@@ -63,6 +63,43 @@ declare module '@alkanes/ts-sdk/wasm' {
     dataApiGetBitcoinPrice(): Promise<any>;
     dataApiGetBitcoinMarketChart(days: string): Promise<any>;
 
+    // Data API methods (new oylapi REST endpoints - 35 new bindings)
+    dataApiGetPoolCreationHistory(limit?: number, offset?: number): Promise<any>;
+    dataApiGetPoolSwapHistory(poolId?: string, limit?: number, offset?: number): Promise<any>;
+    dataApiGetTokenSwapHistory(alkaneId: string, limit?: number, offset?: number): Promise<any>;
+    dataApiGetPoolMintHistory(poolId?: string, limit?: number, offset?: number): Promise<any>;
+    dataApiGetPoolBurnHistory(poolId?: string, limit?: number, offset?: number): Promise<any>;
+    dataApiGetAddressSwapHistoryForPool(address: string, poolId: string, limit?: number, offset?: number): Promise<any>;
+    dataApiGetAddressSwapHistoryForToken(address: string, alkaneId: string, limit?: number, offset?: number): Promise<any>;
+    dataApiGetAddressWrapHistory(address: string, limit?: number, offset?: number): Promise<any>;
+    dataApiGetAddressUnwrapHistory(address: string, limit?: number, offset?: number): Promise<any>;
+    dataApiGetAllWrapHistory(limit?: number, offset?: number): Promise<any>;
+    dataApiGetAllUnwrapHistory(limit?: number, offset?: number): Promise<any>;
+    dataApiGetTotalUnwrapAmount(): Promise<any>;
+    dataApiGetAddressPoolCreationHistory(address: string, limit?: number, offset?: number): Promise<any>;
+    dataApiGetAddressPoolMintHistory(address: string, limit?: number, offset?: number): Promise<any>;
+    dataApiGetAddressPoolBurnHistory(address: string, limit?: number, offset?: number): Promise<any>;
+    dataApiGetAllAddressAmmTxHistory(address: string, limit?: number, offset?: number): Promise<any>;
+    dataApiGetAllAmmTxHistory(limit?: number, offset?: number): Promise<any>;
+    dataApiGetAddressPositions(address: string, factoryId: string): Promise<any>;
+    dataApiGetTokenPairs(factoryId: string, alkaneId?: string, limit?: number, offset?: number): Promise<any>;
+    dataApiGetAllTokenPairs(factoryId: string, limit?: number, offset?: number): Promise<any>;
+    dataApiGetAlkaneSwapPairDetails(factoryId: string, tokenAId: string, tokenBId: string): Promise<any>;
+    dataApiGetAlkanesUtxo(address: string): Promise<any>;
+    dataApiGetAmmUtxos(address: string): Promise<any>;
+    dataApiGetAddressUtxos(address: string): Promise<any>;
+    dataApiGetAddressBalance(address: string): Promise<any>;
+    dataApiGetTaprootBalance(address: string): Promise<any>;
+    dataApiGetAccountUtxos(account: string): Promise<any>;
+    dataApiGetAccountBalance(account: string): Promise<any>;
+    dataApiGetAddressOutpoints(address: string): Promise<any>;
+    dataApiGlobalAlkanesSearch(query: string, limit?: number, offset?: number): Promise<any>;
+    dataApiPathfind(tokenIn: string, tokenOut: string, amountIn: string, maxHops?: number): Promise<any>;
+    dataApiGetBitcoinMarketWeekly(): Promise<any>;
+    dataApiGetBitcoinMarkets(): Promise<any>;
+    dataApiGetTaprootHistory(taprootAddress: string, totalTxs: number): Promise<any>;
+    dataApiGetIntentHistory(address: string, totalTxs?: number, lastSeenTxId?: string): Promise<any>;
+
     // Utility methods
     getEnrichedBalances(address: string, protocolTag?: string): Promise<any>;
     getAddressTxs(address: string): Promise<any[]>;
@@ -87,6 +124,39 @@ declare module '@alkanes/ts-sdk/wasm' {
     espoGetPools(limit?: number, page?: number): Promise<any>;
     espoFindBestSwapPath(tokenIn: string, tokenOut: string, mode?: string, amountIn?: string, amountOut?: string, amountOutMin?: string, amountInMax?: string, availableIn?: string, feeBps?: number, maxHops?: number): Promise<any>;
     espoGetBestMevSwap(token: string, feeBps?: number, maxHops?: number): Promise<any>;
+    espoGetAmmFactories(page?: number, limit?: number): Promise<any>;
+
+    // Espo JSON-RPC methods (essentials module - extended)
+    espoGetAllAlkanes(page?: number, limit?: number): Promise<any>;
+    espoGetAlkaneInfo(alkaneId: string): Promise<any>;
+    espoGetBlockSummary(height: number): Promise<any>;
+    espoGetCirculatingSupply(alkaneId: string, height?: number): Promise<any>;
+    espoGetTransferVolume(alkaneId: string, page?: number, limit?: number): Promise<any>;
+    espoGetTotalReceived(alkaneId: string, page?: number, limit?: number): Promise<any>;
+    espoGetAddressActivity(address: string): Promise<any>;
+    espoGetAlkaneBalances(alkaneId: string): Promise<any>;
+    espoGetAlkaneBalanceMetashrew(owner: string, target: string, height?: number): Promise<any>;
+    espoGetAlkaneBalanceTxs(alkaneId: string, page?: number, limit?: number): Promise<any>;
+    espoGetAlkaneBalanceTxsByToken(owner: string, token: string, page?: number, limit?: number): Promise<any>;
+    espoGetBlockTraces(height: number): Promise<any>;
+    espoGetAlkaneTxSummary(txid: string): Promise<any>;
+    espoGetAlkaneBlockTxs(height: number, page?: number, limit?: number): Promise<any>;
+    espoGetAlkaneAddressTxs(address: string, page?: number, limit?: number): Promise<any>;
+    espoGetAddressTransactions(address: string, page?: number, limit?: number, onlyAlkaneTxs?: boolean): Promise<any>;
+    espoGetAlkaneLatestTraces(): Promise<any>;
+    espoGetMempoolTraces(page?: number, limit?: number, address?: string): Promise<any>;
+
+    // Espo JSON-RPC methods (subfrost module)
+    espoGetWrapEvents(count?: number, offset?: number, successful?: boolean): Promise<any>;
+    espoGetWrapEventsByAddress(address: string, count?: number, offset?: number, successful?: boolean): Promise<any>;
+    espoGetUnwrapEvents(count?: number, offset?: number, successful?: boolean): Promise<any>;
+    espoGetUnwrapEventsByAddress(address: string, count?: number, offset?: number, successful?: boolean): Promise<any>;
+
+    // Espo JSON-RPC methods (pizzafun module)
+    espoGetSeriesIdFromAlkaneId(alkaneId: string): Promise<any>;
+    espoGetSeriesIdsFromAlkaneIds(alkaneIds: string[]): Promise<any>;
+    espoGetAlkaneIdFromSeriesId(seriesId: string): Promise<any>;
+    espoGetAlkaneIdsFromSeriesIds(seriesIds: string[]): Promise<any>;
   }
 
   export default function init(): Promise<void>;

@@ -1200,4 +1200,112 @@ impl EspoProvider for MockProvider {
     ) -> Result<JsonValue> {
         Ok(serde_json::json!({"ok": true}))
     }
+
+    async fn get_amm_factories(&self, _page: Option<u64>, _limit: Option<u64>) -> Result<JsonValue> {
+        Ok(serde_json::json!({"ok": true, "factories": []}))
+    }
+
+    async fn get_all_alkanes(&self, _page: Option<u64>, _limit: Option<u64>) -> Result<JsonValue> {
+        Ok(serde_json::json!({"ok": true, "items": [], "total": 0}))
+    }
+
+    async fn get_alkane_info(&self, _alkane_id: &str) -> Result<JsonValue> {
+        Ok(serde_json::json!({"ok": true}))
+    }
+
+    async fn get_block_summary(&self, _height: u64) -> Result<JsonValue> {
+        Ok(serde_json::json!({"ok": true, "found": false}))
+    }
+
+    async fn get_circulating_supply(&self, _alkane_id: &str, _height: Option<u64>) -> Result<JsonValue> {
+        Ok(serde_json::json!({"ok": true, "supply": "0"}))
+    }
+
+    async fn get_transfer_volume(&self, _alkane_id: &str, _page: Option<u64>, _limit: Option<u64>) -> Result<JsonValue> {
+        Ok(serde_json::json!({"ok": true, "items": [], "total": 0}))
+    }
+
+    async fn get_total_received(&self, _alkane_id: &str, _page: Option<u64>, _limit: Option<u64>) -> Result<JsonValue> {
+        Ok(serde_json::json!({"ok": true, "items": [], "total": 0}))
+    }
+
+    async fn get_address_activity(&self, _address: &str) -> Result<JsonValue> {
+        Ok(serde_json::json!({"ok": true, "transfer_volume": {}, "total_received": {}}))
+    }
+
+    async fn get_alkane_balances(&self, _alkane_id: &str) -> Result<JsonValue> {
+        Ok(serde_json::json!({"ok": true, "balances": {}}))
+    }
+
+    async fn get_alkane_balance_metashrew(&self, _owner: &str, _target: &str, _height: Option<u64>) -> Result<JsonValue> {
+        Ok(serde_json::json!({"ok": true}))
+    }
+
+    async fn get_alkane_balance_txs(&self, _alkane_id: &str, _page: Option<u64>, _limit: Option<u64>) -> Result<JsonValue> {
+        Ok(serde_json::json!({"ok": true, "txids": [], "total": 0}))
+    }
+
+    async fn get_alkane_balance_txs_by_token(&self, _owner: &str, _token: &str, _page: Option<u64>, _limit: Option<u64>) -> Result<JsonValue> {
+        Ok(serde_json::json!({"ok": true, "txids": [], "total": 0}))
+    }
+
+    async fn get_block_traces(&self, _height: u64) -> Result<JsonValue> {
+        Ok(serde_json::json!({"ok": true, "traces": []}))
+    }
+
+    async fn get_alkane_tx_summary(&self, _txid: &str) -> Result<JsonValue> {
+        Ok(serde_json::json!({"ok": true}))
+    }
+
+    async fn get_alkane_block_txs(&self, _height: u64, _page: Option<u64>, _limit: Option<u64>) -> Result<JsonValue> {
+        Ok(serde_json::json!({"ok": true, "txids": [], "total": 0}))
+    }
+
+    async fn get_alkane_address_txs(&self, _address: &str, _page: Option<u64>, _limit: Option<u64>) -> Result<JsonValue> {
+        Ok(serde_json::json!({"ok": true, "txids": [], "total": 0}))
+    }
+
+    async fn get_address_transactions(&self, _address: &str, _page: Option<u64>, _limit: Option<u64>, _only_alkane_txs: Option<bool>) -> Result<JsonValue> {
+        Ok(serde_json::json!({"ok": true, "transactions": [], "total": 0}))
+    }
+
+    async fn get_alkane_latest_traces(&self) -> Result<JsonValue> {
+        Ok(serde_json::json!({"ok": true, "txids": []}))
+    }
+
+    async fn get_mempool_traces(&self, _page: Option<u64>, _limit: Option<u64>, _address: Option<&str>) -> Result<JsonValue> {
+        Ok(serde_json::json!({"ok": true, "items": [], "total": 0}))
+    }
+
+    async fn get_wrap_events_all(&self, _count: Option<u64>, _offset: Option<u64>, _successful: Option<bool>) -> Result<JsonValue> {
+        Ok(serde_json::json!({"items": [], "total": 0}))
+    }
+
+    async fn get_wrap_events_by_address(&self, _address: &str, _count: Option<u64>, _offset: Option<u64>, _successful: Option<bool>) -> Result<JsonValue> {
+        Ok(serde_json::json!({"items": [], "total": 0}))
+    }
+
+    async fn get_unwrap_events_all(&self, _count: Option<u64>, _offset: Option<u64>, _successful: Option<bool>) -> Result<JsonValue> {
+        Ok(serde_json::json!({"items": [], "total": 0}))
+    }
+
+    async fn get_unwrap_events_by_address(&self, _address: &str, _count: Option<u64>, _offset: Option<u64>, _successful: Option<bool>) -> Result<JsonValue> {
+        Ok(serde_json::json!({"items": [], "total": 0}))
+    }
+
+    async fn get_series_id_from_alkane_id(&self, _alkane_id: &str) -> Result<JsonValue> {
+        Ok(serde_json::json!({"ok": false, "error": "not_found"}))
+    }
+
+    async fn get_series_ids_from_alkane_ids(&self, _alkane_ids: &[&str]) -> Result<JsonValue> {
+        Ok(serde_json::json!({"ok": true, "items": []}))
+    }
+
+    async fn get_alkane_id_from_series_id(&self, _series_id: &str) -> Result<JsonValue> {
+        Ok(serde_json::json!({"ok": false, "error": "not_found"}))
+    }
+
+    async fn get_alkane_ids_from_series_ids(&self, _series_ids: &[&str]) -> Result<JsonValue> {
+        Ok(serde_json::json!({"ok": true, "items": []}))
+    }
 }

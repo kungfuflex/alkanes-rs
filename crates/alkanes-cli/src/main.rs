@@ -6013,6 +6013,265 @@ async fn execute_espo_command(
                 println!("{}", serde_json::to_string_pretty(&result)?);
             }
         }
+        EspoCommands::AmmFactories { limit, page, raw } => {
+            let result = provider.get_amm_factories(page, limit).await?;
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("AMM Factories:");
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+        }
+        EspoCommands::AllAlkanes { limit, page, raw } => {
+            let result = provider.get_all_alkanes(page, limit).await?;
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                let total = result.get("total").and_then(|v| v.as_u64()).unwrap_or(0);
+                println!("All Alkanes ({} total):", total);
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+        }
+        EspoCommands::AlkaneInfo { alkane_id, raw } => {
+            let result = provider.get_alkane_info(&alkane_id).await?;
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                let name = result.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+                let symbol = result.get("symbol").and_then(|v| v.as_str()).unwrap_or("?");
+                println!("Alkane {} — {} ({}):", alkane_id, name, symbol);
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+        }
+        EspoCommands::BlockSummary { height, raw } => {
+            let result = provider.get_block_summary(height).await?;
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("Block {} summary:", height);
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+        }
+        EspoCommands::CirculatingSupply { alkane_id, height, raw } => {
+            let result = provider.get_circulating_supply(&alkane_id, height).await?;
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                let supply = result.get("supply").and_then(|v| v.as_str()).unwrap_or("?");
+                println!("Circulating supply of {}: {}", alkane_id, supply);
+            }
+        }
+        EspoCommands::TransferVolume { alkane_id, limit, page, raw } => {
+            let result = provider.get_transfer_volume(&alkane_id, page, limit).await?;
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("Transfer volume for {}:", alkane_id);
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+        }
+        EspoCommands::TotalReceived { alkane_id, limit, page, raw } => {
+            let result = provider.get_total_received(&alkane_id, page, limit).await?;
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("Total received for {}:", alkane_id);
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+        }
+        EspoCommands::AddressActivity { address, raw } => {
+            let result = provider.get_address_activity(&address).await?;
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("Activity for {}:", address);
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+        }
+        EspoCommands::AlkaneBalances { alkane_id, raw } => {
+            let result = provider.get_alkane_balances(&alkane_id).await?;
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("All balances for {}:", alkane_id);
+                if let Some(balances) = result.get("balances").and_then(|v| v.as_object()) {
+                    for (addr, bal) in balances {
+                        println!("  {}: {}", addr, bal);
+                    }
+                    if balances.is_empty() {
+                        println!("  (no balances)");
+                    }
+                } else {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+            }
+        }
+        EspoCommands::AlkaneBalanceMetashrew { owner, target, height, raw } => {
+            let result = provider.get_alkane_balance_metashrew(&owner, &target, height).await?;
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("Metashrew balance for owner={} target={}:", owner, target);
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+        }
+        EspoCommands::AlkaneBalanceTxs { alkane_id, limit, page, raw } => {
+            let result = provider.get_alkane_balance_txs(&alkane_id, page, limit).await?;
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("Balance transactions for {}:", alkane_id);
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+        }
+        EspoCommands::AlkaneBalanceTxsByToken { owner, token, limit, page, raw } => {
+            let result = provider.get_alkane_balance_txs_by_token(&owner, &token, page, limit).await?;
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("Balance transactions for owner={} token={}:", owner, token);
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+        }
+        EspoCommands::BlockTraces { height, raw } => {
+            let result = provider.get_block_traces(height).await?;
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("Traces for block {}:", height);
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+        }
+        EspoCommands::TxSummary { txid, raw } => {
+            let result = provider.get_alkane_tx_summary(&txid).await?;
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("Transaction summary for {}:", txid);
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+        }
+        EspoCommands::BlockTxs { height, limit, page, raw } => {
+            let result = provider.get_alkane_block_txs(height, page, limit).await?;
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("Alkane transactions in block {}:", height);
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+        }
+        EspoCommands::AddressTxs { address, limit, page, raw } => {
+            let result = provider.get_alkane_address_txs(&address, page, limit).await?;
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("Alkane transactions for {}:", address);
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+        }
+        EspoCommands::AddressTransactions { address, limit, page, only_alkane_txs, raw } => {
+            let result = provider.get_address_transactions(&address, page, limit, if only_alkane_txs { Some(true) } else { None }).await?;
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("Transactions for {}:", address);
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+        }
+        EspoCommands::LatestTraces { raw } => {
+            let result = provider.get_alkane_latest_traces().await?;
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("Latest alkane traces:");
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+        }
+        EspoCommands::MempoolTraces { limit, page, address, raw } => {
+            let result = provider.get_mempool_traces(page, limit, address.as_deref()).await?;
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("Mempool traces:");
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+        }
+        EspoCommands::WrapEvents { count, offset, successful, raw } => {
+            let result = provider.get_wrap_events_all(count, offset, successful).await?;
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                let total = result.get("total").and_then(|v| v.as_u64()).unwrap_or(0);
+                println!("Wrap events ({} total):", total);
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+        }
+        EspoCommands::WrapEventsByAddress { address, count, offset, successful, raw } => {
+            let result = provider.get_wrap_events_by_address(&address, count, offset, successful).await?;
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("Wrap events for {}:", address);
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+        }
+        EspoCommands::UnwrapEvents { count, offset, successful, raw } => {
+            let result = provider.get_unwrap_events_all(count, offset, successful).await?;
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                let total = result.get("total").and_then(|v| v.as_u64()).unwrap_or(0);
+                println!("Unwrap events ({} total):", total);
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+        }
+        EspoCommands::UnwrapEventsByAddress { address, count, offset, successful, raw } => {
+            let result = provider.get_unwrap_events_by_address(&address, count, offset, successful).await?;
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("Unwrap events for {}:", address);
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+        }
+        EspoCommands::SeriesIdFromAlkane { alkane_id, raw } => {
+            let result = provider.get_series_id_from_alkane_id(&alkane_id).await?;
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("Series ID for {}:", alkane_id);
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+        }
+        EspoCommands::SeriesIdsFromAlkanes { alkane_ids, raw } => {
+            let ids: Vec<&str> = alkane_ids.split(',').map(|s| s.trim()).collect();
+            let result = provider.get_series_ids_from_alkane_ids(&ids).await?;
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("Series IDs:");
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+        }
+        EspoCommands::AlkaneFromSeriesId { series_id, raw } => {
+            let result = provider.get_alkane_id_from_series_id(&series_id).await?;
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("Alkane ID for series {}:", series_id);
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+        }
+        EspoCommands::AlkanesFromSeriesIds { series_ids, raw } => {
+            let ids: Vec<&str> = series_ids.split(',').map(|s| s.trim()).collect();
+            let result = provider.get_alkane_ids_from_series_ids(&ids).await?;
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("Alkane IDs:");
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+        }
     }
     Ok(())
 }

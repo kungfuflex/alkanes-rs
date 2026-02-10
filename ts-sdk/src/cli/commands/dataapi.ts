@@ -802,6 +802,33 @@ export function registerDataapiCommands(program: Command): void {
       }
     });
 
+  // get-pool-creation-history
+  dataapi
+    .command('get-pool-creation-history')
+    .description('Get pool creation history')
+    .option('--page <number>', 'Page number', '0')
+    .option('--limit <number>', 'Results per page', '100')
+    .action(async (options, command) => {
+      try {
+        const globalOpts = command.parent?.parent?.opts() || {};
+        const spinner = ora('Getting pool creation history...').start();
+
+        const provider = await createProvider({
+          network: globalOpts.provider,
+        });
+
+        const page = options.page ? parseInt(options.page) : undefined;
+        const limit = options.limit ? parseInt(options.limit) : undefined;
+        const result = await provider.oylApi.getPoolCreationHistory(page, limit);
+
+        spinner.succeed();
+        console.log(formatOutput(result, globalOpts));
+      } catch (err: any) {
+        error(`Failed to get pool creation history: ${err.message}`);
+        process.exit(1);
+      }
+    });
+
   // get-pool-swap-history
   dataapi
     .command('get-pool-swap-history <pool-id>')

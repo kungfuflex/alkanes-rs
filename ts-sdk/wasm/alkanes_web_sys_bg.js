@@ -241,21 +241,6 @@ function passArrayJsValueToWasm0(array, malloc) {
     return ptr;
 }
 /**
- * Asynchronously encrypts data using the Web Crypto API.
- * @param {string} mnemonic
- * @param {string} passphrase
- * @returns {Promise<any>}
- */
-export function encryptMnemonic(mnemonic, passphrase) {
-    const ptr0 = passStringToWasm0(mnemonic, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ptr1 = passStringToWasm0(passphrase, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len1 = WASM_VECTOR_LEN;
-    const ret = wasm.encryptMnemonic(ptr0, len0, ptr1, len1);
-    return ret;
-}
-
-/**
  * Initialize the panic hook for better error messages in WASM
  * This should be called early in your application
  */
@@ -774,20 +759,35 @@ export function frbtc_get_signer_address(network) {
     return ret;
 }
 
-function wasm_bindgen__convert__closures_____invoke__h0a7dd91174c54ff4(arg0, arg1) {
-    wasm.wasm_bindgen__convert__closures_____invoke__h0a7dd91174c54ff4(arg0, arg1);
+/**
+ * Asynchronously encrypts data using the Web Crypto API.
+ * @param {string} mnemonic
+ * @param {string} passphrase
+ * @returns {Promise<any>}
+ */
+export function encryptMnemonic(mnemonic, passphrase) {
+    const ptr0 = passStringToWasm0(mnemonic, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(passphrase, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.encryptMnemonic(ptr0, len0, ptr1, len1);
+    return ret;
 }
 
-function wasm_bindgen__convert__closures_____invoke__h9ec53513fb78373d(arg0, arg1) {
-    wasm.wasm_bindgen__convert__closures_____invoke__h9ec53513fb78373d(arg0, arg1);
+function wasm_bindgen__convert__closures_____invoke__hc67e7f9a7930d925(arg0, arg1) {
+    wasm.wasm_bindgen__convert__closures_____invoke__hc67e7f9a7930d925(arg0, arg1);
 }
 
-function wasm_bindgen__convert__closures_____invoke__h18fd4f3472a27029(arg0, arg1, arg2) {
-    wasm.wasm_bindgen__convert__closures_____invoke__h18fd4f3472a27029(arg0, arg1, arg2);
+function wasm_bindgen__convert__closures_____invoke__h01405c57635d3c55(arg0, arg1) {
+    wasm.wasm_bindgen__convert__closures_____invoke__h01405c57635d3c55(arg0, arg1);
 }
 
-function wasm_bindgen__convert__closures_____invoke__h7a3782842eea6d83(arg0, arg1, arg2, arg3) {
-    wasm.wasm_bindgen__convert__closures_____invoke__h7a3782842eea6d83(arg0, arg1, arg2, arg3);
+function wasm_bindgen__convert__closures_____invoke__h5943629905d90057(arg0, arg1, arg2) {
+    wasm.wasm_bindgen__convert__closures_____invoke__h5943629905d90057(arg0, arg1, arg2);
+}
+
+function wasm_bindgen__convert__closures_____invoke__h95fdbac5e4c1bfb6(arg0, arg1, arg2, arg3) {
+    wasm.wasm_bindgen__convert__closures_____invoke__h95fdbac5e4c1bfb6(arg0, arg1, arg2, arg3);
 }
 
 const __wbindgen_enum_RequestCache = ["default", "no-store", "reload", "no-cache", "force-cache", "only-if-cached"];
@@ -3929,6 +3929,323 @@ export class WebProvider {
         const ret = wasm.webprovider_espoGetBestMevSwap(this.__wbg_ptr, ptr0, len0, !isLikeNone(fee_bps), isLikeNone(fee_bps) ? 0 : fee_bps, !isLikeNone(max_hops), isLikeNone(max_hops) ? 0 : max_hops);
         return ret;
     }
+    /**
+     * Get AMM factories from ESPO
+     * @param {number | null} [page]
+     * @param {number | null} [limit]
+     * @returns {Promise<any>}
+     */
+    espoGetAmmFactories(page, limit) {
+        const ret = wasm.webprovider_espoGetAmmFactories(this.__wbg_ptr, !isLikeNone(page), isLikeNone(page) ? 0 : page, !isLikeNone(limit), isLikeNone(limit) ? 0 : limit);
+        return ret;
+    }
+    /**
+     * Get all alkanes from ESPO
+     * @param {number | null} [page]
+     * @param {number | null} [limit]
+     * @returns {Promise<any>}
+     */
+    espoGetAllAlkanes(page, limit) {
+        const ret = wasm.webprovider_espoGetAllAlkanes(this.__wbg_ptr, !isLikeNone(page), isLikeNone(page) ? 0 : page, !isLikeNone(limit), isLikeNone(limit) ? 0 : limit);
+        return ret;
+    }
+    /**
+     * Get alkane info from ESPO
+     * @param {string} alkane_id
+     * @returns {Promise<any>}
+     */
+    espoGetAlkaneInfo(alkane_id) {
+        const ptr0 = passStringToWasm0(alkane_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_espoGetAlkaneInfo(this.__wbg_ptr, ptr0, len0);
+        return ret;
+    }
+    /**
+     * Get block summary from ESPO
+     * @param {number} height
+     * @returns {Promise<any>}
+     */
+    espoGetBlockSummary(height) {
+        const ret = wasm.webprovider_espoGetBlockSummary(this.__wbg_ptr, height);
+        return ret;
+    }
+    /**
+     * Get circulating supply of an alkane from ESPO
+     * @param {string} alkane_id
+     * @param {number | null} [height]
+     * @returns {Promise<any>}
+     */
+    espoGetCirculatingSupply(alkane_id, height) {
+        const ptr0 = passStringToWasm0(alkane_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_espoGetCirculatingSupply(this.__wbg_ptr, ptr0, len0, !isLikeNone(height), isLikeNone(height) ? 0 : height);
+        return ret;
+    }
+    /**
+     * Get transfer volume for an alkane from ESPO
+     * @param {string} alkane_id
+     * @param {number | null} [page]
+     * @param {number | null} [limit]
+     * @returns {Promise<any>}
+     */
+    espoGetTransferVolume(alkane_id, page, limit) {
+        const ptr0 = passStringToWasm0(alkane_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_espoGetTransferVolume(this.__wbg_ptr, ptr0, len0, !isLikeNone(page), isLikeNone(page) ? 0 : page, !isLikeNone(limit), isLikeNone(limit) ? 0 : limit);
+        return ret;
+    }
+    /**
+     * Get total received for an alkane from ESPO
+     * @param {string} alkane_id
+     * @param {number | null} [page]
+     * @param {number | null} [limit]
+     * @returns {Promise<any>}
+     */
+    espoGetTotalReceived(alkane_id, page, limit) {
+        const ptr0 = passStringToWasm0(alkane_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_espoGetTotalReceived(this.__wbg_ptr, ptr0, len0, !isLikeNone(page), isLikeNone(page) ? 0 : page, !isLikeNone(limit), isLikeNone(limit) ? 0 : limit);
+        return ret;
+    }
+    /**
+     * Get address activity from ESPO
+     * @param {string} address
+     * @returns {Promise<any>}
+     */
+    espoGetAddressActivity(address) {
+        const ptr0 = passStringToWasm0(address, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_espoGetAddressActivity(this.__wbg_ptr, ptr0, len0);
+        return ret;
+    }
+    /**
+     * Get all balances for an alkane (all holders) from ESPO
+     * @param {string} alkane_id
+     * @returns {Promise<any>}
+     */
+    espoGetAlkaneBalances(alkane_id) {
+        const ptr0 = passStringToWasm0(alkane_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_espoGetAlkaneBalances(this.__wbg_ptr, ptr0, len0);
+        return ret;
+    }
+    /**
+     * Get alkane balance via metashrew from ESPO
+     * @param {string} owner
+     * @param {string} target
+     * @param {number | null} [height]
+     * @returns {Promise<any>}
+     */
+    espoGetAlkaneBalanceMetashrew(owner, target, height) {
+        const ptr0 = passStringToWasm0(owner, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(target, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_espoGetAlkaneBalanceMetashrew(this.__wbg_ptr, ptr0, len0, ptr1, len1, !isLikeNone(height), isLikeNone(height) ? 0 : height);
+        return ret;
+    }
+    /**
+     * Get alkane balance transactions from ESPO
+     * @param {string} alkane_id
+     * @param {number | null} [page]
+     * @param {number | null} [limit]
+     * @returns {Promise<any>}
+     */
+    espoGetAlkaneBalanceTxs(alkane_id, page, limit) {
+        const ptr0 = passStringToWasm0(alkane_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_espoGetAlkaneBalanceTxs(this.__wbg_ptr, ptr0, len0, !isLikeNone(page), isLikeNone(page) ? 0 : page, !isLikeNone(limit), isLikeNone(limit) ? 0 : limit);
+        return ret;
+    }
+    /**
+     * Get alkane balance transactions by token from ESPO
+     * @param {string} owner
+     * @param {string} token
+     * @param {number | null} [page]
+     * @param {number | null} [limit]
+     * @returns {Promise<any>}
+     */
+    espoGetAlkaneBalanceTxsByToken(owner, token, page, limit) {
+        const ptr0 = passStringToWasm0(owner, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(token, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_espoGetAlkaneBalanceTxsByToken(this.__wbg_ptr, ptr0, len0, ptr1, len1, !isLikeNone(page), isLikeNone(page) ? 0 : page, !isLikeNone(limit), isLikeNone(limit) ? 0 : limit);
+        return ret;
+    }
+    /**
+     * Get block traces from ESPO
+     * @param {number} height
+     * @returns {Promise<any>}
+     */
+    espoGetBlockTraces(height) {
+        const ret = wasm.webprovider_espoGetBlockTraces(this.__wbg_ptr, height);
+        return ret;
+    }
+    /**
+     * Get alkane transaction summary from ESPO
+     * @param {string} txid
+     * @returns {Promise<any>}
+     */
+    espoGetAlkaneTxSummary(txid) {
+        const ptr0 = passStringToWasm0(txid, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_espoGetAlkaneTxSummary(this.__wbg_ptr, ptr0, len0);
+        return ret;
+    }
+    /**
+     * Get alkane transactions in a block from ESPO
+     * @param {number} height
+     * @param {number | null} [page]
+     * @param {number | null} [limit]
+     * @returns {Promise<any>}
+     */
+    espoGetAlkaneBlockTxs(height, page, limit) {
+        const ret = wasm.webprovider_espoGetAlkaneBlockTxs(this.__wbg_ptr, height, !isLikeNone(page), isLikeNone(page) ? 0 : page, !isLikeNone(limit), isLikeNone(limit) ? 0 : limit);
+        return ret;
+    }
+    /**
+     * Get alkane transactions for an address from ESPO
+     * @param {string} address
+     * @param {number | null} [page]
+     * @param {number | null} [limit]
+     * @returns {Promise<any>}
+     */
+    espoGetAlkaneAddressTxs(address, page, limit) {
+        const ptr0 = passStringToWasm0(address, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_espoGetAlkaneAddressTxs(this.__wbg_ptr, ptr0, len0, !isLikeNone(page), isLikeNone(page) ? 0 : page, !isLikeNone(limit), isLikeNone(limit) ? 0 : limit);
+        return ret;
+    }
+    /**
+     * Get all transactions for an address from ESPO
+     * @param {string} address
+     * @param {number | null} [page]
+     * @param {number | null} [limit]
+     * @param {boolean | null} [only_alkane_txs]
+     * @returns {Promise<any>}
+     */
+    espoGetAddressTransactions(address, page, limit, only_alkane_txs) {
+        const ptr0 = passStringToWasm0(address, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_espoGetAddressTransactions(this.__wbg_ptr, ptr0, len0, !isLikeNone(page), isLikeNone(page) ? 0 : page, !isLikeNone(limit), isLikeNone(limit) ? 0 : limit, isLikeNone(only_alkane_txs) ? 0xFFFFFF : only_alkane_txs ? 1 : 0);
+        return ret;
+    }
+    /**
+     * Get latest alkane traces from ESPO
+     * @returns {Promise<any>}
+     */
+    espoGetAlkaneLatestTraces() {
+        const ret = wasm.webprovider_espoGetAlkaneLatestTraces(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * Get mempool traces from ESPO
+     * @param {number | null} [page]
+     * @param {number | null} [limit]
+     * @param {string | null} [address]
+     * @returns {Promise<any>}
+     */
+    espoGetMempoolTraces(page, limit, address) {
+        var ptr0 = isLikeNone(address) ? 0 : passStringToWasm0(address, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_espoGetMempoolTraces(this.__wbg_ptr, !isLikeNone(page), isLikeNone(page) ? 0 : page, !isLikeNone(limit), isLikeNone(limit) ? 0 : limit, ptr0, len0);
+        return ret;
+    }
+    /**
+     * Get all wrap events from ESPO (subfrost namespace)
+     * @param {number | null} [count]
+     * @param {number | null} [offset]
+     * @param {boolean | null} [successful]
+     * @returns {Promise<any>}
+     */
+    espoGetWrapEvents(count, offset, successful) {
+        const ret = wasm.webprovider_espoGetWrapEvents(this.__wbg_ptr, !isLikeNone(count), isLikeNone(count) ? 0 : count, !isLikeNone(offset), isLikeNone(offset) ? 0 : offset, isLikeNone(successful) ? 0xFFFFFF : successful ? 1 : 0);
+        return ret;
+    }
+    /**
+     * Get wrap events for a specific address from ESPO (subfrost namespace)
+     * @param {string} address
+     * @param {number | null} [count]
+     * @param {number | null} [offset]
+     * @param {boolean | null} [successful]
+     * @returns {Promise<any>}
+     */
+    espoGetWrapEventsByAddress(address, count, offset, successful) {
+        const ptr0 = passStringToWasm0(address, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_espoGetWrapEventsByAddress(this.__wbg_ptr, ptr0, len0, !isLikeNone(count), isLikeNone(count) ? 0 : count, !isLikeNone(offset), isLikeNone(offset) ? 0 : offset, isLikeNone(successful) ? 0xFFFFFF : successful ? 1 : 0);
+        return ret;
+    }
+    /**
+     * Get all unwrap events from ESPO (subfrost namespace)
+     * @param {number | null} [count]
+     * @param {number | null} [offset]
+     * @param {boolean | null} [successful]
+     * @returns {Promise<any>}
+     */
+    espoGetUnwrapEvents(count, offset, successful) {
+        const ret = wasm.webprovider_espoGetUnwrapEvents(this.__wbg_ptr, !isLikeNone(count), isLikeNone(count) ? 0 : count, !isLikeNone(offset), isLikeNone(offset) ? 0 : offset, isLikeNone(successful) ? 0xFFFFFF : successful ? 1 : 0);
+        return ret;
+    }
+    /**
+     * Get unwrap events for a specific address from ESPO (subfrost namespace)
+     * @param {string} address
+     * @param {number | null} [count]
+     * @param {number | null} [offset]
+     * @param {boolean | null} [successful]
+     * @returns {Promise<any>}
+     */
+    espoGetUnwrapEventsByAddress(address, count, offset, successful) {
+        const ptr0 = passStringToWasm0(address, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_espoGetUnwrapEventsByAddress(this.__wbg_ptr, ptr0, len0, !isLikeNone(count), isLikeNone(count) ? 0 : count, !isLikeNone(offset), isLikeNone(offset) ? 0 : offset, isLikeNone(successful) ? 0xFFFFFF : successful ? 1 : 0);
+        return ret;
+    }
+    /**
+     * Get series ID from alkane ID (pizzafun namespace)
+     * @param {string} alkane_id
+     * @returns {Promise<any>}
+     */
+    espoGetSeriesIdFromAlkaneId(alkane_id) {
+        const ptr0 = passStringToWasm0(alkane_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_espoGetSeriesIdFromAlkaneId(this.__wbg_ptr, ptr0, len0);
+        return ret;
+    }
+    /**
+     * Get series IDs from multiple alkane IDs (pizzafun namespace)
+     * @param {string[]} alkane_ids
+     * @returns {Promise<any>}
+     */
+    espoGetSeriesIdsFromAlkaneIds(alkane_ids) {
+        const ptr0 = passArrayJsValueToWasm0(alkane_ids, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_espoGetSeriesIdsFromAlkaneIds(this.__wbg_ptr, ptr0, len0);
+        return ret;
+    }
+    /**
+     * Get alkane ID from series ID (pizzafun namespace)
+     * @param {string} series_id
+     * @returns {Promise<any>}
+     */
+    espoGetAlkaneIdFromSeriesId(series_id) {
+        const ptr0 = passStringToWasm0(series_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_espoGetAlkaneIdFromSeriesId(this.__wbg_ptr, ptr0, len0);
+        return ret;
+    }
+    /**
+     * Get alkane IDs from multiple series IDs (pizzafun namespace)
+     * @param {string[]} series_ids
+     * @returns {Promise<any>}
+     */
+    espoGetAlkaneIdsFromSeriesIds(series_ids) {
+        const ptr0 = passArrayJsValueToWasm0(series_ids, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_espoGetAlkaneIdsFromSeriesIds(this.__wbg_ptr, ptr0, len0);
+        return ret;
+    }
 }
 if (Symbol.dispose) WebProvider.prototype[Symbol.dispose] = WebProvider.prototype.free;
 
@@ -4395,7 +4712,7 @@ export function __wbg_new_3c3d849046688a66(arg0, arg1) {
             const a = state0.a;
             state0.a = 0;
             try {
-                return wasm_bindgen__convert__closures_____invoke__h7a3782842eea6d83(a, state0.b, arg0, arg1);
+                return wasm_bindgen__convert__closures_____invoke__h95fdbac5e4c1bfb6(a, state0.b, arg0, arg1);
             } finally {
                 state0.a = a;
             }
@@ -4717,9 +5034,21 @@ export function __wbg_wasmbrowserwalletprovider_new(arg0) {
     return ret;
 };
 
+export function __wbindgen_cast_1e96705036f500cc(arg0, arg1) {
+    // Cast intrinsic for `Closure(Closure { dtor_idx: 2930, function: Function { arguments: [], shim_idx: 2931, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+    const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__he41b8e2aae505aee, wasm_bindgen__convert__closures_____invoke__h01405c57635d3c55);
+    return ret;
+};
+
 export function __wbindgen_cast_2241b6af4c4b2941(arg0, arg1) {
     // Cast intrinsic for `Ref(String) -> Externref`.
     const ret = getStringFromWasm0(arg0, arg1);
+    return ret;
+};
+
+export function __wbindgen_cast_459848692b873776(arg0, arg1) {
+    // Cast intrinsic for `Closure(Closure { dtor_idx: 3620, function: Function { arguments: [], shim_idx: 3621, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+    const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__hb154d7ec25b6c414, wasm_bindgen__convert__closures_____invoke__hc67e7f9a7930d925);
     return ret;
 };
 
@@ -4729,27 +5058,9 @@ export function __wbindgen_cast_4625c577ab2ec9ee(arg0) {
     return ret;
 };
 
-export function __wbindgen_cast_577cb15cb1820d76(arg0, arg1) {
-    // Cast intrinsic for `Closure(Closure { dtor_idx: 4174, function: Function { arguments: [Externref], shim_idx: 4175, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-    const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h7a5e04299cfb8a06, wasm_bindgen__convert__closures_____invoke__h18fd4f3472a27029);
-    return ret;
-};
-
-export function __wbindgen_cast_77bbabe94a2e0a41(arg0, arg1) {
-    // Cast intrinsic for `Closure(Closure { dtor_idx: 2780, function: Function { arguments: [], shim_idx: 2781, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-    const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h20fe825946d13681, wasm_bindgen__convert__closures_____invoke__h9ec53513fb78373d);
-    return ret;
-};
-
 export function __wbindgen_cast_9ae0607507abb057(arg0) {
     // Cast intrinsic for `I64 -> Externref`.
     const ret = arg0;
-    return ret;
-};
-
-export function __wbindgen_cast_ac406047d7225523(arg0, arg1) {
-    // Cast intrinsic for `Closure(Closure { dtor_idx: 3470, function: Function { arguments: [], shim_idx: 3471, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-    const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h03f08b76343a9cd1, wasm_bindgen__convert__closures_____invoke__h0a7dd91174c54ff4);
     return ret;
 };
 
@@ -4768,6 +5079,12 @@ export function __wbindgen_cast_d6cd19b81560fd6e(arg0) {
 export function __wbindgen_cast_e7b45dd881f38ce3(arg0, arg1) {
     // Cast intrinsic for `U128 -> Externref`.
     const ret = (BigInt.asUintN(64, arg0) | (BigInt.asUintN(64, arg1) << BigInt(64)));
+    return ret;
+};
+
+export function __wbindgen_cast_ee6564a6283d61c2(arg0, arg1) {
+    // Cast intrinsic for `Closure(Closure { dtor_idx: 4324, function: Function { arguments: [Externref], shim_idx: 4325, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+    const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h3ba04b4139aaae95, wasm_bindgen__convert__closures_____invoke__h5943629905d90057);
     return ret;
 };
 

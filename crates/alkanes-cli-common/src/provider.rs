@@ -5207,7 +5207,7 @@ impl EspoProvider for ConcreteProvider {
         dir: Option<&str>,
     ) -> Result<JsonValue> {
         let target = self.rpc_config.get_espo_rpc_target();
-        log::info!("[EspoProvider] Calling ammdata.get_trades for pool={} at {}", pool, target.url);
+        log::info!("[EspoProvider] Calling ammdata.get_activity for pool={} at {}", pool, target.url);
 
         let mut params = json!({
             "pool": pool
@@ -5232,7 +5232,7 @@ impl EspoProvider for ConcreteProvider {
             params["dir"] = json!(d);
         }
 
-        self.call(&target.url, "ammdata.get_trades", params, 1).await
+        self.call(&target.url, "ammdata.get_activity", params, 1).await
     }
 
     async fn get_pools(
@@ -5325,5 +5325,229 @@ impl EspoProvider for ConcreteProvider {
         }
 
         self.call(&target.url, "ammdata.get_best_mev_swap", params, 1).await
+    }
+
+    async fn get_amm_factories(
+        &self,
+        page: Option<u64>,
+        limit: Option<u64>,
+    ) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling ammdata.get_amm_factories at {}", target.url);
+        let mut params = json!({});
+        if let Some(p) = page { params["page"] = json!(p); }
+        if let Some(l) = limit { params["limit"] = json!(l); }
+        self.call(&target.url, "ammdata.get_amm_factories", params, 1).await
+    }
+
+    // ==================== Essentials methods (new) ====================
+
+    async fn get_all_alkanes(&self, page: Option<u64>, limit: Option<u64>) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling essentials.get_all_alkanes at {}", target.url);
+        let mut params = json!({});
+        if let Some(p) = page { params["page"] = json!(p); }
+        if let Some(l) = limit { params["limit"] = json!(l); }
+        self.call(&target.url, "essentials.get_all_alkanes", params, 1).await
+    }
+
+    async fn get_alkane_info(&self, alkane_id: &str) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling essentials.get_alkane_info for {} at {}", alkane_id, target.url);
+        self.call(&target.url, "essentials.get_alkane_info", json!({"alkane": alkane_id}), 1).await
+    }
+
+    async fn get_block_summary(&self, height: u64) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling essentials.get_block_summary for height={} at {}", height, target.url);
+        self.call(&target.url, "essentials.get_block_summary", json!({"height": height}), 1).await
+    }
+
+    async fn get_circulating_supply(&self, alkane_id: &str, height: Option<u64>) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling essentials.get_circulating_supply for {} at {}", alkane_id, target.url);
+        let mut params = json!({"alkane": alkane_id});
+        if let Some(h) = height { params["height"] = json!(h); }
+        self.call(&target.url, "essentials.get_circulating_supply", params, 1).await
+    }
+
+    async fn get_transfer_volume(&self, alkane_id: &str, page: Option<u64>, limit: Option<u64>) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling essentials.get_transfer_volume for {} at {}", alkane_id, target.url);
+        let mut params = json!({"alkane": alkane_id});
+        if let Some(p) = page { params["page"] = json!(p); }
+        if let Some(l) = limit { params["limit"] = json!(l); }
+        self.call(&target.url, "essentials.get_transfer_volume", params, 1).await
+    }
+
+    async fn get_total_received(&self, alkane_id: &str, page: Option<u64>, limit: Option<u64>) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling essentials.get_total_received for {} at {}", alkane_id, target.url);
+        let mut params = json!({"alkane": alkane_id});
+        if let Some(p) = page { params["page"] = json!(p); }
+        if let Some(l) = limit { params["limit"] = json!(l); }
+        self.call(&target.url, "essentials.get_total_received", params, 1).await
+    }
+
+    async fn get_address_activity(&self, address: &str) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling essentials.get_address_activity for {} at {}", address, target.url);
+        self.call(&target.url, "essentials.get_address_activity", json!({"address": address}), 1).await
+    }
+
+    async fn get_alkane_balances(&self, alkane_id: &str) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling essentials.get_alkane_balances for {} at {}", alkane_id, target.url);
+        self.call(&target.url, "essentials.get_alkane_balances", json!({"alkane": alkane_id}), 1).await
+    }
+
+    async fn get_alkane_balance_metashrew(&self, owner: &str, target_alkane: &str, height: Option<u64>) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling essentials.get_alkane_balance_metashrew for owner={} target={} at {}", owner, target_alkane, target.url);
+        let mut params = json!({"owner": owner, "target": target_alkane});
+        if let Some(h) = height { params["height"] = json!(h); }
+        self.call(&target.url, "essentials.get_alkane_balance_metashrew", params, 1).await
+    }
+
+    async fn get_alkane_balance_txs(&self, alkane_id: &str, page: Option<u64>, limit: Option<u64>) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling essentials.get_alkane_balance_txs for {} at {}", alkane_id, target.url);
+        let mut params = json!({"alkane": alkane_id});
+        if let Some(p) = page { params["page"] = json!(p); }
+        if let Some(l) = limit { params["limit"] = json!(l); }
+        self.call(&target.url, "essentials.get_alkane_balance_txs", params, 1).await
+    }
+
+    async fn get_alkane_balance_txs_by_token(&self, owner: &str, token: &str, page: Option<u64>, limit: Option<u64>) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling essentials.get_alkane_balance_txs_by_token for owner={} token={} at {}", owner, token, target.url);
+        let mut params = json!({"owner": owner, "token": token});
+        if let Some(p) = page { params["page"] = json!(p); }
+        if let Some(l) = limit { params["limit"] = json!(l); }
+        self.call(&target.url, "essentials.get_alkane_balance_txs_by_token", params, 1).await
+    }
+
+    async fn get_block_traces(&self, height: u64) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling essentials.get_block_traces for height={} at {}", height, target.url);
+        self.call(&target.url, "essentials.get_block_traces", json!({"height": height}), 1).await
+    }
+
+    async fn get_alkane_tx_summary(&self, txid: &str) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling essentials.get_alkane_tx_summary for {} at {}", txid, target.url);
+        self.call(&target.url, "essentials.get_alkane_tx_summary", json!({"txid": txid}), 1).await
+    }
+
+    async fn get_alkane_block_txs(&self, height: u64, page: Option<u64>, limit: Option<u64>) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling essentials.get_alkane_block_txs for height={} at {}", height, target.url);
+        let mut params = json!({"height": height});
+        if let Some(p) = page { params["page"] = json!(p); }
+        if let Some(l) = limit { params["limit"] = json!(l); }
+        self.call(&target.url, "essentials.get_alkane_block_txs", params, 1).await
+    }
+
+    async fn get_alkane_address_txs(&self, address: &str, page: Option<u64>, limit: Option<u64>) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling essentials.get_alkane_address_txs for {} at {}", address, target.url);
+        let mut params = json!({"address": address});
+        if let Some(p) = page { params["page"] = json!(p); }
+        if let Some(l) = limit { params["limit"] = json!(l); }
+        self.call(&target.url, "essentials.get_alkane_address_txs", params, 1).await
+    }
+
+    async fn get_address_transactions(&self, address: &str, page: Option<u64>, limit: Option<u64>, only_alkane_txs: Option<bool>) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling essentials.get_address_transactions for {} at {}", address, target.url);
+        let mut params = json!({"address": address});
+        if let Some(p) = page { params["page"] = json!(p); }
+        if let Some(l) = limit { params["limit"] = json!(l); }
+        if let Some(o) = only_alkane_txs { params["only_alkane_txs"] = json!(o); }
+        self.call(&target.url, "essentials.get_address_transactions", params, 1).await
+    }
+
+    async fn get_alkane_latest_traces(&self) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling essentials.get_alkane_latest_traces at {}", target.url);
+        self.call(&target.url, "essentials.get_alkane_latest_traces", json!({}), 1).await
+    }
+
+    async fn get_mempool_traces(&self, page: Option<u64>, limit: Option<u64>, address: Option<&str>) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling essentials.get_mempool_traces at {}", target.url);
+        let mut params = json!({});
+        if let Some(p) = page { params["page"] = json!(p); }
+        if let Some(l) = limit { params["limit"] = json!(l); }
+        if let Some(a) = address { params["address"] = json!(a); }
+        self.call(&target.url, "essentials.get_mempool_traces", params, 1).await
+    }
+
+    // ==================== Subfrost methods ====================
+
+    async fn get_wrap_events_all(&self, count: Option<u64>, offset: Option<u64>, successful: Option<bool>) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling subfrost.get_wrap_events_all at {}", target.url);
+        let mut params = json!({});
+        if let Some(c) = count { params["count"] = json!(c); }
+        if let Some(o) = offset { params["offset"] = json!(o); }
+        if let Some(s) = successful { params["successful"] = json!(s); }
+        self.call(&target.url, "subfrost.get_wrap_events_all", params, 1).await
+    }
+
+    async fn get_wrap_events_by_address(&self, address: &str, count: Option<u64>, offset: Option<u64>, successful: Option<bool>) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling subfrost.get_wrap_events_by_address for {} at {}", address, target.url);
+        let mut params = json!({"address": address});
+        if let Some(c) = count { params["count"] = json!(c); }
+        if let Some(o) = offset { params["offset"] = json!(o); }
+        if let Some(s) = successful { params["successful"] = json!(s); }
+        self.call(&target.url, "subfrost.get_wrap_events_by_address", params, 1).await
+    }
+
+    async fn get_unwrap_events_all(&self, count: Option<u64>, offset: Option<u64>, successful: Option<bool>) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling subfrost.get_unwrap_events_all at {}", target.url);
+        let mut params = json!({});
+        if let Some(c) = count { params["count"] = json!(c); }
+        if let Some(o) = offset { params["offset"] = json!(o); }
+        if let Some(s) = successful { params["successful"] = json!(s); }
+        self.call(&target.url, "subfrost.get_unwrap_events_all", params, 1).await
+    }
+
+    async fn get_unwrap_events_by_address(&self, address: &str, count: Option<u64>, offset: Option<u64>, successful: Option<bool>) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling subfrost.get_unwrap_events_by_address for {} at {}", address, target.url);
+        let mut params = json!({"address": address});
+        if let Some(c) = count { params["count"] = json!(c); }
+        if let Some(o) = offset { params["offset"] = json!(o); }
+        if let Some(s) = successful { params["successful"] = json!(s); }
+        self.call(&target.url, "subfrost.get_unwrap_events_by_address", params, 1).await
+    }
+
+    // ==================== PizzaFun methods ====================
+
+    async fn get_series_id_from_alkane_id(&self, alkane_id: &str) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling pizzafun.get_series_id_from_alkane_id for {} at {}", alkane_id, target.url);
+        self.call(&target.url, "pizzafun.get_series_id_from_alkane_id", json!({"alkane_id": alkane_id}), 1).await
+    }
+
+    async fn get_series_ids_from_alkane_ids(&self, alkane_ids: &[&str]) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling pizzafun.get_series_ids_from_alkane_ids for {} ids at {}", alkane_ids.len(), target.url);
+        self.call(&target.url, "pizzafun.get_series_ids_from_alkane_ids", json!({"alkane_ids": alkane_ids}), 1).await
+    }
+
+    async fn get_alkane_id_from_series_id(&self, series_id: &str) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling pizzafun.get_alkane_id_from_series_id for {} at {}", series_id, target.url);
+        self.call(&target.url, "pizzafun.get_alkane_id_from_series_id", json!({"series_id": series_id}), 1).await
+    }
+
+    async fn get_alkane_ids_from_series_ids(&self, series_ids: &[&str]) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling pizzafun.get_alkane_ids_from_series_ids for {} ids at {}", series_ids.len(), target.url);
+        self.call(&target.url, "pizzafun.get_alkane_ids_from_series_ids", json!({"series_ids": series_ids}), 1).await
     }
 }

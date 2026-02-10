@@ -4408,6 +4408,758 @@ impl WebProvider {
         })
     }
 
+    // ============================================================================
+    // DATA API — ADDITIONAL METHODS
+    // ============================================================================
+
+    #[wasm_bindgen(js_name = dataApiGetPoolCreationHistory)]
+    pub fn data_api_get_pool_creation_history_js(&self, limit: Option<i64>, offset: Option<i64>) -> js_sys::Promise {
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let url = provider.rpc_config.get_data_api_target().url;
+            let body = serde_json::json!({
+                "limit": limit.unwrap_or(100),
+                "offset": offset.unwrap_or(0)
+            });
+
+            let response = provider.rest_call(&url, "get-pool-creation-history", body).await
+                .map_err(|e| JsValue::from_str(&format!("Get pool creation history failed: {}", e)))?;
+
+            serde_wasm_bindgen::to_value(&response)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = dataApiGetPoolSwapHistory)]
+    pub fn data_api_get_pool_swap_history_js(&self, pool_id: Option<String>, limit: Option<i64>, offset: Option<i64>) -> js_sys::Promise {
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let url = provider.rpc_config.get_data_api_target().url;
+            let mut body = serde_json::json!({
+                "limit": limit.unwrap_or(100),
+                "offset": offset.unwrap_or(0)
+            });
+            if let Some(ref pid) = pool_id {
+                let parts: Vec<&str> = pid.split(':').collect();
+                if parts.len() == 2 {
+                    body["poolId"] = serde_json::json!({ "block": parts[0], "tx": parts[1] });
+                }
+            }
+
+            let response = provider.rest_call(&url, "get-pool-swap-history", body).await
+                .map_err(|e| JsValue::from_str(&format!("Get pool swap history failed: {}", e)))?;
+
+            serde_wasm_bindgen::to_value(&response)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = dataApiGetTokenSwapHistory)]
+    pub fn data_api_get_token_swap_history_js(&self, alkane_id: String, limit: Option<i64>, offset: Option<i64>) -> js_sys::Promise {
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let url = provider.rpc_config.get_data_api_target().url;
+            let parts: Vec<&str> = alkane_id.split(':').collect();
+            let body = if parts.len() == 2 {
+                serde_json::json!({
+                    "alkaneId": { "block": parts[0], "tx": parts[1] },
+                    "limit": limit.unwrap_or(100),
+                    "offset": offset.unwrap_or(0)
+                })
+            } else {
+                serde_json::json!({
+                    "alkaneId": alkane_id,
+                    "limit": limit.unwrap_or(100),
+                    "offset": offset.unwrap_or(0)
+                })
+            };
+
+            let response = provider.rest_call(&url, "get-token-swap-history", body).await
+                .map_err(|e| JsValue::from_str(&format!("Get token swap history failed: {}", e)))?;
+
+            serde_wasm_bindgen::to_value(&response)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = dataApiGetPoolMintHistory)]
+    pub fn data_api_get_pool_mint_history_js(&self, pool_id: Option<String>, limit: Option<i64>, offset: Option<i64>) -> js_sys::Promise {
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let url = provider.rpc_config.get_data_api_target().url;
+            let mut body = serde_json::json!({
+                "limit": limit.unwrap_or(100),
+                "offset": offset.unwrap_or(0)
+            });
+            if let Some(ref pid) = pool_id {
+                let parts: Vec<&str> = pid.split(':').collect();
+                if parts.len() == 2 {
+                    body["poolId"] = serde_json::json!({ "block": parts[0], "tx": parts[1] });
+                }
+            }
+
+            let response = provider.rest_call(&url, "get-pool-mint-history", body).await
+                .map_err(|e| JsValue::from_str(&format!("Get pool mint history failed: {}", e)))?;
+
+            serde_wasm_bindgen::to_value(&response)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = dataApiGetPoolBurnHistory)]
+    pub fn data_api_get_pool_burn_history_js(&self, pool_id: Option<String>, limit: Option<i64>, offset: Option<i64>) -> js_sys::Promise {
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let url = provider.rpc_config.get_data_api_target().url;
+            let mut body = serde_json::json!({
+                "limit": limit.unwrap_or(100),
+                "offset": offset.unwrap_or(0)
+            });
+            if let Some(ref pid) = pool_id {
+                let parts: Vec<&str> = pid.split(':').collect();
+                if parts.len() == 2 {
+                    body["poolId"] = serde_json::json!({ "block": parts[0], "tx": parts[1] });
+                }
+            }
+
+            let response = provider.rest_call(&url, "get-pool-burn-history", body).await
+                .map_err(|e| JsValue::from_str(&format!("Get pool burn history failed: {}", e)))?;
+
+            serde_wasm_bindgen::to_value(&response)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = dataApiGetAddressSwapHistoryForPool)]
+    pub fn data_api_get_address_swap_history_for_pool_js(&self, address: String, pool_id: String, limit: Option<i64>, offset: Option<i64>) -> js_sys::Promise {
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let url = provider.rpc_config.get_data_api_target().url;
+            let parts: Vec<&str> = pool_id.split(':').collect();
+            let body = if parts.len() == 2 {
+                serde_json::json!({
+                    "address": address,
+                    "poolId": { "block": parts[0], "tx": parts[1] },
+                    "limit": limit.unwrap_or(100),
+                    "offset": offset.unwrap_or(0)
+                })
+            } else {
+                serde_json::json!({
+                    "address": address,
+                    "poolId": pool_id,
+                    "limit": limit.unwrap_or(100),
+                    "offset": offset.unwrap_or(0)
+                })
+            };
+
+            let response = provider.rest_call(&url, "get-address-swap-history-for-pool", body).await
+                .map_err(|e| JsValue::from_str(&format!("Get address swap history for pool failed: {}", e)))?;
+
+            serde_wasm_bindgen::to_value(&response)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = dataApiGetAddressSwapHistoryForToken)]
+    pub fn data_api_get_address_swap_history_for_token_js(&self, address: String, alkane_id: String, limit: Option<i64>, offset: Option<i64>) -> js_sys::Promise {
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let url = provider.rpc_config.get_data_api_target().url;
+            let parts: Vec<&str> = alkane_id.split(':').collect();
+            let body = if parts.len() == 2 {
+                serde_json::json!({
+                    "address": address,
+                    "alkaneId": { "block": parts[0], "tx": parts[1] },
+                    "limit": limit.unwrap_or(100),
+                    "offset": offset.unwrap_or(0)
+                })
+            } else {
+                serde_json::json!({
+                    "address": address,
+                    "alkaneId": alkane_id,
+                    "limit": limit.unwrap_or(100),
+                    "offset": offset.unwrap_or(0)
+                })
+            };
+
+            let response = provider.rest_call(&url, "get-address-swap-history-for-token", body).await
+                .map_err(|e| JsValue::from_str(&format!("Get address swap history for token failed: {}", e)))?;
+
+            serde_wasm_bindgen::to_value(&response)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = dataApiGetAddressWrapHistory)]
+    pub fn data_api_get_address_wrap_history_js(&self, address: String, limit: Option<i64>, offset: Option<i64>) -> js_sys::Promise {
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let url = provider.rpc_config.get_data_api_target().url;
+            let body = serde_json::json!({
+                "address": address,
+                "limit": limit.unwrap_or(100),
+                "offset": offset.unwrap_or(0)
+            });
+
+            let response = provider.rest_call(&url, "get-address-wrap-history", body).await
+                .map_err(|e| JsValue::from_str(&format!("Get address wrap history failed: {}", e)))?;
+
+            serde_wasm_bindgen::to_value(&response)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = dataApiGetAddressUnwrapHistory)]
+    pub fn data_api_get_address_unwrap_history_js(&self, address: String, limit: Option<i64>, offset: Option<i64>) -> js_sys::Promise {
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let url = provider.rpc_config.get_data_api_target().url;
+            let body = serde_json::json!({
+                "address": address,
+                "limit": limit.unwrap_or(100),
+                "offset": offset.unwrap_or(0)
+            });
+
+            let response = provider.rest_call(&url, "get-address-unwrap-history", body).await
+                .map_err(|e| JsValue::from_str(&format!("Get address unwrap history failed: {}", e)))?;
+
+            serde_wasm_bindgen::to_value(&response)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = dataApiGetAllWrapHistory)]
+    pub fn data_api_get_all_wrap_history_js(&self, limit: Option<i64>, offset: Option<i64>) -> js_sys::Promise {
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let url = provider.rpc_config.get_data_api_target().url;
+            let body = serde_json::json!({
+                "limit": limit.unwrap_or(100),
+                "offset": offset.unwrap_or(0)
+            });
+
+            let response = provider.rest_call(&url, "get-all-wrap-history", body).await
+                .map_err(|e| JsValue::from_str(&format!("Get all wrap history failed: {}", e)))?;
+
+            serde_wasm_bindgen::to_value(&response)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = dataApiGetAllUnwrapHistory)]
+    pub fn data_api_get_all_unwrap_history_js(&self, limit: Option<i64>, offset: Option<i64>) -> js_sys::Promise {
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let url = provider.rpc_config.get_data_api_target().url;
+            let body = serde_json::json!({
+                "limit": limit.unwrap_or(100),
+                "offset": offset.unwrap_or(0)
+            });
+
+            let response = provider.rest_call(&url, "get-all-unwrap-history", body).await
+                .map_err(|e| JsValue::from_str(&format!("Get all unwrap history failed: {}", e)))?;
+
+            serde_wasm_bindgen::to_value(&response)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = dataApiGetTotalUnwrapAmount)]
+    pub fn data_api_get_total_unwrap_amount_js(&self) -> js_sys::Promise {
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let url = provider.rpc_config.get_data_api_target().url;
+            let body = serde_json::json!({});
+
+            let response = provider.rest_call(&url, "get-total-unwrap-amount", body).await
+                .map_err(|e| JsValue::from_str(&format!("Get total unwrap amount failed: {}", e)))?;
+
+            serde_wasm_bindgen::to_value(&response)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = dataApiGetAddressPoolCreationHistory)]
+    pub fn data_api_get_address_pool_creation_history_js(&self, address: String, limit: Option<i64>, offset: Option<i64>) -> js_sys::Promise {
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let url = provider.rpc_config.get_data_api_target().url;
+            let body = serde_json::json!({
+                "address": address,
+                "limit": limit.unwrap_or(100),
+                "offset": offset.unwrap_or(0)
+            });
+
+            let response = provider.rest_call(&url, "get-address-pool-creation-history", body).await
+                .map_err(|e| JsValue::from_str(&format!("Get address pool creation history failed: {}", e)))?;
+
+            serde_wasm_bindgen::to_value(&response)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = dataApiGetAddressPoolMintHistory)]
+    pub fn data_api_get_address_pool_mint_history_js(&self, address: String, limit: Option<i64>, offset: Option<i64>) -> js_sys::Promise {
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let url = provider.rpc_config.get_data_api_target().url;
+            let body = serde_json::json!({
+                "address": address,
+                "limit": limit.unwrap_or(100),
+                "offset": offset.unwrap_or(0)
+            });
+
+            let response = provider.rest_call(&url, "get-address-pool-mint-history", body).await
+                .map_err(|e| JsValue::from_str(&format!("Get address pool mint history failed: {}", e)))?;
+
+            serde_wasm_bindgen::to_value(&response)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = dataApiGetAddressPoolBurnHistory)]
+    pub fn data_api_get_address_pool_burn_history_js(&self, address: String, limit: Option<i64>, offset: Option<i64>) -> js_sys::Promise {
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let url = provider.rpc_config.get_data_api_target().url;
+            let body = serde_json::json!({
+                "address": address,
+                "limit": limit.unwrap_or(100),
+                "offset": offset.unwrap_or(0)
+            });
+
+            let response = provider.rest_call(&url, "get-address-pool-burn-history", body).await
+                .map_err(|e| JsValue::from_str(&format!("Get address pool burn history failed: {}", e)))?;
+
+            serde_wasm_bindgen::to_value(&response)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = dataApiGetAllAddressAmmTxHistory)]
+    pub fn data_api_get_all_address_amm_tx_history_js(&self, address: String, limit: Option<i64>, offset: Option<i64>) -> js_sys::Promise {
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let url = provider.rpc_config.get_data_api_target().url;
+            let body = serde_json::json!({
+                "address": address,
+                "limit": limit.unwrap_or(100),
+                "offset": offset.unwrap_or(0)
+            });
+
+            let response = provider.rest_call(&url, "get-all-address-amm-tx-history", body).await
+                .map_err(|e| JsValue::from_str(&format!("Get all address AMM tx history failed: {}", e)))?;
+
+            serde_wasm_bindgen::to_value(&response)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = dataApiGetAllAmmTxHistory)]
+    pub fn data_api_get_all_amm_tx_history_js(&self, limit: Option<i64>, offset: Option<i64>) -> js_sys::Promise {
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let url = provider.rpc_config.get_data_api_target().url;
+            let body = serde_json::json!({
+                "limit": limit.unwrap_or(100),
+                "offset": offset.unwrap_or(0)
+            });
+
+            let response = provider.rest_call(&url, "get-all-amm-tx-history", body).await
+                .map_err(|e| JsValue::from_str(&format!("Get all AMM tx history failed: {}", e)))?;
+
+            serde_wasm_bindgen::to_value(&response)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = dataApiGetAddressPositions)]
+    pub fn data_api_get_address_positions_js(&self, address: String, factory_id: String) -> js_sys::Promise {
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let url = provider.rpc_config.get_data_api_target().url;
+            let parts: Vec<&str> = factory_id.split(':').collect();
+            let body = if parts.len() == 2 {
+                serde_json::json!({
+                    "address": address,
+                    "factoryId": { "block": parts[0], "tx": parts[1] }
+                })
+            } else {
+                serde_json::json!({
+                    "address": address,
+                    "factoryId": factory_id
+                })
+            };
+
+            let response = provider.rest_call(&url, "address-positions", body).await
+                .map_err(|e| JsValue::from_str(&format!("Get address positions failed: {}", e)))?;
+
+            serde_wasm_bindgen::to_value(&response)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = dataApiGetTokenPairs)]
+    pub fn data_api_get_token_pairs_js(&self, factory_id: String, alkane_id: Option<String>, limit: Option<i64>, offset: Option<i64>) -> js_sys::Promise {
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let url = provider.rpc_config.get_data_api_target().url;
+            let factory_parts: Vec<&str> = factory_id.split(':').collect();
+            let mut body = if factory_parts.len() == 2 {
+                serde_json::json!({
+                    "factoryId": { "block": factory_parts[0], "tx": factory_parts[1] },
+                    "limit": limit.unwrap_or(100),
+                    "offset": offset.unwrap_or(0)
+                })
+            } else {
+                serde_json::json!({
+                    "factoryId": factory_id,
+                    "limit": limit.unwrap_or(100),
+                    "offset": offset.unwrap_or(0)
+                })
+            };
+            if let Some(ref aid) = alkane_id {
+                let parts: Vec<&str> = aid.split(':').collect();
+                if parts.len() == 2 {
+                    body["alkaneId"] = serde_json::json!({ "block": parts[0], "tx": parts[1] });
+                }
+            }
+
+            let response = provider.rest_call(&url, "get-token-pairs", body).await
+                .map_err(|e| JsValue::from_str(&format!("Get token pairs failed: {}", e)))?;
+
+            serde_wasm_bindgen::to_value(&response)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = dataApiGetAllTokenPairs)]
+    pub fn data_api_get_all_token_pairs_js(&self, factory_id: String, limit: Option<i64>, offset: Option<i64>) -> js_sys::Promise {
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let url = provider.rpc_config.get_data_api_target().url;
+            let parts: Vec<&str> = factory_id.split(':').collect();
+            let body = if parts.len() == 2 {
+                serde_json::json!({
+                    "factoryId": { "block": parts[0], "tx": parts[1] },
+                    "limit": limit.unwrap_or(100),
+                    "offset": offset.unwrap_or(0)
+                })
+            } else {
+                serde_json::json!({
+                    "factoryId": factory_id,
+                    "limit": limit.unwrap_or(100),
+                    "offset": offset.unwrap_or(0)
+                })
+            };
+
+            let response = provider.rest_call(&url, "get-all-token-pairs", body).await
+                .map_err(|e| JsValue::from_str(&format!("Get all token pairs failed: {}", e)))?;
+
+            serde_wasm_bindgen::to_value(&response)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = dataApiGetAlkaneSwapPairDetails)]
+    pub fn data_api_get_alkane_swap_pair_details_js(&self, factory_id: String, token_a_id: String, token_b_id: String) -> js_sys::Promise {
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let url = provider.rpc_config.get_data_api_target().url;
+            let factory_parts: Vec<&str> = factory_id.split(':').collect();
+            let token_a_parts: Vec<&str> = token_a_id.split(':').collect();
+            let token_b_parts: Vec<&str> = token_b_id.split(':').collect();
+            let body = serde_json::json!({
+                "factoryId": if factory_parts.len() == 2 {
+                    serde_json::json!({ "block": factory_parts[0], "tx": factory_parts[1] })
+                } else {
+                    serde_json::json!(factory_id)
+                },
+                "tokenAId": if token_a_parts.len() == 2 {
+                    serde_json::json!({ "block": token_a_parts[0], "tx": token_a_parts[1] })
+                } else {
+                    serde_json::json!(token_a_id)
+                },
+                "tokenBId": if token_b_parts.len() == 2 {
+                    serde_json::json!({ "block": token_b_parts[0], "tx": token_b_parts[1] })
+                } else {
+                    serde_json::json!(token_b_id)
+                }
+            });
+
+            let response = provider.rest_call(&url, "get-alkane-swap-pair-details", body).await
+                .map_err(|e| JsValue::from_str(&format!("Get alkane swap pair details failed: {}", e)))?;
+
+            serde_wasm_bindgen::to_value(&response)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = dataApiGetAlkanesUtxo)]
+    pub fn data_api_get_alkanes_utxo_js(&self, address: String) -> js_sys::Promise {
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let url = provider.rpc_config.get_data_api_target().url;
+            let body = serde_json::json!({ "address": address });
+
+            let response = provider.rest_call(&url, "get-alkanes-utxo", body).await
+                .map_err(|e| JsValue::from_str(&format!("Get alkanes utxo failed: {}", e)))?;
+
+            serde_wasm_bindgen::to_value(&response)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = dataApiGetAmmUtxos)]
+    pub fn data_api_get_amm_utxos_js(&self, address: String) -> js_sys::Promise {
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let url = provider.rpc_config.get_data_api_target().url;
+            let body = serde_json::json!({ "address": address });
+
+            let response = provider.rest_call(&url, "get-amm-utxos", body).await
+                .map_err(|e| JsValue::from_str(&format!("Get AMM utxos failed: {}", e)))?;
+
+            serde_wasm_bindgen::to_value(&response)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = dataApiGetAddressUtxos)]
+    pub fn data_api_get_address_utxos_js(&self, address: String) -> js_sys::Promise {
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let url = provider.rpc_config.get_data_api_target().url;
+            let body = serde_json::json!({ "address": address });
+
+            let response = provider.rest_call(&url, "get-address-utxos", body).await
+                .map_err(|e| JsValue::from_str(&format!("Get address utxos failed: {}", e)))?;
+
+            serde_wasm_bindgen::to_value(&response)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = dataApiGetAddressBalance)]
+    pub fn data_api_get_address_balance_js(&self, address: String) -> js_sys::Promise {
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let url = provider.rpc_config.get_data_api_target().url;
+            let body = serde_json::json!({ "address": address });
+
+            let response = provider.rest_call(&url, "get-address-balance", body).await
+                .map_err(|e| JsValue::from_str(&format!("Get address balance failed: {}", e)))?;
+
+            serde_wasm_bindgen::to_value(&response)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = dataApiGetTaprootBalance)]
+    pub fn data_api_get_taproot_balance_js(&self, address: String) -> js_sys::Promise {
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let url = provider.rpc_config.get_data_api_target().url;
+            let body = serde_json::json!({ "address": address });
+
+            let response = provider.rest_call(&url, "get-taproot-balance", body).await
+                .map_err(|e| JsValue::from_str(&format!("Get taproot balance failed: {}", e)))?;
+
+            serde_wasm_bindgen::to_value(&response)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = dataApiGetAccountUtxos)]
+    pub fn data_api_get_account_utxos_js(&self, account: String) -> js_sys::Promise {
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let url = provider.rpc_config.get_data_api_target().url;
+            let body = serde_json::json!({ "account": account });
+
+            let response = provider.rest_call(&url, "get-account-utxos", body).await
+                .map_err(|e| JsValue::from_str(&format!("Get account utxos failed: {}", e)))?;
+
+            serde_wasm_bindgen::to_value(&response)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = dataApiGetAccountBalance)]
+    pub fn data_api_get_account_balance_js(&self, account: String) -> js_sys::Promise {
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let url = provider.rpc_config.get_data_api_target().url;
+            let body = serde_json::json!({ "account": account });
+
+            let response = provider.rest_call(&url, "get-account-balance", body).await
+                .map_err(|e| JsValue::from_str(&format!("Get account balance failed: {}", e)))?;
+
+            serde_wasm_bindgen::to_value(&response)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = dataApiGetAddressOutpoints)]
+    pub fn data_api_get_address_outpoints_js(&self, address: String) -> js_sys::Promise {
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let url = provider.rpc_config.get_data_api_target().url;
+            let body = serde_json::json!({ "address": address });
+
+            let response = provider.rest_call(&url, "get-address-outpoints", body).await
+                .map_err(|e| JsValue::from_str(&format!("Get address outpoints failed: {}", e)))?;
+
+            serde_wasm_bindgen::to_value(&response)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = dataApiGlobalAlkanesSearch)]
+    pub fn data_api_global_alkanes_search_js(&self, search_query: String, limit: Option<i64>, offset: Option<i64>) -> js_sys::Promise {
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let url = provider.rpc_config.get_data_api_target().url;
+            let body = serde_json::json!({
+                "searchQuery": search_query,
+                "limit": limit.unwrap_or(100),
+                "offset": offset.unwrap_or(0)
+            });
+
+            let response = provider.rest_call(&url, "global-alkanes-search", body).await
+                .map_err(|e| JsValue::from_str(&format!("Global alkanes search failed: {}", e)))?;
+
+            serde_wasm_bindgen::to_value(&response)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = dataApiPathfind)]
+    pub fn data_api_pathfind_js(&self, token_in: String, token_out: String, amount_in: String, max_hops: Option<i64>) -> js_sys::Promise {
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let url = provider.rpc_config.get_data_api_target().url;
+            let mut body = serde_json::json!({
+                "token_in": token_in,
+                "token_out": token_out,
+                "amount_in": amount_in
+            });
+            if let Some(hops) = max_hops {
+                body["max_hops"] = serde_json::json!(hops);
+            }
+
+            let response = provider.rest_call(&url, "pathfind", body).await
+                .map_err(|e| JsValue::from_str(&format!("Pathfind failed: {}", e)))?;
+
+            serde_wasm_bindgen::to_value(&response)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = dataApiGetBitcoinMarketWeekly)]
+    pub fn data_api_get_bitcoin_market_weekly_js(&self) -> js_sys::Promise {
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let url = provider.rpc_config.get_data_api_target().url;
+            let body = serde_json::json!({});
+
+            let response = provider.rest_call(&url, "get-bitcoin-market-weekly", body).await
+                .map_err(|e| JsValue::from_str(&format!("Get bitcoin market weekly failed: {}", e)))?;
+
+            serde_wasm_bindgen::to_value(&response)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = dataApiGetBitcoinMarkets)]
+    pub fn data_api_get_bitcoin_markets_js(&self) -> js_sys::Promise {
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let url = provider.rpc_config.get_data_api_target().url;
+            let body = serde_json::json!({});
+
+            let response = provider.rest_call(&url, "get-bitcoin-markets", body).await
+                .map_err(|e| JsValue::from_str(&format!("Get bitcoin markets failed: {}", e)))?;
+
+            serde_wasm_bindgen::to_value(&response)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = dataApiGetTaprootHistory)]
+    pub fn data_api_get_taproot_history_js(&self, taproot_address: String, total_txs: i64) -> js_sys::Promise {
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let url = provider.rpc_config.get_data_api_target().url;
+            let body = serde_json::json!({
+                "taprootAddress": taproot_address,
+                "totalTxs": total_txs
+            });
+
+            let response = provider.rest_call(&url, "get-taproot-history", body).await
+                .map_err(|e| JsValue::from_str(&format!("Get taproot history failed: {}", e)))?;
+
+            serde_wasm_bindgen::to_value(&response)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    #[wasm_bindgen(js_name = dataApiGetIntentHistory)]
+    pub fn data_api_get_intent_history_js(&self, address: String, total_txs: Option<i64>, last_seen_tx_id: Option<String>) -> js_sys::Promise {
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let url = provider.rpc_config.get_data_api_target().url;
+            let mut body = serde_json::json!({ "address": address });
+            if let Some(txs) = total_txs {
+                body["totalTxs"] = serde_json::json!(txs);
+            }
+            if let Some(ref tx_id) = last_seen_tx_id {
+                body["lastSeenTxId"] = serde_json::json!(tx_id);
+            }
+
+            let response = provider.rest_call(&url, "get-intent-history", body).await
+                .map_err(|e| JsValue::from_str(&format!("Get intent history failed: {}", e)))?;
+
+            serde_wasm_bindgen::to_value(&response)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
     /// Reflect alkane token metadata by querying standard opcodes
     ///
     /// This method queries the alkane contract with standard opcodes to retrieve
@@ -4853,6 +5605,532 @@ impl WebProvider {
                 max_hops.map(|h| h as u64)
             ).await
                 .map_err(|e| JsValue::from_str(&format!("ESPO get best MEV swap failed: {}", e)))?;
+            serde_wasm_bindgen::to_value(&result)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    /// Get AMM factories from ESPO
+    #[wasm_bindgen(js_name = espoGetAmmFactories)]
+    pub fn espo_get_amm_factories_js(
+        &self,
+        page: Option<f64>,
+        limit: Option<f64>
+    ) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EspoProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let result = provider.get_amm_factories(
+                page.map(|p| p as u64),
+                limit.map(|l| l as u64)
+            ).await
+                .map_err(|e| JsValue::from_str(&format!("ESPO get AMM factories failed: {}", e)))?;
+            serde_wasm_bindgen::to_value(&result)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    /// Get all alkanes from ESPO
+    #[wasm_bindgen(js_name = espoGetAllAlkanes)]
+    pub fn espo_get_all_alkanes_js(
+        &self,
+        page: Option<f64>,
+        limit: Option<f64>
+    ) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EspoProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let result = provider.get_all_alkanes(
+                page.map(|p| p as u64),
+                limit.map(|l| l as u64)
+            ).await
+                .map_err(|e| JsValue::from_str(&format!("ESPO get all alkanes failed: {}", e)))?;
+            serde_wasm_bindgen::to_value(&result)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    /// Get alkane info from ESPO
+    #[wasm_bindgen(js_name = espoGetAlkaneInfo)]
+    pub fn espo_get_alkane_info_js(&self, alkane_id: String) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EspoProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let result = provider.get_alkane_info(&alkane_id).await
+                .map_err(|e| JsValue::from_str(&format!("ESPO get alkane info failed: {}", e)))?;
+            serde_wasm_bindgen::to_value(&result)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    /// Get block summary from ESPO
+    #[wasm_bindgen(js_name = espoGetBlockSummary)]
+    pub fn espo_get_block_summary_js(&self, height: f64) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EspoProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let result = provider.get_block_summary(height as u64).await
+                .map_err(|e| JsValue::from_str(&format!("ESPO get block summary failed: {}", e)))?;
+            serde_wasm_bindgen::to_value(&result)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    /// Get circulating supply of an alkane from ESPO
+    #[wasm_bindgen(js_name = espoGetCirculatingSupply)]
+    pub fn espo_get_circulating_supply_js(
+        &self,
+        alkane_id: String,
+        height: Option<f64>
+    ) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EspoProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let result = provider.get_circulating_supply(
+                &alkane_id,
+                height.map(|h| h as u64)
+            ).await
+                .map_err(|e| JsValue::from_str(&format!("ESPO get circulating supply failed: {}", e)))?;
+            serde_wasm_bindgen::to_value(&result)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    /// Get transfer volume for an alkane from ESPO
+    #[wasm_bindgen(js_name = espoGetTransferVolume)]
+    pub fn espo_get_transfer_volume_js(
+        &self,
+        alkane_id: String,
+        page: Option<f64>,
+        limit: Option<f64>
+    ) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EspoProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let result = provider.get_transfer_volume(
+                &alkane_id,
+                page.map(|p| p as u64),
+                limit.map(|l| l as u64)
+            ).await
+                .map_err(|e| JsValue::from_str(&format!("ESPO get transfer volume failed: {}", e)))?;
+            serde_wasm_bindgen::to_value(&result)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    /// Get total received for an alkane from ESPO
+    #[wasm_bindgen(js_name = espoGetTotalReceived)]
+    pub fn espo_get_total_received_js(
+        &self,
+        alkane_id: String,
+        page: Option<f64>,
+        limit: Option<f64>
+    ) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EspoProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let result = provider.get_total_received(
+                &alkane_id,
+                page.map(|p| p as u64),
+                limit.map(|l| l as u64)
+            ).await
+                .map_err(|e| JsValue::from_str(&format!("ESPO get total received failed: {}", e)))?;
+            serde_wasm_bindgen::to_value(&result)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    /// Get address activity from ESPO
+    #[wasm_bindgen(js_name = espoGetAddressActivity)]
+    pub fn espo_get_address_activity_js(&self, address: String) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EspoProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let result = provider.get_address_activity(&address).await
+                .map_err(|e| JsValue::from_str(&format!("ESPO get address activity failed: {}", e)))?;
+            serde_wasm_bindgen::to_value(&result)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    /// Get all balances for an alkane (all holders) from ESPO
+    #[wasm_bindgen(js_name = espoGetAlkaneBalances)]
+    pub fn espo_get_alkane_balances_js(&self, alkane_id: String) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EspoProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let result = provider.get_alkane_balances(&alkane_id).await
+                .map_err(|e| JsValue::from_str(&format!("ESPO get alkane balances failed: {}", e)))?;
+            serde_wasm_bindgen::to_value(&result)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    /// Get alkane balance via metashrew from ESPO
+    #[wasm_bindgen(js_name = espoGetAlkaneBalanceMetashrew)]
+    pub fn espo_get_alkane_balance_metashrew_js(
+        &self,
+        owner: String,
+        target: String,
+        height: Option<f64>
+    ) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EspoProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let result = provider.get_alkane_balance_metashrew(
+                &owner,
+                &target,
+                height.map(|h| h as u64)
+            ).await
+                .map_err(|e| JsValue::from_str(&format!("ESPO get alkane balance metashrew failed: {}", e)))?;
+            serde_wasm_bindgen::to_value(&result)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    /// Get alkane balance transactions from ESPO
+    #[wasm_bindgen(js_name = espoGetAlkaneBalanceTxs)]
+    pub fn espo_get_alkane_balance_txs_js(
+        &self,
+        alkane_id: String,
+        page: Option<f64>,
+        limit: Option<f64>
+    ) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EspoProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let result = provider.get_alkane_balance_txs(
+                &alkane_id,
+                page.map(|p| p as u64),
+                limit.map(|l| l as u64)
+            ).await
+                .map_err(|e| JsValue::from_str(&format!("ESPO get alkane balance txs failed: {}", e)))?;
+            serde_wasm_bindgen::to_value(&result)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    /// Get alkane balance transactions by token from ESPO
+    #[wasm_bindgen(js_name = espoGetAlkaneBalanceTxsByToken)]
+    pub fn espo_get_alkane_balance_txs_by_token_js(
+        &self,
+        owner: String,
+        token: String,
+        page: Option<f64>,
+        limit: Option<f64>
+    ) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EspoProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let result = provider.get_alkane_balance_txs_by_token(
+                &owner,
+                &token,
+                page.map(|p| p as u64),
+                limit.map(|l| l as u64)
+            ).await
+                .map_err(|e| JsValue::from_str(&format!("ESPO get alkane balance txs by token failed: {}", e)))?;
+            serde_wasm_bindgen::to_value(&result)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    /// Get block traces from ESPO
+    #[wasm_bindgen(js_name = espoGetBlockTraces)]
+    pub fn espo_get_block_traces_js(&self, height: f64) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EspoProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let result = provider.get_block_traces(height as u64).await
+                .map_err(|e| JsValue::from_str(&format!("ESPO get block traces failed: {}", e)))?;
+            serde_wasm_bindgen::to_value(&result)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    /// Get alkane transaction summary from ESPO
+    #[wasm_bindgen(js_name = espoGetAlkaneTxSummary)]
+    pub fn espo_get_alkane_tx_summary_js(&self, txid: String) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EspoProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let result = provider.get_alkane_tx_summary(&txid).await
+                .map_err(|e| JsValue::from_str(&format!("ESPO get alkane tx summary failed: {}", e)))?;
+            serde_wasm_bindgen::to_value(&result)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    /// Get alkane transactions in a block from ESPO
+    #[wasm_bindgen(js_name = espoGetAlkaneBlockTxs)]
+    pub fn espo_get_alkane_block_txs_js(
+        &self,
+        height: f64,
+        page: Option<f64>,
+        limit: Option<f64>
+    ) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EspoProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let result = provider.get_alkane_block_txs(
+                height as u64,
+                page.map(|p| p as u64),
+                limit.map(|l| l as u64)
+            ).await
+                .map_err(|e| JsValue::from_str(&format!("ESPO get alkane block txs failed: {}", e)))?;
+            serde_wasm_bindgen::to_value(&result)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    /// Get alkane transactions for an address from ESPO
+    #[wasm_bindgen(js_name = espoGetAlkaneAddressTxs)]
+    pub fn espo_get_alkane_address_txs_js(
+        &self,
+        address: String,
+        page: Option<f64>,
+        limit: Option<f64>
+    ) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EspoProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let result = provider.get_alkane_address_txs(
+                &address,
+                page.map(|p| p as u64),
+                limit.map(|l| l as u64)
+            ).await
+                .map_err(|e| JsValue::from_str(&format!("ESPO get alkane address txs failed: {}", e)))?;
+            serde_wasm_bindgen::to_value(&result)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    /// Get all transactions for an address from ESPO
+    #[wasm_bindgen(js_name = espoGetAddressTransactions)]
+    pub fn espo_get_address_transactions_js(
+        &self,
+        address: String,
+        page: Option<f64>,
+        limit: Option<f64>,
+        only_alkane_txs: Option<bool>
+    ) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EspoProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let result = provider.get_address_transactions(
+                &address,
+                page.map(|p| p as u64),
+                limit.map(|l| l as u64),
+                only_alkane_txs
+            ).await
+                .map_err(|e| JsValue::from_str(&format!("ESPO get address transactions failed: {}", e)))?;
+            serde_wasm_bindgen::to_value(&result)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    /// Get latest alkane traces from ESPO
+    #[wasm_bindgen(js_name = espoGetAlkaneLatestTraces)]
+    pub fn espo_get_alkane_latest_traces_js(&self) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EspoProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let result = provider.get_alkane_latest_traces().await
+                .map_err(|e| JsValue::from_str(&format!("ESPO get alkane latest traces failed: {}", e)))?;
+            serde_wasm_bindgen::to_value(&result)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    /// Get mempool traces from ESPO
+    #[wasm_bindgen(js_name = espoGetMempoolTraces)]
+    pub fn espo_get_mempool_traces_js(
+        &self,
+        page: Option<f64>,
+        limit: Option<f64>,
+        address: Option<String>
+    ) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EspoProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let result = provider.get_mempool_traces(
+                page.map(|p| p as u64),
+                limit.map(|l| l as u64),
+                address.as_deref()
+            ).await
+                .map_err(|e| JsValue::from_str(&format!("ESPO get mempool traces failed: {}", e)))?;
+            serde_wasm_bindgen::to_value(&result)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    /// Get all wrap events from ESPO (subfrost namespace)
+    #[wasm_bindgen(js_name = espoGetWrapEvents)]
+    pub fn espo_get_wrap_events_js(
+        &self,
+        count: Option<f64>,
+        offset: Option<f64>,
+        successful: Option<bool>
+    ) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EspoProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let result = provider.get_wrap_events_all(
+                count.map(|c| c as u64),
+                offset.map(|o| o as u64),
+                successful
+            ).await
+                .map_err(|e| JsValue::from_str(&format!("ESPO get wrap events failed: {}", e)))?;
+            serde_wasm_bindgen::to_value(&result)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    /// Get wrap events for a specific address from ESPO (subfrost namespace)
+    #[wasm_bindgen(js_name = espoGetWrapEventsByAddress)]
+    pub fn espo_get_wrap_events_by_address_js(
+        &self,
+        address: String,
+        count: Option<f64>,
+        offset: Option<f64>,
+        successful: Option<bool>
+    ) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EspoProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let result = provider.get_wrap_events_by_address(
+                &address,
+                count.map(|c| c as u64),
+                offset.map(|o| o as u64),
+                successful
+            ).await
+                .map_err(|e| JsValue::from_str(&format!("ESPO get wrap events by address failed: {}", e)))?;
+            serde_wasm_bindgen::to_value(&result)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    /// Get all unwrap events from ESPO (subfrost namespace)
+    #[wasm_bindgen(js_name = espoGetUnwrapEvents)]
+    pub fn espo_get_unwrap_events_js(
+        &self,
+        count: Option<f64>,
+        offset: Option<f64>,
+        successful: Option<bool>
+    ) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EspoProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let result = provider.get_unwrap_events_all(
+                count.map(|c| c as u64),
+                offset.map(|o| o as u64),
+                successful
+            ).await
+                .map_err(|e| JsValue::from_str(&format!("ESPO get unwrap events failed: {}", e)))?;
+            serde_wasm_bindgen::to_value(&result)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    /// Get unwrap events for a specific address from ESPO (subfrost namespace)
+    #[wasm_bindgen(js_name = espoGetUnwrapEventsByAddress)]
+    pub fn espo_get_unwrap_events_by_address_js(
+        &self,
+        address: String,
+        count: Option<f64>,
+        offset: Option<f64>,
+        successful: Option<bool>
+    ) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EspoProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let result = provider.get_unwrap_events_by_address(
+                &address,
+                count.map(|c| c as u64),
+                offset.map(|o| o as u64),
+                successful
+            ).await
+                .map_err(|e| JsValue::from_str(&format!("ESPO get unwrap events by address failed: {}", e)))?;
+            serde_wasm_bindgen::to_value(&result)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    /// Get series ID from alkane ID (pizzafun namespace)
+    #[wasm_bindgen(js_name = espoGetSeriesIdFromAlkaneId)]
+    pub fn espo_get_series_id_from_alkane_id_js(&self, alkane_id: String) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EspoProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let result = provider.get_series_id_from_alkane_id(&alkane_id).await
+                .map_err(|e| JsValue::from_str(&format!("ESPO get series ID from alkane ID failed: {}", e)))?;
+            serde_wasm_bindgen::to_value(&result)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    /// Get series IDs from multiple alkane IDs (pizzafun namespace)
+    #[wasm_bindgen(js_name = espoGetSeriesIdsFromAlkaneIds)]
+    pub fn espo_get_series_ids_from_alkane_ids_js(&self, alkane_ids: Vec<String>) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EspoProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let ids: Vec<&str> = alkane_ids.iter().map(|s| s.as_str()).collect();
+            let result = provider.get_series_ids_from_alkane_ids(&ids).await
+                .map_err(|e| JsValue::from_str(&format!("ESPO get series IDs from alkane IDs failed: {}", e)))?;
+            serde_wasm_bindgen::to_value(&result)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    /// Get alkane ID from series ID (pizzafun namespace)
+    #[wasm_bindgen(js_name = espoGetAlkaneIdFromSeriesId)]
+    pub fn espo_get_alkane_id_from_series_id_js(&self, series_id: String) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EspoProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let result = provider.get_alkane_id_from_series_id(&series_id).await
+                .map_err(|e| JsValue::from_str(&format!("ESPO get alkane ID from series ID failed: {}", e)))?;
+            serde_wasm_bindgen::to_value(&result)
+                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+        })
+    }
+
+    /// Get alkane IDs from multiple series IDs (pizzafun namespace)
+    #[wasm_bindgen(js_name = espoGetAlkaneIdsFromSeriesIds)]
+    pub fn espo_get_alkane_ids_from_series_ids_js(&self, series_ids: Vec<String>) -> js_sys::Promise {
+        use alkanes_cli_common::traits::EspoProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let ids: Vec<&str> = series_ids.iter().map(|s| s.as_str()).collect();
+            let result = provider.get_alkane_ids_from_series_ids(&ids).await
+                .map_err(|e| JsValue::from_str(&format!("ESPO get alkane IDs from series IDs failed: {}", e)))?;
             serde_wasm_bindgen::to_value(&result)
                 .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
         })
@@ -7875,7 +9153,7 @@ impl alkanes_cli_common::traits::EspoProvider for WebProvider {
         if let Some(d) = dir {
             params["dir"] = serde_json::json!(d);
         }
-        self.call(&target.url, "ammdata.get_trades", params, 1).await
+        self.call(&target.url, "ammdata.get_activity", params, 1).await
     }
 
     async fn get_pools(
@@ -7954,5 +9232,202 @@ impl alkanes_cli_common::traits::EspoProvider for WebProvider {
             params["max_hops"] = serde_json::json!(h);
         }
         self.call(&target.url, "ammdata.get_best_mev_swap", params, 1).await
+    }
+
+    async fn get_amm_factories(
+        &self,
+        page: Option<u64>,
+        limit: Option<u64>,
+    ) -> Result<serde_json::Value> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        let mut params = serde_json::json!({});
+        if let Some(p) = page { params["page"] = serde_json::json!(p); }
+        if let Some(l) = limit { params["limit"] = serde_json::json!(l); }
+        self.call(&target.url, "ammdata.get_amm_factories", params, 1).await
+    }
+
+    // ==================== Essentials methods (new) ====================
+
+    async fn get_all_alkanes(&self, page: Option<u64>, limit: Option<u64>) -> Result<serde_json::Value> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        let mut params = serde_json::json!({});
+        if let Some(p) = page { params["page"] = serde_json::json!(p); }
+        if let Some(l) = limit { params["limit"] = serde_json::json!(l); }
+        self.call(&target.url, "essentials.get_all_alkanes", params, 1).await
+    }
+
+    async fn get_alkane_info(&self, alkane_id: &str) -> Result<serde_json::Value> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        self.call(&target.url, "essentials.get_alkane_info", serde_json::json!({"alkane": alkane_id}), 1).await
+    }
+
+    async fn get_block_summary(&self, height: u64) -> Result<serde_json::Value> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        self.call(&target.url, "essentials.get_block_summary", serde_json::json!({"height": height}), 1).await
+    }
+
+    async fn get_circulating_supply(&self, alkane_id: &str, height: Option<u64>) -> Result<serde_json::Value> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        let mut params = serde_json::json!({"alkane": alkane_id});
+        if let Some(h) = height { params["height"] = serde_json::json!(h); }
+        self.call(&target.url, "essentials.get_circulating_supply", params, 1).await
+    }
+
+    async fn get_transfer_volume(&self, alkane_id: &str, page: Option<u64>, limit: Option<u64>) -> Result<serde_json::Value> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        let mut params = serde_json::json!({"alkane": alkane_id});
+        if let Some(p) = page { params["page"] = serde_json::json!(p); }
+        if let Some(l) = limit { params["limit"] = serde_json::json!(l); }
+        self.call(&target.url, "essentials.get_transfer_volume", params, 1).await
+    }
+
+    async fn get_total_received(&self, alkane_id: &str, page: Option<u64>, limit: Option<u64>) -> Result<serde_json::Value> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        let mut params = serde_json::json!({"alkane": alkane_id});
+        if let Some(p) = page { params["page"] = serde_json::json!(p); }
+        if let Some(l) = limit { params["limit"] = serde_json::json!(l); }
+        self.call(&target.url, "essentials.get_total_received", params, 1).await
+    }
+
+    async fn get_address_activity(&self, address: &str) -> Result<serde_json::Value> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        self.call(&target.url, "essentials.get_address_activity", serde_json::json!({"address": address}), 1).await
+    }
+
+    async fn get_alkane_balances(&self, alkane_id: &str) -> Result<serde_json::Value> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        self.call(&target.url, "essentials.get_alkane_balances", serde_json::json!({"alkane": alkane_id}), 1).await
+    }
+
+    async fn get_alkane_balance_metashrew(&self, owner: &str, target_alkane: &str, height: Option<u64>) -> Result<serde_json::Value> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        let mut params = serde_json::json!({"owner": owner, "target": target_alkane});
+        if let Some(h) = height { params["height"] = serde_json::json!(h); }
+        self.call(&target.url, "essentials.get_alkane_balance_metashrew", params, 1).await
+    }
+
+    async fn get_alkane_balance_txs(&self, alkane_id: &str, page: Option<u64>, limit: Option<u64>) -> Result<serde_json::Value> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        let mut params = serde_json::json!({"alkane": alkane_id});
+        if let Some(p) = page { params["page"] = serde_json::json!(p); }
+        if let Some(l) = limit { params["limit"] = serde_json::json!(l); }
+        self.call(&target.url, "essentials.get_alkane_balance_txs", params, 1).await
+    }
+
+    async fn get_alkane_balance_txs_by_token(&self, owner: &str, token: &str, page: Option<u64>, limit: Option<u64>) -> Result<serde_json::Value> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        let mut params = serde_json::json!({"owner": owner, "token": token});
+        if let Some(p) = page { params["page"] = serde_json::json!(p); }
+        if let Some(l) = limit { params["limit"] = serde_json::json!(l); }
+        self.call(&target.url, "essentials.get_alkane_balance_txs_by_token", params, 1).await
+    }
+
+    async fn get_block_traces(&self, height: u64) -> Result<serde_json::Value> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        self.call(&target.url, "essentials.get_block_traces", serde_json::json!({"height": height}), 1).await
+    }
+
+    async fn get_alkane_tx_summary(&self, txid: &str) -> Result<serde_json::Value> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        self.call(&target.url, "essentials.get_alkane_tx_summary", serde_json::json!({"txid": txid}), 1).await
+    }
+
+    async fn get_alkane_block_txs(&self, height: u64, page: Option<u64>, limit: Option<u64>) -> Result<serde_json::Value> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        let mut params = serde_json::json!({"height": height});
+        if let Some(p) = page { params["page"] = serde_json::json!(p); }
+        if let Some(l) = limit { params["limit"] = serde_json::json!(l); }
+        self.call(&target.url, "essentials.get_alkane_block_txs", params, 1).await
+    }
+
+    async fn get_alkane_address_txs(&self, address: &str, page: Option<u64>, limit: Option<u64>) -> Result<serde_json::Value> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        let mut params = serde_json::json!({"address": address});
+        if let Some(p) = page { params["page"] = serde_json::json!(p); }
+        if let Some(l) = limit { params["limit"] = serde_json::json!(l); }
+        self.call(&target.url, "essentials.get_alkane_address_txs", params, 1).await
+    }
+
+    async fn get_address_transactions(&self, address: &str, page: Option<u64>, limit: Option<u64>, only_alkane_txs: Option<bool>) -> Result<serde_json::Value> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        let mut params = serde_json::json!({"address": address});
+        if let Some(p) = page { params["page"] = serde_json::json!(p); }
+        if let Some(l) = limit { params["limit"] = serde_json::json!(l); }
+        if let Some(o) = only_alkane_txs { params["only_alkane_txs"] = serde_json::json!(o); }
+        self.call(&target.url, "essentials.get_address_transactions", params, 1).await
+    }
+
+    async fn get_alkane_latest_traces(&self) -> Result<serde_json::Value> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        self.call(&target.url, "essentials.get_alkane_latest_traces", serde_json::json!({}), 1).await
+    }
+
+    async fn get_mempool_traces(&self, page: Option<u64>, limit: Option<u64>, address: Option<&str>) -> Result<serde_json::Value> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        let mut params = serde_json::json!({});
+        if let Some(p) = page { params["page"] = serde_json::json!(p); }
+        if let Some(l) = limit { params["limit"] = serde_json::json!(l); }
+        if let Some(a) = address { params["address"] = serde_json::json!(a); }
+        self.call(&target.url, "essentials.get_mempool_traces", params, 1).await
+    }
+
+    // ==================== Subfrost methods ====================
+
+    async fn get_wrap_events_all(&self, count: Option<u64>, offset: Option<u64>, successful: Option<bool>) -> Result<serde_json::Value> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        let mut params = serde_json::json!({});
+        if let Some(c) = count { params["count"] = serde_json::json!(c); }
+        if let Some(o) = offset { params["offset"] = serde_json::json!(o); }
+        if let Some(s) = successful { params["successful"] = serde_json::json!(s); }
+        self.call(&target.url, "subfrost.get_wrap_events_all", params, 1).await
+    }
+
+    async fn get_wrap_events_by_address(&self, address: &str, count: Option<u64>, offset: Option<u64>, successful: Option<bool>) -> Result<serde_json::Value> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        let mut params = serde_json::json!({"address": address});
+        if let Some(c) = count { params["count"] = serde_json::json!(c); }
+        if let Some(o) = offset { params["offset"] = serde_json::json!(o); }
+        if let Some(s) = successful { params["successful"] = serde_json::json!(s); }
+        self.call(&target.url, "subfrost.get_wrap_events_by_address", params, 1).await
+    }
+
+    async fn get_unwrap_events_all(&self, count: Option<u64>, offset: Option<u64>, successful: Option<bool>) -> Result<serde_json::Value> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        let mut params = serde_json::json!({});
+        if let Some(c) = count { params["count"] = serde_json::json!(c); }
+        if let Some(o) = offset { params["offset"] = serde_json::json!(o); }
+        if let Some(s) = successful { params["successful"] = serde_json::json!(s); }
+        self.call(&target.url, "subfrost.get_unwrap_events_all", params, 1).await
+    }
+
+    async fn get_unwrap_events_by_address(&self, address: &str, count: Option<u64>, offset: Option<u64>, successful: Option<bool>) -> Result<serde_json::Value> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        let mut params = serde_json::json!({"address": address});
+        if let Some(c) = count { params["count"] = serde_json::json!(c); }
+        if let Some(o) = offset { params["offset"] = serde_json::json!(o); }
+        if let Some(s) = successful { params["successful"] = serde_json::json!(s); }
+        self.call(&target.url, "subfrost.get_unwrap_events_by_address", params, 1).await
+    }
+
+    // ==================== PizzaFun methods ====================
+
+    async fn get_series_id_from_alkane_id(&self, alkane_id: &str) -> Result<serde_json::Value> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        self.call(&target.url, "pizzafun.get_series_id_from_alkane_id", serde_json::json!({"alkane_id": alkane_id}), 1).await
+    }
+
+    async fn get_series_ids_from_alkane_ids(&self, alkane_ids: &[&str]) -> Result<serde_json::Value> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        self.call(&target.url, "pizzafun.get_series_ids_from_alkane_ids", serde_json::json!({"alkane_ids": alkane_ids}), 1).await
+    }
+
+    async fn get_alkane_id_from_series_id(&self, series_id: &str) -> Result<serde_json::Value> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        self.call(&target.url, "pizzafun.get_alkane_id_from_series_id", serde_json::json!({"series_id": series_id}), 1).await
+    }
+
+    async fn get_alkane_ids_from_series_ids(&self, series_ids: &[&str]) -> Result<serde_json::Value> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        self.call(&target.url, "pizzafun.get_alkane_ids_from_series_ids", serde_json::json!({"series_ids": series_ids}), 1).await
     }
 }

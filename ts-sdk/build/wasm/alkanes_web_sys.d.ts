@@ -968,6 +968,41 @@ export class WebProvider {
   dataApiGetBlockHeight(): Promise<any>;
   dataApiGetBlockHash(): Promise<any>;
   dataApiGetIndexerPosition(): Promise<any>;
+  dataApiGetPoolCreationHistory(limit?: bigint | null, offset?: bigint | null): Promise<any>;
+  dataApiGetPoolSwapHistory(pool_id?: string | null, limit?: bigint | null, offset?: bigint | null): Promise<any>;
+  dataApiGetTokenSwapHistory(alkane_id: string, limit?: bigint | null, offset?: bigint | null): Promise<any>;
+  dataApiGetPoolMintHistory(pool_id?: string | null, limit?: bigint | null, offset?: bigint | null): Promise<any>;
+  dataApiGetPoolBurnHistory(pool_id?: string | null, limit?: bigint | null, offset?: bigint | null): Promise<any>;
+  dataApiGetAddressSwapHistoryForPool(address: string, pool_id: string, limit?: bigint | null, offset?: bigint | null): Promise<any>;
+  dataApiGetAddressSwapHistoryForToken(address: string, alkane_id: string, limit?: bigint | null, offset?: bigint | null): Promise<any>;
+  dataApiGetAddressWrapHistory(address: string, limit?: bigint | null, offset?: bigint | null): Promise<any>;
+  dataApiGetAddressUnwrapHistory(address: string, limit?: bigint | null, offset?: bigint | null): Promise<any>;
+  dataApiGetAllWrapHistory(limit?: bigint | null, offset?: bigint | null): Promise<any>;
+  dataApiGetAllUnwrapHistory(limit?: bigint | null, offset?: bigint | null): Promise<any>;
+  dataApiGetTotalUnwrapAmount(): Promise<any>;
+  dataApiGetAddressPoolCreationHistory(address: string, limit?: bigint | null, offset?: bigint | null): Promise<any>;
+  dataApiGetAddressPoolMintHistory(address: string, limit?: bigint | null, offset?: bigint | null): Promise<any>;
+  dataApiGetAddressPoolBurnHistory(address: string, limit?: bigint | null, offset?: bigint | null): Promise<any>;
+  dataApiGetAllAddressAmmTxHistory(address: string, limit?: bigint | null, offset?: bigint | null): Promise<any>;
+  dataApiGetAllAmmTxHistory(limit?: bigint | null, offset?: bigint | null): Promise<any>;
+  dataApiGetAddressPositions(address: string, factory_id: string): Promise<any>;
+  dataApiGetTokenPairs(factory_id: string, alkane_id?: string | null, limit?: bigint | null, offset?: bigint | null): Promise<any>;
+  dataApiGetAllTokenPairs(factory_id: string, limit?: bigint | null, offset?: bigint | null): Promise<any>;
+  dataApiGetAlkaneSwapPairDetails(factory_id: string, token_a_id: string, token_b_id: string): Promise<any>;
+  dataApiGetAlkanesUtxo(address: string): Promise<any>;
+  dataApiGetAmmUtxos(address: string): Promise<any>;
+  dataApiGetAddressUtxos(address: string): Promise<any>;
+  dataApiGetAddressBalance(address: string): Promise<any>;
+  dataApiGetTaprootBalance(address: string): Promise<any>;
+  dataApiGetAccountUtxos(account: string): Promise<any>;
+  dataApiGetAccountBalance(account: string): Promise<any>;
+  dataApiGetAddressOutpoints(address: string): Promise<any>;
+  dataApiGlobalAlkanesSearch(search_query: string, limit?: bigint | null, offset?: bigint | null): Promise<any>;
+  dataApiPathfind(token_in: string, token_out: string, amount_in: string, max_hops?: bigint | null): Promise<any>;
+  dataApiGetBitcoinMarketWeekly(): Promise<any>;
+  dataApiGetBitcoinMarkets(): Promise<any>;
+  dataApiGetTaprootHistory(taproot_address: string, total_txs: bigint): Promise<any>;
+  dataApiGetIntentHistory(address: string, total_txs?: bigint | null, last_seen_tx_id?: string | null): Promise<any>;
   /**
    * Reflect alkane token metadata by querying standard opcodes
    *
@@ -1039,4 +1074,498 @@ export class WebProvider {
    * Find the best MEV swap opportunity for a token using ESPO
    */
   espoGetBestMevSwap(token: string, fee_bps?: number | null, max_hops?: number | null): Promise<any>;
+  /**
+   * Get AMM factories from ESPO
+   */
+  espoGetAmmFactories(page?: number | null, limit?: number | null): Promise<any>;
+  /**
+   * Get all alkanes from ESPO
+   */
+  espoGetAllAlkanes(page?: number | null, limit?: number | null): Promise<any>;
+  /**
+   * Get alkane info from ESPO
+   */
+  espoGetAlkaneInfo(alkane_id: string): Promise<any>;
+  /**
+   * Get block summary from ESPO
+   */
+  espoGetBlockSummary(height: number): Promise<any>;
+  /**
+   * Get circulating supply of an alkane from ESPO
+   */
+  espoGetCirculatingSupply(alkane_id: string, height?: number | null): Promise<any>;
+  /**
+   * Get transfer volume for an alkane from ESPO
+   */
+  espoGetTransferVolume(alkane_id: string, page?: number | null, limit?: number | null): Promise<any>;
+  /**
+   * Get total received for an alkane from ESPO
+   */
+  espoGetTotalReceived(alkane_id: string, page?: number | null, limit?: number | null): Promise<any>;
+  /**
+   * Get address activity from ESPO
+   */
+  espoGetAddressActivity(address: string): Promise<any>;
+  /**
+   * Get all balances for an alkane (all holders) from ESPO
+   */
+  espoGetAlkaneBalances(alkane_id: string): Promise<any>;
+  /**
+   * Get alkane balance via metashrew from ESPO
+   */
+  espoGetAlkaneBalanceMetashrew(owner: string, target: string, height?: number | null): Promise<any>;
+  /**
+   * Get alkane balance transactions from ESPO
+   */
+  espoGetAlkaneBalanceTxs(alkane_id: string, page?: number | null, limit?: number | null): Promise<any>;
+  /**
+   * Get alkane balance transactions by token from ESPO
+   */
+  espoGetAlkaneBalanceTxsByToken(owner: string, token: string, page?: number | null, limit?: number | null): Promise<any>;
+  /**
+   * Get block traces from ESPO
+   */
+  espoGetBlockTraces(height: number): Promise<any>;
+  /**
+   * Get alkane transaction summary from ESPO
+   */
+  espoGetAlkaneTxSummary(txid: string): Promise<any>;
+  /**
+   * Get alkane transactions in a block from ESPO
+   */
+  espoGetAlkaneBlockTxs(height: number, page?: number | null, limit?: number | null): Promise<any>;
+  /**
+   * Get alkane transactions for an address from ESPO
+   */
+  espoGetAlkaneAddressTxs(address: string, page?: number | null, limit?: number | null): Promise<any>;
+  /**
+   * Get all transactions for an address from ESPO
+   */
+  espoGetAddressTransactions(address: string, page?: number | null, limit?: number | null, only_alkane_txs?: boolean | null): Promise<any>;
+  /**
+   * Get latest alkane traces from ESPO
+   */
+  espoGetAlkaneLatestTraces(): Promise<any>;
+  /**
+   * Get mempool traces from ESPO
+   */
+  espoGetMempoolTraces(page?: number | null, limit?: number | null, address?: string | null): Promise<any>;
+  /**
+   * Get all wrap events from ESPO (subfrost namespace)
+   */
+  espoGetWrapEvents(count?: number | null, offset?: number | null, successful?: boolean | null): Promise<any>;
+  /**
+   * Get wrap events for a specific address from ESPO (subfrost namespace)
+   */
+  espoGetWrapEventsByAddress(address: string, count?: number | null, offset?: number | null, successful?: boolean | null): Promise<any>;
+  /**
+   * Get all unwrap events from ESPO (subfrost namespace)
+   */
+  espoGetUnwrapEvents(count?: number | null, offset?: number | null, successful?: boolean | null): Promise<any>;
+  /**
+   * Get unwrap events for a specific address from ESPO (subfrost namespace)
+   */
+  espoGetUnwrapEventsByAddress(address: string, count?: number | null, offset?: number | null, successful?: boolean | null): Promise<any>;
+  /**
+   * Get series ID from alkane ID (pizzafun namespace)
+   */
+  espoGetSeriesIdFromAlkaneId(alkane_id: string): Promise<any>;
+  /**
+   * Get series IDs from multiple alkane IDs (pizzafun namespace)
+   */
+  espoGetSeriesIdsFromAlkaneIds(alkane_ids: string[]): Promise<any>;
+  /**
+   * Get alkane ID from series ID (pizzafun namespace)
+   */
+  espoGetAlkaneIdFromSeriesId(series_id: string): Promise<any>;
+  /**
+   * Get alkane IDs from multiple series IDs (pizzafun namespace)
+   */
+  espoGetAlkaneIdsFromSeriesIds(series_ids: string[]): Promise<any>;
 }
+
+export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
+
+export interface InitOutput {
+  readonly memory: WebAssembly.Memory;
+  readonly __wbg_webprovider_free: (a: number, b: number) => void;
+  readonly webprovider_new_js: (a: number, b: number, c: number) => [number, number, number];
+  readonly webprovider_sandshrew_rpc_url: (a: number) => [number, number];
+  readonly webprovider_esplora_rpc_url: (a: number) => [number, number];
+  readonly webprovider_bitcoin_rpc_url: (a: number) => [number, number];
+  readonly webprovider_brc20_prog_rpc_url: (a: number) => [number, number];
+  readonly webprovider_getEnrichedBalances: (a: number, b: number, c: number, d: number, e: number) => any;
+  readonly webprovider_getAddressTxs: (a: number, b: number, c: number) => any;
+  readonly webprovider_getTransactionHex: (a: number, b: number, c: number) => any;
+  readonly webprovider_traceOutpoint: (a: number, b: number, c: number) => any;
+  readonly webprovider_getAddressUtxos: (a: number, b: number, c: number) => any;
+  readonly webprovider_broadcastTransaction: (a: number, b: number, c: number) => any;
+  readonly webprovider_getAddressTxsWithTraces: (a: number, b: number, c: number, d: number) => any;
+  readonly webprovider_ordInscription: (a: number, b: number, c: number) => any;
+  readonly webprovider_ordInscriptions: (a: number, b: number, c: number) => any;
+  readonly webprovider_ordOutputs: (a: number, b: number, c: number) => any;
+  readonly webprovider_ordRune: (a: number, b: number, c: number) => any;
+  readonly webprovider_ordAddressInfo: (a: number, b: number, c: number) => any;
+  readonly webprovider_ordBlockInfo: (a: number, b: number, c: number) => any;
+  readonly webprovider_ordBlockCount: (a: number) => any;
+  readonly webprovider_ordBlocks: (a: number) => any;
+  readonly webprovider_ordChildren: (a: number, b: number, c: number, d: number, e: number) => any;
+  readonly webprovider_ordContent: (a: number, b: number, c: number) => any;
+  readonly webprovider_ordParents: (a: number, b: number, c: number, d: number, e: number) => any;
+  readonly webprovider_ordTxInfo: (a: number, b: number, c: number) => any;
+  readonly webprovider_alkanesExecute: (a: number, b: number, c: number) => any;
+  readonly webprovider_alkanesExecuteWithStrings: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number) => any;
+  readonly webprovider_alkanesExecuteFull: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number) => any;
+  readonly webprovider_alkanesResumeExecution: (a: number, b: number, c: number, d: number, e: number) => any;
+  readonly webprovider_alkanesResumeCommitExecution: (a: number, b: number, c: number) => any;
+  readonly webprovider_alkanesResumeRevealExecution: (a: number, b: number, c: number) => any;
+  readonly webprovider_alkanesSimulate: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => any;
+  readonly webprovider_alkanesWrapBtc: (a: number, b: number, c: number) => any;
+  readonly webprovider_alkanesInitPool: (a: number, b: number, c: number) => any;
+  readonly webprovider_alkanesSwap: (a: number, b: number, c: number) => any;
+  readonly webprovider_alkanesReflectAlkaneRange: (a: number, b: number, c: number, d: number, e: number, f: number) => any;
+  readonly webprovider_alkanesTxScript: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => any;
+  readonly webprovider_alkanesPoolDetails: (a: number, b: number, c: number) => any;
+  readonly webprovider_subfrostMinimumUnwrap: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => any;
+  readonly webprovider_opiBlockHeight: (a: number, b: number, c: number) => any;
+  readonly webprovider_opiExtrasBlockHeight: (a: number, b: number, c: number) => any;
+  readonly webprovider_opiDbVersion: (a: number, b: number, c: number) => any;
+  readonly webprovider_opiEventHashVersion: (a: number, b: number, c: number) => any;
+  readonly webprovider_opiBalanceOnBlock: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => any;
+  readonly webprovider_opiActivityOnBlock: (a: number, b: number, c: number, d: number) => any;
+  readonly webprovider_opiBitcoinRpcResultsOnBlock: (a: number, b: number, c: number, d: number) => any;
+  readonly webprovider_opiCurrentBalance: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => any;
+  readonly webprovider_opiValidTxNotesOfWallet: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => any;
+  readonly webprovider_opiValidTxNotesOfTicker: (a: number, b: number, c: number, d: number, e: number) => any;
+  readonly webprovider_opiHolders: (a: number, b: number, c: number, d: number, e: number) => any;
+  readonly webprovider_opiHashOfAllActivity: (a: number, b: number, c: number, d: number) => any;
+  readonly webprovider_opiHashOfAllCurrentBalances: (a: number, b: number, c: number) => any;
+  readonly webprovider_opiEvent: (a: number, b: number, c: number, d: number, e: number) => any;
+  readonly webprovider_opiIp: (a: number, b: number, c: number) => any;
+  readonly webprovider_opiRaw: (a: number, b: number, c: number, d: number, e: number) => any;
+  readonly webprovider_opiRunesBlockHeight: (a: number, b: number, c: number) => any;
+  readonly webprovider_opiRunesBalanceOnBlock: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => any;
+  readonly webprovider_opiRunesActivityOnBlock: (a: number, b: number, c: number, d: number) => any;
+  readonly webprovider_opiRunesCurrentBalance: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => any;
+  readonly webprovider_opiRunesUnspentOutpoints: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => any;
+  readonly webprovider_opiRunesHolders: (a: number, b: number, c: number, d: number, e: number) => any;
+  readonly webprovider_opiRunesHashOfAllActivity: (a: number, b: number, c: number, d: number) => any;
+  readonly webprovider_opiRunesEvent: (a: number, b: number, c: number, d: number, e: number) => any;
+  readonly webprovider_opiBitmapBlockHeight: (a: number, b: number, c: number) => any;
+  readonly webprovider_opiBitmapHashOfAllActivity: (a: number, b: number, c: number, d: number) => any;
+  readonly webprovider_opiBitmapHashOfAllBitmaps: (a: number, b: number, c: number) => any;
+  readonly webprovider_opiBitmapInscriptionId: (a: number, b: number, c: number, d: number, e: number) => any;
+  readonly webprovider_opiPow20BlockHeight: (a: number, b: number, c: number) => any;
+  readonly webprovider_opiPow20BalanceOnBlock: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => any;
+  readonly webprovider_opiPow20ActivityOnBlock: (a: number, b: number, c: number, d: number) => any;
+  readonly webprovider_opiPow20CurrentBalance: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => any;
+  readonly webprovider_opiPow20ValidTxNotesOfWallet: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => any;
+  readonly webprovider_opiPow20ValidTxNotesOfTicker: (a: number, b: number, c: number, d: number, e: number) => any;
+  readonly webprovider_opiPow20Holders: (a: number, b: number, c: number, d: number, e: number) => any;
+  readonly webprovider_opiPow20HashOfAllActivity: (a: number, b: number, c: number, d: number) => any;
+  readonly webprovider_opiPow20HashOfAllCurrentBalances: (a: number, b: number, c: number) => any;
+  readonly webprovider_opiSnsBlockHeight: (a: number, b: number, c: number) => any;
+  readonly webprovider_opiSnsHashOfAllActivity: (a: number, b: number, c: number, d: number) => any;
+  readonly webprovider_opiSnsHashOfAllRegisteredNames: (a: number, b: number, c: number) => any;
+  readonly webprovider_opiSnsInfo: (a: number, b: number, c: number, d: number, e: number) => any;
+  readonly webprovider_opiSnsInscriptionsOfDomain: (a: number, b: number, c: number, d: number, e: number) => any;
+  readonly webprovider_opiSnsRegisteredNamespaces: (a: number, b: number, c: number) => any;
+  readonly webprovider_alkanesBalance: (a: number, b: number, c: number) => any;
+  readonly webprovider_alkanesBytecode: (a: number, b: number, c: number, d: number, e: number) => any;
+  readonly webprovider_alkanesMeta: (a: number, b: number, c: number, d: number, e: number) => any;
+  readonly webprovider_alkanesGetAllPoolsWithDetails: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => any;
+  readonly webprovider_alkanesGetAllPools: (a: number, b: number, c: number) => any;
+  readonly webprovider_ammGetPoolDetails: (a: number, b: number, c: number) => any;
+  readonly webprovider_alkanesTrace: (a: number, b: number, c: number) => any;
+  readonly webprovider_traceProtostones: (a: number, b: number, c: number) => any;
+  readonly webprovider_traceBlock: (a: number, b: number) => any;
+  readonly webprovider_alkanesByAddress: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => any;
+  readonly webprovider_alkanesByOutpoint: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => any;
+  readonly webprovider_esploraGetTx: (a: number, b: number, c: number) => any;
+  readonly webprovider_esploraGetTxStatus: (a: number, b: number, c: number) => any;
+  readonly webprovider_esploraGetAddressInfo: (a: number, b: number, c: number) => any;
+  readonly webprovider_esploraGetBlocksTipHeight: (a: number) => any;
+  readonly webprovider_esploraGetBlocksTipHash: (a: number) => any;
+  readonly webprovider_esploraGetAddressUtxo: (a: number, b: number, c: number) => any;
+  readonly webprovider_esploraGetAddressTxs: (a: number, b: number, c: number) => any;
+  readonly webprovider_esploraGetAddressTxsChain: (a: number, b: number, c: number, d: number, e: number) => any;
+  readonly webprovider_getStorageAt: (a: number, b: bigint, c: bigint, d: number, e: number) => any;
+  readonly webprovider_esploraGetFeeEstimates: (a: number) => any;
+  readonly webprovider_esploraBroadcastTx: (a: number, b: number, c: number) => any;
+  readonly webprovider_esploraGetTxHex: (a: number, b: number, c: number) => any;
+  readonly webprovider_esploraGetBlocks: (a: number, b: number, c: number) => any;
+  readonly webprovider_esploraGetBlockByHeight: (a: number, b: number) => any;
+  readonly webprovider_esploraGetBlock: (a: number, b: number, c: number) => any;
+  readonly webprovider_esploraGetBlockStatus: (a: number, b: number, c: number) => any;
+  readonly webprovider_esploraGetBlockTxids: (a: number, b: number, c: number) => any;
+  readonly webprovider_esploraGetBlockHeader: (a: number, b: number, c: number) => any;
+  readonly webprovider_esploraGetBlockRaw: (a: number, b: number, c: number) => any;
+  readonly webprovider_esploraGetBlockTxid: (a: number, b: number, c: number, d: number) => any;
+  readonly webprovider_esploraGetBlockTxs: (a: number, b: number, c: number, d: number, e: number) => any;
+  readonly webprovider_esploraGetAddressTxsMempool: (a: number, b: number, c: number) => any;
+  readonly webprovider_esploraGetAddressPrefix: (a: number, b: number, c: number) => any;
+  readonly webprovider_esploraGetTxRaw: (a: number, b: number, c: number) => any;
+  readonly webprovider_esploraGetTxMerkleProof: (a: number, b: number, c: number) => any;
+  readonly webprovider_esploraGetTxMerkleblockProof: (a: number, b: number, c: number) => any;
+  readonly webprovider_esploraGetTxOutspend: (a: number, b: number, c: number, d: number) => any;
+  readonly webprovider_esploraGetTxOutspends: (a: number, b: number, c: number) => any;
+  readonly webprovider_esploraGetMempool: (a: number) => any;
+  readonly webprovider_esploraGetMempoolTxids: (a: number) => any;
+  readonly webprovider_esploraGetMempoolRecent: (a: number) => any;
+  readonly webprovider_esploraPostTx: (a: number, b: number, c: number) => any;
+  readonly webprovider_bitcoindGetBlockCount: (a: number) => any;
+  readonly webprovider_bitcoindSendRawTransaction: (a: number, b: number, c: number) => any;
+  readonly webprovider_bitcoindGenerateToAddress: (a: number, b: number, c: number, d: number) => any;
+  readonly webprovider_bitcoindGenerateFuture: (a: number, b: number, c: number) => any;
+  readonly webprovider_bitcoindGetBlockchainInfo: (a: number) => any;
+  readonly webprovider_bitcoindGetNetworkInfo: (a: number) => any;
+  readonly webprovider_bitcoindGetRawTransaction: (a: number, b: number, c: number, d: number, e: number) => any;
+  readonly webprovider_bitcoindGetBlock: (a: number, b: number, c: number, d: number) => any;
+  readonly webprovider_bitcoindGetBlockHash: (a: number, b: number) => any;
+  readonly webprovider_bitcoindGetBlockHeader: (a: number, b: number, c: number) => any;
+  readonly webprovider_bitcoindGetBlockStats: (a: number, b: number, c: number) => any;
+  readonly webprovider_bitcoindGetMempoolInfo: (a: number) => any;
+  readonly webprovider_bitcoindEstimateSmartFee: (a: number, b: number) => any;
+  readonly webprovider_bitcoindGetChainTips: (a: number) => any;
+  readonly webprovider_bitcoindGetRawMempool: (a: number) => any;
+  readonly webprovider_bitcoindGetTxOut: (a: number, b: number, c: number, d: number, e: number) => any;
+  readonly webprovider_bitcoindDecodeRawTransaction: (a: number, b: number, c: number) => any;
+  readonly webprovider_bitcoindDecodePsbt: (a: number, b: number, c: number) => any;
+  readonly webprovider_alkanesView: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => any;
+  readonly webprovider_alkanesInspect: (a: number, b: number, c: number, d: any) => any;
+  readonly webprovider_alkanesInspectBytecode: (a: number, b: number, c: number, d: number, e: number, f: any) => any;
+  readonly webprovider_alkanesPendingUnwraps: (a: number, b: number, c: number) => any;
+  readonly webprovider_brc20progCall: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => any;
+  readonly webprovider_brc20progGetBalance: (a: number, b: number, c: number, d: number, e: number) => any;
+  readonly webprovider_brc20progGetCode: (a: number, b: number, c: number) => any;
+  readonly webprovider_brc20progGetTransactionCount: (a: number, b: number, c: number, d: number, e: number) => any;
+  readonly webprovider_brc20progBlockNumber: (a: number) => any;
+  readonly webprovider_brc20progChainId: (a: number) => any;
+  readonly webprovider_brc20progGetTransactionReceipt: (a: number, b: number, c: number) => any;
+  readonly webprovider_brc20progGetTransactionByHash: (a: number, b: number, c: number) => any;
+  readonly webprovider_brc20progGetBlockByNumber: (a: number, b: number, c: number, d: number) => any;
+  readonly webprovider_brc20progEstimateGas: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => any;
+  readonly webprovider_brc20progGetLogs: (a: number, b: any) => any;
+  readonly webprovider_brc20progWeb3ClientVersion: (a: number) => any;
+  readonly webprovider_metashrewHeight: (a: number) => any;
+  readonly webprovider_waitForIndexer: (a: number) => any;
+  readonly webprovider_metashrewStateRoot: (a: number, b: number, c: number) => any;
+  readonly webprovider_metashrewGetBlockHash: (a: number, b: number) => any;
+  readonly webprovider_metashrewView: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => any;
+  readonly webprovider_luaEvalScript: (a: number, b: number, c: number) => any;
+  readonly webprovider_luaEval: (a: number, b: number, c: number, d: any) => any;
+  readonly webprovider_ordList: (a: number, b: number, c: number) => any;
+  readonly webprovider_ordFind: (a: number, b: number) => any;
+  readonly webprovider_runestoneDecodeTx: (a: number, b: number, c: number) => any;
+  readonly webprovider_runestoneAnalyzeTx: (a: number, b: number, c: number) => any;
+  readonly webprovider_protorunesDecodeTx: (a: number, b: number, c: number) => any;
+  readonly webprovider_protorunesAnalyzeTx: (a: number, b: number, c: number) => any;
+  readonly webprovider_walletCreate: (a: number, b: number, c: number, d: number, e: number) => [number, number, number];
+  readonly webprovider_walletLoad: (a: number, b: number, c: number) => any;
+  readonly webprovider_walletGetAddress: (a: number) => any;
+  readonly webprovider_walletGetBalance: (a: number, b: number, c: number) => any;
+  readonly webprovider_walletLoadMnemonic: (a: number, b: number, c: number, d: number, e: number) => [number, number];
+  readonly webprovider_walletIsLoaded: (a: number) => number;
+  readonly webprovider_walletGetAddresses: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
+  readonly webprovider_walletSend: (a: number, b: number, c: number) => any;
+  readonly webprovider_walletGetUtxos: (a: number, b: number, c: number) => any;
+  readonly webprovider_walletGetHistory: (a: number, b: number, c: number) => any;
+  readonly webprovider_walletCreatePsbt: (a: number, b: number, c: number) => any;
+  readonly webprovider_walletExport: (a: number) => any;
+  readonly webprovider_walletBackup: (a: number) => any;
+  readonly webprovider_frbtcGetSignerAddress: (a: number) => any;
+  readonly webprovider_frbtcWrap: (a: number, b: bigint, c: number, d: number) => any;
+  readonly webprovider_frbtcUnwrap: (a: number, b: bigint, c: bigint, d: number, e: number, f: number, g: number) => any;
+  readonly webprovider_frbtcWrapAndExecute: (a: number, b: bigint, c: number, d: number, e: number, f: number) => any;
+  readonly webprovider_frbtcWrapAndExecute2: (a: number, b: bigint, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => any;
+  readonly webprovider_dataApiGetPoolHistory: (a: number, b: number, c: number, d: number, e: number, f: number, g: bigint, h: number, i: bigint) => any;
+  readonly webprovider_dataApiGetPools: (a: number, b: number, c: number) => any;
+  readonly webprovider_dataApiGetAlkanesByAddress: (a: number, b: number, c: number) => any;
+  readonly webprovider_dataApiGetAllPoolsDetails: (a: number, b: number, c: number, d: number, e: bigint, f: number, g: bigint, h: number, i: number, j: number, k: number) => any;
+  readonly webprovider_dataApiGetPoolDetails: (a: number, b: number, c: number, d: number, e: number) => any;
+  readonly webprovider_dataApiGetAddressBalances: (a: number, b: number, c: number, d: number) => any;
+  readonly webprovider_dataApiGetAllHistory: (a: number, b: number, c: number, d: number, e: bigint, f: number, g: bigint) => any;
+  readonly webprovider_dataApiGetSwapHistory: (a: number, b: number, c: number, d: number, e: bigint, f: number, g: bigint) => any;
+  readonly webprovider_dataApiGetMintHistory: (a: number, b: number, c: number, d: number, e: bigint, f: number, g: bigint) => any;
+  readonly webprovider_dataApiGetBurnHistory: (a: number, b: number, c: number, d: number, e: bigint, f: number, g: bigint) => any;
+  readonly webprovider_dataApiGetTrades: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: bigint) => any;
+  readonly webprovider_dataApiGetCandles: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: bigint) => any;
+  readonly webprovider_dataApiGetReserves: (a: number, b: number, c: number) => any;
+  readonly webprovider_dataApiGetHolders: (a: number, b: number, c: number, d: bigint, e: bigint) => any;
+  readonly webprovider_dataApiGetHoldersCount: (a: number, b: number, c: number) => any;
+  readonly webprovider_dataApiGetKeys: (a: number, b: number, c: number, d: number, e: number, f: bigint) => any;
+  readonly webprovider_dataApiGetBitcoinPrice: (a: number) => any;
+  readonly webprovider_dataApiGetBitcoinMarketChart: (a: number, b: number, c: number) => any;
+  readonly webprovider_dataApiHealth: (a: number) => any;
+  readonly webprovider_dataApiGetAlkanes: (a: number, b: number, c: bigint, d: number, e: bigint) => any;
+  readonly webprovider_dataApiGetAlkaneDetails: (a: number, b: number, c: number) => any;
+  readonly webprovider_dataApiGetPoolById: (a: number, b: number, c: number) => any;
+  readonly webprovider_dataApiGetOutpointBalances: (a: number, b: number, c: number) => any;
+  readonly webprovider_dataApiGetBlockHeight: (a: number) => any;
+  readonly webprovider_dataApiGetBlockHash: (a: number) => any;
+  readonly webprovider_dataApiGetIndexerPosition: (a: number) => any;
+  readonly webprovider_dataApiGetPoolCreationHistory: (a: number, b: number, c: bigint, d: number, e: bigint) => any;
+  readonly webprovider_dataApiGetPoolSwapHistory: (a: number, b: number, c: number, d: number, e: bigint, f: number, g: bigint) => any;
+  readonly webprovider_dataApiGetTokenSwapHistory: (a: number, b: number, c: number, d: number, e: bigint, f: number, g: bigint) => any;
+  readonly webprovider_dataApiGetPoolMintHistory: (a: number, b: number, c: number, d: number, e: bigint, f: number, g: bigint) => any;
+  readonly webprovider_dataApiGetPoolBurnHistory: (a: number, b: number, c: number, d: number, e: bigint, f: number, g: bigint) => any;
+  readonly webprovider_dataApiGetAddressSwapHistoryForPool: (a: number, b: number, c: number, d: number, e: number, f: number, g: bigint, h: number, i: bigint) => any;
+  readonly webprovider_dataApiGetAddressSwapHistoryForToken: (a: number, b: number, c: number, d: number, e: number, f: number, g: bigint, h: number, i: bigint) => any;
+  readonly webprovider_dataApiGetAddressWrapHistory: (a: number, b: number, c: number, d: number, e: bigint, f: number, g: bigint) => any;
+  readonly webprovider_dataApiGetAddressUnwrapHistory: (a: number, b: number, c: number, d: number, e: bigint, f: number, g: bigint) => any;
+  readonly webprovider_dataApiGetAllWrapHistory: (a: number, b: number, c: bigint, d: number, e: bigint) => any;
+  readonly webprovider_dataApiGetAllUnwrapHistory: (a: number, b: number, c: bigint, d: number, e: bigint) => any;
+  readonly webprovider_dataApiGetTotalUnwrapAmount: (a: number) => any;
+  readonly webprovider_dataApiGetAddressPoolCreationHistory: (a: number, b: number, c: number, d: number, e: bigint, f: number, g: bigint) => any;
+  readonly webprovider_dataApiGetAddressPoolMintHistory: (a: number, b: number, c: number, d: number, e: bigint, f: number, g: bigint) => any;
+  readonly webprovider_dataApiGetAddressPoolBurnHistory: (a: number, b: number, c: number, d: number, e: bigint, f: number, g: bigint) => any;
+  readonly webprovider_dataApiGetAllAddressAmmTxHistory: (a: number, b: number, c: number, d: number, e: bigint, f: number, g: bigint) => any;
+  readonly webprovider_dataApiGetAllAmmTxHistory: (a: number, b: number, c: bigint, d: number, e: bigint) => any;
+  readonly webprovider_dataApiGetAddressPositions: (a: number, b: number, c: number, d: number, e: number) => any;
+  readonly webprovider_dataApiGetTokenPairs: (a: number, b: number, c: number, d: number, e: number, f: number, g: bigint, h: number, i: bigint) => any;
+  readonly webprovider_dataApiGetAllTokenPairs: (a: number, b: number, c: number, d: number, e: bigint, f: number, g: bigint) => any;
+  readonly webprovider_dataApiGetAlkaneSwapPairDetails: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => any;
+  readonly webprovider_dataApiGetAlkanesUtxo: (a: number, b: number, c: number) => any;
+  readonly webprovider_dataApiGetAmmUtxos: (a: number, b: number, c: number) => any;
+  readonly webprovider_dataApiGetAddressUtxos: (a: number, b: number, c: number) => any;
+  readonly webprovider_dataApiGetAddressBalance: (a: number, b: number, c: number) => any;
+  readonly webprovider_dataApiGetTaprootBalance: (a: number, b: number, c: number) => any;
+  readonly webprovider_dataApiGetAccountUtxos: (a: number, b: number, c: number) => any;
+  readonly webprovider_dataApiGetAccountBalance: (a: number, b: number, c: number) => any;
+  readonly webprovider_dataApiGetAddressOutpoints: (a: number, b: number, c: number) => any;
+  readonly webprovider_dataApiGlobalAlkanesSearch: (a: number, b: number, c: number, d: number, e: bigint, f: number, g: bigint) => any;
+  readonly webprovider_dataApiPathfind: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: bigint) => any;
+  readonly webprovider_dataApiGetBitcoinMarketWeekly: (a: number) => any;
+  readonly webprovider_dataApiGetBitcoinMarkets: (a: number) => any;
+  readonly webprovider_dataApiGetTaprootHistory: (a: number, b: number, c: number, d: bigint) => any;
+  readonly webprovider_dataApiGetIntentHistory: (a: number, b: number, c: number, d: number, e: bigint, f: number, g: number) => any;
+  readonly webprovider_alkanesReflect: (a: number, b: number, c: number) => any;
+  readonly webprovider_alkanesSequence: (a: number, b: number, c: number) => any;
+  readonly webprovider_alkanesSpendables: (a: number, b: number, c: number) => any;
+  readonly webprovider_espoGetHeight: (a: number) => any;
+  readonly webprovider_espoPing: (a: number) => any;
+  readonly webprovider_espoGetAddressBalances: (a: number, b: number, c: number, d: number) => any;
+  readonly webprovider_espoGetAddressOutpoints: (a: number, b: number, c: number) => any;
+  readonly webprovider_espoGetOutpointBalances: (a: number, b: number, c: number) => any;
+  readonly webprovider_espoGetHolders: (a: number, b: number, c: number, d: number, e: number) => any;
+  readonly webprovider_espoGetHoldersCount: (a: number, b: number, c: number) => any;
+  readonly webprovider_espoGetKeys: (a: number, b: number, c: number, d: number, e: number) => any;
+  readonly webprovider_espoAmmdataPing: (a: number) => any;
+  readonly webprovider_espoGetCandles: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number) => any;
+  readonly webprovider_espoGetTrades: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number) => any;
+  readonly webprovider_espoGetPools: (a: number, b: number, c: number, d: number, e: number) => any;
+  readonly webprovider_espoFindBestSwapPath: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number, p: number, q: number, r: number, s: number, t: number, u: number) => any;
+  readonly webprovider_espoGetBestMevSwap: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => any;
+  readonly webprovider_espoGetAmmFactories: (a: number, b: number, c: number, d: number, e: number) => any;
+  readonly webprovider_espoGetAllAlkanes: (a: number, b: number, c: number, d: number, e: number) => any;
+  readonly webprovider_espoGetAlkaneInfo: (a: number, b: number, c: number) => any;
+  readonly webprovider_espoGetBlockSummary: (a: number, b: number) => any;
+  readonly webprovider_espoGetCirculatingSupply: (a: number, b: number, c: number, d: number, e: number) => any;
+  readonly webprovider_espoGetTransferVolume: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => any;
+  readonly webprovider_espoGetTotalReceived: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => any;
+  readonly webprovider_espoGetAddressActivity: (a: number, b: number, c: number) => any;
+  readonly webprovider_espoGetAlkaneBalances: (a: number, b: number, c: number) => any;
+  readonly webprovider_espoGetAlkaneBalanceMetashrew: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => any;
+  readonly webprovider_espoGetAlkaneBalanceTxs: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => any;
+  readonly webprovider_espoGetAlkaneBalanceTxsByToken: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => any;
+  readonly webprovider_espoGetBlockTraces: (a: number, b: number) => any;
+  readonly webprovider_espoGetAlkaneTxSummary: (a: number, b: number, c: number) => any;
+  readonly webprovider_espoGetAlkaneBlockTxs: (a: number, b: number, c: number, d: number, e: number, f: number) => any;
+  readonly webprovider_espoGetAlkaneAddressTxs: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => any;
+  readonly webprovider_espoGetAddressTransactions: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => any;
+  readonly webprovider_espoGetAlkaneLatestTraces: (a: number) => any;
+  readonly webprovider_espoGetMempoolTraces: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => any;
+  readonly webprovider_espoGetWrapEvents: (a: number, b: number, c: number, d: number, e: number, f: number) => any;
+  readonly webprovider_espoGetWrapEventsByAddress: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => any;
+  readonly webprovider_espoGetUnwrapEvents: (a: number, b: number, c: number, d: number, e: number, f: number) => any;
+  readonly webprovider_espoGetUnwrapEventsByAddress: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => any;
+  readonly webprovider_espoGetSeriesIdFromAlkaneId: (a: number, b: number, c: number) => any;
+  readonly webprovider_espoGetSeriesIdsFromAlkaneIds: (a: number, b: number, c: number) => any;
+  readonly webprovider_espoGetAlkaneIdFromSeriesId: (a: number, b: number, c: number) => any;
+  readonly webprovider_espoGetAlkaneIdsFromSeriesIds: (a: number, b: number, c: number) => any;
+  readonly __wbg_wasmbrowserwalletprovider_free: (a: number, b: number) => void;
+  readonly wasmbrowserwalletprovider_new: (a: any, b: number, c: number) => any;
+  readonly wasmbrowserwalletprovider_getAddress: (a: number) => [number, number];
+  readonly wasmbrowserwalletprovider_getPublicKey: (a: number) => any;
+  readonly wasmbrowserwalletprovider_signPsbt: (a: number, b: number, c: number, d: any) => any;
+  readonly wasmbrowserwalletprovider_signMessage: (a: number, b: number, c: number, d: number, e: number) => any;
+  readonly wasmbrowserwalletprovider_broadcastTransaction: (a: number, b: number, c: number) => any;
+  readonly wasmbrowserwalletprovider_getBalance: (a: number) => any;
+  readonly wasmbrowserwalletprovider_getUtxos: (a: number, b: number) => any;
+  readonly wasmbrowserwalletprovider_getEnrichedUtxos: (a: number) => any;
+  readonly wasmbrowserwalletprovider_getAllBalances: (a: number) => any;
+  readonly wasmbrowserwalletprovider_getWalletInfo: (a: number) => any;
+  readonly wasmbrowserwalletprovider_getConnectionStatus: (a: number) => [number, number];
+  readonly wasmbrowserwalletprovider_getNetwork: (a: number) => [number, number];
+  readonly wasmbrowserwalletprovider_disconnect: (a: number) => any;
+  readonly __wbg_keystore_free: (a: number, b: number) => void;
+  readonly __wbg_pbkdfparams_free: (a: number, b: number) => void;
+  readonly pbkdfparams_from_js: (a: any) => [number, number, number];
+  readonly pbkdfparams_to_js: (a: number) => [number, number, number];
+  readonly keystore_from_js: (a: any) => [number, number, number];
+  readonly keystore_to_js: (a: number) => [number, number, number];
+  readonly keystore_accountXpub: (a: number) => [number, number];
+  readonly keystore_hdPaths: (a: number) => any;
+  readonly keystore_masterFingerprint: (a: number) => [number, number];
+  readonly keystore_decryptMnemonic: (a: number, b: number, c: number) => any;
+  readonly encryptMnemonic: (a: number, b: number, c: number, d: number) => any;
+  readonly analyze_psbt: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+  readonly simulate_alkane_call: (a: number, b: number, c: number, d: number, e: number, f: number) => any;
+  readonly get_alkane_bytecode: (a: number, b: number, c: number, d: number, e: number, f: number) => any;
+  readonly get_alkane_meta: (a: number, b: number, c: number, d: number, e: number, f: number) => any;
+  readonly analyze_runestone: (a: number, b: number) => [number, number, number, number];
+  readonly decode_psbt: (a: number, b: number) => [number, number, number, number];
+  readonly brc20_prog_deploy_contract: (a: number, b: number, c: number, d: number, e: number, f: number) => any;
+  readonly brc20_prog_transact: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => any;
+  readonly brc20_prog_wrap_btc: (a: number, b: number, c: bigint, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number) => any;
+  readonly frbtc_wrap: (a: number, b: number, c: bigint, d: number, e: number) => any;
+  readonly frbtc_unwrap: (a: number, b: number, c: bigint, d: bigint, e: number, f: number, g: number, h: number) => any;
+  readonly frbtc_wrap_and_execute: (a: number, b: number, c: bigint, d: number, e: number, f: number, g: number) => any;
+  readonly frbtc_wrap_and_execute2: (a: number, b: number, c: bigint, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number) => any;
+  readonly frbtc_get_signer_address: (a: number, b: number) => any;
+  readonly init_panic_hook: () => void;
+  readonly rustsecp256k1_v0_9_2_context_create: (a: number) => number;
+  readonly rustsecp256k1_v0_9_2_context_destroy: (a: number) => void;
+  readonly rustsecp256k1_v0_9_2_default_illegal_callback_fn: (a: number, b: number) => void;
+  readonly rustsecp256k1_v0_9_2_default_error_callback_fn: (a: number, b: number) => void;
+  readonly rustsecp256k1_v0_10_0_context_create: (a: number) => number;
+  readonly rustsecp256k1_v0_10_0_context_destroy: (a: number) => void;
+  readonly rustsecp256k1_v0_10_0_default_illegal_callback_fn: (a: number, b: number) => void;
+  readonly rustsecp256k1_v0_10_0_default_error_callback_fn: (a: number, b: number) => void;
+  readonly wasm_bindgen__convert__closures_____invoke__h01405c57635d3c55: (a: number, b: number) => void;
+  readonly wasm_bindgen__closure__destroy__he41b8e2aae505aee: (a: number, b: number) => void;
+  readonly wasm_bindgen__convert__closures_____invoke__h5943629905d90057: (a: number, b: number, c: any) => void;
+  readonly wasm_bindgen__closure__destroy__h3ba04b4139aaae95: (a: number, b: number) => void;
+  readonly wasm_bindgen__convert__closures_____invoke__hc67e7f9a7930d925: (a: number, b: number) => void;
+  readonly wasm_bindgen__closure__destroy__hb154d7ec25b6c414: (a: number, b: number) => void;
+  readonly wasm_bindgen__convert__closures_____invoke__h95fdbac5e4c1bfb6: (a: number, b: number, c: any, d: any) => void;
+  readonly __wbindgen_malloc: (a: number, b: number) => number;
+  readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
+  readonly __wbindgen_exn_store: (a: number) => void;
+  readonly __externref_table_alloc: () => number;
+  readonly __wbindgen_externrefs: WebAssembly.Table;
+  readonly __wbindgen_free: (a: number, b: number, c: number) => void;
+  readonly __externref_table_dealloc: (a: number) => void;
+  readonly __wbindgen_start: () => void;
+}
+
+export type SyncInitInput = BufferSource | WebAssembly.Module;
+/**
+* Instantiates the given `module`, which can either be bytes or
+* a precompiled `WebAssembly.Module`.
+*
+* @param {{ module: SyncInitInput }} module - Passing `SyncInitInput` directly is deprecated.
+*
+* @returns {InitOutput}
+*/
+export function initSync(module: { module: SyncInitInput } | SyncInitInput): InitOutput;
+
+/**
+* If `module_or_path` is {RequestInfo} or {URL}, makes a request and
+* for everything else, calls `WebAssembly.instantiate` directly.
+*
+* @param {{ module_or_path: InitInput | Promise<InitInput> }} module_or_path - Passing `InitInput` directly is deprecated.
+*
+* @returns {Promise<InitOutput>}
+*/
+export default function __wbg_init (module_or_path?: { module_or_path: InitInput | Promise<InitInput> } | InitInput | Promise<InitInput>): Promise<InitOutput>;

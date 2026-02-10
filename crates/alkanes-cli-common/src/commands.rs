@@ -1775,4 +1775,261 @@ pub enum EspoCommands {
         #[arg(long)]
         raw: bool,
     },
+    /// Get all known AMM factories
+    AmmFactories {
+        #[arg(long)]
+        limit: Option<u64>,
+        #[arg(long)]
+        page: Option<u64>,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// List all alkanes with pagination
+    AllAlkanes {
+        #[arg(long)]
+        limit: Option<u64>,
+        #[arg(long)]
+        page: Option<u64>,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get detailed info for a specific alkane
+    AlkaneInfo {
+        /// Alkane ID (format: block:tx)
+        alkane_id: String,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get block summary (header, trace count)
+    BlockSummary {
+        /// Block height
+        height: u64,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get circulating supply for an alkane
+    CirculatingSupply {
+        /// Alkane ID (format: block:tx)
+        alkane_id: String,
+        /// Optional block height (default: latest)
+        #[arg(long)]
+        height: Option<u64>,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get transfer volume rankings for an alkane
+    TransferVolume {
+        /// Alkane ID (format: block:tx)
+        alkane_id: String,
+        #[arg(long)]
+        limit: Option<u64>,
+        #[arg(long)]
+        page: Option<u64>,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get total received rankings for an alkane
+    TotalReceived {
+        /// Alkane ID (format: block:tx)
+        alkane_id: String,
+        #[arg(long)]
+        limit: Option<u64>,
+        #[arg(long)]
+        page: Option<u64>,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get activity summary for an address
+    AddressActivity {
+        /// Bitcoin address
+        address: String,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get all balance holders for an alkane (keyed by address)
+    AlkaneBalances {
+        /// Alkane ID (format: block:tx)
+        alkane_id: String,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get alkane balance via metashrew (raw indexer query)
+    AlkaneBalanceMetashrew {
+        /// Owner AlkaneId (format: block:tx)
+        owner: String,
+        /// Target AlkaneId (format: block:tx)
+        target: String,
+        #[arg(long)]
+        height: Option<u64>,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get transactions that changed balances for an alkane
+    AlkaneBalanceTxs {
+        /// Alkane ID (format: block:tx)
+        alkane_id: String,
+        #[arg(long)]
+        limit: Option<u64>,
+        #[arg(long)]
+        page: Option<u64>,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get transactions that changed a specific token balance for an owner
+    AlkaneBalanceTxsByToken {
+        /// Owner AlkaneId (format: block:tx)
+        owner: String,
+        /// Token AlkaneId (format: block:tx)
+        token: String,
+        #[arg(long)]
+        limit: Option<u64>,
+        #[arg(long)]
+        page: Option<u64>,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get alkane traces for a specific block
+    BlockTraces {
+        /// Block height
+        height: u64,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get alkane trace summary for a transaction
+    TxSummary {
+        /// Transaction ID
+        txid: String,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get alkane transaction IDs in a block
+    BlockTxs {
+        /// Block height
+        height: u64,
+        #[arg(long)]
+        limit: Option<u64>,
+        #[arg(long)]
+        page: Option<u64>,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get alkane transaction IDs for an address
+    AddressTxs {
+        /// Bitcoin address
+        address: String,
+        #[arg(long)]
+        limit: Option<u64>,
+        #[arg(long)]
+        page: Option<u64>,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get full transaction details for an address
+    AddressTransactions {
+        /// Bitcoin address
+        address: String,
+        #[arg(long)]
+        limit: Option<u64>,
+        #[arg(long)]
+        page: Option<u64>,
+        /// Only include alkane transactions
+        #[arg(long)]
+        only_alkane_txs: bool,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get the most recent alkane traces
+    LatestTraces {
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get mempool traces (unconfirmed alkane transactions)
+    MempoolTraces {
+        #[arg(long)]
+        limit: Option<u64>,
+        #[arg(long)]
+        page: Option<u64>,
+        /// Filter by address
+        #[arg(long)]
+        address: Option<String>,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get all frBTC wrap events
+    WrapEvents {
+        #[arg(long)]
+        count: Option<u64>,
+        #[arg(long)]
+        offset: Option<u64>,
+        /// Filter by success status
+        #[arg(long)]
+        successful: Option<bool>,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get frBTC wrap events for an address
+    WrapEventsByAddress {
+        /// Bitcoin address
+        address: String,
+        #[arg(long)]
+        count: Option<u64>,
+        #[arg(long)]
+        offset: Option<u64>,
+        #[arg(long)]
+        successful: Option<bool>,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get all frBTC unwrap events
+    UnwrapEvents {
+        #[arg(long)]
+        count: Option<u64>,
+        #[arg(long)]
+        offset: Option<u64>,
+        #[arg(long)]
+        successful: Option<bool>,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get frBTC unwrap events for an address
+    UnwrapEventsByAddress {
+        /// Bitcoin address
+        address: String,
+        #[arg(long)]
+        count: Option<u64>,
+        #[arg(long)]
+        offset: Option<u64>,
+        #[arg(long)]
+        successful: Option<bool>,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Look up series ID from an AlkaneId
+    SeriesIdFromAlkane {
+        /// Alkane ID (format: block:tx)
+        alkane_id: String,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Look up series IDs from multiple AlkaneIds
+    SeriesIdsFromAlkanes {
+        /// Alkane IDs (comma-separated, format: block:tx,block:tx)
+        alkane_ids: String,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Look up AlkaneId from a series ID
+    AlkaneFromSeriesId {
+        /// Series ID
+        series_id: String,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Look up AlkaneIds from multiple series IDs
+    AlkanesFromSeriesIds {
+        /// Series IDs (comma-separated)
+        series_ids: String,
+        #[arg(long)]
+        raw: bool,
+    },
 }

@@ -353,6 +353,172 @@ export interface MevSwapResponse {
   hops: SwapHop[];
 }
 
+/** Response from getAmmFactories */
+export interface AmmFactoriesResponse extends PaginatedResponse {
+  factories: any[];
+}
+
+/** Response from getAllAlkanes */
+export interface AllAlkanesResponse extends PaginatedResponse {
+  alkanes: any[];
+}
+
+/** Response from getAlkaneInfo */
+export interface AlkaneInfoResponse {
+  ok: boolean;
+  alkane: string;
+  name: string;
+  symbol: string;
+  [key: string]: any;
+}
+
+/** Response from getBlockSummary */
+export interface BlockSummaryResponse {
+  ok: boolean;
+  height: number;
+  [key: string]: any;
+}
+
+/** Response from getCirculatingSupply */
+export interface CirculatingSupplyResponse {
+  ok: boolean;
+  alkane: string;
+  supply: string;
+  [key: string]: any;
+}
+
+/** Response from getTransferVolume */
+export interface TransferVolumeResponse extends PaginatedResponse {
+  alkane: string;
+  items: any[];
+}
+
+/** Response from getTotalReceived */
+export interface TotalReceivedResponse extends PaginatedResponse {
+  alkane: string;
+  items: any[];
+}
+
+/** Response from getAddressActivity */
+export interface AddressActivityResponse {
+  ok: boolean;
+  address: string;
+  [key: string]: any;
+}
+
+/** Response from getAlkaneBalances (all holders of an alkane) */
+export interface AlkaneAllBalancesResponse {
+  ok: boolean;
+  alkane: string;
+  balances: Record<string, string>;
+}
+
+/** Response from getAlkaneBalanceMetashrew */
+export interface AlkaneBalanceMetashrewResponse {
+  ok: boolean;
+  [key: string]: any;
+}
+
+/** Response from getAlkaneBalanceTxs */
+export interface AlkaneBalanceTxsResponse extends PaginatedResponse {
+  alkane: string;
+  items: any[];
+}
+
+/** Response from getAlkaneBalanceTxsByToken */
+export interface AlkaneBalanceTxsByTokenResponse extends PaginatedResponse {
+  owner: string;
+  token: string;
+  items: any[];
+}
+
+/** Response from getBlockTraces */
+export interface BlockTracesResponse {
+  ok: boolean;
+  height: number;
+  traces: any[];
+}
+
+/** Response from getAlkaneTxSummary */
+export interface AlkaneTxSummaryResponse {
+  ok: boolean;
+  txid: string;
+  [key: string]: any;
+}
+
+/** Response from getAlkaneBlockTxs */
+export interface AlkaneBlockTxsResponse extends PaginatedResponse {
+  height: number;
+  items: any[];
+}
+
+/** Response from getAlkaneAddressTxs */
+export interface AlkaneAddressTxsResponse extends PaginatedResponse {
+  address: string;
+  items: any[];
+}
+
+/** Response from getAddressTransactions */
+export interface AddressTransactionsResponse extends PaginatedResponse {
+  address: string;
+  items: any[];
+}
+
+/** Response from getAlkaneLatestTraces */
+export interface AlkaneLatestTracesResponse {
+  ok: boolean;
+  traces: any[];
+}
+
+/** Response from getMempoolTraces */
+export interface MempoolTracesResponse extends PaginatedResponse {
+  traces: any[];
+}
+
+/** Wrap event from subfrost module */
+export interface WrapEvent {
+  txid: string;
+  address: string;
+  amount: string;
+  successful: boolean;
+  [key: string]: any;
+}
+
+/** Response from getWrapEvents / getWrapEventsByAddress */
+export interface WrapEventsResponse {
+  ok: boolean;
+  total: number;
+  events: WrapEvent[];
+}
+
+/** Unwrap event from subfrost module */
+export interface UnwrapEvent {
+  txid: string;
+  address: string;
+  amount: string;
+  successful: boolean;
+  [key: string]: any;
+}
+
+/** Response from getUnwrapEvents / getUnwrapEventsByAddress */
+export interface UnwrapEventsResponse {
+  ok: boolean;
+  total: number;
+  events: UnwrapEvent[];
+}
+
+/** Response from pizzafun series ID lookups */
+export interface SeriesIdResponse {
+  ok: boolean;
+  [key: string]: any;
+}
+
+/** Response from pizzafun batch series ID lookups */
+export interface SeriesIdsResponse {
+  ok: boolean;
+  [key: string]: any;
+}
+
 // Execute params for AlkanesRpcClient.execute()
 export interface RpcExecuteParams {
   /** Target contract ID in "block:tx" format */
@@ -1169,6 +1335,220 @@ export class DataApiClient {
   async getBitcoinMarketChart(days: string): Promise<MarketChartResponse> {
     return this.provider.dataApiGetBitcoinMarketChart(days);
   }
+
+  // ============================================================================
+  // NEW WASM-BACKED DATA API METHODS (35 methods)
+  // ============================================================================
+
+  // Pool creation history
+  async getPoolCreationHistory(limit?: number, offset?: number): Promise<any> {
+    const result = await this.provider.dataApiGetPoolCreationHistory(limit, offset);
+    return mapToObject(result);
+  }
+
+  // Pool swap history
+  async getPoolSwapHistory(poolId?: string, limit?: number, offset?: number): Promise<any> {
+    const result = await this.provider.dataApiGetPoolSwapHistory(poolId, limit, offset);
+    return mapToObject(result);
+  }
+
+  // Token swap history
+  async getTokenSwapHistory(alkaneId: string, limit?: number, offset?: number): Promise<any> {
+    const result = await this.provider.dataApiGetTokenSwapHistory(alkaneId, limit, offset);
+    return mapToObject(result);
+  }
+
+  // Pool mint history
+  async getPoolMintHistory(poolId?: string, limit?: number, offset?: number): Promise<any> {
+    const result = await this.provider.dataApiGetPoolMintHistory(poolId, limit, offset);
+    return mapToObject(result);
+  }
+
+  // Pool burn history
+  async getPoolBurnHistory(poolId?: string, limit?: number, offset?: number): Promise<any> {
+    const result = await this.provider.dataApiGetPoolBurnHistory(poolId, limit, offset);
+    return mapToObject(result);
+  }
+
+  // Address swap history for pool
+  async getAddressSwapHistoryForPool(address: string, poolId: string, limit?: number, offset?: number): Promise<any> {
+    const result = await this.provider.dataApiGetAddressSwapHistoryForPool(address, poolId, limit, offset);
+    return mapToObject(result);
+  }
+
+  // Address swap history for token
+  async getAddressSwapHistoryForToken(address: string, alkaneId: string, limit?: number, offset?: number): Promise<any> {
+    const result = await this.provider.dataApiGetAddressSwapHistoryForToken(address, alkaneId, limit, offset);
+    return mapToObject(result);
+  }
+
+  // Address wrap history
+  async getAddressWrapHistory(address: string, limit?: number, offset?: number): Promise<any> {
+    const result = await this.provider.dataApiGetAddressWrapHistory(address, limit, offset);
+    return mapToObject(result);
+  }
+
+  // Address unwrap history
+  async getAddressUnwrapHistory(address: string, limit?: number, offset?: number): Promise<any> {
+    const result = await this.provider.dataApiGetAddressUnwrapHistory(address, limit, offset);
+    return mapToObject(result);
+  }
+
+  // All wrap history
+  async getAllWrapHistory(limit?: number, offset?: number): Promise<any> {
+    const result = await this.provider.dataApiGetAllWrapHistory(limit, offset);
+    return mapToObject(result);
+  }
+
+  // All unwrap history
+  async getAllUnwrapHistory(limit?: number, offset?: number): Promise<any> {
+    const result = await this.provider.dataApiGetAllUnwrapHistory(limit, offset);
+    return mapToObject(result);
+  }
+
+  // Total unwrap amount
+  async getTotalUnwrapAmount(): Promise<any> {
+    const result = await this.provider.dataApiGetTotalUnwrapAmount();
+    return mapToObject(result);
+  }
+
+  // Address pool creation history
+  async getAddressPoolCreationHistory(address: string, limit?: number, offset?: number): Promise<any> {
+    const result = await this.provider.dataApiGetAddressPoolCreationHistory(address, limit, offset);
+    return mapToObject(result);
+  }
+
+  // Address pool mint history
+  async getAddressPoolMintHistory(address: string, limit?: number, offset?: number): Promise<any> {
+    const result = await this.provider.dataApiGetAddressPoolMintHistory(address, limit, offset);
+    return mapToObject(result);
+  }
+
+  // Address pool burn history
+  async getAddressPoolBurnHistory(address: string, limit?: number, offset?: number): Promise<any> {
+    const result = await this.provider.dataApiGetAddressPoolBurnHistory(address, limit, offset);
+    return mapToObject(result);
+  }
+
+  // All address AMM transaction history
+  async getAllAddressAmmTxHistory(address: string, limit?: number, offset?: number): Promise<any> {
+    const result = await this.provider.dataApiGetAllAddressAmmTxHistory(address, limit, offset);
+    return mapToObject(result);
+  }
+
+  // All AMM transaction history
+  async getAllAmmTxHistory(limit?: number, offset?: number): Promise<any> {
+    const result = await this.provider.dataApiGetAllAmmTxHistory(limit, offset);
+    return mapToObject(result);
+  }
+
+  // Address LP positions
+  async getAddressPositions(address: string, factoryId: string): Promise<any> {
+    const result = await this.provider.dataApiGetAddressPositions(address, factoryId);
+    return mapToObject(result);
+  }
+
+  // Token pairs
+  async getTokenPairs(factoryId: string, alkaneId?: string, limit?: number, offset?: number): Promise<any> {
+    const result = await this.provider.dataApiGetTokenPairs(factoryId, alkaneId, limit, offset);
+    return mapToObject(result);
+  }
+
+  // All token pairs
+  async getAllTokenPairs(factoryId: string, limit?: number, offset?: number): Promise<any> {
+    const result = await this.provider.dataApiGetAllTokenPairs(factoryId, limit, offset);
+    return mapToObject(result);
+  }
+
+  // Alkane swap pair details
+  async getAlkaneSwapPairDetails(factoryId: string, tokenAId: string, tokenBId: string): Promise<any> {
+    const result = await this.provider.dataApiGetAlkaneSwapPairDetails(factoryId, tokenAId, tokenBId);
+    return mapToObject(result);
+  }
+
+  // Alkanes UTXOs
+  async getAlkanesUtxo(address: string): Promise<any> {
+    const result = await this.provider.dataApiGetAlkanesUtxo(address);
+    return mapToObject(result);
+  }
+
+  // AMM UTXOs
+  async getAmmUtxos(address: string): Promise<any> {
+    const result = await this.provider.dataApiGetAmmUtxos(address);
+    return mapToObject(result);
+  }
+
+  // Address UTXOs
+  async getAddressUtxos(address: string): Promise<any> {
+    const result = await this.provider.dataApiGetAddressUtxos(address);
+    return mapToObject(result);
+  }
+
+  // Address BTC balance
+  async getAddressBalance(address: string): Promise<any> {
+    const result = await this.provider.dataApiGetAddressBalance(address);
+    return mapToObject(result);
+  }
+
+  // Taproot balance
+  async getTaprootBalance(address: string): Promise<any> {
+    const result = await this.provider.dataApiGetTaprootBalance(address);
+    return mapToObject(result);
+  }
+
+  // Account UTXOs
+  async getAccountUtxos(account: string): Promise<any> {
+    const result = await this.provider.dataApiGetAccountUtxos(account);
+    return mapToObject(result);
+  }
+
+  // Account balance
+  async getAccountBalance(account: string): Promise<any> {
+    const result = await this.provider.dataApiGetAccountBalance(account);
+    return mapToObject(result);
+  }
+
+  // Address outpoints
+  async getAddressOutpoints(address: string): Promise<any> {
+    const result = await this.provider.dataApiGetAddressOutpoints(address);
+    return mapToObject(result);
+  }
+
+  // Global alkanes search
+  async globalAlkanesSearch(query: string, limit?: number, offset?: number): Promise<any> {
+    const result = await this.provider.dataApiGlobalAlkanesSearch(query, limit, offset);
+    return mapToObject(result);
+  }
+
+  // Pathfind swap route
+  async pathfind(tokenIn: string, tokenOut: string, amountIn: string, maxHops?: number): Promise<any> {
+    const result = await this.provider.dataApiPathfind(tokenIn, tokenOut, amountIn, maxHops);
+    return mapToObject(result);
+  }
+
+  // Bitcoin weekly market data
+  async getBitcoinMarketWeekly(): Promise<any> {
+    const result = await this.provider.dataApiGetBitcoinMarketWeekly();
+    return mapToObject(result);
+  }
+
+  // Bitcoin markets data
+  async getBitcoinMarkets(): Promise<any> {
+    const result = await this.provider.dataApiGetBitcoinMarkets();
+    return mapToObject(result);
+  }
+
+  // Taproot history
+  async getTaprootHistory(taprootAddress: string, totalTxs: number): Promise<any> {
+    const result = await this.provider.dataApiGetTaprootHistory(taprootAddress, totalTxs);
+    return mapToObject(result);
+  }
+
+  // Intent history
+  async getIntentHistory(address: string, totalTxs?: number, lastSeenTxId?: string): Promise<any> {
+    const result = await this.provider.dataApiGetIntentHistory(address, totalTxs, lastSeenTxId);
+    return mapToObject(result);
+  }
 }
 
 /**
@@ -1250,6 +1630,11 @@ export class OylApiClient {
   /** Get all pools details with pagination */
   async getAllPoolsDetails(factoryId: string, page?: number, limit?: number): Promise<any> {
     return this.post('get-all-pools-details', { factoryId: this.parseAlkaneId(factoryId), page, limit });
+  }
+
+  /** Get pool creation history */
+  async getPoolCreationHistory(page?: number, limit?: number): Promise<any> {
+    return this.post('get-pool-creation-history', { page, limit });
   }
 
   /** Get AMM UTXOs for address */
@@ -1719,6 +2104,293 @@ export class EspoClient {
       feeBps,
       maxHops
     );
+    return mapToObject(result);
+  }
+
+  /**
+   * Get AMM factories
+   * @param page - Page number
+   * @param limit - Items per page
+   */
+  async getAmmFactories(page?: number, limit?: number): Promise<AmmFactoriesResponse> {
+    const result = await this.provider.espoGetAmmFactories(page, limit);
+    return mapToObject(result);
+  }
+
+  // ============================================================================
+  // ESSENTIALS MODULE (EXTENDED)
+  // ============================================================================
+
+  /**
+   * Get all alkanes with pagination
+   * @param page - Page number
+   * @param limit - Items per page
+   */
+  async getAllAlkanes(page?: number, limit?: number): Promise<AllAlkanesResponse> {
+    const result = await this.provider.espoGetAllAlkanes(page, limit);
+    return mapToObject(result);
+  }
+
+  /**
+   * Get info for a specific alkane
+   * @param alkaneId - Alkane ID in format "block:tx"
+   */
+  async getAlkaneInfo(alkaneId: string): Promise<AlkaneInfoResponse> {
+    const result = await this.provider.espoGetAlkaneInfo(alkaneId);
+    return mapToObject(result);
+  }
+
+  /**
+   * Get block summary
+   * @param height - Block height
+   */
+  async getBlockSummary(height: number): Promise<BlockSummaryResponse> {
+    const result = await this.provider.espoGetBlockSummary(height);
+    return mapToObject(result);
+  }
+
+  /**
+   * Get circulating supply of an alkane
+   * @param alkaneId - Alkane ID in format "block:tx"
+   * @param height - Optional block height for historical query
+   */
+  async getCirculatingSupply(alkaneId: string, height?: number): Promise<CirculatingSupplyResponse> {
+    const result = await this.provider.espoGetCirculatingSupply(alkaneId, height);
+    return mapToObject(result);
+  }
+
+  /**
+   * Get transfer volume for an alkane
+   * @param alkaneId - Alkane ID in format "block:tx"
+   * @param page - Page number
+   * @param limit - Items per page
+   */
+  async getTransferVolume(alkaneId: string, page?: number, limit?: number): Promise<TransferVolumeResponse> {
+    const result = await this.provider.espoGetTransferVolume(alkaneId, page, limit);
+    return mapToObject(result);
+  }
+
+  /**
+   * Get total received for an alkane
+   * @param alkaneId - Alkane ID in format "block:tx"
+   * @param page - Page number
+   * @param limit - Items per page
+   */
+  async getTotalReceived(alkaneId: string, page?: number, limit?: number): Promise<TotalReceivedResponse> {
+    const result = await this.provider.espoGetTotalReceived(alkaneId, page, limit);
+    return mapToObject(result);
+  }
+
+  /**
+   * Get activity for an address
+   * @param address - Bitcoin address
+   */
+  async getAddressActivity(address: string): Promise<AddressActivityResponse> {
+    const result = await this.provider.espoGetAddressActivity(address);
+    return mapToObject(result);
+  }
+
+  /**
+   * Get all balances for an alkane (all holders)
+   * @param alkaneId - Alkane ID in format "block:tx"
+   */
+  async getAlkaneBalances(alkaneId: string): Promise<AlkaneAllBalancesResponse> {
+    const result = await this.provider.espoGetAlkaneBalances(alkaneId);
+    return mapToObject(result);
+  }
+
+  /**
+   * Get alkane balance via metashrew
+   * @param owner - Owner alkane ID in format "block:tx"
+   * @param target - Target alkane ID in format "block:tx"
+   * @param height - Optional block height
+   */
+  async getAlkaneBalanceMetashrew(owner: string, target: string, height?: number): Promise<AlkaneBalanceMetashrewResponse> {
+    const result = await this.provider.espoGetAlkaneBalanceMetashrew(owner, target, height);
+    return mapToObject(result);
+  }
+
+  /**
+   * Get alkane balance transactions
+   * @param alkaneId - Alkane ID in format "block:tx"
+   * @param page - Page number
+   * @param limit - Items per page
+   */
+  async getAlkaneBalanceTxs(alkaneId: string, page?: number, limit?: number): Promise<AlkaneBalanceTxsResponse> {
+    const result = await this.provider.espoGetAlkaneBalanceTxs(alkaneId, page, limit);
+    return mapToObject(result);
+  }
+
+  /**
+   * Get alkane balance transactions by token
+   * @param owner - Owner address or ID
+   * @param token - Token alkane ID in format "block:tx"
+   * @param page - Page number
+   * @param limit - Items per page
+   */
+  async getAlkaneBalanceTxsByToken(owner: string, token: string, page?: number, limit?: number): Promise<AlkaneBalanceTxsByTokenResponse> {
+    const result = await this.provider.espoGetAlkaneBalanceTxsByToken(owner, token, page, limit);
+    return mapToObject(result);
+  }
+
+  /**
+   * Get block traces
+   * @param height - Block height
+   */
+  async getBlockTraces(height: number): Promise<BlockTracesResponse> {
+    const result = await this.provider.espoGetBlockTraces(height);
+    return mapToObject(result);
+  }
+
+  /**
+   * Get alkane transaction summary
+   * @param txid - Transaction ID
+   */
+  async getAlkaneTxSummary(txid: string): Promise<AlkaneTxSummaryResponse> {
+    const result = await this.provider.espoGetAlkaneTxSummary(txid);
+    return mapToObject(result);
+  }
+
+  /**
+   * Get alkane transactions in a block
+   * @param height - Block height
+   * @param page - Page number
+   * @param limit - Items per page
+   */
+  async getAlkaneBlockTxs(height: number, page?: number, limit?: number): Promise<AlkaneBlockTxsResponse> {
+    const result = await this.provider.espoGetAlkaneBlockTxs(height, page, limit);
+    return mapToObject(result);
+  }
+
+  /**
+   * Get alkane transactions for an address
+   * @param address - Bitcoin address
+   * @param page - Page number
+   * @param limit - Items per page
+   */
+  async getAlkaneAddressTxs(address: string, page?: number, limit?: number): Promise<AlkaneAddressTxsResponse> {
+    const result = await this.provider.espoGetAlkaneAddressTxs(address, page, limit);
+    return mapToObject(result);
+  }
+
+  /**
+   * Get all transactions for an address (optionally filtered to alkane txs only)
+   * @param address - Bitcoin address
+   * @param page - Page number
+   * @param limit - Items per page
+   * @param onlyAlkaneTxs - Only return alkane transactions
+   */
+  async getAddressTransactions(address: string, page?: number, limit?: number, onlyAlkaneTxs?: boolean): Promise<AddressTransactionsResponse> {
+    const result = await this.provider.espoGetAddressTransactions(address, page, limit, onlyAlkaneTxs);
+    return mapToObject(result);
+  }
+
+  /**
+   * Get latest alkane traces
+   */
+  async getAlkaneLatestTraces(): Promise<AlkaneLatestTracesResponse> {
+    const result = await this.provider.espoGetAlkaneLatestTraces();
+    return mapToObject(result);
+  }
+
+  /**
+   * Get mempool traces
+   * @param page - Page number
+   * @param limit - Items per page
+   * @param address - Optional address filter
+   */
+  async getMempoolTraces(page?: number, limit?: number, address?: string): Promise<MempoolTracesResponse> {
+    const result = await this.provider.espoGetMempoolTraces(page, limit, address);
+    return mapToObject(result);
+  }
+
+  // ============================================================================
+  // SUBFROST MODULE
+  // ============================================================================
+
+  /**
+   * Get all wrap events
+   * @param count - Number of events to return
+   * @param offset - Offset for pagination
+   * @param successful - Filter by success status
+   */
+  async getWrapEvents(count?: number, offset?: number, successful?: boolean): Promise<WrapEventsResponse> {
+    const result = await this.provider.espoGetWrapEvents(count, offset, successful);
+    return mapToObject(result);
+  }
+
+  /**
+   * Get wrap events for a specific address
+   * @param address - Bitcoin address
+   * @param count - Number of events to return
+   * @param offset - Offset for pagination
+   * @param successful - Filter by success status
+   */
+  async getWrapEventsByAddress(address: string, count?: number, offset?: number, successful?: boolean): Promise<WrapEventsResponse> {
+    const result = await this.provider.espoGetWrapEventsByAddress(address, count, offset, successful);
+    return mapToObject(result);
+  }
+
+  /**
+   * Get all unwrap events
+   * @param count - Number of events to return
+   * @param offset - Offset for pagination
+   * @param successful - Filter by success status
+   */
+  async getUnwrapEvents(count?: number, offset?: number, successful?: boolean): Promise<UnwrapEventsResponse> {
+    const result = await this.provider.espoGetUnwrapEvents(count, offset, successful);
+    return mapToObject(result);
+  }
+
+  /**
+   * Get unwrap events for a specific address
+   * @param address - Bitcoin address
+   * @param count - Number of events to return
+   * @param offset - Offset for pagination
+   * @param successful - Filter by success status
+   */
+  async getUnwrapEventsByAddress(address: string, count?: number, offset?: number, successful?: boolean): Promise<UnwrapEventsResponse> {
+    const result = await this.provider.espoGetUnwrapEventsByAddress(address, count, offset, successful);
+    return mapToObject(result);
+  }
+
+  // ============================================================================
+  // PIZZAFUN MODULE
+  // ============================================================================
+
+  /**
+   * Get series ID from alkane ID
+   * @param alkaneId - Alkane ID in format "block:tx"
+   */
+  async getSeriesIdFromAlkaneId(alkaneId: string): Promise<SeriesIdResponse> {
+    const result = await this.provider.espoGetSeriesIdFromAlkaneId(alkaneId);
+    return mapToObject(result);
+  }
+
+  /**
+   * Get series IDs from multiple alkane IDs
+   * @param alkaneIds - Array of alkane IDs in format "block:tx"
+   */
+  async getSeriesIdsFromAlkaneIds(alkaneIds: string[]): Promise<SeriesIdsResponse> {
+    const result = await this.provider.espoGetSeriesIdsFromAlkaneIds(alkaneIds);
+    return mapToObject(result);
+  }
+
+  /**
+   * Get alkane ID from series ID
+   * @param seriesId - Series ID
+   */
+  async getAlkaneIdFromSeriesId(seriesId: string): Promise<SeriesIdResponse> {
+    const result = await this.provider.espoGetAlkaneIdFromSeriesId(seriesId);
+    return mapToObject(result);
+  }
+
+  /**
+   * Get alkane IDs from multiple series IDs
+   * @param seriesIds - Array of series IDs
+   */
+  async getAlkaneIdsFromSeriesIds(seriesIds: string[]): Promise<SeriesIdsResponse> {
+    const result = await this.provider.espoGetAlkaneIdsFromSeriesIds(seriesIds);
     return mapToObject(result);
   }
 }

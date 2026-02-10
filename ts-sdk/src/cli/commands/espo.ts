@@ -430,4 +430,783 @@ export function registerEspoCommands(program: Command): void {
         process.exit(1);
       }
     });
+
+  // amm-factories
+  espo
+    .command('amm-factories')
+    .description('Get AMM factories')
+    .option('--page <page>', 'Page number')
+    .option('--limit <limit>', 'Limit results')
+    .action(async (options, command) => {
+      try {
+        const globalOpts = command.parent?.parent?.opts() || {};
+        const spinner = ora('Getting AMM factories...').start();
+
+        const provider = await createProvider({
+          network: globalOpts.provider,
+        });
+
+        const result = await provider.espo.getAmmFactories(
+          options.page ? parseInt(options.page, 10) : undefined,
+          options.limit ? parseInt(options.limit, 10) : undefined
+        );
+
+        spinner.succeed();
+        console.log(formatOutput(result, globalOpts));
+      } catch (err: any) {
+        error(`Failed to get AMM factories: ${err.message}`);
+        process.exit(1);
+      }
+    });
+
+  // all-alkanes
+  espo
+    .command('all-alkanes')
+    .description('Get all alkanes with pagination')
+    .option('--page <page>', 'Page number')
+    .option('--limit <limit>', 'Limit results')
+    .action(async (options, command) => {
+      try {
+        const globalOpts = command.parent?.parent?.opts() || {};
+        const spinner = ora('Getting all alkanes...').start();
+
+        const provider = await createProvider({
+          network: globalOpts.provider,
+        });
+
+        const result = await provider.espo.getAllAlkanes(
+          options.page ? parseInt(options.page, 10) : undefined,
+          options.limit ? parseInt(options.limit, 10) : undefined
+        );
+
+        spinner.succeed();
+        console.log(formatOutput(result, globalOpts));
+      } catch (err: any) {
+        error(`Failed to get all alkanes: ${err.message}`);
+        process.exit(1);
+      }
+    });
+
+  // alkane-info
+  espo
+    .command('alkane-info <alkane-id>')
+    .description('Get info for a specific alkane')
+    .action(async (alkaneId, options, command) => {
+      try {
+        const globalOpts = command.parent?.parent?.opts() || {};
+        const spinner = ora('Getting alkane info...').start();
+
+        const provider = await createProvider({
+          network: globalOpts.provider,
+        });
+
+        const result = await provider.espo.getAlkaneInfo(alkaneId);
+
+        spinner.succeed();
+        console.log(formatOutput(result, globalOpts));
+      } catch (err: any) {
+        error(`Failed to get alkane info: ${err.message}`);
+        process.exit(1);
+      }
+    });
+
+  // block-summary
+  espo
+    .command('block-summary <height>')
+    .description('Get block summary')
+    .action(async (height, options, command) => {
+      try {
+        const globalOpts = command.parent?.parent?.opts() || {};
+        const spinner = ora('Getting block summary...').start();
+
+        const provider = await createProvider({
+          network: globalOpts.provider,
+        });
+
+        const result = await provider.espo.getBlockSummary(parseInt(height, 10));
+
+        spinner.succeed();
+        console.log(formatOutput(result, globalOpts));
+      } catch (err: any) {
+        error(`Failed to get block summary: ${err.message}`);
+        process.exit(1);
+      }
+    });
+
+  // circulating-supply
+  espo
+    .command('circulating-supply <alkane-id>')
+    .description('Get circulating supply of an alkane')
+    .option('--height <height>', 'Block height for historical query')
+    .action(async (alkaneId, options, command) => {
+      try {
+        const globalOpts = command.parent?.parent?.opts() || {};
+        const spinner = ora('Getting circulating supply...').start();
+
+        const provider = await createProvider({
+          network: globalOpts.provider,
+        });
+
+        const result = await provider.espo.getCirculatingSupply(
+          alkaneId,
+          options.height ? parseInt(options.height, 10) : undefined
+        );
+
+        spinner.succeed();
+        console.log(formatOutput(result, globalOpts));
+      } catch (err: any) {
+        error(`Failed to get circulating supply: ${err.message}`);
+        process.exit(1);
+      }
+    });
+
+  // transfer-volume
+  espo
+    .command('transfer-volume <alkane-id>')
+    .description('Get transfer volume for an alkane')
+    .option('--page <page>', 'Page number')
+    .option('--limit <limit>', 'Limit results')
+    .action(async (alkaneId, options, command) => {
+      try {
+        const globalOpts = command.parent?.parent?.opts() || {};
+        const spinner = ora('Getting transfer volume...').start();
+
+        const provider = await createProvider({
+          network: globalOpts.provider,
+        });
+
+        const result = await provider.espo.getTransferVolume(
+          alkaneId,
+          options.page ? parseInt(options.page, 10) : undefined,
+          options.limit ? parseInt(options.limit, 10) : undefined
+        );
+
+        spinner.succeed();
+        console.log(formatOutput(result, globalOpts));
+      } catch (err: any) {
+        error(`Failed to get transfer volume: ${err.message}`);
+        process.exit(1);
+      }
+    });
+
+  // total-received
+  espo
+    .command('total-received <alkane-id>')
+    .description('Get total received for an alkane')
+    .option('--page <page>', 'Page number')
+    .option('--limit <limit>', 'Limit results')
+    .action(async (alkaneId, options, command) => {
+      try {
+        const globalOpts = command.parent?.parent?.opts() || {};
+        const spinner = ora('Getting total received...').start();
+
+        const provider = await createProvider({
+          network: globalOpts.provider,
+        });
+
+        const result = await provider.espo.getTotalReceived(
+          alkaneId,
+          options.page ? parseInt(options.page, 10) : undefined,
+          options.limit ? parseInt(options.limit, 10) : undefined
+        );
+
+        spinner.succeed();
+        console.log(formatOutput(result, globalOpts));
+      } catch (err: any) {
+        error(`Failed to get total received: ${err.message}`);
+        process.exit(1);
+      }
+    });
+
+  // address-activity
+  espo
+    .command('address-activity <address>')
+    .description('Get activity for an address')
+    .action(async (address, options, command) => {
+      try {
+        const globalOpts = command.parent?.parent?.opts() || {};
+        const spinner = ora('Getting address activity...').start();
+
+        const provider = await createProvider({
+          network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
+        });
+
+        const resolvedAddress = await resolveAddressWithProvider(address, provider, {
+          walletFile: globalOpts.walletFile,
+          passphrase: globalOpts.passphrase,
+          network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
+        });
+
+        const result = await provider.espo.getAddressActivity(resolvedAddress);
+
+        spinner.succeed();
+        if (address !== resolvedAddress) {
+          info(`Address: ${resolvedAddress} (resolved from ${address})`);
+        }
+        console.log(formatOutput(result, globalOpts));
+      } catch (err: any) {
+        error(`Failed to get address activity: ${err.message}`);
+        process.exit(1);
+      }
+    });
+
+  // alkane-balances (all holders of an alkane)
+  espo
+    .command('alkane-balances <alkane-id>')
+    .description('Get all balances for an alkane (all holders)')
+    .action(async (alkaneId, options, command) => {
+      try {
+        const globalOpts = command.parent?.parent?.opts() || {};
+        const spinner = ora('Getting alkane balances...').start();
+
+        const provider = await createProvider({
+          network: globalOpts.provider,
+        });
+
+        const result = await provider.espo.getAlkaneBalances(alkaneId);
+
+        spinner.succeed();
+        console.log(formatOutput(result, globalOpts));
+      } catch (err: any) {
+        error(`Failed to get alkane balances: ${err.message}`);
+        process.exit(1);
+      }
+    });
+
+  // alkane-balance-metashrew
+  espo
+    .command('alkane-balance-metashrew <owner> <target>')
+    .description('Get alkane balance via metashrew (owner and target are AlkaneIds)')
+    .option('--height <height>', 'Block height')
+    .action(async (owner, target, options, command) => {
+      try {
+        const globalOpts = command.parent?.parent?.opts() || {};
+        const spinner = ora('Getting alkane balance metashrew...').start();
+
+        const provider = await createProvider({
+          network: globalOpts.provider,
+        });
+
+        const result = await provider.espo.getAlkaneBalanceMetashrew(
+          owner,
+          target,
+          options.height ? parseInt(options.height, 10) : undefined
+        );
+
+        spinner.succeed();
+        console.log(formatOutput(result, globalOpts));
+      } catch (err: any) {
+        error(`Failed to get alkane balance metashrew: ${err.message}`);
+        process.exit(1);
+      }
+    });
+
+  // alkane-balance-txs
+  espo
+    .command('alkane-balance-txs <alkane-id>')
+    .description('Get alkane balance transactions')
+    .option('--page <page>', 'Page number')
+    .option('--limit <limit>', 'Limit results')
+    .action(async (alkaneId, options, command) => {
+      try {
+        const globalOpts = command.parent?.parent?.opts() || {};
+        const spinner = ora('Getting alkane balance txs...').start();
+
+        const provider = await createProvider({
+          network: globalOpts.provider,
+        });
+
+        const result = await provider.espo.getAlkaneBalanceTxs(
+          alkaneId,
+          options.page ? parseInt(options.page, 10) : undefined,
+          options.limit ? parseInt(options.limit, 10) : undefined
+        );
+
+        spinner.succeed();
+        console.log(formatOutput(result, globalOpts));
+      } catch (err: any) {
+        error(`Failed to get alkane balance txs: ${err.message}`);
+        process.exit(1);
+      }
+    });
+
+  // alkane-balance-txs-by-token
+  espo
+    .command('alkane-balance-txs-by-token <owner> <token>')
+    .description('Get alkane balance transactions by token')
+    .option('--page <page>', 'Page number')
+    .option('--limit <limit>', 'Limit results')
+    .action(async (owner, token, options, command) => {
+      try {
+        const globalOpts = command.parent?.parent?.opts() || {};
+        const spinner = ora('Getting alkane balance txs by token...').start();
+
+        const provider = await createProvider({
+          network: globalOpts.provider,
+        });
+
+        const result = await provider.espo.getAlkaneBalanceTxsByToken(
+          owner,
+          token,
+          options.page ? parseInt(options.page, 10) : undefined,
+          options.limit ? parseInt(options.limit, 10) : undefined
+        );
+
+        spinner.succeed();
+        console.log(formatOutput(result, globalOpts));
+      } catch (err: any) {
+        error(`Failed to get alkane balance txs by token: ${err.message}`);
+        process.exit(1);
+      }
+    });
+
+  // block-traces
+  espo
+    .command('block-traces <height>')
+    .description('Get traces for a block')
+    .action(async (height, options, command) => {
+      try {
+        const globalOpts = command.parent?.parent?.opts() || {};
+        const spinner = ora('Getting block traces...').start();
+
+        const provider = await createProvider({
+          network: globalOpts.provider,
+        });
+
+        const result = await provider.espo.getBlockTraces(parseInt(height, 10));
+
+        spinner.succeed();
+        console.log(formatOutput(result, globalOpts));
+      } catch (err: any) {
+        error(`Failed to get block traces: ${err.message}`);
+        process.exit(1);
+      }
+    });
+
+  // tx-summary
+  espo
+    .command('tx-summary <txid>')
+    .description('Get alkane transaction summary')
+    .action(async (txid, options, command) => {
+      try {
+        const globalOpts = command.parent?.parent?.opts() || {};
+        const spinner = ora('Getting tx summary...').start();
+
+        const provider = await createProvider({
+          network: globalOpts.provider,
+        });
+
+        const result = await provider.espo.getAlkaneTxSummary(txid);
+
+        spinner.succeed();
+        console.log(formatOutput(result, globalOpts));
+      } catch (err: any) {
+        error(`Failed to get tx summary: ${err.message}`);
+        process.exit(1);
+      }
+    });
+
+  // block-txs
+  espo
+    .command('block-txs <height>')
+    .description('Get alkane transactions in a block')
+    .option('--page <page>', 'Page number')
+    .option('--limit <limit>', 'Limit results')
+    .action(async (height, options, command) => {
+      try {
+        const globalOpts = command.parent?.parent?.opts() || {};
+        const spinner = ora('Getting block txs...').start();
+
+        const provider = await createProvider({
+          network: globalOpts.provider,
+        });
+
+        const result = await provider.espo.getAlkaneBlockTxs(
+          parseInt(height, 10),
+          options.page ? parseInt(options.page, 10) : undefined,
+          options.limit ? parseInt(options.limit, 10) : undefined
+        );
+
+        spinner.succeed();
+        console.log(formatOutput(result, globalOpts));
+      } catch (err: any) {
+        error(`Failed to get block txs: ${err.message}`);
+        process.exit(1);
+      }
+    });
+
+  // address-txs
+  espo
+    .command('address-txs <address>')
+    .description('Get alkane transactions for an address')
+    .option('--page <page>', 'Page number')
+    .option('--limit <limit>', 'Limit results')
+    .action(async (address, options, command) => {
+      try {
+        const globalOpts = command.parent?.parent?.opts() || {};
+        const spinner = ora('Getting address txs...').start();
+
+        const provider = await createProvider({
+          network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
+        });
+
+        const resolvedAddress = await resolveAddressWithProvider(address, provider, {
+          walletFile: globalOpts.walletFile,
+          passphrase: globalOpts.passphrase,
+          network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
+        });
+
+        const result = await provider.espo.getAlkaneAddressTxs(
+          resolvedAddress,
+          options.page ? parseInt(options.page, 10) : undefined,
+          options.limit ? parseInt(options.limit, 10) : undefined
+        );
+
+        spinner.succeed();
+        if (address !== resolvedAddress) {
+          info(`Address: ${resolvedAddress} (resolved from ${address})`);
+        }
+        console.log(formatOutput(result, globalOpts));
+      } catch (err: any) {
+        error(`Failed to get address txs: ${err.message}`);
+        process.exit(1);
+      }
+    });
+
+  // address-transactions
+  espo
+    .command('address-transactions <address>')
+    .description('Get all transactions for an address')
+    .option('--page <page>', 'Page number')
+    .option('--limit <limit>', 'Limit results')
+    .option('--only-alkane-txs', 'Only return alkane transactions', false)
+    .action(async (address, options, command) => {
+      try {
+        const globalOpts = command.parent?.parent?.opts() || {};
+        const spinner = ora('Getting address transactions...').start();
+
+        const provider = await createProvider({
+          network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
+        });
+
+        const resolvedAddress = await resolveAddressWithProvider(address, provider, {
+          walletFile: globalOpts.walletFile,
+          passphrase: globalOpts.passphrase,
+          network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
+        });
+
+        const result = await provider.espo.getAddressTransactions(
+          resolvedAddress,
+          options.page ? parseInt(options.page, 10) : undefined,
+          options.limit ? parseInt(options.limit, 10) : undefined,
+          options.onlyAlkaneTxs || undefined
+        );
+
+        spinner.succeed();
+        if (address !== resolvedAddress) {
+          info(`Address: ${resolvedAddress} (resolved from ${address})`);
+        }
+        console.log(formatOutput(result, globalOpts));
+      } catch (err: any) {
+        error(`Failed to get address transactions: ${err.message}`);
+        process.exit(1);
+      }
+    });
+
+  // latest-traces
+  espo
+    .command('latest-traces')
+    .description('Get latest alkane traces')
+    .action(async (options, command) => {
+      try {
+        const globalOpts = command.parent?.parent?.opts() || {};
+        const spinner = ora('Getting latest traces...').start();
+
+        const provider = await createProvider({
+          network: globalOpts.provider,
+        });
+
+        const result = await provider.espo.getAlkaneLatestTraces();
+
+        spinner.succeed();
+        console.log(formatOutput(result, globalOpts));
+      } catch (err: any) {
+        error(`Failed to get latest traces: ${err.message}`);
+        process.exit(1);
+      }
+    });
+
+  // mempool-traces
+  espo
+    .command('mempool-traces')
+    .description('Get mempool traces')
+    .option('--page <page>', 'Page number')
+    .option('--limit <limit>', 'Limit results')
+    .option('--address <address>', 'Filter by address')
+    .action(async (options, command) => {
+      try {
+        const globalOpts = command.parent?.parent?.opts() || {};
+        const spinner = ora('Getting mempool traces...').start();
+
+        const provider = await createProvider({
+          network: globalOpts.provider,
+        });
+
+        const result = await provider.espo.getMempoolTraces(
+          options.page ? parseInt(options.page, 10) : undefined,
+          options.limit ? parseInt(options.limit, 10) : undefined,
+          options.address
+        );
+
+        spinner.succeed();
+        console.log(formatOutput(result, globalOpts));
+      } catch (err: any) {
+        error(`Failed to get mempool traces: ${err.message}`);
+        process.exit(1);
+      }
+    });
+
+  // wrap-events
+  espo
+    .command('wrap-events')
+    .description('Get all wrap events')
+    .option('--count <count>', 'Number of events')
+    .option('--offset <offset>', 'Offset for pagination')
+    .option('--successful', 'Filter by success status')
+    .action(async (options, command) => {
+      try {
+        const globalOpts = command.parent?.parent?.opts() || {};
+        const spinner = ora('Getting wrap events...').start();
+
+        const provider = await createProvider({
+          network: globalOpts.provider,
+        });
+
+        const result = await provider.espo.getWrapEvents(
+          options.count ? parseInt(options.count, 10) : undefined,
+          options.offset ? parseInt(options.offset, 10) : undefined,
+          options.successful !== undefined ? true : undefined
+        );
+
+        spinner.succeed();
+        console.log(formatOutput(result, globalOpts));
+      } catch (err: any) {
+        error(`Failed to get wrap events: ${err.message}`);
+        process.exit(1);
+      }
+    });
+
+  // wrap-events-by-address
+  espo
+    .command('wrap-events-by-address <address>')
+    .description('Get wrap events for an address')
+    .option('--count <count>', 'Number of events')
+    .option('--offset <offset>', 'Offset for pagination')
+    .option('--successful', 'Filter by success status')
+    .action(async (address, options, command) => {
+      try {
+        const globalOpts = command.parent?.parent?.opts() || {};
+        const spinner = ora('Getting wrap events...').start();
+
+        const provider = await createProvider({
+          network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
+        });
+
+        const resolvedAddress = await resolveAddressWithProvider(address, provider, {
+          walletFile: globalOpts.walletFile,
+          passphrase: globalOpts.passphrase,
+          network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
+        });
+
+        const result = await provider.espo.getWrapEventsByAddress(
+          resolvedAddress,
+          options.count ? parseInt(options.count, 10) : undefined,
+          options.offset ? parseInt(options.offset, 10) : undefined,
+          options.successful !== undefined ? true : undefined
+        );
+
+        spinner.succeed();
+        if (address !== resolvedAddress) {
+          info(`Address: ${resolvedAddress} (resolved from ${address})`);
+        }
+        console.log(formatOutput(result, globalOpts));
+      } catch (err: any) {
+        error(`Failed to get wrap events: ${err.message}`);
+        process.exit(1);
+      }
+    });
+
+  // unwrap-events
+  espo
+    .command('unwrap-events')
+    .description('Get all unwrap events')
+    .option('--count <count>', 'Number of events')
+    .option('--offset <offset>', 'Offset for pagination')
+    .option('--successful', 'Filter by success status')
+    .action(async (options, command) => {
+      try {
+        const globalOpts = command.parent?.parent?.opts() || {};
+        const spinner = ora('Getting unwrap events...').start();
+
+        const provider = await createProvider({
+          network: globalOpts.provider,
+        });
+
+        const result = await provider.espo.getUnwrapEvents(
+          options.count ? parseInt(options.count, 10) : undefined,
+          options.offset ? parseInt(options.offset, 10) : undefined,
+          options.successful !== undefined ? true : undefined
+        );
+
+        spinner.succeed();
+        console.log(formatOutput(result, globalOpts));
+      } catch (err: any) {
+        error(`Failed to get unwrap events: ${err.message}`);
+        process.exit(1);
+      }
+    });
+
+  // unwrap-events-by-address
+  espo
+    .command('unwrap-events-by-address <address>')
+    .description('Get unwrap events for an address')
+    .option('--count <count>', 'Number of events')
+    .option('--offset <offset>', 'Offset for pagination')
+    .option('--successful', 'Filter by success status')
+    .action(async (address, options, command) => {
+      try {
+        const globalOpts = command.parent?.parent?.opts() || {};
+        const spinner = ora('Getting unwrap events...').start();
+
+        const provider = await createProvider({
+          network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
+        });
+
+        const resolvedAddress = await resolveAddressWithProvider(address, provider, {
+          walletFile: globalOpts.walletFile,
+          passphrase: globalOpts.passphrase,
+          network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
+        });
+
+        const result = await provider.espo.getUnwrapEventsByAddress(
+          resolvedAddress,
+          options.count ? parseInt(options.count, 10) : undefined,
+          options.offset ? parseInt(options.offset, 10) : undefined,
+          options.successful !== undefined ? true : undefined
+        );
+
+        spinner.succeed();
+        if (address !== resolvedAddress) {
+          info(`Address: ${resolvedAddress} (resolved from ${address})`);
+        }
+        console.log(formatOutput(result, globalOpts));
+      } catch (err: any) {
+        error(`Failed to get unwrap events: ${err.message}`);
+        process.exit(1);
+      }
+    });
+
+  // series-id-from-alkane
+  espo
+    .command('series-id-from-alkane <alkane-id>')
+    .description('Get series ID from alkane ID (pizzafun)')
+    .action(async (alkaneId, options, command) => {
+      try {
+        const globalOpts = command.parent?.parent?.opts() || {};
+        const spinner = ora('Getting series ID...').start();
+
+        const provider = await createProvider({
+          network: globalOpts.provider,
+        });
+
+        const result = await provider.espo.getSeriesIdFromAlkaneId(alkaneId);
+
+        spinner.succeed();
+        console.log(formatOutput(result, globalOpts));
+      } catch (err: any) {
+        error(`Failed to get series ID: ${err.message}`);
+        process.exit(1);
+      }
+    });
+
+  // series-ids-from-alkanes
+  espo
+    .command('series-ids-from-alkanes <alkane-ids>')
+    .description('Get series IDs from comma-separated alkane IDs (pizzafun)')
+    .action(async (alkaneIds, options, command) => {
+      try {
+        const globalOpts = command.parent?.parent?.opts() || {};
+        const spinner = ora('Getting series IDs...').start();
+
+        const provider = await createProvider({
+          network: globalOpts.provider,
+        });
+
+        const ids = alkaneIds.split(',').map((s: string) => s.trim());
+        const result = await provider.espo.getSeriesIdsFromAlkaneIds(ids);
+
+        spinner.succeed();
+        console.log(formatOutput(result, globalOpts));
+      } catch (err: any) {
+        error(`Failed to get series IDs: ${err.message}`);
+        process.exit(1);
+      }
+    });
+
+  // alkane-from-series-id
+  espo
+    .command('alkane-from-series-id <series-id>')
+    .description('Get alkane ID from series ID (pizzafun)')
+    .action(async (seriesId, options, command) => {
+      try {
+        const globalOpts = command.parent?.parent?.opts() || {};
+        const spinner = ora('Getting alkane ID...').start();
+
+        const provider = await createProvider({
+          network: globalOpts.provider,
+        });
+
+        const result = await provider.espo.getAlkaneIdFromSeriesId(seriesId);
+
+        spinner.succeed();
+        console.log(formatOutput(result, globalOpts));
+      } catch (err: any) {
+        error(`Failed to get alkane ID: ${err.message}`);
+        process.exit(1);
+      }
+    });
+
+  // alkanes-from-series-ids
+  espo
+    .command('alkanes-from-series-ids <series-ids>')
+    .description('Get alkane IDs from comma-separated series IDs (pizzafun)')
+    .action(async (seriesIds, options, command) => {
+      try {
+        const globalOpts = command.parent?.parent?.opts() || {};
+        const spinner = ora('Getting alkane IDs...').start();
+
+        const provider = await createProvider({
+          network: globalOpts.provider,
+        });
+
+        const ids = seriesIds.split(',').map((s: string) => s.trim());
+        const result = await provider.espo.getAlkaneIdsFromSeriesIds(ids);
+
+        spinner.succeed();
+        console.log(formatOutput(result, globalOpts));
+      } catch (err: any) {
+        error(`Failed to get alkane IDs: ${err.message}`);
+        process.exit(1);
+      }
+    });
 }
