@@ -452,6 +452,21 @@ impl NetworkParams {
     pub fn from_network_str(network: &str) -> Result<Self, AlkanesError> {
         match network {
             "regtest" => Ok(Self::regtest()),
+            // "bitcoin" is the Display output of bitcoin::Network::Bitcoin,
+            // so accept it as an alias for "mainnet"
+            "bitcoin" => Ok(Self {
+                network: Network::Bitcoin,
+                magic: [0xf9, 0xbe, 0xb4, 0xd9],
+                default_port: 8333,
+                rpc_port: 8332,
+                bech32_hrp: "bc".to_string(),
+                bech32_prefix: "bc".to_string(),
+                p2pkh_prefix: 0x00,
+                p2sh_prefix: 0x05,
+                bitcoin_rpc_url: None,
+                metashrew_rpc_url: None,
+                esplora_url: None,
+            }),
             "subfrost-regtest" => Ok(Self {
                 network: Network::Regtest,
                 magic: [0xfa, 0xbf, 0xb5, 0xda],
