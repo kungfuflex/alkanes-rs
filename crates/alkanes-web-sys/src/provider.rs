@@ -2,6 +2,7 @@
 //!
 //! **Date:** 2025-08-08
 //! **Objective:** Refactor the `WebProvider` to correctly fetch enriched UTXO data, specifically for Protorunes.
+//! **2026-02-10:** Fixed network_params() calling from_network_str with "bitcoin" instead of "mainnet" (see alkanes-cli-common/network.rs)
 //!
 //! **Initial State & Problem:**
 //! The initial implementation incorrectly used a generic JSON-RPC abstraction for what should have been
