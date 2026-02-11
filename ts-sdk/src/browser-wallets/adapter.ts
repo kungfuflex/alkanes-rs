@@ -184,6 +184,15 @@ export class BaseWalletAdapter implements JsWalletAdapter {
   }
 
   async signPsbt(psbtHex: string, options?: PsbtSigningOptionsForWasm): Promise<string> {
+    // Patch tapInternalKey on P2TR inputs to the connected wallet's actual public key.
+    // The SDK's WASM builds PSBTs using a dummy wallet (walletCreate()), so all
+    // tap_internal_key fields contain the dummy wallet's key. Browser wallets like
+    // UniSat auto-detect signable inputs by deriving a P2TR address from tapInternalKey —
+    // if it doesn't match the connected account, all inputs are silently skipped,
+    // causing an infinite loading spinner. This patching ensures the wallet can match
+    // its own key to the PSBT inputs.
+    const patchedHex = this.patchTapInternalKey(psbtHex);
+
     const signingOptions: PsbtSigningOptions | undefined = options
       ? {
           autoFinalized: options.auto_finalized,
@@ -196,7 +205,7 @@ export class BaseWalletAdapter implements JsWalletAdapter {
         }
       : undefined;
 
-    return this.wallet.signPsbt(psbtHex, signingOptions);
+    return this.wallet.signPsbt(patchedHex, signingOptions);
   }
 
   async signPsbts(psbtHexs: string[], options?: PsbtSigningOptionsForWasm): Promise<string[]> {
@@ -242,6 +251,48 @@ export class BaseWalletAdapter implements JsWalletAdapter {
   async getInscriptions(cursor?: number, size?: number): Promise<any> {
     // Not available from base wallet API
     return { list: [], total: 0 };
+  }
+
+  /**
+   * Patch tapInternalKey on P2TR inputs to the connected wallet's actual x-only public key.
+   *
+   * When the SDK's WASM builds a PSBT, it sets tap_internal_key from the dummy wallet's
+   * keypair (see execute.rs). Browser wallets use tapInternalKey to identify which inputs
+   * belong to the connected account — a mismatch causes the wallet to skip all inputs:
+   *   - UniSat: infinite loading spinner (silently skips unmatched inputs)
+   *   - Xverse: "No taproot scripts signed" error
+   *
+   * This method replaces the dummy key with the real wallet key so the wallet can
+   * recognize and sign its own inputs.
+   */
+  protected patchTapInternalKey(psbtHex: string): string {
+    const pubKey = this.wallet.publicKey;
+    if (!pubKey) return psbtHex;
+
+    try {
+      const psbt = bitcoin.Psbt.fromHex(psbtHex);
+      // Derive x-only key (strip 02/03 prefix if compressed, or use as-is if already 32 bytes)
+      const xOnlyHex = pubKey.length === 66 ? pubKey.slice(2) : pubKey;
+      const xOnlyBuf = Buffer.from(xOnlyHex, 'hex');
+
+      if (xOnlyBuf.length !== 32) return psbtHex; // Safety: not a valid x-only key
+
+      let patched = 0;
+      for (let i = 0; i < psbt.data.inputs.length; i++) {
+        if (psbt.data.inputs[i].tapInternalKey) {
+          psbt.data.inputs[i].tapInternalKey = xOnlyBuf;
+          patched++;
+        }
+      }
+
+      if (patched > 0) {
+        return psbt.toHex();
+      }
+    } catch {
+      // If PSBT parsing fails, return the original — let the wallet handle the error
+    }
+
+    return psbtHex;
   }
 }
 
@@ -291,7 +342,9 @@ export class UnisatAdapter extends BaseWalletAdapter {
 
   async signPsbts(psbtHexs: string[], options?: PsbtSigningOptionsForWasm): Promise<string[]> {
     if (!this.unisat) throw new Error('Unisat not available');
-    return this.unisat.signPsbts(psbtHexs, {
+    // Patch tapInternalKey on all PSBTs before batch signing
+    const patchedHexs = psbtHexs.map((hex) => this.patchTapInternalKey(hex));
+    return this.unisat.signPsbts(patchedHexs, {
       autoFinalized: options?.auto_finalized ?? true,
       toSignInputs: options?.to_sign_inputs,
     });
@@ -328,8 +381,11 @@ export class XverseAdapter extends BaseWalletAdapter {
   async signPsbt(psbtHex: string, options?: PsbtSigningOptionsForWasm): Promise<string> {
     if (!this.xverse) throw new Error('Xverse not available');
 
+    // Patch tapInternalKey before signing (dummy wallet key → user's real key)
+    const patchedHex = this.patchTapInternalKey(psbtHex);
+
     // Xverse prefers base64 format
-    const psbt = bitcoin.Psbt.fromHex(psbtHex);
+    const psbt = bitcoin.Psbt.fromHex(patchedHex);
     const psbtBase64 = psbt.toBase64();
 
     const signInputs = this.buildXverseSignInputs(psbt, options);
@@ -465,7 +521,8 @@ export class OkxAdapter extends BaseWalletAdapter {
 
   async signPsbt(psbtHex: string, options?: PsbtSigningOptionsForWasm): Promise<string> {
     if (!this.okx) throw new Error('OKX wallet not available');
-    return this.okx.signPsbt(psbtHex, {
+    const patchedHex = this.patchTapInternalKey(psbtHex);
+    return this.okx.signPsbt(patchedHex, {
       autoFinalized: options?.auto_finalized ?? true,
       toSignInputs: options?.to_sign_inputs,
     });
@@ -473,7 +530,8 @@ export class OkxAdapter extends BaseWalletAdapter {
 
   async signPsbts(psbtHexs: string[], options?: PsbtSigningOptionsForWasm): Promise<string[]> {
     if (!this.okx) throw new Error('OKX wallet not available');
-    return this.okx.signPsbts(psbtHexs, {
+    const patchedHexs = psbtHexs.map((hex) => this.patchTapInternalKey(hex));
+    return this.okx.signPsbts(patchedHexs, {
       autoFinalized: options?.auto_finalized ?? true,
       toSignInputs: options?.to_sign_inputs,
     });
@@ -536,6 +594,9 @@ export class LeatherAdapter extends BaseWalletAdapter {
   async signPsbt(psbtHex: string, options?: PsbtSigningOptionsForWasm): Promise<string> {
     if (!this.leather) throw new Error('Leather wallet not available');
 
+    // Patch tapInternalKey before signing (dummy wallet key → user's real key)
+    const patchedHex = this.patchTapInternalKey(psbtHex);
+
     // Leather uses signAtIndex - we need to determine which inputs to sign
     let signAtIndex: number[] | undefined;
 
@@ -543,7 +604,7 @@ export class LeatherAdapter extends BaseWalletAdapter {
       signAtIndex = options.to_sign_inputs.map((i) => i.index);
     } else {
       // Auto-detect inputs to sign based on addresses
-      const psbt = bitcoin.Psbt.fromHex(psbtHex);
+      const psbt = bitcoin.Psbt.fromHex(patchedHex);
       const inputs = psbt.data.inputs;
       const network = this.getBitcoinNetwork();
       const ordinalsAddress = this.wallet.address;
@@ -575,7 +636,7 @@ export class LeatherAdapter extends BaseWalletAdapter {
     }
 
     const response = await this.leather.request('signPsbt', {
-      hex: psbtHex,
+      hex: patchedHex,
       signAtIndex,
       broadcast: false,
     });
@@ -606,7 +667,8 @@ export class PhantomAdapter extends BaseWalletAdapter {
   async signPsbt(psbtHex: string, options?: PsbtSigningOptionsForWasm): Promise<string> {
     if (!this.phantom) throw new Error('Phantom Bitcoin not available');
 
-    const psbtBytes = hexToBytes(psbtHex);
+    const patchedHex = this.patchTapInternalKey(psbtHex);
+    const psbtBytes = hexToBytes(patchedHex);
     const { signedPsbt } = await this.phantom.signPSBT(psbtBytes, {
       inputsToSign: options?.to_sign_inputs?.map((i) => ({
         sigHash: i.sighash_types?.[0],
@@ -657,11 +719,14 @@ export class MagicEdenAdapter extends BaseWalletAdapter {
   async signPsbt(psbtHex: string, options?: PsbtSigningOptionsForWasm): Promise<string> {
     if (!this.magicEden) throw new Error('Magic Eden wallet not available');
 
+    // Patch tapInternalKey before signing (dummy wallet key → user's real key)
+    const patchedHex = this.patchTapInternalKey(psbtHex);
+
     // Build toSignInputs based on addresses if not explicitly provided
     let toSignInputs = options?.to_sign_inputs;
 
     if (!toSignInputs) {
-      const psbt = bitcoin.Psbt.fromHex(psbtHex);
+      const psbt = bitcoin.Psbt.fromHex(patchedHex);
       const inputs = psbt.data.inputs;
       const network = this.getBitcoinNetwork();
       const ordinalsAddress = this.wallet.address;
@@ -695,7 +760,7 @@ export class MagicEdenAdapter extends BaseWalletAdapter {
       }
     }
 
-    return this.magicEden.signPsbt(psbtHex, {
+    return this.magicEden.signPsbt(patchedHex, {
       autoFinalized: options?.auto_finalized ?? true,
       toSignInputs,
     });
@@ -717,7 +782,8 @@ export class WizzAdapter extends BaseWalletAdapter {
 
   async signPsbt(psbtHex: string, options?: PsbtSigningOptionsForWasm): Promise<string> {
     if (!this.wizz) throw new Error('Wizz wallet not available');
-    return this.wizz.signPsbt(psbtHex, {
+    const patchedHex = this.patchTapInternalKey(psbtHex);
+    return this.wizz.signPsbt(patchedHex, {
       autoFinalized: options?.auto_finalized ?? true,
       toSignInputs: options?.to_sign_inputs,
     });
@@ -725,7 +791,8 @@ export class WizzAdapter extends BaseWalletAdapter {
 
   async signPsbts(psbtHexs: string[], options?: PsbtSigningOptionsForWasm): Promise<string[]> {
     if (!this.wizz) throw new Error('Wizz wallet not available');
-    return this.wizz.signPsbts(psbtHexs, {
+    const patchedHexs = psbtHexs.map((hex) => this.patchTapInternalKey(hex));
+    return this.wizz.signPsbts(patchedHexs, {
       autoFinalized: options?.auto_finalized ?? true,
       toSignInputs: options?.to_sign_inputs,
     });
@@ -760,8 +827,9 @@ export class OylAdapter extends BaseWalletAdapter {
 
   async signPsbt(psbtHex: string, options?: PsbtSigningOptionsForWasm): Promise<string> {
     if (!this.oyl) throw new Error("Oyl wallet not available");
+    const patchedHex = this.patchTapInternalKey(psbtHex);
     const result = await this.oyl.signPsbt({
-      psbt: psbtHex,
+      psbt: patchedHex,
       finalize: options?.auto_finalized,
       broadcast: false,
     });
@@ -770,8 +838,8 @@ export class OylAdapter extends BaseWalletAdapter {
 
   async signPsbts(psbtHexs: string[], options?: PsbtSigningOptionsForWasm): Promise<string[]> {
     if (!this.oyl) throw new Error("Oyl wallet not available");
-    const psbtsToSign = psbtHexs.map(psbt => ({
-      psbt,
+    const psbtsToSign = psbtHexs.map(hex => ({
+      psbt: this.patchTapInternalKey(hex),
       finalize: options?.auto_finalized,
       broadcast: false,
     }));
