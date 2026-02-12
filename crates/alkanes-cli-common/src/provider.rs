@@ -3187,13 +3187,40 @@ impl AlkanesProvider for ConcreteProvider {
 
     async fn simulate(&self, contract_id: &str, context: &alkanes_pb::MessageContextParcel, block_tag: Option<String>) -> Result<JsonValue> {
         use prost::Message;
+        use protorune_support::utils::encode_varint_list;
+
+        // Parse contract_id ("block:tx") and prepend to calldata as a cellpack.
+        // The metashrew "simulate" view function expects calldata = encipher([target_block, target_tx, ...inputs]),
+        // matching the encoding in alkanes-jsonrpc handler's encode_simulate_request.
+        let parts: Vec<&str> = contract_id.split(':').collect();
+        if parts.len() != 2 {
+            return Err(AlkanesError::Other(format!("Invalid contract_id format '{}', expected 'block:tx'", contract_id)));
+        }
+        let target_block: u128 = parts[0].parse()
+            .map_err(|_| AlkanesError::Other(format!("Invalid block in contract_id: {}", parts[0])))?;
+        let target_tx: u128 = parts[1].parse()
+            .map_err(|_| AlkanesError::Other(format!("Invalid tx in contract_id: {}", parts[1])))?;
+
+        // Decode existing calldata (LEB128 varint-encoded opcode + args from the caller)
+        let existing_inputs = {
+            let mut cursor = std::io::Cursor::new(context.calldata.clone());
+            protorune_support::utils::decode_varint_list(&mut cursor)
+                .unwrap_or_default()
+        };
+
+        // Build full cellpack: [target_block, target_tx, ...existing_inputs]
+        let mut cellpack_values = vec![target_block, target_tx];
+        cellpack_values.extend(existing_inputs);
+
+        let mut patched = context.clone();
+        patched.calldata = encode_varint_list(&cellpack_values);
+
         let mut buf = Vec::new();
-        context.encode(&mut buf)?;
+        patched.encode(&mut buf)?;
         let params_hex = format!("0x{}", hex::encode(&buf));
-        
-        // Use metashrew_view with "simulate" view function, not alkanes_simulate
+
         let result_bytes = self.metashrew_view_call("simulate", &params_hex, block_tag.as_deref().unwrap_or("latest")).await?;
-        
+
         // Return as hex string JSON value
         Ok(serde_json::json!(format!("0x{}", hex::encode(result_bytes))))
     }
