@@ -152,6 +152,16 @@ declare module '@alkanes/ts-sdk' {
     getKeys(alkane: string, prefix?: string, limit?: number): Promise<DataApiStorageKey[]>;
     getBitcoinPrice(): Promise<BitcoinPriceResponse>;
     getBitcoinMarketChart(days: string): Promise<MarketChartResponse>;
+    getAlkanes(page?: number, limit?: number): Promise<DataApiAlkanesListResponse>;
+    getAlkaneDetails(alkaneId: string): Promise<DataApiAlkaneDetailsResponse>;
+    getPoolById(poolId: string): Promise<DataApiPoolByIdResponse>;
+    getPoolDetails(factoryId: string, poolId: string): Promise<DataApiPoolDetailsResponse>;
+    getAllPoolsDetails(factoryId: string, limit?: number, offset?: number, sortBy?: string, order?: string): Promise<DataApiAllPoolsDetailsResponse>;
+    getOutpointBalances(outpoint: string): Promise<OutpointBalancesResponse>;
+    getBlockHeight(): Promise<number>;
+    getBlockHash(): Promise<string>;
+    getIndexerPosition(): Promise<DataApiIndexerPositionResponse>;
+    health(): Promise<DataApiHealthResponse>;
   }
 
   export class LuaClient {
@@ -210,6 +220,22 @@ declare module '@alkanes/ts-sdk' {
     getPools(limit?: number, page?: number): Promise<PoolsResponse>;
     findBestSwapPath(tokenIn: string, tokenOut: string, mode?: string, amountIn?: string, amountOut?: string, amountOutMin?: string, amountInMax?: string, availableIn?: string, feeBps?: number, maxHops?: number): Promise<SwapPathResponse>;
     getBestMevSwap(token: string, feeBps?: number, maxHops?: number): Promise<MevSwapResponse>;
+    getAlkaneInfo(alkaneId: string): Promise<AlkaneInfoResponse>;
+    getCirculatingSupply(alkaneId: string, height?: number): Promise<CirculatingSupplyResponse>;
+    getAllAlkanes(page?: number, limit?: number): Promise<AllAlkanesResponse>;
+    getAmmFactories(page?: number, limit?: number): Promise<AmmFactoriesResponse>;
+    getBlockSummary(height: number): Promise<BlockSummaryResponse>;
+    getTransferVolume(alkaneId: string, page?: number, limit?: number): Promise<TransferVolumeResponse>;
+    getAddressActivity(address: string): Promise<AddressActivityResponse>;
+    getAddressTransactions(address: string, page?: number, limit?: number, onlyAlkaneTxs?: boolean): Promise<AddressTransactionsResponse>;
+    getSeriesIdFromAlkaneId(alkaneId: string): Promise<SeriesIdResponse>;
+    getSeriesIdsFromAlkaneIds(alkaneIds: string[]): Promise<SeriesIdsResponse>;
+    getAlkaneIdFromSeriesId(seriesId: string): Promise<AlkaneIdFromSeriesResponse>;
+    getMempoolTraces(page?: number, limit?: number, address?: string): Promise<MempoolTracesResponse>;
+    getWrapEvents(count?: number, offset?: number, successful?: boolean): Promise<WrapEventsResponse>;
+    getUnwrapEvents(count?: number, offset?: number, successful?: boolean): Promise<UnwrapEventsResponse>;
+    getWrapEventsByAddress(address: string, count?: number, offset?: number, successful?: boolean): Promise<WrapEventsResponse>;
+    getUnwrapEventsByAddress(address: string, count?: number, offset?: number, successful?: boolean): Promise<UnwrapEventsResponse>;
   }
 
   export class AlkanesProvider {
@@ -1633,6 +1659,255 @@ declare module '@alkanes/ts-sdk' {
     signet: AlkanesProviderConfig;
     regtest: AlkanesProviderConfig;
   };
+
+  // ============================================================================
+  // PROTOSTONE EXPORTS
+  // ============================================================================
+
+  export type u128 = bigint;
+  export type u32 = number;
+
+  export interface ProtoBurn {
+    pointer: number;
+    from?: u32[];
+  }
+
+  export interface ProtoMessage {
+    calldata: Buffer;
+    pointer: number;
+    refundPointer: number;
+  }
+
+  export class ProtoStone {
+    burn?: ProtoBurn;
+    message?: ProtoMessage;
+    protocolTag: u128;
+    edicts?: ProtoruneEdict[];
+
+    constructor(opts: {
+      protocolTag: bigint;
+      burn?: { pointer: number; from?: u32[] };
+      message?: { calldata: Buffer; pointer: number; refundPointer: number };
+      edicts?: ProtoruneEdict[];
+    });
+
+    static burn(opts: { protocolTag: bigint; pointer: number; from?: u32[]; edicts?: ProtoruneEdict[] }): ProtoStone;
+    static message(opts: { protocolTag: bigint; calldata: Buffer; pointer: number; refundPointer: number; edicts?: ProtoruneEdict[] }): ProtoStone;
+    static edicts(opts: { protocolTag: bigint; edicts: ProtoruneEdict[] }): ProtoStone;
+    encipher_payloads(): bigint[];
+  }
+
+  export class ProtoruneRuneId {
+    readonly block: u128;
+    readonly tx: u128;
+    constructor(block: u128, tx: u128);
+    static new(block: u128, tx: u128): ProtoruneRuneId | null;
+    static sort(runeIds: ProtoruneRuneId[]): ProtoruneRuneId[];
+    static fromString(s: string): ProtoruneRuneId;
+    delta(next: ProtoruneRuneId): [u128, u128] | null;
+    next(block: u128, tx: u128): ProtoruneRuneId | null;
+    toString(): string;
+  }
+
+  export interface ProtoruneEdict {
+    id: ProtoruneRuneId;
+    amount: u128;
+    output: u32;
+  }
+
+  export namespace ProtoruneEdict {
+    function fromIntegers(numOutputs: number, id: ProtoruneRuneId, amount: u128, output: u128): ProtoruneEdict | null;
+  }
+
+  export interface RunestoneProtostoneSpec {
+    mint?: { block: bigint; tx: bigint };
+    pointer?: number;
+    etching?: RuneEtchingSpec;
+    edicts?: ProtoruneEdict[];
+    protostones?: ProtoStone[];
+  }
+
+  export interface RuneEtchingSpec {
+    runeName?: string;
+    symbol?: string;
+    divisibility?: number;
+    premine?: bigint;
+    terms?: {
+      amount?: bigint;
+      cap?: bigint;
+      height?: [bigint | null, bigint | null];
+      offset?: [bigint | null, bigint | null];
+    };
+    turbo?: boolean;
+  }
+
+  export function encodeRunestoneProtostone(runestone: RunestoneProtostoneSpec): {
+    encodedRunestone: Buffer;
+    etchingCommitment?: Buffer;
+  };
+
+  export class Cellpack {
+    target: { block: bigint; tx: bigint };
+    inputs: bigint[];
+    constructor(block: bigint, tx: bigint, inputs: bigint[]);
+    serialize(): Buffer;
+  }
+
+  export function lebEncodeU128(inputs: bigint[]): Buffer;
+  export function encodeVarInt(value: bigint): Buffer;
+  export const CALLDATA_MAGIC: number;
+
+  // ============================================================================
+  // ADDITIONAL ESPO RESPONSE TYPES
+  // ============================================================================
+
+  export interface AlkaneInfoResponse {
+    ok: boolean;
+    alkane: string;
+    name?: string;
+    symbol?: string;
+    decimals?: number;
+    total_supply?: string;
+    cap?: string;
+    minted?: string;
+    [key: string]: any;
+  }
+
+  export interface CirculatingSupplyResponse {
+    ok: boolean;
+    alkane: string;
+    supply?: string;
+    circulating_supply?: string;
+    [key: string]: any;
+  }
+
+  export interface AllAlkanesResponse extends PaginatedResponse {
+    alkanes: Array<{
+      id: string;
+      name?: string;
+      symbol?: string;
+      total_supply?: string;
+      [key: string]: any;
+    }>;
+  }
+
+  export interface AmmFactoriesResponse extends PaginatedResponse {
+    factories: Array<{ id: string; [key: string]: any }>;
+  }
+
+  export interface BlockSummaryResponse {
+    ok: boolean;
+    height: number;
+    [key: string]: any;
+  }
+
+  export interface TransferVolumeResponse extends PaginatedResponse {
+    alkane: string;
+    items: Array<{ [key: string]: any }>;
+  }
+
+  export interface AddressActivityResponse {
+    ok: boolean;
+    address: string;
+    [key: string]: any;
+  }
+
+  export interface AddressTransactionsResponse extends PaginatedResponse {
+    address: string;
+    transactions: Array<{ [key: string]: any }>;
+  }
+
+  export interface SeriesIdResponse {
+    ok: boolean;
+    series_id?: string;
+    [key: string]: any;
+  }
+
+  export interface SeriesIdsResponse {
+    ok: boolean;
+    results: Array<{ alkane_id: string; series_id?: string }>;
+  }
+
+  export interface AlkaneIdFromSeriesResponse {
+    ok: boolean;
+    alkane_id?: string;
+    [key: string]: any;
+  }
+
+  export interface MempoolTracesResponse extends PaginatedResponse {
+    traces: Array<{ [key: string]: any }>;
+  }
+
+  export interface WrapEventsResponse {
+    ok: boolean;
+    events: Array<{ [key: string]: any }>;
+  }
+
+  export interface UnwrapEventsResponse {
+    ok: boolean;
+    events: Array<{ [key: string]: any }>;
+  }
+
+  // ============================================================================
+  // ADDITIONAL DATA API RESPONSE TYPES
+  // ============================================================================
+
+  export interface DataApiAlkanesListResponse {
+    alkanes: Array<{
+      id: string;
+      name?: string;
+      symbol?: string;
+      decimals?: number;
+      total_supply?: string;
+      [key: string]: any;
+    }>;
+  }
+
+  export interface DataApiAlkaneDetailsResponse {
+    id: string;
+    name?: string;
+    symbol?: string;
+    decimals?: number;
+    total_supply?: string;
+    [key: string]: any;
+  }
+
+  export interface DataApiPoolByIdResponse {
+    pool_id: string;
+    token0: string;
+    token1: string;
+    reserve0: string;
+    reserve1: string;
+    total_supply: string;
+    [key: string]: any;
+  }
+
+  export interface DataApiPoolDetailsResponse {
+    pool_id: string;
+    token0: string;
+    token1: string;
+    reserve0: string;
+    reserve1: string;
+    total_supply: string;
+    tvl?: string;
+    volume_24h?: string;
+    apr?: string;
+    [key: string]: any;
+  }
+
+  export interface DataApiAllPoolsDetailsResponse {
+    pools: DataApiPoolDetailsResponse[];
+  }
+
+  export interface DataApiIndexerPositionResponse {
+    height: number;
+    hash: string;
+  }
+
+  export interface DataApiHealthResponse {
+    ok: boolean;
+    [key: string]: any;
+  }
 
   // Other exports
   export const VERSION: string;
