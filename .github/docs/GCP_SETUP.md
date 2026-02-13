@@ -20,15 +20,15 @@ This will open a browser window for authentication.
 
 ```bash
 # Create project
-gcloud projects create distributable-octet-pipeline \
+gcloud projects create pkg-alkanes-build \
   --name="Alkanes Distributable Pipeline" \
   --set-as-default
 
 # Set as default project
-gcloud config set project distributable-octet-pipeline
+gcloud config set project pkg-alkanes-build
 
 # Verify project creation
-gcloud projects describe distributable-octet-pipeline
+gcloud projects describe pkg-alkanes-build
 ```
 
 ## Step 3: Link Billing Account
@@ -38,11 +38,11 @@ gcloud projects describe distributable-octet-pipeline
 gcloud billing accounts list
 
 # Copy the ACCOUNT_ID from the output above, then link it:
-gcloud billing projects link distributable-octet-pipeline \
+gcloud billing projects link pkg-alkanes-build \
   --billing-account=XXXXXX-XXXXXX-XXXXXX
 
 # Verify billing is linked
-gcloud billing projects describe distributable-octet-pipeline
+gcloud billing projects describe pkg-alkanes-build
 ```
 
 ## Step 4: Enable Required APIs
@@ -84,21 +84,21 @@ cargo-packages  CARGO   us-central1    Alkanes Rust crates
 ```
 
 **Repository URLs:**
-- npm: https://us-central1-npm.pkg.dev/distributable-octet-pipeline/npm-packages/
-- cargo: sparse+https://us-central1-cargo.pkg.dev/distributable-octet-pipeline/cargo-packages/
+- npm: https://us-central1-npm.pkg.dev/pkg-alkanes-build/npm-packages/
+- cargo: sparse+https://us-central1-cargo.pkg.dev/pkg-alkanes-build/cargo-packages/
 
 ## Step 6: Create Workload Identity Pool
 
 ```bash
 # Create identity pool for GitHub Actions
 gcloud iam workload-identity-pools create "github-actions-pool" \
-  --project="distributable-octet-pipeline" \
+  --project="pkg-alkanes-build" \
   --location="global" \
   --display-name="GitHub Actions Pool"
 
 # Verify pool creation
 gcloud iam workload-identity-pools describe "github-actions-pool" \
-  --project="distributable-octet-pipeline" \
+  --project="pkg-alkanes-build" \
   --location="global"
 ```
 
@@ -107,7 +107,7 @@ gcloud iam workload-identity-pools describe "github-actions-pool" \
 ```bash
 # Create OIDC provider
 gcloud iam workload-identity-pools providers create-oidc "github-provider" \
-  --project="distributable-octet-pipeline" \
+  --project="pkg-alkanes-build" \
   --location="global" \
   --workload-identity-pool="github-actions-pool" \
   --display-name="GitHub Provider" \
@@ -116,7 +116,7 @@ gcloud iam workload-identity-pools providers create-oidc "github-provider" \
 
 # Verify provider creation
 gcloud iam workload-identity-pools providers describe "github-provider" \
-  --project="distributable-octet-pipeline" \
+  --project="pkg-alkanes-build" \
   --location="global" \
   --workload-identity-pool="github-actions-pool"
 ```
@@ -126,12 +126,12 @@ gcloud iam workload-identity-pools providers describe "github-provider" \
 ```bash
 # Create service account for GitHub Actions
 gcloud iam service-accounts create github-actions-publisher \
-  --project="distributable-octet-pipeline" \
+  --project="pkg-alkanes-build" \
   --display-name="GitHub Actions Publisher" \
   --description="Service account for publishing packages from GitHub Actions"
 
 # Set service account email variable for later use
-SA_EMAIL="github-actions-publisher@distributable-octet-pipeline.iam.gserviceaccount.com"
+SA_EMAIL="github-actions-publisher@pkg-alkanes-build.iam.gserviceaccount.com"
 
 # Verify service account creation
 gcloud iam service-accounts describe ${SA_EMAIL}
@@ -142,14 +142,14 @@ gcloud iam service-accounts describe ${SA_EMAIL}
 ```bash
 # Grant Artifact Registry Writer role for npm repository
 gcloud artifacts repositories add-iam-policy-binding npm-packages \
-  --project="distributable-octet-pipeline" \
+  --project="pkg-alkanes-build" \
   --location=us-central1 \
   --member="serviceAccount:${SA_EMAIL}" \
   --role="roles/artifactregistry.writer"
 
 # Grant Artifact Registry Writer role for cargo repository
 gcloud artifacts repositories add-iam-policy-binding cargo-packages \
-  --project="distributable-octet-pipeline" \
+  --project="pkg-alkanes-build" \
   --location=us-central1 \
   --member="serviceAccount:${SA_EMAIL}" \
   --role="roles/artifactregistry.writer"
@@ -164,13 +164,13 @@ gcloud artifacts repositories get-iam-policy cargo-packages --location=us-centra
 ```bash
 # Set variables
 GITHUB_REPO="kungfuflex/alkanes-rs"
-PROJECT_NUMBER=$(gcloud projects describe distributable-octet-pipeline --format='value(projectNumber)')
+PROJECT_NUMBER=$(gcloud projects describe pkg-alkanes-build --format='value(projectNumber)')
 
 echo "Project Number: ${PROJECT_NUMBER}"
 
 # Allow workload identity user binding
 gcloud iam service-accounts add-iam-policy-binding "${SA_EMAIL}" \
-  --project="distributable-octet-pipeline" \
+  --project="pkg-alkanes-build" \
   --role="roles/iam.workloadIdentityUser" \
   --member="principalSet://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/github-actions-pool/attribute.repository/${GITHUB_REPO}"
 
@@ -185,7 +185,7 @@ This value will be used in GitHub Secrets.
 ```bash
 # Get the full provider name
 PROVIDER_NAME=$(gcloud iam workload-identity-pools providers describe "github-provider" \
-  --project="distributable-octet-pipeline" \
+  --project="pkg-alkanes-build" \
   --location="global" \
   --workload-identity-pool="github-actions-pool" \
   --format="value(name)")
@@ -209,10 +209,10 @@ gcloud iam workload-identity-pools providers describe "github-provider" \
   --format="value(name)"
 echo ""
 echo "GCP_SERVICE_ACCOUNT:"
-echo "github-actions-publisher@distributable-octet-pipeline.iam.gserviceaccount.com"
+echo "github-actions-publisher@pkg-alkanes-build.iam.gserviceaccount.com"
 echo ""
 echo "GCP_PROJECT_ID:"
-echo "distributable-octet-pipeline"
+echo "pkg-alkanes-build"
 echo ""
 ```
 
@@ -227,8 +227,8 @@ Copy these values - you'll add them to GitHub in the next section.
 3. Add each secret:
 
 - **GCP_WORKLOAD_IDENTITY_PROVIDER**: `projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/github-actions-pool/providers/github-provider`
-- **GCP_SERVICE_ACCOUNT**: `github-actions-publisher@distributable-octet-pipeline.iam.gserviceaccount.com`
-- **GCP_PROJECT_ID**: `distributable-octet-pipeline`
+- **GCP_SERVICE_ACCOUNT**: `github-actions-publisher@pkg-alkanes-build.iam.gserviceaccount.com`
+- **GCP_PROJECT_ID**: `pkg-alkanes-build`
 - **CLOUDFLARE_API_TOKEN**: Your Cloudflare API token (create at https://dash.cloudflare.com/profile/api-tokens)
 
 ### Option B: Using GitHub CLI
@@ -244,8 +244,8 @@ PROVIDER_NAME=$(gcloud iam workload-identity-pools providers describe "github-pr
 
 # Set secrets
 gh secret set GCP_WORKLOAD_IDENTITY_PROVIDER --body "${PROVIDER_NAME}" --repo kungfuflex/alkanes-rs
-gh secret set GCP_SERVICE_ACCOUNT --body "github-actions-publisher@distributable-octet-pipeline.iam.gserviceaccount.com" --repo kungfuflex/alkanes-rs
-gh secret set GCP_PROJECT_ID --body "distributable-octet-pipeline" --repo kungfuflex/alkanes-rs
+gh secret set GCP_SERVICE_ACCOUNT --body "github-actions-publisher@pkg-alkanes-build.iam.gserviceaccount.com" --repo kungfuflex/alkanes-rs
+gh secret set GCP_PROJECT_ID --body "pkg-alkanes-build" --repo kungfuflex/alkanes-rs
 
 # You'll need to set CLOUDFLARE_API_TOKEN manually with your token:
 gh secret set CLOUDFLARE_API_TOKEN --body "YOUR_CLOUDFLARE_TOKEN" --repo kungfuflex/alkanes-rs
@@ -274,7 +274,7 @@ gcloud artifacts print-settings cargo \
 
 Before proceeding to workflow setup, verify:
 
-- [ ] GCP project `distributable-octet-pipeline` exists
+- [ ] GCP project `pkg-alkanes-build` exists
 - [ ] Billing is enabled on the project
 - [ ] Both Artifact Registry repositories are created (npm-packages, cargo-packages)
 - [ ] Workload Identity Pool `github-actions-pool` exists
@@ -290,7 +290,7 @@ Before proceeding to workflow setup, verify:
 
 If the project ID is taken, choose a different name:
 ```bash
-gcloud projects create distributable-octet-pipeline-v2
+gcloud projects create pkg-alkanes-build-v2
 ```
 Update all subsequent commands to use the new project ID.
 
@@ -298,12 +298,12 @@ Update all subsequent commands to use the new project ID.
 
 Ensure billing is linked:
 ```bash
-gcloud billing projects describe distributable-octet-pipeline
+gcloud billing projects describe pkg-alkanes-build
 ```
 
 If not linked, run:
 ```bash
-gcloud billing projects link distributable-octet-pipeline --billing-account=YOUR_BILLING_ID
+gcloud billing projects link pkg-alkanes-build --billing-account=YOUR_BILLING_ID
 ```
 
 ### Error: Permission denied
@@ -327,7 +327,7 @@ gcloud iam workload-identity-pools providers describe github-provider \
   --workload-identity-pool=github-actions-pool
 
 # Check service account permissions
-gcloud iam service-accounts get-iam-policy github-actions-publisher@distributable-octet-pipeline.iam.gserviceaccount.com
+gcloud iam service-accounts get-iam-policy github-actions-publisher@pkg-alkanes-build.iam.gserviceaccount.com
 ```
 
 ## Next Steps
@@ -370,11 +370,11 @@ gcloud artifacts repositories delete npm-packages --location=us-central1
 gcloud artifacts repositories delete cargo-packages --location=us-central1
 
 # Delete service account
-gcloud iam service-accounts delete github-actions-publisher@distributable-octet-pipeline.iam.gserviceaccount.com
+gcloud iam service-accounts delete github-actions-publisher@pkg-alkanes-build.iam.gserviceaccount.com
 
 # Delete workload identity pool (deletes provider too)
 gcloud iam workload-identity-pools delete github-actions-pool --location=global
 
 # Delete project (WARNING: This deletes everything)
-gcloud projects delete distributable-octet-pipeline
+gcloud projects delete pkg-alkanes-build
 ```

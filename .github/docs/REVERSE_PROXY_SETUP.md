@@ -57,7 +57,7 @@ gcloud artifacts repositories get-iam-policy npm-packages --location=us-central1
 
 ```bash
 # Test npm access (no auth)
-curl -I https://us-central1-npm.pkg.dev/distributable-octet-pipeline/npm-packages/@alkanes/ts-sdk
+curl -I https://us-central1-npm.pkg.dev/pkg-alkanes-build/npm-packages/@alkanes/ts-sdk
 
 # Should return 200 OK
 ```
@@ -74,10 +74,10 @@ Users can now install directly via tarball URL:
 
 ```bash
 # Install specific version
-npm install https://us-central1-npm.pkg.dev/distributable-octet-pipeline/npm-packages/@alkanes/ts-sdk/-/ts-sdk-0.1.0-dev.20251215.tgz
+npm install https://us-central1-npm.pkg.dev/pkg-alkanes-build/npm-packages/@alkanes/ts-sdk/-/ts-sdk-0.1.0-dev.20251215.tgz
 
 # Or configure registry (but no auth needed!)
-npm config set @alkanes:registry https://us-central1-npm.pkg.dev/distributable-octet-pipeline/npm-packages/
+npm config set @alkanes:registry https://us-central1-npm.pkg.dev/pkg-alkanes-build/npm-packages/
 npm install @alkanes/ts-sdk
 ```
 
@@ -96,7 +96,7 @@ Alternatively, if you want to use the registry:
 ```toml
 # In ~/.cargo/config.toml (now no credentials needed!)
 [registries.alkanes]
-index = "sparse+https://us-central1-cargo.pkg.dev/distributable-octet-pipeline/cargo-packages/"
+index = "sparse+https://us-central1-cargo.pkg.dev/pkg-alkanes-build/cargo-packages/"
 
 # In Cargo.toml
 [dependencies]
@@ -171,7 +171,7 @@ http {
             proxy_set_header Authorization "Bearer ${GCP_TOKEN}";
             proxy_set_header Host "us-central1-npm.pkg.dev";
 
-            proxy_pass https://npm_registry/distributable-octet-pipeline/npm-packages;
+            proxy_pass https://npm_registry/pkg-alkanes-build/npm-packages;
             proxy_ssl_server_name on;
             proxy_ssl_name us-central1-npm.pkg.dev;
 
@@ -191,7 +191,7 @@ http {
             proxy_set_header Authorization "Bearer ${GCP_TOKEN}";
             proxy_set_header Host "us-central1-cargo.pkg.dev";
 
-            proxy_pass https://cargo_registry/distributable-octet-pipeline/cargo-packages;
+            proxy_pass https://cargo_registry/pkg-alkanes-build/cargo-packages;
             proxy_ssl_server_name on;
             proxy_ssl_name us-central1-cargo.pkg.dev;
         }
@@ -233,15 +233,15 @@ exec "$@"
 cd proxy
 
 # Build container
-gcloud builds submit --tag gcr.io/distributable-octet-pipeline/pkg-proxy
+gcloud builds submit --tag gcr.io/pkg-alkanes-build/pkg-proxy
 
 # Deploy to Cloud Run
 gcloud run deploy pkg-proxy \
-  --image gcr.io/distributable-octet-pipeline/pkg-proxy \
+  --image gcr.io/pkg-alkanes-build/pkg-proxy \
   --platform managed \
   --region us-central1 \
   --allow-unauthenticated \
-  --service-account github-actions-publisher@distributable-octet-pipeline.iam.gserviceaccount.com \
+  --service-account github-actions-publisher@pkg-alkanes-build.iam.gserviceaccount.com \
   --port 8080
 
 # Get service URL
@@ -285,12 +285,12 @@ Or update `.github/scripts/setup-cloudflare-dns.sh` to point to Cloud Run instea
 
 **Option A: Direct tarball URL**
 ```bash
-npm install https://us-central1-npm.pkg.dev/distributable-octet-pipeline/npm-packages/@alkanes/ts-sdk/-/ts-sdk-VERSION.tgz
+npm install https://us-central1-npm.pkg.dev/pkg-alkanes-build/npm-packages/@alkanes/ts-sdk/-/ts-sdk-VERSION.tgz
 ```
 
 **Option B: Registry (no auth needed)**
 ```bash
-npm config set @alkanes:registry https://us-central1-npm.pkg.dev/distributable-octet-pipeline/npm-packages/
+npm config set @alkanes:registry https://us-central1-npm.pkg.dev/pkg-alkanes-build/npm-packages/
 npm install @alkanes/ts-sdk
 ```
 
@@ -298,7 +298,7 @@ npm install @alkanes/ts-sdk
 ```json
 {
   "dependencies": {
-    "@alkanes/ts-sdk": "https://us-central1-npm.pkg.dev/distributable-octet-pipeline/npm-packages/@alkanes/ts-sdk/-/ts-sdk-0.1.0-dev.20251215.tgz"
+    "@alkanes/ts-sdk": "https://us-central1-npm.pkg.dev/pkg-alkanes-build/npm-packages/@alkanes/ts-sdk/-/ts-sdk-0.1.0-dev.20251215.tgz"
   }
 }
 ```
@@ -315,7 +315,7 @@ alkanes = { git = "https://github.com/kungfuflex/alkanes-rs", branch = "develop"
 ```toml
 # ~/.cargo/config.toml (no credentials needed!)
 [registries.alkanes]
-index = "sparse+https://us-central1-cargo.pkg.dev/distributable-octet-pipeline/cargo-packages/"
+index = "sparse+https://us-central1-cargo.pkg.dev/pkg-alkanes-build/cargo-packages/"
 
 # Cargo.toml
 [dependencies]
@@ -361,7 +361,7 @@ alkanes = { version = "10.0.0", registry = "alkanes" }
 
 2. Test access (no auth):
    ```bash
-   curl -I https://us-central1-npm.pkg.dev/distributable-octet-pipeline/npm-packages/
+   curl -I https://us-central1-npm.pkg.dev/pkg-alkanes-build/npm-packages/
    ```
 
 3. Update documentation with simplified install instructions

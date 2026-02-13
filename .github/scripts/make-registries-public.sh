@@ -30,11 +30,11 @@ fi
 
 # Check if project is set
 PROJECT=$(gcloud config get-value project 2>/dev/null)
-if [ "$PROJECT" != "distributable-octet-pipeline" ]; then
-    echo -e "${YELLOW}Warning: Current project is not distributable-octet-pipeline${NC}"
+if [ "$PROJECT" != "pkg-alkanes-build" ]; then
+    echo -e "${YELLOW}Warning: Current project is not pkg-alkanes-build${NC}"
     echo "Current project: $PROJECT"
-    echo "Setting project to distributable-octet-pipeline..."
-    gcloud config set project distributable-octet-pipeline
+    echo "Setting project to pkg-alkanes-build..."
+    gcloud config set project pkg-alkanes-build
 fi
 
 echo "Project: $(gcloud config get-value project)"
@@ -91,7 +91,7 @@ echo -e "${BLUE}=== Testing Public Access ===${NC}"
 echo ""
 
 echo "Testing npm repository..."
-NPM_URL="https://us-central1-npm.pkg.dev/distributable-octet-pipeline/npm-packages/"
+NPM_URL="https://us-central1-npm.pkg.dev/pkg-alkanes-build/npm-packages/"
 if curl -s -o /dev/null -w "%{http_code}" "$NPM_URL" | grep -q "200\|403"; then
     echo -e "${GREEN}✓ npm repository is accessible${NC}"
 else
@@ -100,7 +100,7 @@ fi
 
 echo ""
 echo "Testing cargo repository..."
-CARGO_URL="https://us-central1-cargo.pkg.dev/distributable-octet-pipeline/cargo-packages/"
+CARGO_URL="https://us-central1-cargo.pkg.dev/pkg-alkanes-build/cargo-packages/"
 if curl -s -o /dev/null -w "%{http_code}" "$CARGO_URL" | grep -q "200\|403"; then
     echo -e "${GREEN}✓ cargo repository is accessible${NC}"
 else
@@ -115,13 +115,13 @@ echo ""
 echo "Users can now install packages without authentication:"
 echo ""
 echo "  ${BLUE}npm:${NC}"
-echo "    npm config set @alkanes:registry https://us-central1-npm.pkg.dev/distributable-octet-pipeline/npm-packages/"
+echo "    npm config set @alkanes:registry https://us-central1-npm.pkg.dev/pkg-alkanes-build/npm-packages/"
 echo "    npm install @alkanes/ts-sdk"
 echo ""
 echo "  ${BLUE}cargo:${NC}"
 echo "    # In ~/.cargo/config.toml"
 echo "    [registries.alkanes]"
-echo "    index = \"sparse+https://us-central1-cargo.pkg.dev/distributable-octet-pipeline/cargo-packages/\""
+echo "    index = \"sparse+https://us-central1-cargo.pkg.dev/pkg-alkanes-build/cargo-packages/\""
 echo ""
 echo "    # In Cargo.toml"
 echo "    [dependencies]"

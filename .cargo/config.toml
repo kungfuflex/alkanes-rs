@@ -7,7 +7,7 @@ runner = "wasm-bindgen-test-runner"
 # Alkanes private registry (Google Cloud Artifact Registry)
 # This allows publishing and consuming crates from the private registry
 [registries.alkanes]
-index = "sparse+https://us-central1-cargo.pkg.dev/distributable-octet-pipeline/cargo-packages/"
+index = "sparse+https://us-central1-cargo.pkg.dev/pkg-alkanes-build/cargo-packages/"
 
 # Git fetch configuration
 [net]

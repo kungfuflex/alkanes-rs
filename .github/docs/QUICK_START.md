@@ -11,7 +11,7 @@ The alkanes-rs publishing pipeline uses **public** Google Cloud Artifact Registr
 ### Initial Setup (One-time)
 
 1. **Set up GCP infrastructure** (follow `.github/docs/GCP_SETUP.md`):
-   - Create GCP project `distributable-octet-pipeline`
+   - Create GCP project `pkg-alkanes-build`
    - Enable Artifact Registry
    - Set up Workload Identity Federation
    - Configure GitHub Secrets
@@ -35,7 +35,7 @@ The alkanes-rs publishing pipeline uses **public** Google Cloud Artifact Registr
 
 **One-time configuration:**
 ```bash
-npm config set @alkanes:registry https://us-central1-npm.pkg.dev/distributable-octet-pipeline/npm-packages/
+npm config set @alkanes:registry https://us-central1-npm.pkg.dev/pkg-alkanes-build/npm-packages/
 ```
 
 **Install:**
@@ -45,7 +45,7 @@ npm install @alkanes/ts-sdk
 
 **Or add to `.npmrc` in your project:**
 ```
-@alkanes:registry=https://us-central1-npm.pkg.dev/distributable-octet-pipeline/npm-packages/
+@alkanes:registry=https://us-central1-npm.pkg.dev/pkg-alkanes-build/npm-packages/
 ```
 
 Then:
@@ -66,7 +66,7 @@ alkanes = { git = "https://github.com/kungfuflex/alkanes-rs", branch = "develop"
 Add to `~/.cargo/config.toml` (one-time):
 ```toml
 [registries.alkanes]
-index = "sparse+https://us-central1-cargo.pkg.dev/distributable-octet-pipeline/cargo-packages/"
+index = "sparse+https://us-central1-cargo.pkg.dev/pkg-alkanes-build/cargo-packages/"
 ```
 
 Then in `Cargo.toml`:
@@ -108,9 +108,9 @@ Users install without authentication (public read access)
 
 ## URLs
 
-- npm packages: https://us-central1-npm.pkg.dev/distributable-octet-pipeline/npm-packages/
-- cargo packages: https://us-central1-cargo.pkg.dev/distributable-octet-pipeline/cargo-packages/
-- Console: https://console.cloud.google.com/artifacts?project=distributable-octet-pipeline
+- npm packages: https://us-central1-npm.pkg.dev/pkg-alkanes-build/npm-packages/
+- cargo packages: https://us-central1-cargo.pkg.dev/pkg-alkanes-build/cargo-packages/
+- Console: https://console.cloud.google.com/artifacts?project=pkg-alkanes-build
 
 ## Troubleshooting
 
