@@ -2013,6 +2013,112 @@ impl WalletProvider for ConcreteProvider {
             prevouts.push(utxo);
         }
 
+        // Handle signing based on wallet state
+        if let WalletState::ExternalKey { private_key, .. } = &self.wallet_state {
+            // Sign with external private key
+            let secret_key = bitcoin::secp256k1::SecretKey::from_str(private_key)?;
+            let keypair = bitcoin::secp256k1::Keypair::from_secret_key(&secp, &secret_key);
+
+            let mut sighash_cache = SighashCache::new(&mut tx);
+            for (i, psbt_input) in psbt.inputs.iter_mut().enumerate() {
+                let prev_txout = &prevouts[i];
+
+                log::info!("Signing input {} (ExternalKey): tap_scripts.is_empty()={}, tap_scripts.len()={}",
+                    i, psbt_input.tap_scripts.is_empty(), psbt_input.tap_scripts.len());
+
+                if !psbt_input.tap_scripts.is_empty() {
+                    // Script-path spend
+                    log::info!("Input {} is a script-path spend (ExternalKey)", i);
+                    let (control_block, (script, leaf_version)) = psbt_input.tap_scripts.iter().next().unwrap();
+                    let leaf_hash = taproot::TapLeafHash::from_script(script, *leaf_version);
+                    let sighash = sighash_cache.taproot_script_spend_signature_hash(
+                        i,
+                        &Prevouts::All(&prevouts),
+                        leaf_hash,
+                        TapSighashType::Default,
+                    )?;
+
+                    let msg = bitcoin::secp256k1::Message::from(sighash);
+
+                    #[cfg(not(target_arch = "wasm32"))]
+                    let signature = self.secp.sign_schnorr_with_rng(&msg, &keypair, &mut rand::thread_rng());
+                    #[cfg(target_arch = "wasm32")]
+                    let signature = self.secp.sign_schnorr_with_rng(&msg, &keypair, &mut OsRng);
+
+                    let taproot_signature = taproot::Signature { signature, sighash_type: TapSighashType::Default };
+
+                    let mut final_witness = Witness::new();
+                    final_witness.push(taproot_signature.to_vec());
+                    final_witness.push(script.as_bytes());
+                    final_witness.push(control_block.serialize());
+
+                    log::info!("Created script-path witness with {} items (ExternalKey):", final_witness.len());
+                    psbt_input.final_script_witness = Some(final_witness);
+
+                } else if prev_txout.script_pubkey.is_p2tr() {
+                    // P2TR key-path spend
+                    let untweaked_keypair = UntweakedKeypair::from(keypair);
+                    let tweaked_keypair = untweaked_keypair.tap_tweak(&secp, None);
+
+                    let sighash = sighash_cache.taproot_key_spend_signature_hash(
+                        i,
+                        &Prevouts::All(&prevouts),
+                        TapSighashType::Default,
+                    )?;
+
+                    let msg = bitcoin::secp256k1::Message::from(sighash);
+                    #[cfg(not(target_arch = "wasm32"))]
+                    let signature = secp.sign_schnorr_with_rng(&msg, &tweaked_keypair.to_keypair(), &mut rand::thread_rng());
+                    #[cfg(target_arch = "wasm32")]
+                    let signature = secp.sign_schnorr_with_rng(&msg, &tweaked_keypair.to_keypair(), &mut OsRng);
+
+                    let taproot_signature = taproot::Signature {
+                        signature,
+                        sighash_type: TapSighashType::Default,
+                    };
+
+                    psbt_input.tap_key_sig = Some(taproot_signature);
+
+                } else if prev_txout.script_pubkey.is_p2wpkh() {
+                    // P2WPKH key-path spend
+                    let public_key = bitcoin::PublicKey::from_private_key(&secp, &bitcoin::PrivateKey {
+                        compressed: true,
+                        network: network.into(),
+                        inner: secret_key,
+                    });
+
+                    let sighash = sighash_cache.p2wpkh_signature_hash(
+                        i,
+                        &prev_txout.script_pubkey,
+                        prev_txout.value,
+                        EcdsaSighashType::All,
+                    )?;
+
+                    let msg = bitcoin::secp256k1::Message::from(sighash);
+                    let signature = secp.sign_ecdsa(&msg, &secret_key);
+                    let ecdsa_signature = bitcoin::ecdsa::Signature {
+                        signature,
+                        sighash_type: EcdsaSighashType::All,
+                    };
+
+                    psbt_input.partial_sigs.insert(public_key, ecdsa_signature);
+
+                    let mut witness = Witness::new();
+                    witness.push(ecdsa_signature.serialize());
+                    witness.push(public_key.to_bytes());
+                    psbt_input.final_script_witness = Some(witness);
+
+                } else {
+                    return Err(AlkanesError::Wallet(format!(
+                        "Unsupported script type for ExternalKey input {}: {}",
+                        i, prev_txout.script_pubkey
+                    )));
+                }
+            }
+
+            return Ok(psbt);
+        }
+
         let (keystore, mnemonic) = match &mut self.wallet_state {
             WalletState::Unlocked { keystore, mnemonic } => (keystore, mnemonic),
             _ => return Err(AlkanesError::Wallet("Wallet must be unlocked to sign transactions".to_string())),
@@ -3917,8 +4023,13 @@ impl DeezelProvider for ConcreteProvider {
         // signed with the same key used to create the commit address.
         let keypair = if let Some(secret) = ephemeral_secret {
             bitcoin::secp256k1::Keypair::from_secret_key(&self.secp, &secret)
+        } else if let WalletState::ExternalKey { private_key, .. } = &self.wallet_state {
+            // Use external private key for signing
+            let secret_key = bitcoin::secp256k1::SecretKey::from_str(private_key)
+                .map_err(|e| AlkanesError::Wallet(format!("Invalid external private key: {}", e)))?;
+            bitcoin::secp256k1::Keypair::from_secret_key(&self.secp, &secret_key)
         } else {
-            // Fallback to old behavior for non-presign flows
+            // Fallback to keystore mnemonic for non-presign flows
             let mnemonic = match &self.wallet_state {
                 WalletState::Unlocked { mnemonic, .. } => mnemonic,
                 _ => return Err(AlkanesError::Wallet("Wallet must be unlocked to sign".to_string())),
