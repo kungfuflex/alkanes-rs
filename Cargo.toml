@@ -3,7 +3,7 @@ members = ["crates/*"]
 resolver = "2"
 
 [workspace.metadata.alkanes-data-api]
-description = "REST API for alkanes blockchain"
+description = "REST API for alkanes"
 
 [workspace.package]
 version = "10.0.0"
