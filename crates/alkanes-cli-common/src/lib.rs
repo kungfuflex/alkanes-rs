@@ -87,6 +87,7 @@ pub mod byte_view;
 pub mod proto;
 pub mod subfrost;
 pub mod ordinals;
+pub mod opnet;
 
 #[cfg(feature = "std")]
 pub mod dataapi;

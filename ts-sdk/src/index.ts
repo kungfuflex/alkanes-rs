@@ -68,11 +68,17 @@ export {
   EspoClient,
   createProvider,
   NETWORK_PRESETS,
+  OPNET_PRESETS,
+  OpnetRpcClient,
 } from './provider';
 
 export type {
   AlkanesProviderConfig,
   LogLevel,
+  OpnetBlockInfo,
+  OpnetTxInfo,
+  OpnetReceipt,
+  OpnetGasInfo,
   PoolDetails,
   PoolWithDetails,
   TradeInfo,

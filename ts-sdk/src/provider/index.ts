@@ -107,6 +107,12 @@ export const NETWORK_PRESETS: Record<string, { rpcUrl: string; dataApiUrl: strin
   },
 };
 
+/** OP_NET (opshrew) endpoint presets keyed by network */
+export const OPNET_PRESETS: Record<string, string> = {
+  'mainnet': 'https://sigop.subfrost.io/v4/mainnet',
+  'signet': 'https://sigop.subfrost.io/v4/signet',
+};
+
 /**
  * Log level for SDK operations
  * - 'off': No logging (default)
@@ -1195,6 +1201,227 @@ export class Brc20ProgClient {
   async estimateGas(to: string, data: string, from?: string): Promise<string> {
     const result = await this.provider.brc20progEstimateGas(to, data, from);
     return mapToObject(result);
+  }
+}
+
+// ── OP_NET types ──────────────────────────────────────────────────────
+
+export interface OpnetBlockInfo {
+  height: number;
+  hash: string;
+  timestamp: number;
+  txCount: number;
+  opnetTxCount: number;
+  gasUsed: bigint;
+}
+
+export interface OpnetTxInfo {
+  height: number;
+  txIndex: number;
+  txType: 'generic' | 'deployment' | 'interaction';
+  contractAddress: string;
+}
+
+export interface OpnetReceipt {
+  success: boolean;
+  gasUsed: bigint;
+  exitData: string;
+  eventCount: number;
+}
+
+export interface OpnetGasInfo {
+  height: number;
+  gasUsed: bigint;
+  blockHash: string;
+}
+
+// Helpers for decoding LE bytes
+function readU32LE(buf: Uint8Array, offset: number): number {
+  return buf[offset] | (buf[offset + 1] << 8) | (buf[offset + 2] << 16) | (buf[offset + 3] << 24);
+}
+
+function readU64LE(buf: Uint8Array, offset: number): bigint {
+  const lo = BigInt(readU32LE(buf, offset) >>> 0);
+  const hi = BigInt(readU32LE(buf, offset + 4) >>> 0);
+  return (hi << 32n) | lo;
+}
+
+function toHex(buf: Uint8Array): string {
+  return Array.from(buf).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function hexToBytes(hex: string): Uint8Array {
+  const h = hex.startsWith('0x') ? hex.slice(2) : hex;
+  const bytes = new Uint8Array(h.length / 2);
+  for (let i = 0; i < bytes.length; i++) {
+    bytes[i] = parseInt(h.substring(i * 2, i * 2 + 2), 16);
+  }
+  return bytes;
+}
+
+function encodeU32LE(v: number): string {
+  const buf = new Uint8Array(4);
+  buf[0] = v & 0xff; buf[1] = (v >> 8) & 0xff;
+  buf[2] = (v >> 16) & 0xff; buf[3] = (v >> 24) & 0xff;
+  return toHex(buf);
+}
+
+function encodeU64LE(v: bigint): string {
+  const buf = new Uint8Array(8);
+  for (let i = 0; i < 8; i++) {
+    buf[i] = Number((v >> BigInt(i * 8)) & 0xFFn);
+  }
+  return toHex(buf);
+}
+
+const TX_TYPES: Record<number, 'generic' | 'deployment' | 'interaction'> = {
+  0: 'generic', 1: 'deployment', 2: 'interaction',
+};
+
+/**
+ * OP_NET RPC client for querying opshrew-indexed state.
+ *
+ * Uses metashrew_view calls under the hood. Each method corresponds
+ * to an opshrew WASM view function and maps to a canonical OP_NET
+ * JSON-RPC method (btc_*).
+ *
+ * Endpoints:
+ *   signet:  https://sigop.subfrost.io/v4/signet
+ *   mainnet: https://sigop.subfrost.io/v4/mainnet
+ */
+export class OpnetRpcClient {
+  constructor(private metashrew: MetashrewClient) {}
+
+  /** btc_blockNumber — get latest indexed block height */
+  async getBlockNumber(): Promise<number> {
+    const hex = await this.metashrew.view('blocknumber', '', 'latest');
+    const bytes = hexToBytes(hex);
+    return bytes.length >= 4 ? readU32LE(bytes, 0) : 0;
+  }
+
+  /** btc_chainId — get chain ID */
+  async getChainId(): Promise<string> {
+    const hex = await this.metashrew.view('chainid', '', 'latest');
+    return hex;
+  }
+
+  /** btc_getStorageAt — get contract storage slot value */
+  async getStorageAt(contractAddress: string, key: string): Promise<string> {
+    const params = contractAddress.replace(/^0x/, '') + key.replace(/^0x/, '');
+    return this.metashrew.view('getstorageat', params, 'latest');
+  }
+
+  /** btc_getCode — get contract bytecode */
+  async getCode(contractAddress: string): Promise<string> {
+    const params = contractAddress.replace(/^0x/, '');
+    return this.metashrew.view('getcode', params, 'latest');
+  }
+
+  /** btc_call — simulate contract execution (read-only) */
+  async call(contractAddress: string, calldata: string): Promise<string> {
+    const params = contractAddress.replace(/^0x/, '') + calldata.replace(/^0x/, '');
+    return this.metashrew.view('simulate', params, 'latest');
+  }
+
+  /** btc_getBlockByNumber — get block info by height */
+  async getBlockByNumber(height: number): Promise<OpnetBlockInfo | null> {
+    const params = encodeU32LE(height);
+    const hex = await this.metashrew.view('getblockbynumber', params, 'latest');
+    const bytes = hexToBytes(hex);
+    if (bytes.length < 56) return null;
+    return {
+      height,
+      hash: '0x' + toHex(bytes.subarray(0, 32)),
+      timestamp: Number(readU64LE(bytes, 32)),
+      txCount: readU32LE(bytes, 40),
+      opnetTxCount: readU32LE(bytes, 44),
+      gasUsed: readU64LE(bytes, 48),
+    };
+  }
+
+  /** btc_getBlockByHash — get block info by hash */
+  async getBlockByHash(hash: string): Promise<OpnetBlockInfo | null> {
+    const params = hash.replace(/^0x/, '');
+    const hex = await this.metashrew.view('getblockbyhash', params, 'latest');
+    const bytes = hexToBytes(hex);
+    if (bytes.length < 28) return null;
+    return {
+      height: readU32LE(bytes, 0),
+      hash: hash.startsWith('0x') ? hash : '0x' + hash,
+      timestamp: Number(readU64LE(bytes, 4)),
+      txCount: readU32LE(bytes, 12),
+      opnetTxCount: readU32LE(bytes, 16),
+      gasUsed: readU64LE(bytes, 20),
+    };
+  }
+
+  /** btc_getTransactionByHash — get transaction info */
+  async getTransactionByHash(txHash: string): Promise<OpnetTxInfo | null> {
+    const params = txHash.replace(/^0x/, '');
+    const hex = await this.metashrew.view('gettransactionbyhash', params, 'latest');
+    const bytes = hexToBytes(hex);
+    if (bytes.length < 9) return null;
+    return {
+      height: readU32LE(bytes, 0),
+      txIndex: readU32LE(bytes, 4),
+      txType: TX_TYPES[bytes[8]] || 'generic',
+      contractAddress: '0x' + toHex(bytes.subarray(9)),
+    };
+  }
+
+  /** btc_getTransactionReceipt — get transaction receipt */
+  async getTransactionReceipt(txHash: string): Promise<OpnetReceipt | null> {
+    const params = txHash.replace(/^0x/, '');
+    const hex = await this.metashrew.view('gettransactionreceipt', params, 'latest');
+    const bytes = hexToBytes(hex);
+    if (bytes.length < 13) return null;
+    const exitDataLen = readU32LE(bytes, 9);
+    const exitData = bytes.length >= 13 + exitDataLen
+      ? '0x' + toHex(bytes.subarray(13, 13 + exitDataLen))
+      : '0x';
+    const eventCount = bytes.length >= 13 + exitDataLen + 4
+      ? readU32LE(bytes, 13 + exitDataLen)
+      : 0;
+    return {
+      success: bytes[0] === 1,
+      gasUsed: readU64LE(bytes, 1),
+      exitData,
+      eventCount,
+    };
+  }
+
+  /** btc_gas — get gas information for latest or specific block */
+  async getGas(height?: number): Promise<OpnetGasInfo> {
+    const params = height !== undefined ? encodeU32LE(height) : '';
+    const hex = await this.metashrew.view('gas', params, 'latest');
+    const bytes = hexToBytes(hex);
+    if (bytes.length < 12) {
+      return { height: 0, gasUsed: 0n, blockHash: '' };
+    }
+    return {
+      height: readU32LE(bytes, 0),
+      gasUsed: readU64LE(bytes, 4),
+      blockHash: bytes.length >= 44 ? '0x' + toHex(bytes.subarray(12, 44)) : '',
+    };
+  }
+
+  /** Get deployer pubkey for a contract */
+  async getDeployer(contractAddress: string): Promise<string> {
+    const params = contractAddress.replace(/^0x/, '');
+    return this.metashrew.view('getdeployer', params, 'latest');
+  }
+
+  /** Get total number of deployed contracts */
+  async getContractCount(): Promise<bigint> {
+    const hex = await this.metashrew.view('contractcount', '', 'latest');
+    const bytes = hexToBytes(hex);
+    return bytes.length >= 8 ? readU64LE(bytes, 0) : 0n;
+  }
+
+  /** Get contract address by list index */
+  async getContractAtIndex(index: bigint): Promise<string> {
+    const params = encodeU64LE(index);
+    return this.metashrew.view('contractatindex', params, 'latest');
   }
 }
 
@@ -2488,6 +2715,7 @@ export class AlkanesProvider {
   private _metashrew: MetashrewClient | null = null;
   private _ord: OrdClient | null = null;
   private _brc20prog: Brc20ProgClient | null = null;
+  private _opnet: OpnetRpcClient | null = null;
   private _oylApi: OylApiClient | null = null;
 
   public readonly network: bitcoin.Network;
@@ -2740,6 +2968,23 @@ export class AlkanesProvider {
       this._brc20prog = new Brc20ProgClient(this._provider);
     }
     return this._brc20prog;
+  }
+
+  /**
+   * OP_NET RPC client for querying opshrew-indexed state.
+   *
+   * Uses metashrew_view calls to query OP_NET contract state,
+   * block info, transaction receipts, and more.
+   *
+   * Endpoints:
+   *   signet:  https://sigop.subfrost.io/v4/signet
+   *   mainnet: https://sigop.subfrost.io/v4/mainnet
+   */
+  get opnet(): OpnetRpcClient {
+    if (!this._opnet) {
+      this._opnet = new OpnetRpcClient(this.metashrew);
+    }
+    return this._opnet;
   }
 
   /**
