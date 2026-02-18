@@ -8,4 +8,6 @@ pub mod client;
 pub mod types;
 
 pub use client::OpnetClient;
+#[cfg(feature = "std")]
+pub use client::NativeOpnetClient;
 pub use types::*;

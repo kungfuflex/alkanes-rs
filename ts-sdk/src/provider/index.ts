@@ -111,6 +111,8 @@ export const NETWORK_PRESETS: Record<string, { rpcUrl: string; dataApiUrl: strin
 export const OPNET_PRESETS: Record<string, string> = {
   'mainnet': 'https://sigop.subfrost.io/v4/mainnet',
   'signet': 'https://sigop.subfrost.io/v4/signet',
+  'testnet': 'https://regtest.opnet.org',         // Official OP_NET testnet (Bitcoin Testnet3)
+  'regtest': 'https://regtest.opnet.org',          // Alias
 };
 
 /**
@@ -1278,55 +1280,152 @@ const TX_TYPES: Record<number, 'generic' | 'deployment' | 'interaction'> = {
   0: 'generic', 1: 'deployment', 2: 'interaction',
 };
 
+/** Protocol detection for OpnetRpcClient */
+export type OpnetRpcProtocol = 'metashrew' | 'opnet-native';
+
 /**
- * OP_NET RPC client for querying opshrew-indexed state.
+ * OP_NET RPC client with dual-protocol support.
  *
- * Uses metashrew_view calls under the hood. Each method corresponds
- * to an opshrew WASM view function and maps to a canonical OP_NET
- * JSON-RPC method (btc_*).
+ * Supports two backends:
+ * - **metashrew**: opshrew view functions via metashrew_view JSON-RPC (sigop.subfrost.io)
+ * - **opnet-native**: Standard OP_NET JSON-RPC 2.0 (regtest.opnet.org)
  *
- * Endpoints:
- *   signet:  https://sigop.subfrost.io/v4/signet
- *   mainnet: https://sigop.subfrost.io/v4/mainnet
+ * Protocol is auto-detected on first call. You can also construct directly
+ * with a known protocol using the static factory methods.
  */
 export class OpnetRpcClient {
-  constructor(private metashrew: MetashrewClient) {}
+  private protocol: OpnetRpcProtocol | null = null;
+  private metashrew: MetashrewClient | null;
+  private nativeUrl: string | null;
+
+  /** Create from a MetashrewClient (metashrew protocol) */
+  static fromMetashrew(client: MetashrewClient): OpnetRpcClient {
+    const c = new OpnetRpcClient(client, null);
+    c.protocol = 'metashrew';
+    return c;
+  }
+
+  /** Create from a native OP_NET JSON-RPC URL */
+  static fromNativeUrl(url: string): OpnetRpcClient {
+    const c = new OpnetRpcClient(null, url);
+    c.protocol = 'opnet-native';
+    return c;
+  }
+
+  /** Create with auto-detection. Pass MetashrewClient for metashrew endpoints, URL string for native. */
+  constructor(metashrew: MetashrewClient | null, nativeUrl?: string | null) {
+    this.metashrew = metashrew;
+    this.nativeUrl = nativeUrl ?? null;
+  }
+
+  /** Auto-detect protocol by probing metashrew_view. */
+  private async detectProtocol(): Promise<OpnetRpcProtocol> {
+    if (this.protocol) return this.protocol;
+    if (this.metashrew) {
+      try {
+        await this.metashrew.view('blocknumber', '', 'latest');
+        this.protocol = 'metashrew';
+        return 'metashrew';
+      } catch {
+        // metashrew probe failed — fall through to native
+      }
+    }
+    this.protocol = 'opnet-native';
+    return 'opnet-native';
+  }
+
+  /** Make a native OP_NET JSON-RPC 2.0 call */
+  private async nativeCall(method: string, params: any[] = []): Promise<any> {
+    if (!this.nativeUrl) throw new Error('OpnetRpcClient: no native URL configured');
+    const body = JSON.stringify({ jsonrpc: '2.0', id: 1, method, params });
+    const res = await fetch(this.nativeUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body,
+    });
+    const json = await res.json();
+    if (json.error) throw new Error(`OP_NET RPC error: ${json.error.message || JSON.stringify(json.error)}`);
+    return json.result;
+  }
 
   /** btc_blockNumber — get latest indexed block height */
   async getBlockNumber(): Promise<number> {
-    const hex = await this.metashrew.view('blocknumber', '', 'latest');
+    const proto = await this.detectProtocol();
+    if (proto === 'opnet-native') {
+      const result = await this.nativeCall('getBlockNumber');
+      return typeof result === 'string' ? parseInt(result, 16) : Number(result);
+    }
+    const hex = await this.metashrew!.view('blocknumber', '', 'latest');
     const bytes = hexToBytes(hex);
     return bytes.length >= 4 ? readU32LE(bytes, 0) : 0;
   }
 
   /** btc_chainId — get chain ID */
   async getChainId(): Promise<string> {
-    const hex = await this.metashrew.view('chainid', '', 'latest');
-    return hex;
+    const proto = await this.detectProtocol();
+    if (proto === 'opnet-native') {
+      return String(await this.nativeCall('getChainId'));
+    }
+    return this.metashrew!.view('chainid', '', 'latest');
   }
 
   /** btc_getStorageAt — get contract storage slot value */
   async getStorageAt(contractAddress: string, key: string): Promise<string> {
+    const proto = await this.detectProtocol();
+    if (proto === 'opnet-native') {
+      return String(await this.nativeCall('getStorageAt', [contractAddress, key]));
+    }
     const params = contractAddress.replace(/^0x/, '') + key.replace(/^0x/, '');
-    return this.metashrew.view('getstorageat', params, 'latest');
+    return this.metashrew!.view('getstorageat', params, 'latest');
   }
 
   /** btc_getCode — get contract bytecode */
   async getCode(contractAddress: string): Promise<string> {
+    const proto = await this.detectProtocol();
+    if (proto === 'opnet-native') {
+      return String(await this.nativeCall('getCode', [contractAddress]));
+    }
     const params = contractAddress.replace(/^0x/, '');
-    return this.metashrew.view('getcode', params, 'latest');
+    return this.metashrew!.view('getcode', params, 'latest');
   }
 
   /** btc_call — simulate contract execution (read-only) */
   async call(contractAddress: string, calldata: string): Promise<string> {
+    const proto = await this.detectProtocol();
+    if (proto === 'opnet-native') {
+      return String(await this.nativeCall('call', [contractAddress, calldata]));
+    }
     const params = contractAddress.replace(/^0x/, '') + calldata.replace(/^0x/, '');
-    return this.metashrew.view('simulate', params, 'latest');
+    return this.metashrew!.view('simulate', params, 'latest');
+  }
+
+  /** Send a signed raw transaction */
+  async sendRawTransaction(txHex: string): Promise<string> {
+    const proto = await this.detectProtocol();
+    if (proto === 'opnet-native') {
+      return String(await this.nativeCall('sendRawTransaction', [txHex]));
+    }
+    throw new Error('sendRawTransaction not supported over metashrew protocol');
+  }
+
+  /** btc_getBalance — get address balance (native OP_NET only) */
+  async getBalance(address: string): Promise<string> {
+    const proto = await this.detectProtocol();
+    if (proto === 'opnet-native') {
+      return String(await this.nativeCall('getBalance', [address]));
+    }
+    throw new Error('getBalance not supported over metashrew protocol');
   }
 
   /** btc_getBlockByNumber — get block info by height */
   async getBlockByNumber(height: number): Promise<OpnetBlockInfo | null> {
+    const proto = await this.detectProtocol();
+    if (proto === 'opnet-native') {
+      const result = await this.nativeCall('getBlockByNumber', [height]);
+      return result ? result as OpnetBlockInfo : null;
+    }
     const params = encodeU32LE(height);
-    const hex = await this.metashrew.view('getblockbynumber', params, 'latest');
+    const hex = await this.metashrew!.view('getblockbynumber', params, 'latest');
     const bytes = hexToBytes(hex);
     if (bytes.length < 56) return null;
     return {
@@ -1341,8 +1440,13 @@ export class OpnetRpcClient {
 
   /** btc_getBlockByHash — get block info by hash */
   async getBlockByHash(hash: string): Promise<OpnetBlockInfo | null> {
+    const proto = await this.detectProtocol();
+    if (proto === 'opnet-native') {
+      const result = await this.nativeCall('getBlockByHash', [hash]);
+      return result ? result as OpnetBlockInfo : null;
+    }
     const params = hash.replace(/^0x/, '');
-    const hex = await this.metashrew.view('getblockbyhash', params, 'latest');
+    const hex = await this.metashrew!.view('getblockbyhash', params, 'latest');
     const bytes = hexToBytes(hex);
     if (bytes.length < 28) return null;
     return {
@@ -1357,8 +1461,13 @@ export class OpnetRpcClient {
 
   /** btc_getTransactionByHash — get transaction info */
   async getTransactionByHash(txHash: string): Promise<OpnetTxInfo | null> {
+    const proto = await this.detectProtocol();
+    if (proto === 'opnet-native') {
+      const result = await this.nativeCall('getTransactionByHash', [txHash]);
+      return result ? result as OpnetTxInfo : null;
+    }
     const params = txHash.replace(/^0x/, '');
-    const hex = await this.metashrew.view('gettransactionbyhash', params, 'latest');
+    const hex = await this.metashrew!.view('gettransactionbyhash', params, 'latest');
     const bytes = hexToBytes(hex);
     if (bytes.length < 9) return null;
     return {
@@ -1371,8 +1480,13 @@ export class OpnetRpcClient {
 
   /** btc_getTransactionReceipt — get transaction receipt */
   async getTransactionReceipt(txHash: string): Promise<OpnetReceipt | null> {
+    const proto = await this.detectProtocol();
+    if (proto === 'opnet-native') {
+      const result = await this.nativeCall('getTransactionReceipt', [txHash]);
+      return result ? result as OpnetReceipt : null;
+    }
     const params = txHash.replace(/^0x/, '');
-    const hex = await this.metashrew.view('gettransactionreceipt', params, 'latest');
+    const hex = await this.metashrew!.view('gettransactionreceipt', params, 'latest');
     const bytes = hexToBytes(hex);
     if (bytes.length < 13) return null;
     const exitDataLen = readU32LE(bytes, 9);
@@ -1392,8 +1506,13 @@ export class OpnetRpcClient {
 
   /** btc_gas — get gas information for latest or specific block */
   async getGas(height?: number): Promise<OpnetGasInfo> {
+    const proto = await this.detectProtocol();
+    if (proto === 'opnet-native') {
+      const result = await this.nativeCall('getGas', height !== undefined ? [height] : []);
+      return result as OpnetGasInfo;
+    }
     const params = height !== undefined ? encodeU32LE(height) : '';
-    const hex = await this.metashrew.view('gas', params, 'latest');
+    const hex = await this.metashrew!.view('gas', params, 'latest');
     const bytes = hexToBytes(hex);
     if (bytes.length < 12) {
       return { height: 0, gasUsed: 0n, blockHash: '' };
@@ -1407,21 +1526,39 @@ export class OpnetRpcClient {
 
   /** Get deployer pubkey for a contract */
   async getDeployer(contractAddress: string): Promise<string> {
+    const proto = await this.detectProtocol();
+    if (proto === 'opnet-native') {
+      return String(await this.nativeCall('getDeployer', [contractAddress]));
+    }
     const params = contractAddress.replace(/^0x/, '');
-    return this.metashrew.view('getdeployer', params, 'latest');
+    return this.metashrew!.view('getdeployer', params, 'latest');
   }
 
   /** Get total number of deployed contracts */
   async getContractCount(): Promise<bigint> {
-    const hex = await this.metashrew.view('contractcount', '', 'latest');
+    const proto = await this.detectProtocol();
+    if (proto === 'opnet-native') {
+      const result = await this.nativeCall('getContractCount');
+      return BigInt(result);
+    }
+    const hex = await this.metashrew!.view('contractcount', '', 'latest');
     const bytes = hexToBytes(hex);
     return bytes.length >= 8 ? readU64LE(bytes, 0) : 0n;
   }
 
   /** Get contract address by list index */
   async getContractAtIndex(index: bigint): Promise<string> {
+    const proto = await this.detectProtocol();
+    if (proto === 'opnet-native') {
+      return String(await this.nativeCall('getContractAtIndex', [index.toString()]));
+    }
     const params = encodeU64LE(index);
-    return this.metashrew.view('contractatindex', params, 'latest');
+    return this.metashrew!.view('contractatindex', params, 'latest');
+  }
+
+  /** Get the detected or configured protocol */
+  getProtocol(): OpnetRpcProtocol | null {
+    return this.protocol;
   }
 }
 

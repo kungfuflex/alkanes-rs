@@ -192,6 +192,90 @@ impl<'a> OpnetClient<'a> {
     }
 }
 
+// ── Native OP_NET JSON-RPC client ──────────────────────────────────────
+
+/// Client for native OP_NET JSON-RPC endpoints (e.g. regtest.opnet.org).
+///
+/// Unlike [`OpnetClient`] which routes through metashrew view calls,
+/// this client speaks standard JSON-RPC 2.0 directly to an OP_NET node.
+#[cfg(feature = "std")]
+pub struct NativeOpnetClient {
+    url: String,
+    client: reqwest::Client,
+}
+
+#[cfg(feature = "std")]
+impl NativeOpnetClient {
+    pub fn new(url: &str) -> Self {
+        Self {
+            url: url.to_string(),
+            client: reqwest::Client::new(),
+        }
+    }
+
+    async fn rpc_call(&self, method: &str, params: serde_json::Value) -> crate::Result<serde_json::Value> {
+        let body = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": method,
+            "params": params,
+        });
+        let resp = self.client.post(&self.url)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| anyhow::anyhow!("OP_NET RPC request failed: {}", e))?;
+        let json: serde_json::Value = resp.json().await
+            .map_err(|e| anyhow::anyhow!("OP_NET RPC response parse failed: {}", e))?;
+        if let Some(err) = json.get("error") {
+            return Err(anyhow::anyhow!("OP_NET RPC error: {}", err));
+        }
+        Ok(json["result"].clone())
+    }
+
+    /// getBlockNumber — get latest block height from the OP_NET node.
+    pub async fn block_number(&self) -> crate::Result<u32> {
+        let result = self.rpc_call("getBlockNumber", serde_json::json!([])).await?;
+        Ok(result.as_u64().unwrap_or(0) as u32)
+    }
+
+    /// getStorageAt — get contract storage slot value.
+    pub async fn get_storage_at(&self, contract_address: &str, key: &str) -> crate::Result<String> {
+        let result = self.rpc_call("getStorageAt", serde_json::json!([contract_address, key])).await?;
+        Ok(result.as_str().unwrap_or("").to_string())
+    }
+
+    /// getCode — get contract bytecode.
+    pub async fn get_code(&self, contract_address: &str) -> crate::Result<String> {
+        let result = self.rpc_call("getCode", serde_json::json!([contract_address])).await?;
+        Ok(result.as_str().unwrap_or("").to_string())
+    }
+
+    /// call — simulate contract execution (read-only).
+    pub async fn call(&self, contract_address: &str, calldata: &str) -> crate::Result<String> {
+        let result = self.rpc_call("call", serde_json::json!([contract_address, calldata])).await?;
+        Ok(result.as_str().unwrap_or("").to_string())
+    }
+
+    /// getBalance — get balance for an address.
+    pub async fn get_balance(&self, address: &str) -> crate::Result<String> {
+        let result = self.rpc_call("getBalance", serde_json::json!([address])).await?;
+        Ok(result.as_str().unwrap_or("").to_string())
+    }
+
+    /// sendRawTransaction — broadcast a raw transaction.
+    pub async fn send_raw_transaction(&self, tx_hex: &str) -> crate::Result<String> {
+        let result = self.rpc_call("sendRawTransaction", serde_json::json!([tx_hex])).await?;
+        Ok(result.as_str().unwrap_or("").to_string())
+    }
+
+    /// getChainId — get the chain ID.
+    pub async fn chain_id(&self) -> crate::Result<String> {
+        let result = self.rpc_call("getChainId", serde_json::json!([])).await?;
+        Ok(result.as_str().unwrap_or("").to_string())
+    }
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────
 
 fn decode_block_by_number(bytes: &[u8], height: u32) -> OpnetBlockInfo {
