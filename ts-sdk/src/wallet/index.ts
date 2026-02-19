@@ -275,27 +275,83 @@ export class AlkanesWallet {
 
   /**
    * Sign an existing PSBT
-   * 
+   *
+   * Routes each input to the correct BIP derivation path:
+   *   - P2TR (taproot) inputs → BIP86 m/86'/coinType'/0'/0/0 with TapTweak applied
+   *   - P2WPKH (native SegWit) inputs → BIP84 m/84'/coinType'/0'/0/0 (via accountNode)
+   *
+   * Root cause of the previous bug: this.accountNode was unconditionally derived from
+   * BIP84 (m/84'/0'/0'), so P2TR inputs could never be signed — the BIP84 compressed
+   * public key doesn't match the tweaked BIP86 taproot output key, causing bitcoinjs-lib's
+   * checkTaprootHashesForSig to throw "Can not sign for input #N with the key <hex>".
+   *
+   * Fix:
+   *   1. Detect P2TR inputs via input.tapInternalKey or witnessUtxo script bytes
+   *      (OP_1 0x51 + push-32 0x20 = 34-byte P2TR scriptPubKey).
+   *   2. For taproot: derive BIP86 node at m/86'/coinType'/0'/0/0.
+   *   3. Compute TapTweak = H_taptweak(x-only-internalPubKey) per BIP340/BIP341.
+   *   4. Scalar-add tweak to private key: tweakedKey = internalKey + tapTweak (mod n).
+   *   5. Sign with tweaked ECPair — its public key matches the P2TR output key exactly.
+   *   6. For non-taproot: fall through to the existing BIP84 path (no regression).
+   *
    * @param psbtBase64 - PSBT in base64 format
    * @returns Signed PSBT in base64
    */
   signPsbt(psbtBase64: string): string {
     const psbt = bitcoin.Psbt.fromBase64(psbtBase64, { network: this.network });
-    
+    const coinType = this.getCoinType();
+
+    // Derive the BIP86 taproot account node once and reuse across all taproot inputs.
+    // Coin type is dynamic (0 = mainnet, 1 = testnet/regtest) so regtest wallets work too.
+    const taprootAccountNode = this.root.derivePath(`m/86'/${coinType}'/0'`);
+
     // Sign all inputs that we can
     psbt.data.inputs.forEach((input, index) => {
       try {
-        // Derive the key for this input
-        // For now, using index 0 - in production, would need to identify correct path
-        const node = this.accountNode.derive(0).derive(0);
-        const keyPair = ECPair.fromPrivateKey(node.privateKey!, { network: this.network });
-        psbt.signInput(index, keyPair);
+        // Detect P2TR inputs: either the PSBT carries an explicit tapInternalKey field,
+        // or the witnessUtxo scriptPubKey is exactly 34 bytes: OP_1 (0x51) + OP_DATA_32 (0x20).
+        const isTaproot = !!(
+          input.tapInternalKey ||
+          (input.witnessUtxo &&
+            input.witnessUtxo.script.length === 34 &&
+            input.witnessUtxo.script[0] === 0x51 &&
+            input.witnessUtxo.script[1] === 0x20)
+        );
+
+        if (isTaproot) {
+          // BIP86: m/86'/coinType'/0'/0/0 — taproot receive address at index 0
+          const node = taprootAccountNode.derive(0).derive(0);
+
+          // Taproot key-path spending requires the TWEAKED private key (BIP340 §4.2).
+          // x-only public key = 32-byte pubkey without the parity prefix byte.
+          const internalXOnly = node.publicKey.slice(1);
+          const tapTweak = bitcoin.crypto.taggedHash('TapTweak', internalXOnly);
+
+          // Scalar addition on secp256k1: tweakedPrivKey = internalPrivKey + tapTweak (mod n)
+          const tweakedPrivKeyBytes = ecc.privateAdd(node.privateKey!, tapTweak);
+          if (!tweakedPrivKeyBytes) {
+            throw new Error(`TapTweak for input ${index} produced an invalid key (overflow)`);
+          }
+
+          // The resulting ECPair's public key equals the P2TR output key; signing will succeed.
+          const tweakedKeyPair = ECPair.fromPrivateKey(
+            Buffer.from(tweakedPrivKeyBytes),
+            { network: this.network }
+          );
+          psbt.signInput(index, tweakedKeyPair);
+        } else {
+          // BIP84 path: m/84'/coinType'/0'/0/0 — native SegWit receive address at index 0.
+          // Uses this.accountNode which was already derived in the constructor.
+          const node = this.accountNode.derive(0).derive(0);
+          const keyPair = ECPair.fromPrivateKey(node.privateKey!, { network: this.network });
+          psbt.signInput(index, keyPair);
+        }
       } catch (error) {
         // Input might not be ours or already signed
         console.warn(`Could not sign input ${index}:`, error);
       }
     });
-    
+
     return psbt.toBase64();
   }
 
