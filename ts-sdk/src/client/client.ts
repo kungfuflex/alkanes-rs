@@ -1014,7 +1014,7 @@ export class AlkanesClient {
     const rawProvider = this.provider.rawProvider;
 
     // Convert to the format expected by the WASM binding
-    const swapParams = {
+    const swapParams: Record<string, any> = {
       factory_id: params.factory_id,
       path: params.path,
       input_amount: String(params.input_amount),
@@ -1027,6 +1027,8 @@ export class AlkanesClient {
       trace: false,
       auto_confirm: params.auto_confirm ?? true,
     };
+    if (params.ordinals_strategy !== undefined) swapParams.ordinals_strategy = params.ordinals_strategy;
+    if (params.mempool_indexer !== undefined) swapParams.mempool_indexer = params.mempool_indexer;
 
     return rawProvider.alkanesSwap(JSON.stringify(swapParams));
   }
@@ -1042,7 +1044,7 @@ export class AlkanesClient {
   ): Promise<string> {
     const rawProvider = this.provider.rawProvider;
 
-    const poolParams = {
+    const poolParams: Record<string, any> = {
       factory_id: params.factory_id,
       token0: params.token0,
       token1: params.token1,
@@ -1056,6 +1058,8 @@ export class AlkanesClient {
       trace: false,
       auto_confirm: params.auto_confirm ?? true,
     };
+    if (params.ordinals_strategy !== undefined) poolParams.ordinals_strategy = params.ordinals_strategy;
+    if (params.mempool_indexer !== undefined) poolParams.mempool_indexer = params.mempool_indexer;
 
     return rawProvider.alkanesInitPool(JSON.stringify(poolParams));
   }

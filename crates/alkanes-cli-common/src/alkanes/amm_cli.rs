@@ -21,6 +21,8 @@ pub struct InitPoolParams {
     pub fee_rate: Option<f64>,
     pub trace: bool,
     pub auto_confirm: bool,
+    #[serde(default)]
+    pub ordinals_strategy: super::types::OrdinalsStrategy,
 }
 
 /// Parameters for executing a swap
@@ -37,6 +39,8 @@ pub struct SwapExecuteParams {
     pub fee_rate: Option<f64>,
     pub trace: bool,
     pub auto_confirm: bool,
+    #[serde(default)]
+    pub ordinals_strategy: super::types::OrdinalsStrategy,
 }
 
 /// Add liquidity to a pool (opcode 1)
@@ -113,7 +117,7 @@ pub async fn init_pool(
         trace_enabled: params.trace,
         mine_enabled: false,
         auto_confirm: params.auto_confirm,
-        ordinals_strategy: super::types::OrdinalsStrategy::default(),
+        ordinals_strategy: params.ordinals_strategy,
         mempool_indexer: false,
     };
     
@@ -212,7 +216,7 @@ pub async fn execute_swap(
         trace_enabled: params.trace,
         mine_enabled: false,
         auto_confirm: params.auto_confirm,
-        ordinals_strategy: super::types::OrdinalsStrategy::default(),
+        ordinals_strategy: params.ordinals_strategy,
         mempool_indexer: false,
     };
     

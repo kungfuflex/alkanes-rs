@@ -3274,6 +3274,8 @@ export class AlkanesProvider {
     feeRate?: number;
     trace?: boolean;
     autoConfirm?: boolean;
+    ordinalsStrategy?: import('../types').OrdinalsStrategy;
+    mempoolIndexer?: boolean;
   }): Promise<string> {
     const provider = await this.getProvider();
 
@@ -3291,6 +3293,8 @@ export class AlkanesProvider {
     if (params.minimumLp) poolParams.minimum_lp = String(params.minimumLp);
     if (params.fromAddress) poolParams.from_address = params.fromAddress;
     if (params.changeAddress) poolParams.change_address = params.changeAddress;
+    if (params.ordinalsStrategy !== undefined) poolParams.ordinals_strategy = params.ordinalsStrategy;
+    if (params.mempoolIndexer !== undefined) poolParams.mempool_indexer = params.mempoolIndexer;
 
     return provider.alkanesInitPool(JSON.stringify(poolParams));
   }
@@ -3313,6 +3317,8 @@ export class AlkanesProvider {
     feeRate?: number;
     trace?: boolean;
     autoConfirm?: boolean;
+    ordinalsStrategy?: import('../types').OrdinalsStrategy;
+    mempoolIndexer?: boolean;
   }): Promise<string> {
     const provider = await this.getProvider();
 
@@ -3329,6 +3335,8 @@ export class AlkanesProvider {
     };
     if (params.fromAddress) swapParams.from_address = params.fromAddress;
     if (params.changeAddress) swapParams.change_address = params.changeAddress;
+    if (params.ordinalsStrategy !== undefined) swapParams.ordinals_strategy = params.ordinalsStrategy;
+    if (params.mempoolIndexer !== undefined) swapParams.mempool_indexer = params.mempoolIndexer;
 
     return provider.alkanesSwap(JSON.stringify(swapParams));
   }
