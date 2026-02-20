@@ -2606,8 +2606,10 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         let mut outputs = Vec::new();
 
         // Add recipient outputs
+        use crate::traits::AddressResolver;
         for to_addr in &params.to_addresses {
-            let addr = bitcoin::Address::from_str(to_addr)?
+            let resolved_addr = self.provider.resolve_all_identifiers(to_addr).await?;
+            let addr = bitcoin::Address::from_str(&resolved_addr)?
                 .require_network(self.provider.get_network())?;
             outputs.push(bitcoin::TxOut {
                 value: bitcoin::Amount::from_sat(546),
@@ -2628,7 +2630,8 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             WalletProvider::get_address(self.provider).await?
         };
 
-        let addr = bitcoin::Address::from_str(&change_addr_str)?
+        let resolved_change_addr = self.provider.resolve_all_identifiers(&change_addr_str).await?;
+        let addr = bitcoin::Address::from_str(&resolved_change_addr)?
             .require_network(self.provider.get_network())?;
 
         // Calculate reveal fee based on actual transaction size
