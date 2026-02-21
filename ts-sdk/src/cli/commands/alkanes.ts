@@ -856,6 +856,56 @@ export function registerAlkanesCommands(program: Command): void {
       }
     });
 
+  // transfer (state-changing)
+  alkanes
+    .command('transfer <alkane-id> <amount> <to-address>')
+    .description('Transfer alkane tokens to another address')
+    .option('--feeRate <rate>', 'Fee rate in sat/vB')
+    .option('--ordinals-strategy <strategy>', 'Strategy for inscribed UTXOs: exclude (default), preserve, burn')
+    .option('--mempool-indexer', 'Enable mempool tracing for pending UTXO inscriptions')
+    .option('--pointer <target>', 'Override protostone pointer (e.g., v0, p0). Controls where alkane remainder goes')
+    .option('--refund <target>', 'Override protostone refund (e.g., v0, p0). Controls where tokens go on failure')
+    .option('--raw', 'Output raw JSON')
+    .action(async (alkaneId, amount, toAddress, options, command) => {
+      try {
+        const globalOpts = command.parent?.parent?.opts() || {};
+        const spinner = ora('Transferring alkane tokens...').start();
+
+        const provider = await createProvider({
+          network: globalOpts.provider,
+          jsonrpcUrl: globalOpts.jsonrpcUrl,
+          metashrewUrl: globalOpts.metashrewUrl,
+        });
+
+        const [block, tx] = alkaneId.split(':').map(Number);
+        if (isNaN(block) || isNaN(tx)) {
+          throw new Error(`Invalid alkane ID "${alkaneId}". Expected format: block:tx (e.g., 2:0)`);
+        }
+
+        const result = await provider.alkanesTransferTyped({
+          alkaneId: { block, tx },
+          amount,
+          toAddress: toAddress,
+          feeRate: options.feeRate ? parseFloat(options.feeRate) : 1,
+          ordinalsStrategy: options.ordinalsStrategy,
+          mempoolIndexer: options.mempoolIndexer,
+          pointer: options.pointer,
+          refund: options.refund,
+        });
+
+        spinner.succeed('Transfer complete');
+        const parsed = typeof result === 'string' ? JSON.parse(result) : result;
+        if (options.raw) {
+          console.log(formatOutput(parsed, { raw: true }));
+        } else {
+          success(`Reveal TXID: ${parsed.reveal_txid || parsed.txid || JSON.stringify(parsed)}`);
+        }
+      } catch (err: any) {
+        error(`Failed to transfer: ${err.message}`);
+        process.exit(1);
+      }
+    });
+
   // init-pool (state-changing)
   alkanes
     .command('init-pool')

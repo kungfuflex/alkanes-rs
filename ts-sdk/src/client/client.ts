@@ -1065,6 +1065,50 @@ export class AlkanesClient {
   }
 
   // ==========================================================================
+  // Alkane Transfer
+  // ==========================================================================
+
+  /**
+   * Transfer alkane tokens to another address
+   *
+   * Uses an edict-only protostone (no contract call) for pure token movement.
+   * Delegates to `alkanesTransferTyped` on the provider, which constructs the
+   * edict protostone `[block:tx:amount:v1]:v0:v0` and routes through `alkanesExecuteFull`.
+   *
+   * @param params - Transfer parameters (accepts TypeScript objects, not JSON strings)
+   * @returns Execution result with transaction IDs
+   *
+   * @example
+   * ```typescript
+   * const result = await client.alkanesTransfer({
+   *   alkane_id: { block: 2, tx: 0 },
+   *   amount: '1000',
+   *   to_address: 'bc1p...',
+   *   fee_rate: 10,
+   * });
+   * console.log('Transfer txid:', result.reveal_txid);
+   * ```
+   */
+  async alkanesTransfer(
+    params: import('../types').AlkanesTransferParams
+  ): Promise<import('../types').AlkanesExecuteResult> {
+    return this.provider.alkanesTransferTyped({
+      alkaneId: params.alkane_id,
+      amount: String(params.amount),
+      toAddress: params.to_address,
+      fromAddresses: params.from_addresses,
+      changeAddress: params.change_address,
+      alkanesChangeAddress: params.alkanes_change_address,
+      feeRate: params.fee_rate,
+      ordinalsStrategy: params.ordinals_strategy,
+      mempoolIndexer: params.mempool_indexer,
+      autoConfirm: params.auto_confirm,
+      pointer: params.pointer,
+      refund: params.refund,
+    });
+  }
+
+  // ==========================================================================
   // Raw Alkanes Execute
   // ==========================================================================
 

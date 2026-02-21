@@ -60,6 +60,44 @@ export interface AlkanesExecuteBaseParams {
 }
 
 // ============================================================================
+// Alkane Transfer Types
+// ============================================================================
+
+/**
+ * Parameters for transferring alkane tokens to another address
+ *
+ * Uses an edict-only protostone (no contract call) to move tokens.
+ * The Rust layer supports this natively — `ProtostoneSpec.cellpack` is `Option<Cellpack>`,
+ * and when `None`, the protostone carries only edicts for pure token transfers.
+ *
+ * Output layout:
+ * - v0: Sender (receives unedicted alkane remainder via runestone pointer)
+ * - v1: Recipient (receives transferred amount via edict)
+ * - v2: OP_RETURN (protostone)
+ * - v3: BTC change
+ */
+export interface AlkanesTransferParams extends AlkanesExecuteBaseParams {
+  /** Alkane token to transfer */
+  alkane_id: AlkaneId;
+  /** Amount to transfer (in base units) */
+  amount: number | bigint | string;
+  /** Recipient address */
+  to_address: string;
+  /**
+   * Protostone pointer override (optional, defaults to 'v0')
+   * Controls where unedicted alkane remainder goes.
+   * Use 'vN' for physical output N, 'pN' for shadow protostone output N.
+   */
+  pointer?: string;
+  /**
+   * Protostone refund override (optional, defaults to pointer value)
+   * Controls where tokens go on execution failure.
+   * Use 'vN' for physical output N, 'pN' for shadow protostone output N.
+   */
+  refund?: string;
+}
+
+// ============================================================================
 // frBTC Wrap/Unwrap Types
 // ============================================================================
 
