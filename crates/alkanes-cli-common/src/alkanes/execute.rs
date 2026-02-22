@@ -1071,9 +1071,9 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         // If we need alkanes, query protorunes_by_address directly to find UTXOs with balances
         // This bypasses the lua batch script which has issues with individual outpoint queries
         if !alkanes_needed.is_empty() {
-            log::info!("Querying alkane balances using protorunes_by_address (direct method)...");
+            log::info!("Querying UTXOs for alkane balances using espo (primary) with metashrew fallback...");
 
-            // IMPORTANT: Get addresses from from_addresses parameter, NOT from spendable_utxos
+            // IMPORTANT: Get addresses from from_addresses parameter, NOT just from spendable_utxos
             // The alkane UTXOs may be on addresses that have no Bitcoin UTXOs (esplora doesn't know about them)
             // So we must query ALL addresses specified by the user, not just ones with existing UTXOs
             let addresses_to_query: Vec<String> = if let Some(addrs) = from_addresses {
@@ -1093,58 +1093,76 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                 addrs
             };
 
-            log::info!("Fetching balances for {} addresses (1 RPC call per address): {:?}", addresses_to_query.len(), addresses_to_query);
+            log::info!("Fetching balances for {} addresses (espo primary, metashrew fallback): {:?}",
+                       addresses_to_query.len(), addresses_to_query);
 
             // Create a map of (txid:vout) -> balance data for quick lookup
             let mut utxo_balances: alloc::collections::BTreeMap<String, serde_json::Value> = alloc::collections::BTreeMap::new();
 
-            // Use protorunes_by_address directly for each address (bypasses problematic lua batch script)
+            // Fetch alkane balances per address.
+            // Strategy: try espo (PostgreSQL-backed) first, fall back to metashrew Lua batch script.
+            // Espo is the production-ready indexer; metashrew is being phased out.
             for address in &addresses_to_query {
-                match self.provider.protorunes_by_address(address, None, 1).await {
-                    Ok(wallet_response) => {
-                        log::info!("Found {} alkane outpoints for address {}", wallet_response.balances.len(), address);
-                        for outpoint_response in &wallet_response.balances {
-                            let mut balances_array = Vec::new();
-                            for (alkane_id, amount) in &outpoint_response.balance_sheet.cached.balances {
-                                balances_array.push(serde_json::json!({
-                                    "block": alkane_id.block,
-                                    "tx": alkane_id.tx,
-                                    "amount": amount
-                                }));
-                            }
-                            let key = format!("{}:{}", outpoint_response.outpoint.txid, outpoint_response.outpoint.vout);
-                            utxo_balances.insert(key.clone(), serde_json::json!({
-                                "txid": outpoint_response.outpoint.txid.to_string(),
-                                "vout": outpoint_response.outpoint.vout,
-                                "value": outpoint_response.output.value.to_sat(),
-                                "balances": balances_array
-                            }));
-                            // Also add these alkane UTXOs to spendable_utxos if not already present
-                            let outpoint = bitcoin::OutPoint {
-                                txid: outpoint_response.outpoint.txid,
-                                vout: outpoint_response.outpoint.vout,
-                            };
-                            if !spendable_utxos.iter().any(|(op, _)| op == &outpoint) {
-                                spendable_utxos.push((outpoint, UtxoInfo {
-                                    txid: outpoint_response.outpoint.txid.to_string(),
-                                    vout: outpoint_response.outpoint.vout,
-                                    amount: outpoint_response.output.value.to_sat(),
-                                    address: address.clone(),
-                                    script_pubkey: Some(outpoint_response.output.script_pubkey.clone()),
-                                    confirmations: 100, // Assume confirmed
-                                    frozen: false,
-                                    freeze_reason: None,
-                                    block_height: None,
-                                    has_inscriptions: false,
-                                    has_runes: false,
-                                    has_alkanes: true,
-                                    is_coinbase: false,
-                                }));
+                // Primary: espo get_address_outpoints (no metashrew dependency)
+                match self.provider.get_address_outpoints(address).await {
+                    Ok(result) => {
+                        // Espo response: {"ok": true, "outpoints": [{"outpoint": "txid:vout", "entries": [{"alkane": "block:tx", "amount": "N"}]}]}
+                        if let Some(outpoints_array) = result.get("outpoints").and_then(|v| v.as_array()) {
+                            log::info!("Espo returned {} outpoints for address {}", outpoints_array.len(), address);
+                            for outpoint_obj in outpoints_array {
+                                if let Some(outpoint_str) = outpoint_obj.get("outpoint").and_then(|v| v.as_str()) {
+                                    // Convert espo entries to the internal format: { balances: [{ block, tx, amount }] }
+                                    let mut balances_array = Vec::new();
+                                    if let Some(entries) = outpoint_obj.get("entries").and_then(|v| v.as_array()) {
+                                        for entry in entries {
+                                            if let (Some(alkane_str), Some(amount_str)) = (
+                                                entry.get("alkane").and_then(|v| v.as_str()),
+                                                entry.get("amount").and_then(|v| v.as_str()),
+                                            ) {
+                                                // Parse "block:tx" format
+                                                let parts: Vec<&str> = alkane_str.split(':').collect();
+                                                if parts.len() == 2 {
+                                                    if let (Ok(block), Ok(tx)) = (parts[0].parse::<u64>(), parts[1].parse::<u64>()) {
+                                                        let amount = amount_str.parse::<u64>().unwrap_or(0);
+                                                        balances_array.push(serde_json::json!({
+                                                            "block": block,
+                                                            "tx": tx,
+                                                            "amount": amount
+                                                        }));
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    utxo_balances.insert(outpoint_str.to_string(), serde_json::json!({
+                                        "balances": balances_array
+                                    }));
+                                }
                             }
                         }
                     }
                     Err(e) => {
-                        log::warn!("Failed to fetch protorunes_by_address for {}: {}", address, e);
+                        log::info!("Espo unavailable for address {} ({}), falling back to metashrew batch", address, e);
+                        // Fallback: metashrew Lua batch script
+                        match self.provider.batch_fetch_utxo_balances(address, Some(1), None).await {
+                            Ok(result) => {
+                                // Parse the result and index by txid:vout
+                                if let Some(utxos_array) = result.get("utxos").and_then(|v| v.as_array()) {
+                                    for utxo_entry in utxos_array {
+                                        if let (Some(txid), Some(vout)) = (
+                                            utxo_entry.get("txid").and_then(|v| v.as_str()),
+                                            utxo_entry.get("vout").and_then(|v| v.as_u64())
+                                        ) {
+                                            let key = format!("{}:{}", txid, vout);
+                                            utxo_balances.insert(key, utxo_entry.clone());
+                                        }
+                                    }
+                                }
+                            }
+                            Err(e2) => {
+                                log::error!("Both espo and metashrew failed for address {}: espo={}, metashrew={}", address, e, e2);
+                            }
+                        }
                     }
                 }
             }
