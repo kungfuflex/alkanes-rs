@@ -174,6 +174,8 @@ export type {
   ExportOptions,
   ImportOptions,
   FeeEstimation,
+  // Alkane transfer
+  AlkanesTransferParams,
   // BRC20-Prog types
   AntiFrontrunningStrategy,
   Brc20ProgExecuteParams,

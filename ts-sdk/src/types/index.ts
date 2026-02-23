@@ -235,6 +235,7 @@ export type {
   AlkaneId as AlkanesAlkaneId,
   OrdinalsStrategy,
   AlkanesExecuteBaseParams,
+  AlkanesTransferParams,
   FrbtcWrapParams,
   FrbtcUnwrapParams,
   FrbtcWrapAndExecuteParams,

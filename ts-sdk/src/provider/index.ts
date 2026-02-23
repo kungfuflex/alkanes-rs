@@ -3138,6 +3138,8 @@ export class AlkanesProvider {
     mineEnabled?: boolean;
     autoConfirm?: boolean;
     rawOutput?: boolean;
+    ordinalsStrategy?: string;
+    mempoolIndexer?: boolean;
   }): Promise<any> {
     const provider = await this.getProvider();
 
@@ -3159,6 +3161,8 @@ export class AlkanesProvider {
     if (params.mineEnabled !== undefined) options.mine_enabled = params.mineEnabled;
     if (params.autoConfirm !== undefined) options.auto_confirm = params.autoConfirm;
     if (params.rawOutput !== undefined) options.raw_output = params.rawOutput;
+    if (params.ordinalsStrategy !== undefined) options.ordinals_strategy = params.ordinalsStrategy;
+    if (params.mempoolIndexer !== undefined) options.mempool_indexer = params.mempoolIndexer;
 
     const optionsJson = Object.keys(options).length > 0 ? JSON.stringify(options) : null;
 
@@ -3339,6 +3343,86 @@ export class AlkanesProvider {
     if (params.mempoolIndexer !== undefined) swapParams.mempool_indexer = params.mempoolIndexer;
 
     return provider.alkanesSwap(JSON.stringify(swapParams));
+  }
+
+  // ============================================================================
+  // ALKANE TRANSFER
+  // ============================================================================
+
+  /**
+   * Transfer alkane tokens to another address (typed parameters)
+   *
+   * Uses an edict-only protostone — no contract call, just a pure token transfer.
+   * The Rust layer's `ProtostoneSpec.cellpack` is `Option<Cellpack>`, and the
+   * edict string format `[block:tx:amount:target]:pointer:refund` produces a
+   * protostone with `cellpack: None` carrying only the transfer edict.
+   *
+   * Output layout:
+   * - v0: Sender (receives unedicted alkane remainder via runestone pointer)
+   * - v1: Recipient (receives transferred amount via edict)
+   * - v2: OP_RETURN (protostone)
+   * - v3: BTC change
+   *
+   * @param params - Transfer parameters
+   * @returns Execution result with transaction IDs
+   *
+   * @example
+   * ```typescript
+   * const result = await provider.alkanesTransferTyped({
+   *   alkaneId: { block: 2, tx: 0 },
+   *   amount: '1000',
+   *   toAddress: 'bc1p...',
+   *   feeRate: 10,
+   * });
+   * console.log('Transfer txid:', result.reveal_txid);
+   * ```
+   */
+  async alkanesTransferTyped(params: {
+    alkaneId: { block: number; tx: number };
+    amount: string | number | bigint;
+    toAddress: string;
+    fromAddresses?: string[];
+    changeAddress?: string;
+    alkanesChangeAddress?: string;
+    feeRate?: number;
+    ordinalsStrategy?: string;
+    mempoolIndexer?: boolean;
+    autoConfirm?: boolean;
+    mineEnabled?: boolean;
+    traceEnabled?: boolean;
+    pointer?: string;
+    refund?: string;
+  }): Promise<any> {
+    const { block, tx } = params.alkaneId;
+    const amount = String(params.amount);
+
+    // Pointer defaults: v0 = sender change output, refund defaults to pointer
+    const pointer = params.pointer ?? 'v0';
+    const refund = params.refund ?? pointer;
+
+    // Edict-only protostone: [block:tx:amount:target]:pointer:refund
+    // target=v1 (recipient output), pointer/refund control remainder and failure routing
+    const protostones = `[${block}:${tx}:${amount}:v1]:${pointer}:${refund}`;
+
+    // Input requirement: the alkane tokens to transfer
+    const inputRequirements = `${block}:${tx}:${amount}`;
+
+    // Output layout: v0=sender (alkane remainder), v1=recipient (edict target),
+    // v2=OP_RETURN (protostone), v3=BTC change
+    return this.alkanesExecuteTyped({
+      toAddresses: ['p2tr:0', params.toAddress],
+      inputRequirements,
+      protostones,
+      feeRate: params.feeRate,
+      fromAddresses: params.fromAddresses,
+      changeAddress: params.changeAddress,
+      alkanesChangeAddress: params.alkanesChangeAddress,
+      traceEnabled: params.traceEnabled,
+      mineEnabled: params.mineEnabled,
+      autoConfirm: params.autoConfirm,
+      ordinalsStrategy: params.ordinalsStrategy,
+      mempoolIndexer: params.mempoolIndexer,
+    });
   }
 
   // ============================================================================
