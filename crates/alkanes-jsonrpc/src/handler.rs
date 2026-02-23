@@ -1,4 +1,4 @@
-use crate::jsonrpc::{JsonRpcRequest, JsonRpcResponse, INTERNAL_ERROR, METHOD_NOT_FOUND};
+use crate::jsonrpc::{JsonRpcRequest, JsonRpcResponse, INTERNAL_ERROR, INVALID_PARAMS, METHOD_NOT_FOUND};
 use crate::proxy::ProxyClient;
 use crate::sandshrew;
 use anyhow::Result;
@@ -43,6 +43,11 @@ pub async fn handle_request_with_storage(
         String::new()
     };
 
+    // Handle special non-namespaced methods
+    if request.method == "spendablesbyaddress" {
+        return handle_spendables_by_address(&request.params, &request.id, proxy).await;
+    }
+
     match namespace {
         "ord" => handle_ord_method(&method_name, &request.params, &request.id, proxy).await,
         "esplora" => handle_esplora_method(&method_name, &request.params, &request.id, proxy).await,
@@ -55,6 +60,52 @@ pub async fn handle_request_with_storage(
         "btc" => handle_bitcoind_method(request, proxy).await,
         _ => handle_bitcoind_method(request, proxy).await,
     }
+}
+
+/// Handle spendablesbyaddress - returns UTXOs for an address via esplora
+/// This is used by the WASM SDK to get spendable UTXOs for building transactions
+async fn handle_spendables_by_address(
+    params: &[Value],
+    request_id: &Value,
+    proxy: &ProxyClient,
+) -> Result<JsonRpcResponse> {
+    if params.is_empty() {
+        return Ok(JsonRpcResponse::error(
+            INVALID_PARAMS,
+            "spendablesbyaddress requires address parameter".to_string(),
+            request_id.clone(),
+        ));
+    }
+
+    let address = params[0].as_str().ok_or_else(|| {
+        anyhow::anyhow!("address must be a string")
+    })?;
+
+    // Fetch UTXOs from esplora
+    let path = format!("/address/{}/utxo", address);
+    let utxos = proxy.fetch_esplora_endpoint(&path).await?;
+
+    // Transform esplora UTXOs to spendables format expected by the SDK
+    // esplora format: [{ txid, vout, value, status: { block_height, ... } }]
+    // spendables format: { outpoints: [{ outpoint: { txid, vout }, value, height }] }
+    let empty_vec = vec![];
+    let utxo_array = utxos.as_array().unwrap_or(&empty_vec);
+    let outpoints: Vec<Value> = utxo_array.iter().map(|utxo| {
+        serde_json::json!({
+            "outpoint": {
+                "txid": utxo.get("txid").and_then(|v| v.as_str()).unwrap_or(""),
+                "vout": utxo.get("vout").and_then(|v| v.as_u64()).unwrap_or(0)
+            },
+            "value": utxo.get("value").and_then(|v| v.as_u64()).unwrap_or(0),
+            "height": utxo.get("status").and_then(|s| s.get("block_height")).and_then(|v| v.as_u64()).unwrap_or(0)
+        })
+    }).collect();
+
+    let result = serde_json::json!({
+        "outpoints": outpoints
+    });
+
+    Ok(JsonRpcResponse::success(result, request_id.clone()))
 }
 
 async fn handle_ord_method(
@@ -135,7 +186,17 @@ async fn handle_esplora_method(
     request_id: &Value,
     proxy: &ProxyClient,
 ) -> Result<JsonRpcResponse> {
-    let path_parts: Vec<&str> = method.split(':').collect();
+    // Handle common underscore-based method aliases from lua scripts
+    // e.g., "addressutxo" -> "address::utxo" (becomes /address/{param}/utxo)
+    let normalized_method = match method {
+        "addressutxo" => "address::utxo",
+        "addresstxs" => "address::txs",
+        "addresstxsmempool" => "address::txs:mempool",
+        "addresstxschain" => "address::txs:chain",
+        _ => method,
+    };
+
+    let path_parts: Vec<&str> = normalized_method.split(':').collect();
     let mut path = String::from("/");
     let mut param_index = 0;
 
@@ -152,7 +213,7 @@ async fn handle_esplora_method(
         } else {
             path.push_str(part);
         }
-        
+
         if i < path_parts.len() - 1 {
             path.push('/');
         }
@@ -938,12 +999,10 @@ async fn handle_alkanes_method(
     let block_tag = if method == "protorunesbyoutpoint" {
         let first = params.get(0);
         if first.map_or(false, |v| v.is_object()) {
-            // Object format: block_tag at index 1
             params.get(1)
                 .and_then(|v| v.as_str())
                 .unwrap_or("latest")
         } else {
-            // Positional format: block_tag at index 2
             params.get(2)
                 .and_then(|v| v.as_str())
                 .unwrap_or("latest")
@@ -1005,8 +1064,6 @@ async fn handle_alkanes_method(
             }
         }
         "protorunesbyoutpoint" => {
-            // For protorunesbyoutpoint, params are [txid, vout, block_tag, protocol_tag]
-            // block_tag is at index 2, not index 1 like other methods
             match encode_protorunesbyoutpoint_request(params) {
                 Ok(hex) => ("protorunesbyoutpoint", Value::String(hex), "protorunesbyoutpoint"),
                 Err(e) => {
@@ -1019,7 +1076,6 @@ async fn handle_alkanes_method(
             }
         }
         "protorunesbyaddress" => {
-            // Accepts: ["address_string", block_tag] or [{"address": "...", "protocolTag": N}, block_tag]
             match encode_protorunesbyaddress_request(params) {
                 Ok(hex) => ("protorunesbyaddress", Value::String(hex), "protorunesbyaddress"),
                 Err(e) => {
