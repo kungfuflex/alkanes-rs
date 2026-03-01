@@ -1902,8 +1902,7 @@ impl WebProvider {
                 "pools": all_pool_details
             });
             
-            serde_wasm_bindgen::to_value(&response)
-                .map_err(|e| JsValue::from_str(&format!("Serialization failed: {}", e)))
+            Self::json_to_js_value(&response)
         })
     }
 
@@ -4002,8 +4001,7 @@ impl WebProvider {
             let response = provider.rest_call(&base_url, "get-address-balances", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get address balances failed: {}", e)))?;
 
-            serde_wasm_bindgen::to_value(&response)
-                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+            Self::json_to_js_value(&response)
         })
     }
 
@@ -4022,8 +4020,7 @@ impl WebProvider {
             let response = provider.rest_call(&url, "get-all-history", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get all history failed: {}", e)))?;
             
-            serde_wasm_bindgen::to_value(&response)
-                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+            Self::json_to_js_value(&response)
         })
     }
 
@@ -4084,8 +4081,7 @@ impl WebProvider {
             let response = provider.rest_call(&url, "get-pool-mint-history", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get pool mint history failed: {}", e)))?;
 
-            serde_wasm_bindgen::to_value(&response)
-                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+            Self::json_to_js_value(&response)
         })
     }
 
@@ -4114,8 +4110,7 @@ impl WebProvider {
             let response = provider.rest_call(&url, "get-pool-burn-history", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get pool burn history failed: {}", e)))?;
 
-            serde_wasm_bindgen::to_value(&response)
-                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+            Self::json_to_js_value(&response)
         })
     }
 
@@ -4135,8 +4130,7 @@ impl WebProvider {
             let response = provider.rest_call(&url, "get-trades", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get trades failed: {}", e)))?;
             
-            serde_wasm_bindgen::to_value(&response)
-                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+            Self::json_to_js_value(&response)
         })
     }
 
@@ -4157,8 +4151,7 @@ impl WebProvider {
             let response = provider.rest_call(&url, "get-candles", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get candles failed: {}", e)))?;
             
-            serde_wasm_bindgen::to_value(&response)
-                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+            Self::json_to_js_value(&response)
         })
     }
 
@@ -4195,8 +4188,7 @@ impl WebProvider {
             let response = provider.rest_call(&url, "get-alkane-holders", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get holders failed: {}", e)))?;
             
-            serde_wasm_bindgen::to_value(&response)
-                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+            Self::json_to_js_value(&response)
         })
     }
 
@@ -4211,8 +4203,7 @@ impl WebProvider {
             let response = provider.rest_call(&url, "get-alkane-holders-count", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get holders count failed: {}", e)))?;
             
-            serde_wasm_bindgen::to_value(&response)
-                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+            Self::json_to_js_value(&response)
         })
     }
 
@@ -4231,8 +4222,7 @@ impl WebProvider {
             let response = provider.rest_call(&url, "get-keys", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get keys failed: {}", e)))?;
             
-            serde_wasm_bindgen::to_value(&response)
-                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+            Self::json_to_js_value(&response)
         })
     }
 
@@ -4266,8 +4256,7 @@ impl WebProvider {
             let response = provider.rest_call(&url, "get-bitcoin-market-chart", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get bitcoin market chart failed: {}", e)))?;
 
-            serde_wasm_bindgen::to_value(&response)
-                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+            Self::json_to_js_value(&response)
         })
     }
 
@@ -4299,8 +4288,7 @@ impl WebProvider {
             let response = provider.rest_call(&url, "get-alkanes", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get alkanes failed: {}", e)))?;
 
-            serde_wasm_bindgen::to_value(&response)
-                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+            Self::json_to_js_value(&response)
         })
     }
 
@@ -4323,8 +4311,7 @@ impl WebProvider {
             let response = provider.rest_call(&url, "get-alkane-details", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get alkane details failed: {}", e)))?;
 
-            serde_wasm_bindgen::to_value(&response)
-                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+            Self::json_to_js_value(&response)
         })
     }
 
@@ -4339,8 +4326,7 @@ impl WebProvider {
             let response = provider.rest_call(&url, "get-pool-by-id", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get pool by id failed: {}", e)))?;
 
-            serde_wasm_bindgen::to_value(&response)
-                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+            Self::json_to_js_value(&response)
         })
     }
 
@@ -4355,8 +4341,7 @@ impl WebProvider {
             let response = provider.rest_call(&url, "get-outpoint-balances", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get outpoint balances failed: {}", e)))?;
 
-            serde_wasm_bindgen::to_value(&response)
-                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+            Self::json_to_js_value(&response)
         })
     }
 
@@ -4371,8 +4356,7 @@ impl WebProvider {
             let response = provider.rest_call(&url, "get-block-height", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get block height failed: {}", e)))?;
 
-            serde_wasm_bindgen::to_value(&response)
-                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+            Self::json_to_js_value(&response)
         })
     }
 
@@ -4387,8 +4371,7 @@ impl WebProvider {
             let response = provider.rest_call(&url, "get-block-hash", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get block hash failed: {}", e)))?;
 
-            serde_wasm_bindgen::to_value(&response)
-                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+            Self::json_to_js_value(&response)
         })
     }
 
@@ -4403,8 +4386,7 @@ impl WebProvider {
             let response = provider.rest_call(&url, "get-indexer-position", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get indexer position failed: {}", e)))?;
 
-            serde_wasm_bindgen::to_value(&response)
-                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+            Self::json_to_js_value(&response)
         })
     }
 
@@ -4426,8 +4408,7 @@ impl WebProvider {
             let response = provider.rest_call(&url, "get-pool-creation-history", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get pool creation history failed: {}", e)))?;
 
-            serde_wasm_bindgen::to_value(&response)
-                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+            Self::json_to_js_value(&response)
         })
     }
 
@@ -4451,8 +4432,7 @@ impl WebProvider {
             let response = provider.rest_call(&url, "get-pool-swap-history", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get pool swap history failed: {}", e)))?;
 
-            serde_wasm_bindgen::to_value(&response)
-                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+            Self::json_to_js_value(&response)
         })
     }
 
@@ -4480,8 +4460,7 @@ impl WebProvider {
             let response = provider.rest_call(&url, "get-token-swap-history", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get token swap history failed: {}", e)))?;
 
-            serde_wasm_bindgen::to_value(&response)
-                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+            Self::json_to_js_value(&response)
         })
     }
 
@@ -4505,8 +4484,7 @@ impl WebProvider {
             let response = provider.rest_call(&url, "get-pool-mint-history", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get pool mint history failed: {}", e)))?;
 
-            serde_wasm_bindgen::to_value(&response)
-                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+            Self::json_to_js_value(&response)
         })
     }
 
@@ -4530,8 +4508,7 @@ impl WebProvider {
             let response = provider.rest_call(&url, "get-pool-burn-history", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get pool burn history failed: {}", e)))?;
 
-            serde_wasm_bindgen::to_value(&response)
-                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+            Self::json_to_js_value(&response)
         })
     }
 
@@ -4561,8 +4538,7 @@ impl WebProvider {
             let response = provider.rest_call(&url, "get-address-swap-history-for-pool", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get address swap history for pool failed: {}", e)))?;
 
-            serde_wasm_bindgen::to_value(&response)
-                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+            Self::json_to_js_value(&response)
         })
     }
 
@@ -4592,8 +4568,7 @@ impl WebProvider {
             let response = provider.rest_call(&url, "get-address-swap-history-for-token", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get address swap history for token failed: {}", e)))?;
 
-            serde_wasm_bindgen::to_value(&response)
-                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+            Self::json_to_js_value(&response)
         })
     }
 
@@ -4612,8 +4587,7 @@ impl WebProvider {
             let response = provider.rest_call(&url, "get-address-wrap-history", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get address wrap history failed: {}", e)))?;
 
-            serde_wasm_bindgen::to_value(&response)
-                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+            Self::json_to_js_value(&response)
         })
     }
 
@@ -4632,8 +4606,7 @@ impl WebProvider {
             let response = provider.rest_call(&url, "get-address-unwrap-history", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get address unwrap history failed: {}", e)))?;
 
-            serde_wasm_bindgen::to_value(&response)
-                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+            Self::json_to_js_value(&response)
         })
     }
 
@@ -4651,8 +4624,7 @@ impl WebProvider {
             let response = provider.rest_call(&url, "get-all-wrap-history", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get all wrap history failed: {}", e)))?;
 
-            serde_wasm_bindgen::to_value(&response)
-                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+            Self::json_to_js_value(&response)
         })
     }
 
@@ -4670,8 +4642,7 @@ impl WebProvider {
             let response = provider.rest_call(&url, "get-all-unwrap-history", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get all unwrap history failed: {}", e)))?;
 
-            serde_wasm_bindgen::to_value(&response)
-                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+            Self::json_to_js_value(&response)
         })
     }
 
@@ -4686,8 +4657,7 @@ impl WebProvider {
             let response = provider.rest_call(&url, "get-total-unwrap-amount", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get total unwrap amount failed: {}", e)))?;
 
-            serde_wasm_bindgen::to_value(&response)
-                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+            Self::json_to_js_value(&response)
         })
     }
 
@@ -4706,8 +4676,7 @@ impl WebProvider {
             let response = provider.rest_call(&url, "get-address-pool-creation-history", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get address pool creation history failed: {}", e)))?;
 
-            serde_wasm_bindgen::to_value(&response)
-                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+            Self::json_to_js_value(&response)
         })
     }
 
@@ -4726,8 +4695,7 @@ impl WebProvider {
             let response = provider.rest_call(&url, "get-address-pool-mint-history", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get address pool mint history failed: {}", e)))?;
 
-            serde_wasm_bindgen::to_value(&response)
-                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+            Self::json_to_js_value(&response)
         })
     }
 
@@ -4746,8 +4714,7 @@ impl WebProvider {
             let response = provider.rest_call(&url, "get-address-pool-burn-history", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get address pool burn history failed: {}", e)))?;
 
-            serde_wasm_bindgen::to_value(&response)
-                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+            Self::json_to_js_value(&response)
         })
     }
 
@@ -4766,8 +4733,7 @@ impl WebProvider {
             let response = provider.rest_call(&url, "get-all-address-amm-tx-history", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get all address AMM tx history failed: {}", e)))?;
 
-            serde_wasm_bindgen::to_value(&response)
-                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+            Self::json_to_js_value(&response)
         })
     }
 
@@ -4785,8 +4751,7 @@ impl WebProvider {
             let response = provider.rest_call(&url, "get-all-amm-tx-history", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get all AMM tx history failed: {}", e)))?;
 
-            serde_wasm_bindgen::to_value(&response)
-                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+            Self::json_to_js_value(&response)
         })
     }
 
@@ -4812,8 +4777,7 @@ impl WebProvider {
             let response = provider.rest_call(&url, "address-positions", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get address positions failed: {}", e)))?;
 
-            serde_wasm_bindgen::to_value(&response)
-                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+            Self::json_to_js_value(&response)
         })
     }
 
@@ -4847,8 +4811,7 @@ impl WebProvider {
             let response = provider.rest_call(&url, "get-token-pairs", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get token pairs failed: {}", e)))?;
 
-            serde_wasm_bindgen::to_value(&response)
-                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+            Self::json_to_js_value(&response)
         })
     }
 
@@ -4876,8 +4839,7 @@ impl WebProvider {
             let response = provider.rest_call(&url, "get-all-token-pairs", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get all token pairs failed: {}", e)))?;
 
-            serde_wasm_bindgen::to_value(&response)
-                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+            Self::json_to_js_value(&response)
         })
     }
 
@@ -4911,8 +4873,7 @@ impl WebProvider {
             let response = provider.rest_call(&url, "get-alkane-swap-pair-details", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get alkane swap pair details failed: {}", e)))?;
 
-            serde_wasm_bindgen::to_value(&response)
-                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+            Self::json_to_js_value(&response)
         })
     }
 
@@ -4927,8 +4888,7 @@ impl WebProvider {
             let response = provider.rest_call(&url, "get-alkanes-utxo", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get alkanes utxo failed: {}", e)))?;
 
-            serde_wasm_bindgen::to_value(&response)
-                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+            Self::json_to_js_value(&response)
         })
     }
 
@@ -4943,8 +4903,7 @@ impl WebProvider {
             let response = provider.rest_call(&url, "get-amm-utxos", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get AMM utxos failed: {}", e)))?;
 
-            serde_wasm_bindgen::to_value(&response)
-                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+            Self::json_to_js_value(&response)
         })
     }
 
@@ -4959,8 +4918,7 @@ impl WebProvider {
             let response = provider.rest_call(&url, "get-address-utxos", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get address utxos failed: {}", e)))?;
 
-            serde_wasm_bindgen::to_value(&response)
-                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+            Self::json_to_js_value(&response)
         })
     }
 
@@ -4975,8 +4933,7 @@ impl WebProvider {
             let response = provider.rest_call(&url, "get-address-balance", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get address balance failed: {}", e)))?;
 
-            serde_wasm_bindgen::to_value(&response)
-                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+            Self::json_to_js_value(&response)
         })
     }
 
@@ -4991,8 +4948,7 @@ impl WebProvider {
             let response = provider.rest_call(&url, "get-taproot-balance", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get taproot balance failed: {}", e)))?;
 
-            serde_wasm_bindgen::to_value(&response)
-                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+            Self::json_to_js_value(&response)
         })
     }
 
@@ -5007,8 +4963,7 @@ impl WebProvider {
             let response = provider.rest_call(&url, "get-account-utxos", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get account utxos failed: {}", e)))?;
 
-            serde_wasm_bindgen::to_value(&response)
-                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+            Self::json_to_js_value(&response)
         })
     }
 
@@ -5023,8 +4978,7 @@ impl WebProvider {
             let response = provider.rest_call(&url, "get-account-balance", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get account balance failed: {}", e)))?;
 
-            serde_wasm_bindgen::to_value(&response)
-                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+            Self::json_to_js_value(&response)
         })
     }
 
@@ -5039,8 +4993,7 @@ impl WebProvider {
             let response = provider.rest_call(&url, "get-address-outpoints", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get address outpoints failed: {}", e)))?;
 
-            serde_wasm_bindgen::to_value(&response)
-                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+            Self::json_to_js_value(&response)
         })
     }
 
@@ -5059,8 +5012,7 @@ impl WebProvider {
             let response = provider.rest_call(&url, "global-alkanes-search", body).await
                 .map_err(|e| JsValue::from_str(&format!("Global alkanes search failed: {}", e)))?;
 
-            serde_wasm_bindgen::to_value(&response)
-                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+            Self::json_to_js_value(&response)
         })
     }
 
@@ -5082,8 +5034,7 @@ impl WebProvider {
             let response = provider.rest_call(&url, "pathfind", body).await
                 .map_err(|e| JsValue::from_str(&format!("Pathfind failed: {}", e)))?;
 
-            serde_wasm_bindgen::to_value(&response)
-                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+            Self::json_to_js_value(&response)
         })
     }
 
@@ -5098,8 +5049,7 @@ impl WebProvider {
             let response = provider.rest_call(&url, "get-bitcoin-market-weekly", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get bitcoin market weekly failed: {}", e)))?;
 
-            serde_wasm_bindgen::to_value(&response)
-                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+            Self::json_to_js_value(&response)
         })
     }
 
@@ -5114,8 +5064,7 @@ impl WebProvider {
             let response = provider.rest_call(&url, "get-bitcoin-markets", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get bitcoin markets failed: {}", e)))?;
 
-            serde_wasm_bindgen::to_value(&response)
-                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+            Self::json_to_js_value(&response)
         })
     }
 
@@ -5133,8 +5082,7 @@ impl WebProvider {
             let response = provider.rest_call(&url, "get-taproot-history", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get taproot history failed: {}", e)))?;
 
-            serde_wasm_bindgen::to_value(&response)
-                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+            Self::json_to_js_value(&response)
         })
     }
 
@@ -5155,8 +5103,7 @@ impl WebProvider {
             let response = provider.rest_call(&url, "get-intent-history", body).await
                 .map_err(|e| JsValue::from_str(&format!("Get intent history failed: {}", e)))?;
 
-            serde_wasm_bindgen::to_value(&response)
-                .map_err(|e| JsValue::from_str(&format!("Serialize failed: {}", e)))
+            Self::json_to_js_value(&response)
         })
     }
 
@@ -6363,6 +6310,19 @@ impl WebProvider {
         }
 
         Ok(response_json)
+    }
+
+    /// Convert a serde_json::Value to JsValue using JSON.parse for reliable serialization
+    ///
+    /// This is preferred over serde_wasm_bindgen::to_value() which can fail silently
+    /// on complex nested structures or BigInt values, returning empty objects {}.
+    /// The JSON.parse approach serializes to string first, then uses JavaScript's
+    /// native JSON parser which handles all JSON types correctly.
+    fn json_to_js_value(response: &JsonValue) -> std::result::Result<JsValue, JsValue> {
+        let json_str = serde_json::to_string(response)
+            .map_err(|e| JsValue::from_str(&format!("JSON stringify failed: {}", e)))?;
+        js_sys::JSON::parse(&json_str)
+            .map_err(|e| JsValue::from_str(&format!("JSON parse failed: {:?}", e)))
     }
 
     /// Broadcasts a transaction via Rebar Labs Shield for enhanced privacy
