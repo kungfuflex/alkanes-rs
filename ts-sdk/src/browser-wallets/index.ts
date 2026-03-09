@@ -181,6 +181,28 @@ export const BROWSER_WALLETS: BrowserWalletInfo[] = [
     mobileSupport: true,
     deepLinkScheme: 'keplr://',
   },
+  {
+    id: 'tokeo',
+    name: 'Tokeo Wallet',
+    icon: WALLET_ICONS.tokeo || '',
+    website: 'https://tokeo.io/',
+    injectionKey: 'tokeo',
+    supportsPsbt: true,
+    supportsTaproot: true,
+    supportsOrdinals: false,
+    mobileSupport: false,
+  },
+  {
+    id: 'orange',
+    name: 'Orange Wallet',
+    icon: WALLET_ICONS.orange,
+    website: 'https://www.orangewallet.com/',
+    injectionKey: 'OrangeBitcoinProvider',
+    supportsPsbt: true,
+    supportsTaproot: true,
+    supportsOrdinals: false,
+    mobileSupport: false,
+  },
 ];
 
 /**
@@ -197,8 +219,27 @@ export function isWalletInstalled(wallet: BrowserWalletInfo): boolean {
   if (!isBrowser()) return false;
 
   try {
-    const walletObj = (window as any)[wallet.injectionKey];
-    return walletObj !== undefined && walletObj !== null;
+    const win = window as any;
+
+    // Special detection for wallets with non-standard injection
+    switch (wallet.id) {
+      case 'phantom':
+        return win.phantom?.bitcoin !== undefined;
+      case 'magic-eden':
+        return win.magicEden?.bitcoin !== undefined;
+      case 'okx':
+        return win.okxwallet?.bitcoin !== undefined;
+      case 'tokeo':
+        return win.tokeo?.bitcoin !== undefined;
+      case 'orange':
+        return (win.OrangeBitcoinProvider !== undefined) ||
+               (win.OrangecryptoProviders?.BitcoinProvider !== undefined) ||
+               (win.OrangeWalletProviders?.OrangeBitcoinProvider !== undefined);
+      default: {
+        const walletObj = win[wallet.injectionKey];
+        return walletObj !== undefined && walletObj !== null;
+      }
+    }
   } catch {
     return false;
   }
@@ -606,6 +647,40 @@ export class WalletConnector {
         break;
       }
 
+      case 'tokeo': {
+        const bitcoinProvider = provider.bitcoin;
+        if (!bitcoinProvider) {
+          throw new Error('Tokeo Bitcoin provider not available');
+        }
+        const accounts = await bitcoinProvider.requestAccounts();
+        const publicKey = await bitcoinProvider.getPublicKey();
+        account = {
+          address: accounts[0],
+          publicKey,
+          addressType: 'unknown',
+        };
+        break;
+      }
+
+      case 'orange': {
+        // Orange has multiple injection paths
+        const win = window as any;
+        const orangeProvider = win.OrangeBitcoinProvider ||
+          win.OrangecryptoProviders?.BitcoinProvider ||
+          win.OrangeWalletProviders?.OrangeBitcoinProvider;
+        if (!orangeProvider) {
+          throw new Error('Orange wallet not available');
+        }
+        const accts = await orangeProvider.requestAccounts();
+        const pubKey = await orangeProvider.getPublicKey();
+        account = {
+          address: accts[0],
+          publicKey: pubKey,
+          addressType: 'unknown',
+        };
+        break;
+      }
+
       default:
         throw new Error(`Connection not implemented for ${wallet.name}`);
     }
@@ -668,6 +743,8 @@ export {
   MagicEdenAdapter,
   WizzAdapter,
   OylAdapter,
+  TokeoAdapter,
+  OrangeAdapter,
 } from './adapter';
 
 export type {

@@ -184,14 +184,13 @@ export class BaseWalletAdapter implements JsWalletAdapter {
   }
 
   async signPsbt(psbtHex: string, options?: PsbtSigningOptionsForWasm): Promise<string> {
-    // Patch tapInternalKey on P2TR inputs to the connected wallet's actual public key.
-    // The SDK's WASM builds PSBTs using a dummy wallet (walletCreate()), so all
-    // tap_internal_key fields contain the dummy wallet's key. Browser wallets like
-    // UniSat auto-detect signable inputs by deriving a P2TR address from tapInternalKey —
-    // if it doesn't match the connected account, all inputs are silently skipped,
-    // causing an infinite loading spinner. This patching ensures the wallet can match
-    // its own key to the PSBT inputs.
-    const patchedHex = this.patchTapInternalKey(psbtHex);
+    // Full PSBT patching pipeline:
+    // 1. Patch tapInternalKey (dummy wallet key → user's real key)
+    // 2. Patch input witnessUtxo scripts (dummy wallet scripts → user's real scripts)
+    // 3. Inject redeemScripts for P2SH-P2WPKH wallets (Xverse)
+    let patchedHex = this.patchTapInternalKey(psbtHex);
+    patchedHex = this.patchInputWitnessScripts(patchedHex);
+    patchedHex = this.injectRedeemScripts(patchedHex);
 
     const signingOptions: PsbtSigningOptions | undefined = options
       ? {
@@ -205,7 +204,12 @@ export class BaseWalletAdapter implements JsWalletAdapter {
         }
       : undefined;
 
-    return this.wallet.signPsbt(patchedHex, signingOptions);
+    // 60-second timeout to detect wallet popup dismissed / extension crash
+    const signPromise = this.wallet.signPsbt(patchedHex, signingOptions);
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`${this.wallet.info.name} signing timed out after 60s`)), 60000)
+    );
+    return Promise.race([signPromise, timeoutPromise]);
   }
 
   async signPsbts(psbtHexs: string[], options?: PsbtSigningOptionsForWasm): Promise<string[]> {
@@ -251,6 +255,141 @@ export class BaseWalletAdapter implements JsWalletAdapter {
   async getInscriptions(cursor?: number, size?: number): Promise<any> {
     // Not available from base wallet API
     return { list: [], total: 0 };
+  }
+
+  /**
+   * Patch input witnessUtxo scripts from the dummy wallet's scriptPubKeys to the
+   * connected wallet's real scriptPubKeys.
+   *
+   * The SDK's WASM builds PSBTs using a dummy wallet. The witnessUtxo.script fields
+   * contain the dummy wallet's hashes. Browser wallets validate witnessUtxo consistency
+   * for sighash computation:
+   *   - UniSat: "Cannot read properties of undefined (reading 'scriptPk')"
+   *   - All wallets: incorrect sighash if witnessUtxo.script doesn't match the real UTXO
+   *
+   * Matching is by SCRIPT TYPE PATTERN (opcode + length), not by exact bytes,
+   * because the dummy wallet's hashes differ from the user's.
+   */
+  protected patchInputWitnessScripts(psbtHex: string): string {
+    const taprootAddr = this.wallet.address;
+    const segwitAddr = this.wallet.paymentAddress;
+
+    if (!taprootAddr) return psbtHex;
+
+    try {
+      const psbt = bitcoin.Psbt.fromHex(psbtHex);
+      const network = this.getBitcoinNetworkFromAddress(taprootAddr);
+
+      const taprootScript = bitcoin.address.toOutputScript(taprootAddr, network);
+
+      // Derive segwit script only if we have a distinct segwit address
+      let segwitScript: Buffer | null = null;
+      if (segwitAddr && segwitAddr !== taprootAddr) {
+        try {
+          const s = bitcoin.address.toOutputScript(segwitAddr, network);
+          const buf = Buffer.from(s);
+          // Only use for P2WPKH/P2SH patching
+          if ((buf.length === 22 && buf[0] === 0x00 && buf[1] === 0x14) ||
+              (buf.length === 23 && buf[0] === 0xa9)) {
+            segwitScript = buf;
+          }
+        } catch { /* ignore invalid address */ }
+      }
+
+      let patched = 0;
+      for (const input of psbt.data.inputs) {
+        if (!input.witnessUtxo) continue;
+        const script = Buffer.from(input.witnessUtxo.script);
+
+        // P2TR (0x51, 0x20, 32-byte key)
+        if (script.length === 34 && script[0] === 0x51 && script[1] === 0x20) {
+          input.witnessUtxo = { ...input.witnessUtxo, script: taprootScript };
+          patched++;
+        }
+        // P2WPKH (0x00, 0x14, 20-byte hash)
+        else if (script.length === 22 && script[0] === 0x00 && script[1] === 0x14) {
+          if (segwitScript) {
+            input.witnessUtxo = { ...input.witnessUtxo, script: segwitScript };
+            patched++;
+          } else {
+            // Single-address wallet — leave as-is (taproot wallet won't have P2WPKH UTXOs)
+          }
+        }
+        // P2SH (0xa9, 0x14, ..., 0x87) — replace with segwit if user has native segwit
+        else if (script.length === 23 && script[0] === 0xa9) {
+          if (segwitScript && segwitScript.length === 22) {
+            // User has native P2WPKH but dummy wallet used P2SH — patch to native
+            input.witnessUtxo = { ...input.witnessUtxo, script: segwitScript };
+            patched++;
+          }
+        }
+      }
+
+      return patched > 0 ? psbt.toHex() : psbtHex;
+    } catch {
+      return psbtHex;
+    }
+  }
+
+  /**
+   * Inject redeemScript for P2SH-P2WPKH inputs (needed for Xverse and similar wallets).
+   *
+   * Only applies when the wallet's payment address is a P2SH address (starts with '3' or '2').
+   * For native segwit wallets, this is a no-op.
+   */
+  protected injectRedeemScripts(psbtHex: string): string {
+    const paymentAddr = this.wallet.paymentAddress;
+    const paymentPubKey = this.wallet.paymentPublicKey;
+
+    if (!paymentAddr || !paymentPubKey) return psbtHex;
+
+    // Only P2SH addresses need redeemScript injection
+    if (!paymentAddr.startsWith('3') && !paymentAddr.startsWith('2')) return psbtHex;
+
+    try {
+      const psbt = bitcoin.Psbt.fromHex(psbtHex);
+      const network = this.getBitcoinNetworkFromAddress(paymentAddr);
+      const pubkey = Buffer.from(paymentPubKey, 'hex');
+      const p2wpkh = bitcoin.payments.p2wpkh({ pubkey, network });
+      const redeemScript = Buffer.from(p2wpkh.output!);
+      const p2shScript = Buffer.from(bitcoin.address.toOutputScript(paymentAddr, network));
+
+      let patched = 0;
+      for (let i = 0; i < psbt.data.inputs.length; i++) {
+        const input = psbt.data.inputs[i];
+        if (input.redeemScript) continue; // Already has redeemScript
+
+        if (!input.witnessUtxo) continue;
+        const script = Buffer.from(input.witnessUtxo.script);
+
+        // Match P2WPKH or P2SH scripts that need redeemScript
+        if ((script.length === 22 && script[0] === 0x00 && script[1] === 0x14) ||
+            script.equals(p2shScript)) {
+          // Replace witnessUtxo script with the P2SH scriptPubKey
+          input.witnessUtxo = { ...input.witnessUtxo, script: p2shScript };
+          psbt.data.inputs[i].redeemScript = redeemScript;
+          patched++;
+        }
+      }
+
+      return patched > 0 ? psbt.toHex() : psbtHex;
+    } catch {
+      return psbtHex;
+    }
+  }
+
+  /**
+   * Detect Bitcoin network from address prefix
+   */
+  protected getBitcoinNetworkFromAddress(addr: string): bitcoin.Network {
+    const lower = addr.toLowerCase();
+    if (lower.startsWith('bc1') || lower.startsWith('1') || lower.startsWith('3')) {
+      return bitcoin.networks.bitcoin;
+    }
+    if (lower.startsWith('tb1') || lower.startsWith('m') || lower.startsWith('n') || lower.startsWith('2')) {
+      return bitcoin.networks.testnet;
+    }
+    return bitcoin.networks.regtest;
   }
 
   /**
@@ -825,24 +964,72 @@ export class OylAdapter extends BaseWalletAdapter {
     return (window as any).oyl;
   }
 
+  /**
+   * OYL-specific signPsbt with reconnection on session expiry.
+   *
+   * OYL's sessions can expire mid-operation. When that happens, signing fails
+   * with "Site origin must be connected first". We auto-reconnect via
+   * getAddresses() and retry once.
+   *
+   * Also: OYL shows one confirmation popup PER INPUT — multiple popups are expected UX.
+   */
   async signPsbt(psbtHex: string, options?: PsbtSigningOptionsForWasm): Promise<string> {
     if (!this.oyl) throw new Error("Oyl wallet not available");
-    const patchedHex = this.patchTapInternalKey(psbtHex);
-    const result = await this.oyl.signPsbt({
-      psbt: patchedHex,
-      finalize: options?.auto_finalized,
-      broadcast: false,
-    });
-    return result.psbt;
+
+    // Full patching pipeline (inherited from base)
+    let patchedHex = this.patchTapInternalKey(psbtHex);
+    patchedHex = this.patchInputWitnessScripts(patchedHex);
+    patchedHex = this.injectRedeemScripts(patchedHex);
+
+    const doSign = async () => {
+      const result = await this.oyl.signPsbt({
+        psbt: patchedHex,
+        finalize: options?.auto_finalized,
+        broadcast: false,
+      });
+      return result.psbt;
+    };
+
+    try {
+      // 60-second timeout
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('OYL signing timed out after 60s')), 60000)
+      );
+      return await Promise.race([doSign(), timeoutPromise]);
+    } catch (err: any) {
+      const msg = err?.message || String(err);
+      // Auto-reconnect on session expiry
+      if (msg.includes('connected first') || msg.includes('not connected')) {
+        try {
+          // Re-establish connection via getAddresses()
+          if (typeof this.oyl.connect === 'function') {
+            await this.oyl.connect();
+          }
+          await this.oyl.getAddresses();
+        } catch { /* reconnection attempt failed, throw original */ }
+
+        // Retry once after reconnection
+        const timeoutPromise = new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('OYL signing timed out after 60s (retry)')), 60000)
+        );
+        return Promise.race([doSign(), timeoutPromise]);
+      }
+      throw err;
+    }
   }
 
   async signPsbts(psbtHexs: string[], options?: PsbtSigningOptionsForWasm): Promise<string[]> {
     if (!this.oyl) throw new Error("Oyl wallet not available");
-    const psbtsToSign = psbtHexs.map(hex => ({
-      psbt: this.patchTapInternalKey(hex),
-      finalize: options?.auto_finalized,
-      broadcast: false,
-    }));
+    const psbtsToSign = psbtHexs.map(hex => {
+      let patched = this.patchTapInternalKey(hex);
+      patched = this.patchInputWitnessScripts(patched);
+      patched = this.injectRedeemScripts(patched);
+      return {
+        psbt: patched,
+        finalize: options?.auto_finalized,
+        broadcast: false,
+      };
+    });
     const results = await this.oyl.signPsbts(psbtsToSign);
     return results.map((r: { psbt: string }) => r.psbt);
   }
@@ -862,6 +1049,66 @@ export class OylAdapter extends BaseWalletAdapter {
   async switchNetwork(network: string): Promise<void> {
     if (!this.oyl) throw new Error("Oyl wallet not available");
     await this.oyl.switchNetwork(network);
+  }
+}
+
+/**
+ * Tokeo-specific wallet adapter
+ *
+ * Tokeo injects at window.tokeo.bitcoin and follows the UniSat-like API pattern.
+ */
+export class TokeoAdapter extends BaseWalletAdapter {
+  private get tokeo(): any {
+    return (window as any).tokeo?.bitcoin;
+  }
+
+  async signPsbt(psbtHex: string, options?: PsbtSigningOptionsForWasm): Promise<string> {
+    if (!this.tokeo) throw new Error('Tokeo wallet not available');
+    let patchedHex = this.patchTapInternalKey(psbtHex);
+    patchedHex = this.patchInputWitnessScripts(patchedHex);
+    patchedHex = this.injectRedeemScripts(patchedHex);
+    return this.tokeo.signPsbt(patchedHex, {
+      autoFinalized: options?.auto_finalized ?? true,
+      toSignInputs: options?.to_sign_inputs,
+    });
+  }
+
+  async signMessage(message: string, address: string): Promise<string> {
+    if (!this.tokeo) throw new Error('Tokeo wallet not available');
+    return this.tokeo.signMessage(message);
+  }
+}
+
+/**
+ * Orange-specific wallet adapter
+ *
+ * Orange injects at multiple possible window paths:
+ *   window.OrangeBitcoinProvider
+ *   window.OrangecryptoProviders?.BitcoinProvider
+ *   window.OrangeWalletProviders?.OrangeBitcoinProvider
+ */
+export class OrangeAdapter extends BaseWalletAdapter {
+  private get orange(): any {
+    const win = window as any;
+    return win.OrangeBitcoinProvider ||
+           win.OrangecryptoProviders?.BitcoinProvider ||
+           win.OrangeWalletProviders?.OrangeBitcoinProvider;
+  }
+
+  async signPsbt(psbtHex: string, options?: PsbtSigningOptionsForWasm): Promise<string> {
+    if (!this.orange) throw new Error('Orange wallet not available');
+    let patchedHex = this.patchTapInternalKey(psbtHex);
+    patchedHex = this.patchInputWitnessScripts(patchedHex);
+    patchedHex = this.injectRedeemScripts(patchedHex);
+    return this.orange.signPsbt(patchedHex, {
+      autoFinalized: options?.auto_finalized ?? true,
+      toSignInputs: options?.to_sign_inputs,
+    });
+  }
+
+  async signMessage(message: string, address: string): Promise<string> {
+    if (!this.orange) throw new Error('Orange wallet not available');
+    return this.orange.signMessage({ address, message });
   }
 }
 
@@ -889,6 +1136,10 @@ export function createWalletAdapter(wallet: ConnectedWallet): JsWalletAdapter {
       return new WizzAdapter(wallet);
     case 'oyl':
       return new OylAdapter(wallet);
+    case 'tokeo':
+      return new TokeoAdapter(wallet);
+    case 'orange':
+      return new OrangeAdapter(wallet);
     default:
       // Use base adapter for unknown wallets
       return new BaseWalletAdapter(wallet);
