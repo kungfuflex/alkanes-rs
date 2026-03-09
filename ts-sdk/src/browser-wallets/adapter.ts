@@ -479,13 +479,93 @@ export class UnisatAdapter extends BaseWalletAdapter {
     }
   }
 
+  /**
+   * UniSat-specific signPsbt with required workarounds:
+   * 1. autoFinalized MUST be true — UniSat can't finalize taproot inputs externally
+   * 2. Each toSignInputs entry MUST have `address` — UniSat rejects without it
+   * 3. Full PSBT patching pipeline (tapInternalKey, witnessUtxo scripts, redeemScripts)
+   * 4. 60-second timeout to detect stuck popups
+   *
+   * Verified working: tx 81b3d4d2c04e163c0ba791963b7569eaa2196814b4d3a5afa8d62719d0a3df69
+   */
+  async signPsbt(psbtHex: string, options?: PsbtSigningOptionsForWasm): Promise<string> {
+    if (!this.unisat) throw new Error('Unisat not available');
+
+    // Full patching pipeline
+    let patchedHex = this.patchTapInternalKey(psbtHex);
+    patchedHex = this.patchInputWitnessScripts(patchedHex);
+    patchedHex = this.injectRedeemScripts(patchedHex);
+
+    // Build toSignInputs with address (required by UniSat)
+    const psbt = bitcoin.Psbt.fromHex(patchedHex);
+    const unisatAddress = this.wallet.address;
+    const toSignInputs = options?.to_sign_inputs
+      ? options.to_sign_inputs.map((input) => ({
+          index: input.index,
+          address: input.address || unisatAddress,
+          sighashTypes: input.sighash_types,
+        }))
+      : psbt.data.inputs.map((_, index) => ({
+          index,
+          address: unisatAddress,
+        }));
+
+    // 60-second timeout
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('UniSat signing timed out after 60s')), 60000)
+    );
+
+    // Prefer signPsbts (array format) if available, fall back to signPsbt
+    let signedHex: string;
+    if (typeof this.unisat.signPsbts === 'function') {
+      const results = await Promise.race([
+        this.unisat.signPsbts([patchedHex], {
+          autoFinalized: true,
+          toSignInputs,
+        }),
+        timeoutPromise,
+      ]);
+      signedHex = results[0];
+    } else {
+      signedHex = await Promise.race([
+        this.unisat.signPsbt(patchedHex, {
+          autoFinalized: true,
+          toSignInputs,
+        }),
+        timeoutPromise,
+      ]);
+    }
+
+    if (!signedHex) {
+      throw new Error('UniSat signing was cancelled or returned empty result');
+    }
+
+    return signedHex;
+  }
+
   async signPsbts(psbtHexs: string[], options?: PsbtSigningOptionsForWasm): Promise<string[]> {
     if (!this.unisat) throw new Error('Unisat not available');
-    // Patch tapInternalKey on all PSBTs before batch signing
-    const patchedHexs = psbtHexs.map((hex) => this.patchTapInternalKey(hex));
+    // Full patching pipeline on all PSBTs
+    const patchedHexs = psbtHexs.map((hex) => {
+      let patched = this.patchTapInternalKey(hex);
+      patched = this.patchInputWitnessScripts(patched);
+      patched = this.injectRedeemScripts(patched);
+      return patched;
+    });
+
+    // Build toSignInputs with address for UniSat
+    const unisatAddress = this.wallet.address;
+    const toSignInputs = options?.to_sign_inputs
+      ? options.to_sign_inputs.map((input) => ({
+          index: input.index,
+          address: input.address || unisatAddress,
+          sighashTypes: input.sighash_types,
+        }))
+      : undefined;
+
     return this.unisat.signPsbts(patchedHexs, {
       autoFinalized: options?.auto_finalized ?? true,
-      toSignInputs: options?.to_sign_inputs,
+      toSignInputs,
     });
   }
 }
@@ -520,8 +600,10 @@ export class XverseAdapter extends BaseWalletAdapter {
   async signPsbt(psbtHex: string, options?: PsbtSigningOptionsForWasm): Promise<string> {
     if (!this.xverse) throw new Error('Xverse not available');
 
-    // Patch tapInternalKey before signing (dummy wallet key → user's real key)
-    const patchedHex = this.patchTapInternalKey(psbtHex);
+    // Full patching pipeline
+    let patchedHex = this.patchTapInternalKey(psbtHex);
+    patchedHex = this.patchInputWitnessScripts(patchedHex);
+    patchedHex = this.injectRedeemScripts(patchedHex);
 
     // Xverse prefers base64 format
     const psbt = bitcoin.Psbt.fromHex(patchedHex);
@@ -529,19 +611,29 @@ export class XverseAdapter extends BaseWalletAdapter {
 
     const signInputs = this.buildXverseSignInputs(psbt, options);
 
-    const response = await this.xverse.request('signPsbt', {
-      psbt: psbtBase64,
-      signInputs,
-      broadcast: false,
-    });
+    // 60-second timeout
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('Xverse signing timed out after 60s')), 60000)
+    );
 
-    if (response.status === 'success') {
-      // Convert back to hex
-      const signedPsbt = bitcoin.Psbt.fromBase64(response.result.psbt);
+    const response = await Promise.race([
+      this.xverse.request('signPsbt', {
+        psbt: psbtBase64,
+        signInputs,
+        broadcast: false,
+      }),
+      timeoutPromise,
+    ]);
+
+    // Xverse returns { status: "success", result: { psbt: "..." } }
+    // or JSON-RPC: { jsonrpc: "2.0", result: { psbt: "..." } }
+    const signedPsbtBase64 = response?.result?.psbt;
+    if (signedPsbtBase64) {
+      const signedPsbt = bitcoin.Psbt.fromBase64(signedPsbtBase64);
       return signedPsbt.toHex();
     }
 
-    throw new Error(response.error?.message || 'Xverse signing failed');
+    throw new Error(response?.error?.message || 'Xverse signing failed');
   }
 
   /**
@@ -660,16 +752,31 @@ export class OkxAdapter extends BaseWalletAdapter {
 
   async signPsbt(psbtHex: string, options?: PsbtSigningOptionsForWasm): Promise<string> {
     if (!this.okx) throw new Error('OKX wallet not available');
-    const patchedHex = this.patchTapInternalKey(psbtHex);
-    return this.okx.signPsbt(patchedHex, {
-      autoFinalized: options?.auto_finalized ?? true,
-      toSignInputs: options?.to_sign_inputs,
-    });
+    let patchedHex = this.patchTapInternalKey(psbtHex);
+    patchedHex = this.patchInputWitnessScripts(patchedHex);
+    patchedHex = this.injectRedeemScripts(patchedHex);
+
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('OKX signing timed out after 60s')), 60000)
+    );
+
+    return Promise.race([
+      this.okx.signPsbt(patchedHex, {
+        autoFinalized: options?.auto_finalized ?? true,
+        toSignInputs: options?.to_sign_inputs,
+      }),
+      timeoutPromise,
+    ]);
   }
 
   async signPsbts(psbtHexs: string[], options?: PsbtSigningOptionsForWasm): Promise<string[]> {
     if (!this.okx) throw new Error('OKX wallet not available');
-    const patchedHexs = psbtHexs.map((hex) => this.patchTapInternalKey(hex));
+    const patchedHexs = psbtHexs.map((hex) => {
+      let patched = this.patchTapInternalKey(hex);
+      patched = this.patchInputWitnessScripts(patched);
+      patched = this.injectRedeemScripts(patched);
+      return patched;
+    });
     return this.okx.signPsbts(patchedHexs, {
       autoFinalized: options?.auto_finalized ?? true,
       toSignInputs: options?.to_sign_inputs,
@@ -733,8 +840,10 @@ export class LeatherAdapter extends BaseWalletAdapter {
   async signPsbt(psbtHex: string, options?: PsbtSigningOptionsForWasm): Promise<string> {
     if (!this.leather) throw new Error('Leather wallet not available');
 
-    // Patch tapInternalKey before signing (dummy wallet key → user's real key)
-    const patchedHex = this.patchTapInternalKey(psbtHex);
+    // Full patching pipeline
+    let patchedHex = this.patchTapInternalKey(psbtHex);
+    patchedHex = this.patchInputWitnessScripts(patchedHex);
+    patchedHex = this.injectRedeemScripts(patchedHex);
 
     // Leather uses signAtIndex - we need to determine which inputs to sign
     let signAtIndex: number[] | undefined;
@@ -806,7 +915,9 @@ export class PhantomAdapter extends BaseWalletAdapter {
   async signPsbt(psbtHex: string, options?: PsbtSigningOptionsForWasm): Promise<string> {
     if (!this.phantom) throw new Error('Phantom Bitcoin not available');
 
-    const patchedHex = this.patchTapInternalKey(psbtHex);
+    let patchedHex = this.patchTapInternalKey(psbtHex);
+    patchedHex = this.patchInputWitnessScripts(patchedHex);
+    patchedHex = this.injectRedeemScripts(patchedHex);
     const psbtBytes = hexToBytes(patchedHex);
     const { signedPsbt } = await this.phantom.signPSBT(psbtBytes, {
       inputsToSign: options?.to_sign_inputs?.map((i) => ({
@@ -858,8 +969,10 @@ export class MagicEdenAdapter extends BaseWalletAdapter {
   async signPsbt(psbtHex: string, options?: PsbtSigningOptionsForWasm): Promise<string> {
     if (!this.magicEden) throw new Error('Magic Eden wallet not available');
 
-    // Patch tapInternalKey before signing (dummy wallet key → user's real key)
-    const patchedHex = this.patchTapInternalKey(psbtHex);
+    // Full patching pipeline
+    let patchedHex = this.patchTapInternalKey(psbtHex);
+    patchedHex = this.patchInputWitnessScripts(patchedHex);
+    patchedHex = this.injectRedeemScripts(patchedHex);
 
     // Build toSignInputs based on addresses if not explicitly provided
     let toSignInputs = options?.to_sign_inputs;
@@ -921,7 +1034,9 @@ export class WizzAdapter extends BaseWalletAdapter {
 
   async signPsbt(psbtHex: string, options?: PsbtSigningOptionsForWasm): Promise<string> {
     if (!this.wizz) throw new Error('Wizz wallet not available');
-    const patchedHex = this.patchTapInternalKey(psbtHex);
+    let patchedHex = this.patchTapInternalKey(psbtHex);
+    patchedHex = this.patchInputWitnessScripts(patchedHex);
+    patchedHex = this.injectRedeemScripts(patchedHex);
     return this.wizz.signPsbt(patchedHex, {
       autoFinalized: options?.auto_finalized ?? true,
       toSignInputs: options?.to_sign_inputs,
@@ -930,7 +1045,12 @@ export class WizzAdapter extends BaseWalletAdapter {
 
   async signPsbts(psbtHexs: string[], options?: PsbtSigningOptionsForWasm): Promise<string[]> {
     if (!this.wizz) throw new Error('Wizz wallet not available');
-    const patchedHexs = psbtHexs.map((hex) => this.patchTapInternalKey(hex));
+    const patchedHexs = psbtHexs.map((hex) => {
+      let patched = this.patchTapInternalKey(hex);
+      patched = this.patchInputWitnessScripts(patched);
+      patched = this.injectRedeemScripts(patched);
+      return patched;
+    });
     return this.wizz.signPsbts(patchedHexs, {
       autoFinalized: options?.auto_finalized ?? true,
       toSignInputs: options?.to_sign_inputs,
