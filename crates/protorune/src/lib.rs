@@ -76,15 +76,22 @@ pub fn num_non_op_return_outputs(tx: &Transaction) -> usize {
         .count()
 }
 
+#[cfg(not(feature = "mainnet"))]
+pub const V217_FIX_HEIGHT: u64 = 0;
+#[cfg(feature = "mainnet")]
+pub const V217_FIX_HEIGHT: u64 = 943_500;
+
 /// vout : the vout to transfer runes to
 /// amount : the amount to transfer to the vout
 /// max_amount : max amount available to transfer
 /// tx : Transaction
+/// height : block height (used for activation gating)
 pub fn handle_transfer_runes_to_vout(
     vout: u128,
     amount: u128,
     max_amount: u128,
     tx: &Transaction,
+    height: u64,
 ) -> Result<BTreeMap<u32, u128>> {
     // pointer should not call this function if amount is 0
     let mut output: BTreeMap<u32, u128> = BTreeMap::<u32, u128>::new();
@@ -109,7 +116,7 @@ pub fn handle_transfer_runes_to_vout(
                     output.insert(i, max_amount / count + rem);
                 }
             }
-        } else {
+        } else if height >= V217_FIX_HEIGHT {
             let count = num_non_op_return_outputs(tx) as u128;
             let mut remaining = max_amount;
             if count != 0 {
@@ -119,6 +126,17 @@ pub fn handle_transfer_runes_to_vout(
                         continue;
                     }
                     // Now calculate and decrement for non-OP_RETURN outputs only
+                    let amount_outpoint = std::cmp::min(remaining, amount);
+                    remaining -= amount_outpoint;
+                    output.insert(i, amount_outpoint);
+                }
+            }
+        } else {
+            // Pre-fix behavior: iterates all outputs including OP_RETURN
+            let count = tx.output.len() as u128;
+            let mut remaining = max_amount;
+            if count != 0 {
+                for i in 0..tx.output.len() as u32 {
                     let amount_outpoint = std::cmp::min(remaining, amount);
                     remaining -= amount_outpoint;
                     output.insert(i, amount_outpoint);
@@ -231,6 +249,7 @@ impl Protorune {
             &mut balances_by_output,
             &mut balance_sheet,
             &tx.output,
+            height,
         )?;
         Self::handle_leftover_runes(&mut balance_sheet, &mut balances_by_output, unallocated_to)?;
         for (vout, sheet) in balances_by_output.clone() {
@@ -292,6 +311,7 @@ impl Protorune {
         balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer>>,
         balances: &mut BalanceSheet<AtomicPointer>,
         _outs: &Vec<TxOut>,
+        height: u64,
     ) -> Result<()> {
         if edict.id.block == 0 && edict.id.tx != 0 {
             Err(anyhow!("invalid edict"))
@@ -299,7 +319,7 @@ impl Protorune {
             let max = balances.get_and_update(&edict.id.into());
 
             let transfer_targets =
-                handle_transfer_runes_to_vout(edict.output, edict.amount, max, tx)?;
+                handle_transfer_runes_to_vout(edict.output, edict.amount, max, tx, height)?;
 
             transfer_targets.iter().try_for_each(|(vout, amount)| {
                 Self::update_balances_for_edict(
@@ -320,9 +340,10 @@ impl Protorune {
         balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer>>,
         balances: &mut BalanceSheet<AtomicPointer>,
         outs: &Vec<TxOut>,
+        height: u64,
     ) -> Result<()> {
         for edict in edicts {
-            Self::process_edict(tx, edict, balances_by_output, balances, outs)?;
+            Self::process_edict(tx, edict, balances_by_output, balances, outs, height)?;
         }
         Ok(())
     }
@@ -961,6 +982,7 @@ impl Protorune {
                             &mut proto_balances_by_output,
                             &mut prior_balance_sheet,
                             &tx.output,
+                            height,
                         )?;
 
                         // Handle any remaining balance

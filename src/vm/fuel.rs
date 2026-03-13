@@ -324,6 +324,26 @@ pub const fn minimum_fuel(height: u32) -> u64 {
         MINIMUM_FUEL_START
     }
 }
+//use if regtest
+#[cfg(not(any(
+    feature = "mainnet",
+    feature = "dogecoin",
+    feature = "bellscoin",
+    feature = "fractal",
+    feature = "luckycoin"
+)))]
+pub const V217_FIX_HEIGHT: u32 = 0;
+#[cfg(feature = "mainnet")]
+pub const V217_FIX_HEIGHT: u32 = 943_500;
+#[cfg(feature = "dogecoin")]
+pub const V217_FIX_HEIGHT: u32 = 0;
+#[cfg(feature = "fractal")]
+pub const V217_FIX_HEIGHT: u32 = 0;
+#[cfg(feature = "luckycoin")]
+pub const V217_FIX_HEIGHT: u32 = 0;
+#[cfg(feature = "bellscoin")]
+pub const V217_FIX_HEIGHT: u32 = 0;
+
 pub const FUEL_PER_REQUEST_BYTE: u64 = 1;
 pub const FUEL_PER_LOAD_BYTE: u64 = 2;
 pub const FUEL_PER_STORE_BYTE_START: u64 = 8;
@@ -359,14 +379,26 @@ pub trait Fuelable {
 
 impl<'a> Fuelable for Caller<'_, AlkanesState> {
     fn consume_fuel(&mut self, n: u64) -> Result<()> {
-        overflow_error((self.get_fuel().unwrap() as u64).checked_sub(n))?;
+        let remaining = overflow_error((self.get_fuel().unwrap() as u64).checked_sub(n))?;
+        let height = self.data().context.lock().unwrap().message.height as u32;
+        if height >= V217_FIX_HEIGHT {
+            self.set_fuel(remaining)
+                .map_err(|e| anyhow!("failed to set fuel: {}", e))?;
+        }
         Ok(())
     }
 }
 
 impl Fuelable for AlkanesInstance {
     fn consume_fuel(&mut self, n: u64) -> Result<()> {
-        overflow_error((self.store.get_fuel().unwrap() as u64).checked_sub(n))?;
+        let remaining =
+            overflow_error((self.store.get_fuel().unwrap() as u64).checked_sub(n))?;
+        let height = self.store.data().context.lock().unwrap().message.height as u32;
+        if height >= V217_FIX_HEIGHT {
+            self.store
+                .set_fuel(remaining)
+                .map_err(|e| anyhow!("failed to set fuel: {}", e))?;
+        }
         Ok(())
     }
 }
