@@ -35,6 +35,5 @@ prost-types = { workspace = true }
 
 [dev-dependencies]
 metashrew-core = { git = "https://github.com/sandshrewmetaprotocols/metashrew", features = ["test-utils"] }
-wasm-bindgen-cli = "0.2.99"
 getrandom = { version = "0.2.15", features = ["js"] }
 protorune = { path = ".", features = ["test-utils"] }

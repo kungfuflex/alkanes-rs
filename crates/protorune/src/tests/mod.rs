@@ -8,5 +8,6 @@ pub mod index_runes_edicts;
 pub mod index_runes_mint;
 #[cfg(test)]
 // pub mod multi_protocol;
+pub mod ord_runes_parity;
 pub mod test_cenotaphs;
 pub mod test_many_outputs_bug;
