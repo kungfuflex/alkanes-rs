@@ -13,7 +13,8 @@ mod tests {
     use bitcoin::{OutPoint, Transaction, TxIn, TxOut, Amount, Sequence, Witness};
     use bitcoin::blockdata::script::ScriptBuf;
     use bitcoin::blockdata::transaction::Version;
-    use ordinals::{Edict, RuneId, Runestone};
+    use ordinals::{Edict, Etching, Rune, RuneId, Runestone};
+    use std::str::FromStr;
     use wasm_bindgen_test::*;
 
     struct MyMessageContext(());
@@ -45,22 +46,35 @@ mod tests {
         clear();
 
         // Step 1: Create initial block with rune etching (8356 runes minted)
-        let config = helpers::RunesTestingConfig {
-            rune_etch_height: 840000,
-            rune_etch_vout: 0,
-            rune_name: Some("ALKAMIST".to_string()),
-            rune_symbol: Some("A".to_string()),
-            address1: helpers::ADDRESS1(),
-            address2: helpers::ADDRESS2(),
-            rune_pointer: Some(0), // Initial mint goes to vout 0
-        };
+        let etch_height: u64 = 840000;
 
-        let etch_tx = helpers::create_rune_etching_transaction(&config);
+        let etch_tx = helpers::create_tx_from_runestone(
+            Runestone {
+                etching: Some(Etching {
+                    divisibility: Some(0),
+                    premine: Some(8356),
+                    rune: Some(Rune::from_str("AAAAAAAAAAAAALKAMIST").unwrap()),
+                    spacers: Some(0),
+                    symbol: Some('A'),
+                    turbo: true,
+                    terms: None,
+                }),
+                pointer: Some(0),
+                edicts: vec![],
+                mint: None,
+                protocol: None,
+            },
+            vec![helpers::get_mock_txin(0)],
+            vec![helpers::get_txout_transfer_to_address(
+                &helpers::ADDRESS1(),
+                100_000_000,
+            )],
+        );
         let etch_block = helpers::create_block_with_txs(vec![etch_tx.clone()]);
 
         let _ = Protorune::index_block::<MyMessageContext>(
             etch_block.clone(),
-            config.rune_etch_height,
+            etch_height,
         );
 
         // Step 2: Create a transaction with 18 outputs total:
@@ -81,7 +95,7 @@ mod tests {
         };
 
         // Create runestone with edict
-        let rune_id = RuneId::new(config.rune_etch_height, config.rune_etch_vout).unwrap();
+        let rune_id = RuneId::new(etch_height, 0).unwrap();
         let runestone: ScriptBuf = (Runestone {
             etching: None,
             pointer: None,
@@ -101,7 +115,7 @@ mod tests {
         };
 
         // Create 17 regular outputs (vouts 1-17)
-        let address1 = helpers::get_address(&config.address1);
+        let address1 = helpers::get_address(&helpers::ADDRESS1());
         let script_pubkey = address1.script_pubkey();
 
         let mut outputs = vec![op_return]; // vout 0
@@ -123,13 +137,13 @@ mod tests {
 
         let _ = Protorune::index_block::<MyMessageContext>(
             transfer_block.clone(),
-            config.rune_etch_height + 1,
+            etch_height + 1,
         );
 
         // Step 3: Verify balances
         let protorune_id = ProtoruneRuneId {
-            block: config.rune_etch_height as u128,
-            tx: config.rune_etch_vout as u128,
+            block: etch_height as u128,
+            tx: 0,
         };
 
         // Check vout 16 (should have 500 runes)
