@@ -71,6 +71,12 @@ where
                 "sandshrew" => self.handle_sandshrew_method(&method_name, &request.params, &request.id).await,
                 "lua" => self.handle_lua_method(&method_name, &request.params, &request.id).await,
                 "btc" => self.handle_bitcoind_method(&method_name, &request.params, &request.id).await,
+                // Espo (OYL data API) — not available in devnet, return error to trigger fallback
+                "essentials" => Ok(JsonRpcResponse::error(
+                    METHOD_NOT_FOUND,
+                    format!("Espo method not available: {}", method_name),
+                    request.id.clone(),
+                )),
                 _ => {
                     // Default: forward to bitcoind with last underscore-separated part as method
                     let actual_method = method_parts.last().unwrap_or(&"");
@@ -608,18 +614,12 @@ where
 
             let confirmations = current_height.saturating_sub(block_height);
 
-            // Check if coinbase by looking at the raw transaction
-            let is_coinbase = if block_height == 0 || vout == 0 {
-                // Heuristic: tx at vout 0 in early blocks is likely coinbase.
-                // For accuracy we'd need to fetch the tx, but for the spendables
-                // script the key thing is to filter immature outputs.
-                // The esplora UTXO response doesn't include is_coinbase, so we
-                // check if the tx is the first tx in its block (coinbase).
-                // For devnet where all mining goes to one key, this is sufficient.
-                true
-            } else {
-                false
-            };
+            // Determine if this is a coinbase output.
+            // Esplora doesn't directly tell us, but we can check the value:
+            // coinbase outputs are exactly 50 BTC (5_000_000_000 sats) on regtest.
+            // A more accurate check would fetch the raw tx, but this heuristic
+            // covers the devnet case where all coinbase goes to one key.
+            let is_coinbase = value == 5_000_000_000 && vout == 0;
 
             let entry = json!({
                 "txid": txid,

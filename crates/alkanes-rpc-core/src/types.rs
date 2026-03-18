@@ -5,8 +5,25 @@ use serde_json::Value;
 pub struct JsonRpcRequest {
     pub jsonrpc: String,
     pub method: String,
+    /// JSON-RPC params — supports both positional (array) and named (object).
+    /// Object params are wrapped in a single-element array for uniform handling.
+    #[serde(deserialize_with = "deserialize_params", default)]
     pub params: Vec<Value>,
     pub id: Value,
+}
+
+/// Accept both `[...]` and `{...}` for JSON-RPC params.
+fn deserialize_params<'de, D>(deserializer: D) -> std::result::Result<Vec<Value>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Value::deserialize(deserializer)?;
+    match value {
+        Value::Array(arr) => Ok(arr),
+        Value::Object(_) => Ok(vec![value]),
+        Value::Null => Ok(vec![]),
+        other => Ok(vec![other]),
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
