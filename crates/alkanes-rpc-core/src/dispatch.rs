@@ -704,9 +704,8 @@ where
                         let txid = op.get("txid").and_then(|t| t.as_str()).unwrap_or("");
                         let vout = op.get("vout").and_then(|v| v.as_u64()).unwrap_or(0);
 
-                        // Reverse txid from internal (LE) to display (BE) format
-                        let display_txid = reverse_txid(txid).unwrap_or_default();
-                        let key = format!("{}:{}", display_txid, vout);
+                        // The txid from decode_wallet_response is already in display format
+                        let key = format!("{}:{}", txid, vout);
 
                         // Extract balances from either format
                         let mut balances = Vec::new();
@@ -1092,17 +1091,33 @@ fn process_address_info(
 
     if let Some(outpoints) = protorunes_result.get("outpoints").and_then(|v| v.as_array()) {
         for outpoint in outpoints {
-            if let (Some(op), Some(runes)) = (
-                outpoint.get("outpoint"),
-                outpoint.get("runes").and_then(|r| r.as_array()),
-            ) {
+            if let Some(op) = outpoint.get("outpoint") {
                 if let (Some(txid), Some(vout)) = (
                     op.get("txid").and_then(|t| t.as_str()),
                     op.get("vout").and_then(|v| v.as_u64()),
                 ) {
-                    let reversed_txid = reverse_txid(txid)?;
-                    let key = format!("{}:{}", reversed_txid, vout);
-                    runes_map.insert(key, runes.clone());
+                    // The txid from decode_wallet_response is already in display (BE) format
+                    // (reversed in codec.rs line 407). Esplora also uses display format.
+                    // No reversal needed — use the txid as-is.
+                    let key = format!("{}:{}", txid, vout);
+
+                    // Try "runes" field (older/alternative format)
+                    let runes = outpoint.get("runes")
+                        .and_then(|r| r.as_array())
+                        .cloned();
+
+                    // Try "balance_sheet.cached.balances" (decode_wallet_response format)
+                    let balance_sheet_runes = outpoint.get("balance_sheet")
+                        .and_then(|bs| bs.get("cached"))
+                        .and_then(|c| c.get("balances"))
+                        .and_then(|b| b.as_array())
+                        .cloned();
+
+                    if let Some(r) = runes.or(balance_sheet_runes) {
+                        if !r.is_empty() {
+                            runes_map.insert(key, r);
+                        }
+                    }
                 }
             }
         }
