@@ -217,6 +217,18 @@ async fn execute_subfrost_command(
             .await?;
             println!("{}", result);
         }
+        SubfrostCommands::SolvencyCheck {
+            block_tag,
+            raw,
+        } => {
+            let result = subfrost::execute_solvency_check(
+                provider,
+                block_tag,
+                raw,
+            )
+            .await?;
+            println!("{}", result);
+        }
     }
     Ok(())
 }

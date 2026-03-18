@@ -2673,6 +2673,19 @@ pub enum SubfrostCommands {
         #[arg(long)]
         raw: bool,
     },
+    /// Check subfrost vault solvency against pending unwraps
+    ///
+    /// Derives the subfrost signer (vault) address, queries its BTC balance,
+    /// and compares it against the total pending unwrap obligations to determine
+    /// if the vault is solvent.
+    SolvencyCheck {
+        /// Block tag to query (e.g., "latest" or a block height)
+        #[arg(long)]
+        block_tag: Option<String>,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
 }
 
 /// ESPO subcommands (alkanes balance indexer with PostgreSQL backend)

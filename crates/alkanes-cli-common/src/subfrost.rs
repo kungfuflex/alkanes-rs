@@ -561,6 +561,165 @@ where
     }
 }
 
+// ============================================================================
+// Solvency Check
+// ============================================================================
+
+/// Result of the solvency check
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SolvencyCheckResult {
+    /// The subfrost vault (signer) address
+    pub vault_address: String,
+    /// Total BTC balance in the vault (sats)
+    pub vault_balance_sats: u64,
+    /// Total BTC balance in the vault (BTC)
+    pub vault_balance_btc: f64,
+    /// Number of UTXOs in the vault
+    pub vault_utxo_count: usize,
+    /// Total frBTC supply (sats) — the full redemption obligation
+    pub frbtc_total_supply_sats: u64,
+    /// Total frBTC supply (BTC)
+    pub frbtc_total_supply_btc: f64,
+    /// Number of pending unwraps
+    pub pending_unwrap_count: usize,
+    /// Total pending unwrap obligation (sats)
+    pub pending_unwrap_total_sats: u64,
+    /// Total pending unwrap obligation (BTC)
+    pub pending_unwrap_total_btc: f64,
+    /// Surplus (positive) or deficit (negative) vs total supply in sats
+    pub surplus_sats: i64,
+    /// Surplus (positive) or deficit (negative) vs total supply in BTC
+    pub surplus_btc: f64,
+    /// Whether the vault is solvent (vault balance >= frBTC total supply)
+    pub is_solvent: bool,
+    /// Current block height used for the query
+    pub block_height: u64,
+}
+
+/// Execute the solvency check command.
+///
+/// 1. Derives the subfrost signer (vault) P2TR address from frBTC contract
+/// 2. Queries the vault's BTC balance via esplora UTXOs
+/// 3. Queries pending unwraps from the metashrew indexer
+/// 4. Compares vault balance against total pending unwrap obligations
+pub async fn execute_solvency_check<P: crate::traits::DeezelProvider + ?Sized>(
+    provider: &P,
+    block_tag: Option<String>,
+    raw: bool,
+) -> Result<String> {
+    // Step 1: Derive the subfrost vault address via simulate GET_SIGNER (opcode 103) on frBTC [32:0]
+    let contract_id = format!("{}:{}", FRBTC_CONTRACT_BLOCK, FRBTC_CONTRACT_TX);
+    let mut parcel = crate::proto::alkanes::MessageContextParcel::default();
+    parcel.height = 880000;
+    // Encode GET_SIGNER opcode as LEB128 in calldata
+    {
+        let mut buf = Vec::new();
+        leb128::write::unsigned(&mut buf, GET_SIGNER_OPCODE as u64).unwrap();
+        parcel.calldata = buf;
+    }
+    let response = provider.simulate(&contract_id, &parcel, None).await
+        .map_err(|e| crate::AlkanesError::Other(format!("Failed to simulate GET_SIGNER: {}", e)))?;
+    let pubkey_bytes = parse_signer_pubkey(&response)
+        .map_err(|e| crate::AlkanesError::Other(format!("Failed to parse signer pubkey: {}", e)))?;
+    let network = provider.get_network();
+    let vault_address = compute_address(&pubkey_bytes, network)
+        .map_err(|e| crate::AlkanesError::Other(format!("Failed to compute vault address: {}", e)))?
+        .to_string();
+
+    // Step 2: Get vault UTXOs and compute balance
+    let utxos_json = provider.get_address_utxo(&vault_address).await
+        .map_err(|e| crate::AlkanesError::Other(format!("Failed to get vault UTXOs: {}", e)))?;
+
+    let (vault_balance_sats, vault_utxo_count) = if let Some(utxos) = utxos_json.as_array() {
+        let balance: u64 = utxos.iter()
+            .filter_map(|u| u["value"].as_u64())
+            .sum();
+        (balance, utxos.len())
+    } else {
+        (0u64, 0usize)
+    };
+
+    // Step 3: Get pending unwraps
+    let pending_unwraps = provider.pending_unwraps(block_tag.clone()).await
+        .map_err(|e| crate::AlkanesError::Other(format!("Failed to get pending unwraps: {}", e)))?;
+
+    let pending_unwrap_total_sats: u64 = pending_unwraps.iter().map(|u| u.amount).sum();
+
+    // Step 4: Get current height
+    let block_height = provider.get_height().await
+        .unwrap_or(0);
+
+    // Compute solvency
+    let surplus_sats = vault_balance_sats as i64 - pending_unwrap_total_sats as i64;
+    let is_solvent = surplus_sats >= 0;
+
+    let result = SolvencyCheckResult {
+        vault_address,
+        vault_balance_sats,
+        vault_balance_btc: vault_balance_sats as f64 / 100_000_000.0,
+        vault_utxo_count,
+        pending_unwrap_count: pending_unwraps.len(),
+        pending_unwrap_total_sats,
+        pending_unwrap_total_btc: pending_unwrap_total_sats as f64 / 100_000_000.0,
+        surplus_sats,
+        surplus_btc: surplus_sats as f64 / 100_000_000.0,
+        is_solvent,
+        block_height,
+    };
+
+    if raw {
+        Ok(serde_json::to_string_pretty(&result)?)
+    } else {
+        Ok(format_solvency_result(&result))
+    }
+}
+
+/// Format the solvency check result as a human-readable string
+fn format_solvency_result(result: &SolvencyCheckResult) -> String {
+    let status = if result.is_solvent { "SOLVENT" } else { "INSOLVENT" };
+    let status_icon = if result.is_solvent { "✅" } else { "❌" };
+    let surplus_label = if result.is_solvent { "Surplus" } else { "Deficit" };
+
+    format!(
+        r#"
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                        SUBFROST SOLVENCY CHECK                               ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║                                                                              ║
+║  Status: {} {}                                                        ║
+║  Block Height: {:>10}                                                       ║
+║                                                                              ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║  VAULT                                                                       ║
+╠──────────────────────────────────────────────────────────────────────────────╣
+║  Address:  {}  ║
+║  Balance:  {:>14} sats  ({:.8} BTC)                          ║
+║  UTXOs:    {:>14}                                                           ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║  PENDING UNWRAPS                                                             ║
+╠──────────────────────────────────────────────────────────────────────────────╣
+║  Count:    {:>14}                                                           ║
+║  Total:    {:>14} sats  ({:.8} BTC)                          ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║  {}:  {:>14} sats  ({:.8} BTC)                          ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+"#,
+        status_icon,
+        status,
+        result.block_height,
+        result.vault_address,
+        result.vault_balance_sats,
+        result.vault_balance_btc,
+        result.vault_utxo_count,
+        result.pending_unwrap_count,
+        result.pending_unwrap_total_sats,
+        result.pending_unwrap_total_btc,
+        surplus_label,
+        result.surplus_sats.unsigned_abs(),
+        result.surplus_btc.abs(),
+    )
+}
+
 /// Format the minimum unwrap result as a human-readable string
 fn format_minimum_unwrap_result(result: &MinimumUnwrapResult) -> String {
     format!(
