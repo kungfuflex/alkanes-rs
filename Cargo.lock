@@ -573,8 +573,10 @@ dependencies = [
  "actix-cors",
  "actix-web",
  "alkanes-cli-common",
+ "alkanes-rpc-core",
  "alkanes-support",
  "anyhow",
+ "async-trait",
  "base64 0.22.1",
  "bitcoin 0.32.7",
  "bytes",
@@ -613,6 +615,22 @@ dependencies = [
  "quote",
  "serde_json",
  "syn 2.0.110",
+]
+
+[[package]]
+name = "alkanes-rpc-core"
+version = "10.0.0"
+dependencies = [
+ "alkanes-cli-common",
+ "alkanes-support",
+ "anyhow",
+ "async-trait",
+ "base64 0.22.1",
+ "futures",
+ "hex",
+ "prost",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

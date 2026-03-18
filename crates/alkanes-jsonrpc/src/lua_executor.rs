@@ -1,4 +1,5 @@
-use crate::jsonrpc::{JsonRpcRequest, JsonRpcResponse};
+use alkanes_rpc_core::types::{JsonRpcRequest, JsonRpcResponse};
+use crate::handler::ProdDispatcher;
 use crate::proxy::ProxyClient;
 use anyhow::{anyhow, Result};
 use mlua::prelude::*;
@@ -151,13 +152,15 @@ pub struct LuaError {
 /// Context for RPC calls made from Lua
 #[derive(Clone)]
 struct RpcContext {
+    dispatcher: Arc<ProdDispatcher>,
     proxy: Arc<ProxyClient>,
     call_count: Arc<Mutex<usize>>,
 }
 
 impl RpcContext {
-    fn new(proxy: Arc<ProxyClient>) -> Self {
+    fn new(dispatcher: Arc<ProdDispatcher>, proxy: Arc<ProxyClient>) -> Self {
         Self {
+            dispatcher,
             proxy,
             call_count: Arc::new(Mutex::new(0)),
         }
@@ -174,7 +177,7 @@ impl RpcContext {
 
     async fn call_rpc(&self, method: &str, params: Vec<Value>) -> Result<Value> {
         self.increment_calls().await;
-        
+
         let request = JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
             method: method.to_string(),
@@ -182,8 +185,8 @@ impl RpcContext {
             id: serde_json::Value::Number(1.into()),
         };
 
-        let response = crate::handler::handle_request(&request, &self.proxy).await?;
-        
+        let response = crate::handler::handle_request(&request, &self.dispatcher, &self.proxy).await?;
+
         match response {
             JsonRpcResponse::Success { result, .. } => Ok(result),
             JsonRpcResponse::Error { error, .. } => {
@@ -197,10 +200,11 @@ impl RpcContext {
 pub async fn execute_lua_script(
     script: &str,
     args: Vec<Value>,
+    dispatcher: &Arc<ProdDispatcher>,
     proxy: &ProxyClient,
 ) -> Result<LuaExecutionResult> {
     let start = Instant::now();
-    let rpc_context = RpcContext::new(Arc::new(proxy.clone()));
+    let rpc_context = RpcContext::new(dispatcher.clone(), Arc::new(proxy.clone()));
 
     let lua = Lua::new();
 

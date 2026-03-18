@@ -2654,6 +2654,7 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
                 fee_rate: fee_rate.clone(),
                 trace: trace.clone(),
                 auto_confirm: auto_confirm.clone(),
+                ordinals_strategy: Default::default(),
             };
             
             let provider = system.provider_mut();

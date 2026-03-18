@@ -1890,7 +1890,12 @@ impl WalletProvider for ConcreteProvider {
             // All services should be at least at the same height as bitcoind.
             let metashrew_synced = metashrew_height_res.as_ref().is_ok_and(|&h| h >= bitcoind_height);
             let esplora_synced = esplora_height_res.as_ref().is_ok_and(|&h| h >= bitcoind_height);
-            let ord_synced = ord_height_res.as_ref().is_ok_and(|&h| h >= bitcoind_height);
+            // If no ord URL is configured, skip ord sync check
+            let ord_synced = if self.get_ord_server_url().is_none() {
+                true
+            } else {
+                ord_height_res.as_ref().is_ok_and(|&h| h >= bitcoind_height)
+            };
 
             log::info!(
                 "Sync attempt {}/{}: bitcoind: {}, metashrew: {} (synced: {}), esplora: {} (synced: {}), ord: {} (synced: {})",

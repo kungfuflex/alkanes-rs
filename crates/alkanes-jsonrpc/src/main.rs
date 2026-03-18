@@ -1,3 +1,4 @@
+mod backends;
 mod config;
 mod handler;
 mod jsonrpc;
@@ -10,10 +11,12 @@ use actix_web::{middleware::Logger, web, App, HttpRequest, HttpResponse, HttpSer
 use config::Config;
 use jsonrpc::{JsonRpcRequest, JsonRpcResponse, INTERNAL_ERROR};
 use proxy::ProxyClient;
+use reqwest::Client;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 struct AppState {
+    dispatcher: Arc<handler::ProdDispatcher>,
     proxy: Arc<ProxyClient>,
     script_storage: lua_executor::ScriptStorage,
 }
@@ -31,7 +34,12 @@ async fn handle_jsonrpc(
 
     log::info!("{}|{}", ip, serde_json::to_string(&body.0).unwrap_or_default());
 
-    match handler::handle_request_with_storage(&body.0, &state.proxy, Some(&state.script_storage)).await {
+    match handler::handle_request_with_storage(
+        &body.0,
+        &state.dispatcher,
+        &state.proxy,
+        Some(&state.script_storage),
+    ).await {
         Ok(response) => HttpResponse::Ok().json(response),
         Err(e) => {
             log::error!("Error handling request: {:?}", e);
@@ -43,8 +51,6 @@ async fn handle_jsonrpc(
         }
     }
 }
-
-
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
@@ -70,7 +76,16 @@ async fn main() -> std::io::Result<()> {
         lua_executor::ScriptStorage::new()
     };
 
+    let client = Client::new();
     let proxy = Arc::new(ProxyClient::new(config.clone()));
+
+    // Create core dispatcher with reqwest backends
+    let dispatcher = Arc::new(alkanes_rpc_core::RpcDispatcher::new(
+        backends::ReqwestBitcoinBackend::new(client.clone(), &config),
+        backends::ReqwestMetashrewBackend::new(client.clone(), &config),
+        backends::ReqwestEsploraBackend::new(client.clone(), &config),
+        backends::ReqwestOrdBackend::new(client.clone(), &config),
+    ));
 
     let server_host = config.server_host.clone();
     let server_port = config.server_port;
@@ -84,6 +99,7 @@ async fn main() -> std::io::Result<()> {
 
         App::new()
             .app_data(web::Data::new(AppState {
+                dispatcher: dispatcher.clone(),
                 proxy: proxy.clone(),
                 script_storage: script_storage.clone(),
             }))

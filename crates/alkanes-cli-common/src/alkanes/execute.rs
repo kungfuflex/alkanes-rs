@@ -1147,7 +1147,10 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                         match self.provider.batch_fetch_utxo_balances(address, Some(1), None).await {
                             Ok(result) => {
                                 // Parse the result and index by txid:vout
-                                if let Some(utxos_array) = result.get("utxos").and_then(|v| v.as_array()) {
+                                // The lua script may wrap results in {"returns": {"utxos": [...]}}
+                                let utxos_value = result.get("utxos")
+                                    .or_else(|| result.get("returns").and_then(|r| r.get("utxos")));
+                                if let Some(utxos_array) = utxos_value.and_then(|v| v.as_array()) {
                                     for utxo_entry in utxos_array {
                                         if let (Some(txid), Some(vout)) = (
                                             utxo_entry.get("txid").and_then(|v| v.as_str()),
@@ -1167,17 +1170,102 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                 }
             }
             
+            // Check if any espo-discovered alkane UTXOs are missing from spendable_utxos
+            // This happens when esplora doesn't return the UTXO (e.g., small value outputs)
+            // but espo knows about it because it tracks alkane balances
+            let spendable_keys: alloc::collections::BTreeSet<String> = spendable_utxos.iter()
+                .map(|(op, _)| format!("{}:{}", op.txid, op.vout))
+                .collect();
+
+            for (utxo_key, utxo_data) in &utxo_balances {
+                if spendable_keys.contains(utxo_key) {
+                    continue; // Already in spendable set
+                }
+
+                // Check if this UTXO has alkanes we need
+                let has_needed = utxo_data.get("balances").and_then(|v| v.as_array()).map(|arr| {
+                    arr.iter().any(|b| {
+                        let block = b.get("block").and_then(|v| v.as_u64()).unwrap_or(0);
+                        let tx = b.get("tx").and_then(|v| v.as_u64()).unwrap_or(0);
+                        alkanes_needed.contains_key(&(block, tx))
+                    })
+                }).unwrap_or(false);
+
+                if !has_needed {
+                    continue;
+                }
+
+                // This UTXO has needed alkanes but isn't in spendable set - fetch its tx and add it
+                let parts: Vec<&str> = utxo_key.split(':').collect();
+                if parts.len() != 2 {
+                    continue;
+                }
+                let txid_str = parts[0];
+                let vout: u32 = match parts[1].parse() {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                };
+
+                log::info!("Espo found alkane UTXO {}:{} missing from esplora -- fetching tx to add to spendable set", txid_str, vout);
+
+                // Fetch the raw transaction to get the output value and script
+                match self.provider.get_transaction_hex(txid_str).await {
+                    Ok(tx_hex) => {
+                        match bitcoin::consensus::deserialize::<Transaction>(&hex::decode(&tx_hex).unwrap_or_default()) {
+                            Ok(tx) => {
+                                if let Some(output) = tx.output.get(vout as usize) {
+                                    let txid = bitcoin::Txid::from_str(txid_str).unwrap();
+                                    let outpoint = OutPoint { txid, vout };
+                                    let address = if !addresses_to_query.is_empty() {
+                                        addresses_to_query[0].clone()
+                                    } else {
+                                        String::new()
+                                    };
+                                    let utxo_info = UtxoInfo {
+                                        txid: txid_str.to_string(),
+                                        vout,
+                                        amount: output.value.to_sat(),
+                                        address,
+                                        script_pubkey: Some(output.script_pubkey.clone()),
+                                        confirmations: 100, // Assume confirmed since espo indexed it
+                                        frozen: false,
+                                        freeze_reason: None,
+                                        block_height: None,
+                                        has_inscriptions: false,
+                                        has_runes: false,
+                                        has_alkanes: true,
+                                        is_coinbase: false,
+                                    };
+                                    log::info!("Added espo-discovered alkane UTXO {}:{} ({} sats) to spendable set", txid_str, vout, output.value.to_sat());
+                                    spendable_utxos.push((outpoint, utxo_info));
+                                }
+                            }
+                            Err(e) => {
+                                log::warn!("Failed to decode tx {} for espo UTXO: {}", txid_str, e);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        log::warn!("Failed to fetch tx {} for espo UTXO: {}", txid_str, e);
+                    }
+                }
+            }
+
             // Now process UTXOs using the pre-fetched balance data
             for (outpoint, utxo) in spendable_utxos {
                 let key = format!("{}:{}", outpoint.txid, outpoint.vout);
-                
+
                 if let Some(utxo_data) = utxo_balances.get(&key) {
                     // Parse balance data from batch result
                     // Note: amounts may come as strings (from lua/protobuf) or numbers
                     let balances = utxo_data.get("balances").and_then(|v| v.as_array()).map(|arr| {
                         arr.iter().filter_map(|b| {
-                            let block = b.get("block").and_then(|v| v.as_u64())?;
-                            let tx = b.get("tx").and_then(|v| v.as_u64())?;
+                            let block = b.get("block").and_then(|v| {
+                                v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok()))
+                            })?;
+                            let tx = b.get("tx").and_then(|v| {
+                                v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok()))
+                            })?;
                             // Handle amount as either number or string
                             let amount = b.get("amount").and_then(|v| {
                                 v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok()))
@@ -1188,7 +1276,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                     
                     let mut has_needed_alkane = false;
                     let mut utxo_selected = false;
-                    
+
                     // Check if this UTXO has any alkanes we need
                     for ((block, tx), amount) in &balances {
                         let key = (*block, *tx);

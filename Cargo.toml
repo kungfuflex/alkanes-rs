@@ -35,6 +35,7 @@ alkanes-runtime = { path = "./crates/alkanes-runtime" }
 alkanes-macros = { path = "./crates/alkanes-macros" }
 # alkanes-std-factory-support = { path = "./alkanes/alkanes-std-factory-support" }
 alkanes-cli-common = { path = "./crates/alkanes-cli-common" }
+alkanes-rpc-core = { path = "./crates/alkanes-rpc-core" }
 alkanes-cli-sys = { path = "./crates/alkanes-cli-sys" }
 alkanes-cli = { path = "./crates/alkanes-cli" }
 alkanes-asc = { path = "./crates/alkanes-asc" }

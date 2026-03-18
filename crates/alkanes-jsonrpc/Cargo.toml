@@ -28,6 +28,8 @@ hex = { workspace = true }
 bitcoin = { workspace = true }
 alkanes-support = { workspace = true }
 alkanes-cli-common = { path = "../alkanes-cli-common", features = ["std"] }
+alkanes-rpc-core = { path = "../alkanes-rpc-core", features = ["std"] }
+async-trait = { workspace = true }
 prost = { workspace = true }
 bytes = { workspace = true }
 mlua = { version = "0.9", features = ["lua54", "async", "send", "vendored"] }
