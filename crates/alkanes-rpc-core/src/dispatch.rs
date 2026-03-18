@@ -452,6 +452,8 @@ where
         "c1e61d349c30deb20b023b70dc6641b5ada176db552bdbef24dee7cd05273e97";
     const MULTICALL_HASH: &'static str =
         "3a6cdae683f3bfa9691e577f002f3d774e56fbfe118ead500ddcaa44a81e5dfc";
+    const BATCH_UTXO_BALANCES_HASH: &'static str =
+        "5b51b9b50f12dc4fd2ada2206bc29d2a929375502ee07b969b1bf98cb48854d9";
 
     async fn handle_lua_method(
         &self,
@@ -475,6 +477,7 @@ where
             Some("balances") => self.lua_shim_balances(args, request_id).await,
             Some("spendable_utxos") => self.lua_shim_spendable_utxos(args, request_id).await,
             Some("multicall") => self.lua_shim_multicall(args, request_id).await,
+            Some("batch_utxo_balances") => self.lua_shim_batch_utxo_balances(args, request_id).await,
             _ => {
                 // Unknown script — return error so the SDK can fall back
                 Ok(JsonRpcResponse::error(
@@ -491,12 +494,15 @@ where
             h if h == Self::BALANCES_HASH => Some("balances".to_string()),
             h if h == Self::SPENDABLE_UTXOS_HASH => Some("spendable_utxos".to_string()),
             h if h == Self::MULTICALL_HASH => Some("multicall".to_string()),
+            h if h == Self::BATCH_UTXO_BALANCES_HASH => Some("batch_utxo_balances".to_string()),
             _ => None,
         }
     }
 
     fn identify_script_by_content(&self, content: &str) -> Option<String> {
-        if content.contains("ord_blockheight") || content.contains("metashrewHeight") {
+        if content.contains("alkane_balances_map") || content.contains("batch_utxo") {
+            Some("batch_utxo_balances".to_string())
+        } else if content.contains("ord_blockheight") || content.contains("metashrewHeight") {
             Some("balances".to_string())
         } else if content.contains("is_coinbase") && content.contains("spendable") {
             Some("spendable_utxos".to_string())
@@ -644,6 +650,124 @@ where
                 "immature": immature,
                 "currentHeight": current_height,
                 "address": address,
+            },
+            "runtime": 0
+        }), request_id.clone()))
+    }
+
+    /// Lua shim: batch_utxo_balances.lua → esplora UTXOs + alkanes_protorunesbyaddress merge
+    ///
+    /// args[0] = address, args[1] = protocol_tag (optional), args[2] = block_tag (optional)
+    async fn lua_shim_batch_utxo_balances(
+        &self,
+        args: &[Value],
+        request_id: &Value,
+    ) -> Result<JsonRpcResponse> {
+        let address = args.get(0).and_then(|v| v.as_str()).unwrap_or("");
+        let protocol_tag = args.get(1)
+            .and_then(|v| v.as_str().or_else(|| v.as_u64().map(|_| "1")))
+            .unwrap_or("1");
+
+        // Fetch esplora UTXOs
+        let utxo_request = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            method: "esplora_address::utxo".to_string(),
+            params: vec![Value::String(address.to_string())],
+            id: request_id.clone(),
+        };
+        let utxo_response = self.dispatch(&utxo_request).await?;
+        let utxos = match utxo_response {
+            JsonRpcResponse::Success { result, .. } => {
+                result.as_array().cloned().unwrap_or_default()
+            }
+            _ => vec![],
+        };
+
+        // Fetch alkane balances via alkanes_protorunesbyaddress
+        let protorunes_request = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            method: "alkanes_protorunesbyaddress".to_string(),
+            params: vec![json!({
+                "address": address,
+                "protocolTag": protocol_tag,
+            })],
+            id: request_id.clone(),
+        };
+        let protorunes_response = self.dispatch(&protorunes_request).await?;
+
+        // Build alkane balances map: txid:vout → balances
+        let mut balances_map: HashMap<String, Vec<Value>> = HashMap::new();
+        if let JsonRpcResponse::Success { result, .. } = &protorunes_response {
+            if let Some(outpoints) = result.get("outpoints").and_then(|v| v.as_array()) {
+                for outpoint in outpoints {
+                    if let Some(op) = outpoint.get("outpoint") {
+                        let txid = op.get("txid").and_then(|t| t.as_str()).unwrap_or("");
+                        let vout = op.get("vout").and_then(|v| v.as_u64()).unwrap_or(0);
+
+                        // Reverse txid from internal (LE) to display (BE) format
+                        let display_txid = reverse_txid(txid).unwrap_or_default();
+                        let key = format!("{}:{}", display_txid, vout);
+
+                        // Extract balances from either format
+                        let mut balances = Vec::new();
+
+                        // Try "runes" field (newer format)
+                        if let Some(runes) = outpoint.get("runes").and_then(|r| r.as_array()) {
+                            for rune in runes {
+                                balances.push(json!({
+                                    "block": rune.get("id").and_then(|id| id.get("block")),
+                                    "tx": rune.get("id").and_then(|id| id.get("tx")),
+                                    "amount": rune.get("amount"),
+                                }));
+                            }
+                        }
+
+                        // Try "balance_sheet.cached.balances" (older format)
+                        if balances.is_empty() {
+                            if let Some(cached) = outpoint.get("balance_sheet")
+                                .and_then(|bs| bs.get("cached"))
+                                .and_then(|c| c.get("balances"))
+                                .and_then(|b| b.as_array())
+                            {
+                                for b in cached {
+                                    balances.push(json!({
+                                        "block": b.get("block"),
+                                        "tx": b.get("tx"),
+                                        "amount": b.get("amount"),
+                                    }));
+                                }
+                            }
+                        }
+
+                        if !balances.is_empty() {
+                            balances_map.insert(key, balances);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Merge: for each UTXO, attach alkane balances
+        let result_utxos: Vec<Value> = utxos.iter().map(|utxo| {
+            let txid = utxo.get("txid").and_then(|t| t.as_str()).unwrap_or("");
+            let vout = utxo.get("vout").and_then(|v| v.as_u64()).unwrap_or(0);
+            let key = format!("{}:{}", txid, vout);
+            let balances = balances_map.get(&key).cloned().unwrap_or_default();
+
+            json!({
+                "txid": txid,
+                "vout": vout,
+                "value": utxo.get("value"),
+                "status": utxo.get("status"),
+                "balances": balances,
+            })
+        }).collect();
+
+        Ok(JsonRpcResponse::success(json!({
+            "calls": 0,
+            "returns": {
+                "utxos": result_utxos,
+                "count": result_utxos.len(),
             },
             "runtime": 0
         }), request_id.clone()))

@@ -602,8 +602,8 @@ pub struct SolvencyCheckResult {
 /// 2. Queries the vault's BTC balance via esplora UTXOs
 /// 3. Queries pending unwraps from the metashrew indexer
 /// 4. Compares vault balance against total pending unwrap obligations
-pub async fn execute_solvency_check<P: crate::traits::DeezelProvider + ?Sized>(
-    provider: &P,
+pub async fn execute_solvency_check(
+    provider: &dyn crate::traits::DeezelProvider,
     block_tag: Option<String>,
     raw: bool,
 ) -> Result<String> {
@@ -639,18 +639,24 @@ pub async fn execute_solvency_check<P: crate::traits::DeezelProvider + ?Sized>(
         (0u64, 0usize)
     };
 
-    // Step 3: Get pending unwraps
+    // Step 3: Get frBTC total supply (the real obligation)
+    use crate::unwrap::MetaprotocolUnwrap;
+    let alkanes_unwrap = crate::unwrap::AlkanesUnwrap::new();
+    let frbtc_total_supply_sats = alkanes_unwrap.get_total_supply(provider).await
+        .map_err(|e| crate::AlkanesError::Other(format!("Failed to get frBTC total supply: {}", e)))?;
+
+    // Step 4: Get pending unwraps
     let pending_unwraps = provider.pending_unwraps(block_tag.clone()).await
         .map_err(|e| crate::AlkanesError::Other(format!("Failed to get pending unwraps: {}", e)))?;
 
     let pending_unwrap_total_sats: u64 = pending_unwraps.iter().map(|u| u.amount).sum();
 
-    // Step 4: Get current height
+    // Step 5: Get current height
     let block_height = provider.get_height().await
         .unwrap_or(0);
 
-    // Compute solvency
-    let surplus_sats = vault_balance_sats as i64 - pending_unwrap_total_sats as i64;
+    // Compute solvency: vault must cover the entire frBTC supply
+    let surplus_sats = vault_balance_sats as i64 - frbtc_total_supply_sats as i64;
     let is_solvent = surplus_sats >= 0;
 
     let result = SolvencyCheckResult {
@@ -658,6 +664,8 @@ pub async fn execute_solvency_check<P: crate::traits::DeezelProvider + ?Sized>(
         vault_balance_sats,
         vault_balance_btc: vault_balance_sats as f64 / 100_000_000.0,
         vault_utxo_count,
+        frbtc_total_supply_sats,
+        frbtc_total_supply_btc: frbtc_total_supply_sats as f64 / 100_000_000.0,
         pending_unwrap_count: pending_unwraps.len(),
         pending_unwrap_total_sats,
         pending_unwrap_total_btc: pending_unwrap_total_sats as f64 / 100_000_000.0,
@@ -696,6 +704,10 @@ fn format_solvency_result(result: &SolvencyCheckResult) -> String {
 ║  Balance:  {:>14} sats  ({:.8} BTC)                          ║
 ║  UTXOs:    {:>14}                                                           ║
 ╠══════════════════════════════════════════════════════════════════════════════╣
+║  frBTC TOTAL SUPPLY (full redemption obligation)                             ║
+╠──────────────────────────────────────────────────────────────────────────────╣
+║  Supply:   {:>14} sats  ({:.8} BTC)                          ║
+╠══════════════════════════════════════════════════════════════════════════════╣
 ║  PENDING UNWRAPS                                                             ║
 ╠──────────────────────────────────────────────────────────────────────────────╣
 ║  Count:    {:>14}                                                           ║
@@ -711,6 +723,8 @@ fn format_solvency_result(result: &SolvencyCheckResult) -> String {
         result.vault_balance_sats,
         result.vault_balance_btc,
         result.vault_utxo_count,
+        result.frbtc_total_supply_sats,
+        result.frbtc_total_supply_btc,
         result.pending_unwrap_count,
         result.pending_unwrap_total_sats,
         result.pending_unwrap_total_btc,
