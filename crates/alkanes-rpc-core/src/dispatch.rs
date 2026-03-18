@@ -71,12 +71,10 @@ where
                 "sandshrew" => self.handle_sandshrew_method(&method_name, &request.params, &request.id).await,
                 "lua" => self.handle_lua_method(&method_name, &request.params, &request.id).await,
                 "btc" => self.handle_bitcoind_method(&method_name, &request.params, &request.id).await,
-                // Espo (OYL data API) — not available in devnet, return error to trigger fallback
-                "essentials" => Ok(JsonRpcResponse::error(
-                    METHOD_NOT_FOUND,
-                    format!("Espo method not available: {}", method_name),
-                    request.id.clone(),
-                )),
+                // Espo (OYL data API) — polyfill using alkanes indexer data
+                // essentials.get_address_outpoints → split by _ → ["essentials.get", "address", "outpoints"]
+                "essentials.get" => self.handle_essentials_method(&method_name, &request.params, &request.id).await,
+                "essentials" => self.handle_essentials_method(&method_name, &request.params, &request.id).await,
                 _ => {
                     // Default: forward to bitcoind with last underscore-separated part as method
                     let actual_method = method_parts.last().unwrap_or(&"");
@@ -460,6 +458,141 @@ where
         "3a6cdae683f3bfa9691e577f002f3d774e56fbfe118ead500ddcaa44a81e5dfc";
     const BATCH_UTXO_BALANCES_HASH: &'static str =
         "5b51b9b50f12dc4fd2ada2206bc29d2a929375502ee07b969b1bf98cb48854d9";
+
+    // -----------------------------------------------------------------------
+    // Essentials (Espo polyfill) — maps espo data API methods to alkanes
+    // indexer queries for environments without a PostgreSQL-backed espo.
+    // -----------------------------------------------------------------------
+
+    async fn handle_essentials_method(
+        &self,
+        method: &str,
+        params: &[Value],
+        request_id: &Value,
+    ) -> Result<JsonRpcResponse> {
+        // essentials.get_address_outpoints → method parts after essentials = "get_address_outpoints"
+        // But dispatch splits on _, so method = "get" from "essentials.get_address_outpoints"
+        // Actually: "essentials.get_address_outpoints" split by _ = ["essentials.get", "address", "outpoints"]
+        // So method_name = "address_outpoints" and namespace = "essentials.get"
+        // We need to reconstruct: namespace is "essentials" when split by first _
+        // Actually the dispatch already did the split. Let's just match on what we get.
+
+        // The full method was "essentials.get_address_outpoints"
+        // After split by _: ["essentials.get", "address", "outpoints"]
+        // namespace = "essentials.get", method_name = "address_outpoints"
+        match method {
+            "address_outpoints" => self.essentials_get_address_outpoints(params, request_id).await,
+            "outpoint_balances" => self.essentials_get_outpoint_balances(params, request_id).await,
+            _ => Ok(JsonRpcResponse::error(
+                METHOD_NOT_FOUND,
+                format!("Essentials method not available: {}", method),
+                request_id.clone(),
+            )),
+        }
+    }
+
+    /// Polyfill for essentials.get_address_outpoints using alkanes_protorunesbyaddress.
+    ///
+    /// Input: {"address": "bcrt1p..."}
+    /// Output: {"ok": true, "outpoints": [{"outpoint": "txid:vout", "entries": [{"alkane": "block:tx", "amount": "N"}]}]}
+    async fn essentials_get_address_outpoints(
+        &self,
+        params: &[Value],
+        request_id: &Value,
+    ) -> Result<JsonRpcResponse> {
+        let address = params.get(0)
+            .and_then(|p| p.get("address").or(Some(p)))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        if address.is_empty() {
+            return Ok(JsonRpcResponse::success(json!({"ok": true, "outpoints": []}), request_id.clone()));
+        }
+
+        // Query alkanes_protorunesbyaddress
+        let proto_request = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            method: "alkanes_protorunesbyaddress".to_string(),
+            params: vec![json!({"address": address, "protocolTag": "1"})],
+            id: request_id.clone(),
+        };
+        let proto_response = self.dispatch(&proto_request).await?;
+
+        let mut espo_outpoints = Vec::new();
+
+        if let JsonRpcResponse::Success { result, .. } = &proto_response {
+            if let Some(outpoints) = result.get("outpoints").and_then(|v| v.as_array()) {
+                for outpoint in outpoints {
+                    let txid = outpoint.get("outpoint")
+                        .and_then(|op| op.get("txid"))
+                        .and_then(|t| t.as_str())
+                        .unwrap_or("");
+                    let vout = outpoint.get("outpoint")
+                        .and_then(|op| op.get("vout"))
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
+
+                    let mut entries = Vec::new();
+
+                    // Try balance_sheet.cached.balances format
+                    if let Some(balances) = outpoint.get("balance_sheet")
+                        .and_then(|bs| bs.get("cached"))
+                        .and_then(|c| c.get("balances"))
+                        .and_then(|b| b.as_array())
+                    {
+                        for b in balances {
+                            let block = b.get("block").and_then(|v| v.as_u64()).unwrap_or(0);
+                            let tx = b.get("tx").and_then(|v| v.as_u64()).unwrap_or(0);
+                            let amount = b.get("amount").and_then(|v| v.as_u64()).unwrap_or(0);
+                            entries.push(json!({
+                                "alkane": format!("{}:{}", block, tx),
+                                "amount": amount.to_string(),
+                            }));
+                        }
+                    }
+
+                    // Try runes format (alternative)
+                    if entries.is_empty() {
+                        if let Some(runes) = outpoint.get("runes").and_then(|r| r.as_array()) {
+                            for rune in runes {
+                                let block = rune.get("id").and_then(|id| id.get("block")).and_then(|v| v.as_u64()).unwrap_or(0);
+                                let tx = rune.get("id").and_then(|id| id.get("tx")).and_then(|v| v.as_u64()).unwrap_or(0);
+                                let amount = rune.get("amount").and_then(|v| v.as_u64()).unwrap_or(0);
+                                entries.push(json!({
+                                    "alkane": format!("{}:{}", block, tx),
+                                    "amount": amount.to_string(),
+                                }));
+                            }
+                        }
+                    }
+
+                    espo_outpoints.push(json!({
+                        "outpoint": format!("{}:{}", txid, vout),
+                        "entries": entries,
+                    }));
+                }
+            }
+        }
+
+        Ok(JsonRpcResponse::success(json!({
+            "ok": true,
+            "outpoints": espo_outpoints,
+        }), request_id.clone()))
+    }
+
+    /// Polyfill for essentials.get_outpoint_balances.
+    async fn essentials_get_outpoint_balances(
+        &self,
+        params: &[Value],
+        request_id: &Value,
+    ) -> Result<JsonRpcResponse> {
+        // Not critical for UTXO selection — return empty
+        Ok(JsonRpcResponse::success(json!({"ok": true, "entries": []}), request_id.clone()))
+    }
+
+    // -----------------------------------------------------------------------
+    // Lua script execution shim
+    // -----------------------------------------------------------------------
 
     async fn handle_lua_method(
         &self,
