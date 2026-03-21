@@ -801,29 +801,67 @@ impl AlkanesHostFunctionsImpl {
         subcontext.trace.clock(event);
 
         // Run the call in a new context
-        let (response, gas_used) = run_after_special(
-            Arc::new(Mutex::new(subcontext.clone())),
+        let subcontext_arc = Arc::new(Mutex::new(subcontext.clone()));
+        match run_after_special(
+            subcontext_arc,
             binary_rc,
             start_fuel,
-        )?;
-        let serialized = CallResponse::from(response.clone().into()).serialize();
-        {
-            caller.set_fuel(overflow_error(start_fuel.checked_sub(gas_used))?)?;
-            let mut return_context: TraceResponse = response.clone().into();
-            return_context.fuel_used = gas_used;
+        ) {
+            Ok((response, gas_used)) => {
+                let serialized = CallResponse::from(response.clone().into()).serialize();
+                {
+                    caller.set_fuel(overflow_error(start_fuel.checked_sub(gas_used))?)?;
+                    let mut return_context: TraceResponse = response.clone().into();
+                    return_context.fuel_used = gas_used;
 
-            // Update trace and context state
-            let mut context_guard = caller.data_mut().context.lock().unwrap();
-            context_guard
-                .trace
-                .clock(TraceEvent::ReturnContext(return_context));
-            let mut saveable: SaveableExtendedCallResponse = response.clone().into();
-            saveable.associate(&subcontext);
-            saveable.save(&mut context_guard.message.atomic, T::isdelegate())?;
-            context_guard.returndata = serialized.clone();
-            T::handle_atomic(&mut context_guard.message.atomic);
+                    // Update trace and context state
+                    let mut context_guard = caller.data_mut().context.lock().unwrap();
+                    context_guard
+                        .trace
+                        .clock(TraceEvent::ReturnContext(return_context));
+                    let mut saveable: SaveableExtendedCallResponse = response.clone().into();
+                    saveable.associate(&subcontext);
+                    saveable.save(&mut context_guard.message.atomic, T::isdelegate())?;
+                    context_guard.returndata = serialized.clone();
+                    T::handle_atomic(&mut context_guard.message.atomic);
+                }
+                Ok(serialized.len() as i32)
+            }
+            Err(e) => {
+                // Child call reverted — handle like EVM: rollback child state,
+                // deduct gas, store revert data, return negative value to caller
+                // WITHOUT aborting the parent frame.
+                let error_msg = e.to_string();
+                let mut data: Vec<u8> = vec![0x08, 0xc3, 0x79, 0xa0]; // EVM revert selector
+                data.extend(error_msg.as_bytes());
+
+                let mut revert_context: TraceResponse = TraceResponse::default();
+                revert_context.inner.data = data.clone();
+                // Consume all allocated fuel on revert (child used it all)
+                revert_context.fuel_used = start_fuel;
+
+                let mut response = CallResponse::default();
+                response.data = data;
+                let serialized = response.serialize();
+                let result = (serialized.len() as i32).checked_neg().unwrap_or(-1);
+
+                {
+                    // Deduct all fuel allocated to the child call
+                    let _ = caller.set_fuel(0);
+
+                    let mut context_guard = caller.data_mut().context.lock().unwrap();
+                    context_guard
+                        .trace
+                        .clock(TraceEvent::RevertContext(revert_context));
+                    // Rollback the child's state changes via checkpoint
+                    context_guard.message.atomic.rollback();
+                    context_guard.returndata = serialized;
+                }
+                // Do NOT call _abort() — the parent frame should continue
+                // and handle the negative return value from the WASM side
+                Ok(result)
+            }
         }
-        Ok(serialized.len() as i32)
     }
     pub(super) fn log<'a>(caller: &mut Caller<'_, AlkanesState>, v: i32) -> Result<()> {
         let mem = get_memory(caller)?;
