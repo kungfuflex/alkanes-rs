@@ -324,6 +324,7 @@ pub fn getinventory() -> i32 {
 #[cfg(not(test))]
 #[no_mangle]
 pub fn getstorageat() -> i32 {
+    configure_network();
     let data = input();
     let _height = u32::from_le_bytes((&data[0..4]).try_into().unwrap());
     let reader = &data[4..];
