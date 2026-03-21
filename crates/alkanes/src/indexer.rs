@@ -1,7 +1,7 @@
 use crate::message::AlkaneMessageContext;
 use crate::network::{
     check_and_upgrade_precompiled, clear_view_mode, genesis, genesis_alkane_upgrade_bytes,
-    is_genesis, setup_diesel, setup_frbtc, setup_frsigil, setup_ftrbtc,
+    is_active, is_genesis, setup_diesel, setup_frbtc, setup_frsigil, setup_ftrbtc,
 };
 use crate::unwrap;
 use crate::vm::fuel::FuelTank;
@@ -98,17 +98,21 @@ pub fn index_block(block: &Block, height: u32) -> Result<()> {
     if really_is_genesis {
         genesis().unwrap();
     }
-    setup_diesel(block)?;
-    setup_frbtc(block)?;
-    setup_frsigil(block)?;
-    setup_ftrbtc(block)?;
-    check_and_upgrade_precompiled(height)?;
-    FuelTank::initialize(&block, height);
+    if is_active(height.into()) {
+        setup_diesel(block)?;
+        setup_frbtc(block)?;
+        setup_frsigil(block)?;
+        setup_ftrbtc(block)?;
+        check_and_upgrade_precompiled(height)?;
+        FuelTank::initialize(&block, height);
+    }
     // Get the set of updated addresses from the indexing process
     let _updated_addresses =
         Protorune::index_block::<AlkaneMessageContext>(block.clone(), height.into())?;
 
-    unwrap::update_last_block(height as u128)?;
+    if is_active(height.into()) {
+        unwrap::update_last_block(height as u128)?;
+    }
 
     #[cfg(feature = "cache")]
     {

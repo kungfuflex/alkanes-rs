@@ -6,6 +6,10 @@ pub mod index_protorunes_by_address;
 pub mod index_runes;
 pub mod index_runes_edicts;
 pub mod index_runes_mint;
+pub mod multi_block;
+pub mod ord_runes_parity;
+pub mod test_many_outputs_bug;
+pub mod view_functions;
 #[cfg(test)]
 // pub mod multi_protocol;
 pub mod test_cenotaphs;
