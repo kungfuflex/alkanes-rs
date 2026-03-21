@@ -285,6 +285,7 @@ impl ConcreteProvider {
             brc20_prog_rpc_url,
             data_api_url: None,
             espo_rpc_url: None,
+            qubitcoin_rpc_url: None,
             subfrost_api_key: None,
             timeout_seconds: 600,
             jsonrpc_headers,
