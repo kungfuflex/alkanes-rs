@@ -132,13 +132,16 @@ pub fn handle_transfer_runes_to_vout(
                 }
             }
         } else {
-            // Pre-fix behavior: iterates all outputs including OP_RETURN
-            let count = tx.output.len() as u128;
+            // Pre-fix behavior: must match v2.1.6 exactly
+            let count = num_non_op_return_outputs(tx) as u128;
             let mut remaining = max_amount;
             if count != 0 {
                 for i in 0..tx.output.len() as u32 {
                     let amount_outpoint = std::cmp::min(remaining, amount);
                     remaining -= amount_outpoint;
+                    if tx.output[i as usize].script_pubkey.is_op_return() {
+                        continue;
+                    }
                     output.insert(i, amount_outpoint);
                 }
             }
