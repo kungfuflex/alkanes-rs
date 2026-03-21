@@ -217,6 +217,12 @@ impl SystemAlkanes {
         )
         .await?;
 
+        // Apply qubitcoin mode if configured
+        if let Some(ref qbc_url) = args.rpc_config.qubitcoin_rpc_url {
+            provider.rpc_config.qubitcoin_rpc_url = Some(qbc_url.clone());
+            log::info!("Qubitcoin single-process mode: {}", qbc_url);
+        }
+
         if let Some(passphrase) = &args.passphrase {
             log::debug!("Setting passphrase for wallet");
             provider.set_passphrase(Some(passphrase.clone()));

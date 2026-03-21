@@ -120,7 +120,7 @@ use crate::commands::Commands;
 
 #[derive(Clone)]
 pub struct ConcreteProvider {
-    rpc_config: RpcConfig,
+    pub rpc_config: RpcConfig,
     command: Commands,
     #[cfg(not(target_arch = "wasm32"))]
     wallet_path: Option<PathBuf>,
@@ -216,6 +216,7 @@ impl ConcreteProvider {
             brc20_prog_rpc_url,
             data_api_url: None,
             espo_rpc_url: None,
+            qubitcoin_rpc_url: None,
             subfrost_api_key: None,
             timeout_seconds: 600,
             jsonrpc_headers,
@@ -327,9 +328,13 @@ impl ConcreteProvider {
         // Use the centralized RPC target resolution
         let target = self.rpc_config.get_metashrew_rpc_target();
 
-        // metashrew_view always uses JSON-RPC (even when called through sandshrew)
-        let rpc_params = serde_json::json!([method, params, height]);
-        let result = self.call(&target.url, "metashrew_view", rpc_params, 1).await?;
+        // In qubitcoin mode, translate metashrew_view → secondaryview
+        let (rpc_method, rpc_params) = if self.rpc_config.is_qubitcoin_mode() {
+            ("secondaryview", serde_json::json!(["alkanes", method, params]))
+        } else {
+            ("metashrew_view", serde_json::json!([method, params, height]))
+        };
+        let result = self.call(&target.url, rpc_method, rpc_params, 1).await?;
 
         // The result should be a hex string starting with "0x"
         let hex_str = result.as_str()
@@ -701,13 +706,208 @@ impl ConcreteProvider {
     }
 }
 
-#[async_trait(?Send)]
+/// Translate an ord JSON-RPC method to a qubitcoin secondaryview call for brc20shrew.
+/// Returns (method, params, is_json_response) if translation applies.
+fn translate_ord_for_qubitcoin(method: &str, params: &serde_json::Value) -> Option<(String, serde_json::Value)> {
+    if !method.starts_with("ord_") {
+        return None;
+    }
+    let view_fn = match method {
+        "ord_output" => "getutxo",
+        "ord_inscription" => "getinscription",
+        "ord_inscriptions" => "getinscriptions",
+        "ord_children" => "getchildren",
+        "ord_parents" => "getparents",
+        "ord_content" => "getcontent",
+        "ord_sat" => "getsat",
+        "ord_tx" => "gettransaction",
+        "ord_block" => "getblockinfo",
+        "ord_blockcount" => "getblockheight",
+        _ => return None,
+    };
 
+    // Build the JSON request that brc20shrew expects
+    let first_param = params.as_array()
+        .and_then(|a| a.first())
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
 
+    let json_request = match method {
+        "ord_output" => {
+            // Input: "txid:vout" → {"outpoint": {"txid": "<hex>", "vout": N}}
+            let parts: Vec<&str> = first_param.splitn(2, ':').collect();
+            if parts.len() == 2 {
+                let txid = parts[0];
+                let vout: u32 = parts[1].parse().unwrap_or(0);
+                // brc20shrew expects txid as bytes (vec), but serde_json serializes as array
+                let txid_bytes: Vec<u8> = (0..txid.len()).step_by(2)
+                    .filter_map(|i| u8::from_str_radix(&txid[i..i+2], 16).ok())
+                    .collect();
+                serde_json::json!({"outpoint": {"txid": txid_bytes, "vout": vout}})
+            } else {
+                serde_json::json!({})
+            }
+        }
+        "ord_inscription" | "ord_content" => {
+            // Input: inscription_id → {"id": "<inscription_id>"}
+            serde_json::json!({"id": first_param})
+        }
+        "ord_inscriptions" => {
+            // Input: could be various filters
+            serde_json::json!({"query": first_param})
+        }
+        "ord_sat" => {
+            serde_json::json!({"sat": first_param})
+        }
+        "ord_tx" => {
+            serde_json::json!({"txid": first_param})
+        }
+        "ord_block" | "ord_blockcount" => {
+            serde_json::json!({"height": first_param})
+        }
+        _ => serde_json::json!({}),
+    };
+
+    let input_hex = hex::encode(serde_json::to_vec(&json_request).unwrap_or_default());
+    Some(("secondaryview".to_string(), serde_json::json!(["brc20-prog", view_fn, input_hex])))
+}
+
+/// Translate an esplora JSON-RPC method to a qubitcoin secondaryview call.
+/// Returns (method, params) if translation applies, None otherwise.
+fn translate_esplora_for_qubitcoin(method: &str, params: &serde_json::Value) -> Option<(String, serde_json::Value)> {
+        if !method.starts_with("esplora_") {
+            return None;
+        }
+        // Map esplora JSON-RPC method names to esplorashrew view function names
+        let view_fn = match method {
+            "esplora_tx" => "tx",
+            "esplora_tx::hex" => "txhex",
+            "esplora_tx::raw" => "txraw",
+            "esplora_tx::status" => "txstatus",
+            "esplora_tx::outspend" => "txoutspend",
+            "esplora_tx::outspends" => "txoutspend",
+            "esplora_block" => "block",
+            "esplora_block::status" => "blockstatus",
+            "esplora_block::txids" => "blocktxids",
+            "esplora_block::header" => "blockheader",
+            "esplora_block::txid" => "blocktxids",
+            "esplora_block-height" => "blockheight",
+            "esplora_blocks:tip:height" => "tipheight",
+            "esplora_blocks:tip:hash" => "tiphash",
+            "esplora_address::utxo" => "utxosbyscripthash",
+            "esplora_broadcast" => return None, // broadcast goes to bitcoind
+            _ => return None,
+        };
+
+        // Build the input string from params (esplorashrew expects a plain string input)
+        let input_str = if let Some(arr) = params.as_array() {
+            arr.iter()
+                .filter_map(|v| v.as_str().or_else(|| v.as_u64().map(|_| "")).or(Some("")))
+                .map(|s| {
+                    if let Some(v) = params.as_array().and_then(|a| a.iter().find(|x| x.is_number())) {
+                        if s.is_empty() { return v.to_string(); }
+                    }
+                    s.to_string()
+                })
+                .collect::<Vec<_>>()
+                .join("/")
+        } else {
+            String::new()
+        };
+
+        let first_param = params.as_array()
+            .and_then(|a| a.first())
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        // For address::utxo, convert bech32 address to script hash
+        let input_hex = if view_fn == "utxosbyscripthash" {
+            // Decode bech32 address → scriptPubKey → SHA256 hash
+            if let Ok((_, witness_version, program)) = bech32::segwit::decode(first_param) {
+                use sha2::{Sha256, Digest};
+                let ver_op: u8 = match witness_version.to_u8() { 0 => 0x00, n => 0x50 + n };
+                let mut script = Vec::with_capacity(2 + program.len());
+                script.push(ver_op);
+                script.push(program.len() as u8);
+                script.extend_from_slice(&program);
+                let hash = Sha256::digest(&script);
+                // esplorashrew expects the script hash in reversed (display) hex order
+                let reversed: Vec<u8> = hash.iter().rev().cloned().collect();
+                hex::encode(hex::encode(reversed).as_bytes())
+            } else {
+                hex::encode(first_param.as_bytes())
+            }
+        } else {
+            // For other views, pass the first param as-is (hex-encoded string)
+            hex::encode(first_param.as_bytes())
+        };
+
+    Some(("secondaryview".to_string(), serde_json::json!(["esplora", view_fn, input_hex])))
+}
 
 #[async_trait(?Send)]
 impl JsonRpcProvider for ConcreteProvider {
     async fn call(
+        &self,
+        url: &str,
+        method: &str,
+        params: serde_json::Value,
+        id: u64,
+    ) -> Result<serde_json::Value> {
+        // In qubitcoin mode, translate methods to qubitcoind's secondary indexer interface
+        #[allow(unused_mut)]
+        let mut is_esplora_view = false;
+        let (url, method, params) = if self.rpc_config.is_qubitcoin_mode() {
+            let qbc_url = self.rpc_config.qubitcoin_rpc_url.as_deref().unwrap();
+            if let Some((new_method, new_params)) = translate_esplora_for_qubitcoin(method, &params) {
+                log::info!("Qubitcoin translate: {} -> {}", method, new_method);
+                is_esplora_view = true;
+                (qbc_url, new_method, new_params)
+            } else if let Some((new_method, new_params)) = translate_ord_for_qubitcoin(method, &params) {
+                log::info!("Qubitcoin translate ord: {} -> {}", method, new_method);
+                is_esplora_view = true; // reuse the hex-decode path
+                (qbc_url, new_method, new_params)
+            } else if method.starts_with("sandshrew_") || method.starts_with("btc_")
+                || matches!(method, "sendrawtransaction" | "sendrawtransactions"
+                    | "getblockcount" | "getblockhash" | "getblock" | "getrawtransaction"
+                    | "getbestblockhash" | "generatetoaddress" | "getblockchaininfo"
+                    | "gettxout" | "getmempoolinfo" | "getrawmempool") {
+                let btc_method = method
+                    .strip_prefix("sandshrew_").or_else(|| method.strip_prefix("btc_"))
+                    .unwrap_or(method);
+                log::info!("Qubitcoin bitcoind proxy: {} -> {}", method, btc_method);
+                (qbc_url, btc_method.to_string(), params)
+            } else {
+                (url, method.to_string(), params)
+            }
+        } else {
+            (url, method.to_string(), params)
+        };
+        let method = method.as_str();
+
+        // For esplora views in qubitcoin mode, secondaryview returns "0x<hex>"
+        // which contains JSON. We need to decode it before returning.
+        let result = self._call_inner(url, method, params, id).await;
+        if is_esplora_view {
+            return result.map(|v| {
+                if let Some(hex_str) = v.as_str().and_then(|s| s.strip_prefix("0x")) {
+                    match hex::decode(hex_str) {
+                        Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or(v),
+                        Err(_) => v,
+                    }
+                } else {
+                    v
+                }
+            });
+        }
+        result
+    }
+
+    // _call_inner is defined on ConcreteProvider (below the trait impl)
+}
+
+impl ConcreteProvider {
+    async fn _call_inner(
         &self,
         url: &str,
         method: &str,
@@ -1177,11 +1377,16 @@ impl WalletProvider for ConcreteProvider {
         for address in addresses_to_check {
             log::info!("[WalletProvider] Batching UTXO+transaction fetch for address: {}", address);
             
-            // Try batched approach first using Lua script
-            match self.execute_lua_script(
-                &crate::lua_script::scripts::ADDRESS_UTXOS_WITH_TXS,
-                vec![json!(address)]
-            ).await {
+            // Try batched approach first using Lua script (skip in qubitcoin mode)
+            let lua_result = if self.rpc_config.is_qubitcoin_mode() {
+                Err(AlkanesError::NotImplemented("Lua scripts not available in qubitcoin mode".into()))
+            } else {
+                self.execute_lua_script(
+                    &crate::lua_script::scripts::ADDRESS_UTXOS_WITH_TXS,
+                    vec![json!(address)]
+                ).await
+            };
+            match lua_result {
                 Ok(result) => {
                     log::info!("[WalletProvider] Successfully fetched UTXOs with transactions in batch");
                     log::debug!("[WalletProvider] Lua script result: {:?}", result);
@@ -1264,7 +1469,16 @@ impl WalletProvider for ConcreteProvider {
             
             // Fallback to original implementation if batched approach fails
             log::debug!("Fetching UTXOs for address (fallback): {}", address);
-            let utxos_json = self.get_address_utxo(&address).await?;
+            let utxos_raw = self.get_address_utxo(&address).await?;
+            // In qubitcoin mode, secondaryview returns "0x<hex>" — decode to JSON
+            let utxos_json = if let Some(hex_str) = utxos_raw.as_str().and_then(|s| s.strip_prefix("0x")) {
+                match hex::decode(hex_str) {
+                    Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or(utxos_raw),
+                    Err(_) => utxos_raw,
+                }
+            } else {
+                utxos_raw
+            };
             if let Ok(esplora_utxos) = serde_json::from_value::<Vec<crate::esplora::EsploraUtxo>>(utxos_json) {
                 for utxo in esplora_utxos {
                     let outpoint = OutPoint::from_str(&format!("{}:{}", utxo.txid, utxo.vout))?;
@@ -2409,10 +2623,19 @@ impl WalletProvider for ConcreteProvider {
 #[async_trait(?Send)]
 impl MetashrewRpcProvider for ConcreteProvider {
     async fn get_metashrew_height(&self) -> Result<u64> {
-        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Metashrew { 
-            command: crate::commands::MetashrewCommands::Height
-        })?;
-        let json = self.call(&rpc_url, "metashrew_height", json!([]), 1).await?;
+        let rpc_url = if let Some(ref url) = self.rpc_config.qubitcoin_rpc_url {
+            url.clone()
+        } else {
+            get_rpc_url(&self.rpc_config, &Commands::Metashrew {
+                command: crate::commands::MetashrewCommands::Height
+            })?
+        };
+        let (rpc_method, rpc_params) = if self.rpc_config.is_qubitcoin_mode() {
+            ("secondaryheight", json!(["alkanes"]))
+        } else {
+            ("metashrew_height", json!([]))
+        };
+        let json = self.call(&rpc_url, rpc_method, rpc_params, 1).await?;
         log::debug!("get_metashrew_height response: {:?}", json);
         if let Some(count) = json.as_u64() {
             return Ok(count);
@@ -2442,7 +2665,12 @@ impl MetashrewRpcProvider for ConcreteProvider {
             command: crate::commands::MetashrewCommands::Height
         })?;
         let params = serde_json::json!([height]);
-        let result = self.call(&rpc_url, "metashrew_stateroot", params, 1).await?;
+        let (rpc_method, rpc_params) = if self.rpc_config.is_qubitcoin_mode() {
+            ("secondaryroot", serde_json::json!(["alkanes"]))
+        } else {
+            ("metashrew_stateroot", params)
+        };
+        let result = self.call(&rpc_url, rpc_method, rpc_params, 1).await?;
         result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid state root response".to_string()))
     }
 
@@ -3317,19 +3545,10 @@ impl AlkanesProvider for ConcreteProvider {
         let target_tx: u128 = parts[1].parse()
             .map_err(|_| AlkanesError::Other(format!("Invalid tx in contract_id: {}", parts[1])))?;
 
-        // Decode existing calldata (LEB128 varint-encoded opcode + args from the caller)
-        let existing_inputs = {
-            let mut cursor = std::io::Cursor::new(context.calldata.clone());
-            protorune_support::utils::decode_varint_list(&mut cursor)
-                .unwrap_or_default()
-        };
-
-        // Build full cellpack: [target_block, target_tx, ...existing_inputs]
-        let mut cellpack_values = vec![target_block, target_tx];
-        cellpack_values.extend(existing_inputs);
-
+        // The caller already built calldata with Cellpack::encipher() which includes
+        // [target_block, target_tx, ...inputs]. Just use it directly — don't prepend
+        // the target again.
         let mut patched = context.clone();
-        patched.calldata = encode_varint_list(&cellpack_values);
 
         let mut buf = Vec::new();
         patched.encode(&mut buf)?;
@@ -3982,6 +4201,10 @@ impl DeezelProvider for ConcreteProvider {
 
     fn get_metashrew_rpc_url(&self) -> Option<String> {
         self.rpc_config.metashrew_rpc_url.clone()
+    }
+
+    fn is_qubitcoin_mode(&self) -> bool {
+        self.rpc_config.is_qubitcoin_mode()
     }
 
     fn get_brc20_prog_rpc_url(&self) -> Option<String> {

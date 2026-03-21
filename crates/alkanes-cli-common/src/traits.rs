@@ -1211,6 +1211,9 @@ pub trait DeezelProvider:
     /// Get the BRC20-Prog RPC URL
     fn get_brc20_prog_rpc_url(&self) -> Option<String>;
 
+    /// Check if operating in qubitcoin single-process mode
+    fn is_qubitcoin_mode(&self) -> bool { false }
+
     /// Create a boxed, clonable version of the provider
     fn clone_box(&self) -> Box<dyn DeezelProvider>;
     

@@ -133,6 +133,12 @@ pub struct RpcConfig {
     #[arg(long)]
     pub espo_rpc_url: Option<String>,
 
+    /// Qubitcoin RPC URL — single-process mode where qubitcoind provides all indexers
+    /// via secondaryview/secondaryheight. Overrides jsonrpc_url, metashrew_rpc_url,
+    /// esplora_url, and ord_url. Uses "alkanes", "esplora", and "brc20-prog" labels.
+    #[arg(long)]
+    pub qubitcoin_rpc_url: Option<String>,
+
     /// Subfrost API Key (optional, can also be set via SUBFROST_API_KEY environment variable)
     #[arg(long)]
     pub subfrost_api_key: Option<String>,
@@ -255,9 +261,17 @@ impl RpcConfig {
         }
     }
     
+    /// Returns true if operating in qubitcoin single-process mode.
+    pub fn is_qubitcoin_mode(&self) -> bool {
+        self.qubitcoin_rpc_url.is_some()
+    }
+
     /// Get the RPC target for Bitcoin Core operations
-    /// Priority: bitcoin_rpc_url > jsonrpc_url (JSONRPC translation) > default
+    /// Priority: qubitcoin_rpc_url > bitcoin_rpc_url > jsonrpc_url (JSONRPC translation) > default
     pub fn get_bitcoin_rpc_target(&self) -> RpcTarget {
+        if let Some(ref url) = self.qubitcoin_rpc_url {
+            return RpcTarget { url: url.clone(), backend_type: RpcBackendType::JsonRpc };
+        }
         if let Some(ref url) = self.bitcoin_rpc_url {
             RpcTarget {
                 url: url.clone(),
@@ -279,6 +293,9 @@ impl RpcConfig {
     /// Get the RPC target for Metashrew operations (alkanes.wasm view functions)
     /// Priority: metashrew_rpc_url > jsonrpc_url > default jsonrpc
     pub fn get_metashrew_rpc_target(&self) -> RpcTarget {
+        if let Some(ref url) = self.qubitcoin_rpc_url {
+            return RpcTarget { url: url.clone(), backend_type: RpcBackendType::JsonRpc };
+        }
         if let Some(ref url) = self.metashrew_rpc_url {
             RpcTarget {
                 url: url.clone(),
@@ -300,6 +317,9 @@ impl RpcConfig {
     /// Get the RPC target for Esplora operations
     /// Priority: esplora_url (REST) > jsonrpc_url (JSONRPC translation) > default jsonrpc
     pub fn get_esplora_rpc_target(&self) -> RpcTarget {
+        if let Some(ref url) = self.qubitcoin_rpc_url {
+            return RpcTarget { url: url.clone(), backend_type: RpcBackendType::JsonRpc };
+        }
         if let Some(ref url) = self.esplora_url {
             RpcTarget {
                 url: url.clone(),
@@ -321,6 +341,9 @@ impl RpcConfig {
     /// Get the RPC target for Ord operations
     /// Priority: ord_url (REST) > jsonrpc_url (JSONRPC translation) > default jsonrpc
     pub fn get_ord_rpc_target(&self) -> RpcTarget {
+        if let Some(ref url) = self.qubitcoin_rpc_url {
+            return RpcTarget { url: url.clone(), backend_type: RpcBackendType::JsonRpc };
+        }
         if let Some(ref url) = self.ord_url {
             RpcTarget {
                 url: url.clone(),
@@ -425,6 +448,7 @@ impl Default for RpcConfig {
             brc20_prog_rpc_url: None,
             data_api_url: None,
             espo_rpc_url: None,
+            qubitcoin_rpc_url: None,
             subfrost_api_key: None,
             timeout_seconds: 600,
             jsonrpc_headers: Vec::new(),

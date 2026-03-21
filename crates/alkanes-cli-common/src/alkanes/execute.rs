@@ -1100,9 +1100,38 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             let mut utxo_balances: alloc::collections::BTreeMap<String, serde_json::Value> = alloc::collections::BTreeMap::new();
 
             // Fetch alkane balances per address.
-            // Strategy: try espo (PostgreSQL-backed) first, fall back to metashrew Lua batch script.
-            // Espo is the production-ready indexer; metashrew is being phased out.
+            // Strategy: try espo first, then metashrew Lua, then protorunesbyaddress.
+            // In qubitcoin mode, skip espo/Lua and go straight to protorunesbyaddress.
             for address in &addresses_to_query {
+                if self.provider.is_qubitcoin_mode() {
+                    // Qubitcoin mode: use protorunesbyaddress directly
+                    log::info!("Qubitcoin mode: using protorunesbyaddress for alkane UTXO discovery");
+                    match self.provider.get_protorunes_by_address(address, None, 1).await {
+                        Ok(response) => {
+                            for outpoint_resp in &response.balances {
+                                let key = format!("{}:{}", outpoint_resp.outpoint.txid, outpoint_resp.outpoint.vout);
+                                let mut balances_array = Vec::new();
+                                for (rune_id, amount) in &outpoint_resp.balance_sheet.cached.balances {
+                                    balances_array.push(serde_json::json!({
+                                        "block": rune_id.block,
+                                        "tx": rune_id.tx,
+                                        "amount": amount
+                                    }));
+                                }
+                                if !balances_array.is_empty() {
+                                    utxo_balances.insert(key, serde_json::json!({
+                                        "balances": balances_array
+                                    }));
+                                }
+                            }
+                            log::info!("protorunesbyaddress returned {} outpoints with balances", utxo_balances.len());
+                        }
+                        Err(e) => {
+                            log::error!("protorunesbyaddress failed for {}: {}", address, e);
+                        }
+                    }
+                    continue;
+                }
                 // Primary: espo get_address_outpoints (no metashrew dependency)
                 match self.provider.get_address_outpoints(address).await {
                     Ok(result) => {
@@ -1163,7 +1192,35 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                                 }
                             }
                             Err(e2) => {
-                                log::error!("Both espo and metashrew failed for address {}: espo={}, metashrew={}", address, e, e2);
+                                log::info!("Both espo and metashrew failed for address {}: espo={}, metashrew={}", address, e, e2);
+                                // Final fallback: use protorunesbyaddress directly
+                                // This works in qubitcoin mode where espo/lua are unavailable
+                                log::info!("Falling back to protorunesbyaddress for alkane UTXO discovery");
+                                match self.provider.get_protorunes_by_address(address, None, 1).await {
+                                    Ok(response) => {
+                                        for outpoint_resp in &response.balances {
+                                            let key = format!("{}:{}", outpoint_resp.outpoint.txid, outpoint_resp.outpoint.vout);
+                                            // Extract balances from the balance_sheet
+                                            let mut balances_array = Vec::new();
+                                            for (rune_id, amount) in &outpoint_resp.balance_sheet.cached.balances {
+                                                balances_array.push(serde_json::json!({
+                                                    "block": rune_id.block,
+                                                    "tx": rune_id.tx,
+                                                    "amount": amount
+                                                }));
+                                            }
+                                            if !balances_array.is_empty() {
+                                                utxo_balances.insert(key, serde_json::json!({
+                                                    "balances": balances_array
+                                                }));
+                                            }
+                                        }
+                                        log::info!("protorunesbyaddress returned {} outpoints with balances", utxo_balances.len());
+                                    }
+                                    Err(e3) => {
+                                        log::error!("All alkane UTXO discovery methods failed for {}: {}", address, e3);
+                                    }
+                                }
                             }
                         }
                     }

@@ -70,6 +70,9 @@ pub struct DeezelCommands {
     /// BRC20-Prog RPC URL (for querying brc20-programmable-module)
     #[arg(long)]
     pub brc20_prog_rpc_url: Option<String>,
+    /// Qubitcoin RPC URL — single-process mode (overrides all other RPC URLs)
+    #[arg(long)]
+    pub qubitcoin_rpc_url: Option<String>,
     /// FrBTC contract address (for testing with custom deployments)
     #[arg(long)]
     pub frbtc_address: Option<String>,
@@ -3133,6 +3136,7 @@ impl From<&DeezelCommands> for alkanes_cli_common::commands::Args {
                 subfrost_api_key: args.subfrost_api_key.clone(),
                 data_api_url: None,  // Not used in deezel commands
                 espo_rpc_url: args.espo_rpc_url.clone(),
+                qubitcoin_rpc_url: args.qubitcoin_rpc_url.clone(),
                 timeout_seconds: 600,
                 jsonrpc_headers: args.jsonrpc_headers.clone(),
             },
