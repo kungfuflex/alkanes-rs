@@ -35,6 +35,21 @@ pub fn fr_btc_premium() -> u128 {
     }
 }
 
+/// Pointer to the precomputed pending payments cache
+fn pending_cache_pointer() -> IndexPointer {
+    IndexPointer::from_keyword("/__INTERNAL/pending_unwraps")
+}
+
+/// Pointer that tracks whether the pending cache has been initialized
+fn pending_cache_initialized_pointer() -> IndexPointer {
+    IndexPointer::from_keyword("/__INTERNAL/pending_unwraps_initialized")
+}
+
+/// Pointer that tracks the last height the pending cache was updated through
+fn pending_cache_height_pointer() -> IndexPointer {
+    IndexPointer::from_keyword("/__INTERNAL/pending_unwraps_height")
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Payment {
     pub spendable: OutPoint,
@@ -94,7 +109,149 @@ pub fn fr_btc_payments_at_block(v: u128) -> Vec<Vec<u8>> {
         .collect::<Vec<Vec<u8>>>()
 }
 
+/// Check if a payment's spendable outpoint is still unfulfilled
+fn is_payment_unfulfilled(payment: &Payment) -> Result<bool> {
+    let spendable_bytes = consensus_encode(&payment.spendable)?;
+    let spendable_by = OUTPOINT_SPENDABLE_BY.select(&spendable_bytes).get();
+    Ok(spendable_by.len() > 1)
+}
+
+/// Serialize a Payment into bytes for the pending cache
+fn serialize_pending_entry(payment: &Payment, block_height: u128) -> Result<Vec<u8>> {
+    let mut entry = Vec::new();
+    entry.extend(&(block_height as u64).to_le_bytes());
+    entry.extend(&consensus_encode(&payment.spendable)?);
+    entry.extend(&consensus_encode(&payment.output)?);
+    Ok(entry)
+}
+
+/// Deserialize a pending cache entry back into (block_height, Payment)
+fn deserialize_pending_entry(data: &[u8]) -> Result<(u128, Payment)> {
+    if data.len() < 8 {
+        return Err(anyhow::anyhow!("pending entry too short"));
+    }
+    let block_height = u64::from_le_bytes(data[0..8].try_into().unwrap()) as u128;
+    let mut cursor = Cursor::new(data[8..].to_vec());
+    let spendable = consensus_decode::<OutPoint>(&mut cursor)?;
+    let output = consensus_decode::<TxOut>(&mut cursor)?;
+    Ok((block_height, Payment { spendable, output, fulfilled: false }))
+}
+
+/// Build the pending cache by scanning from last_block to current height.
+/// Called lazily on first block after upgrade, or incrementally on each new block.
+fn build_pending_cache(height: u128) -> Result<()> {
+    let initialized = pending_cache_initialized_pointer().get();
+    let cache_ptr = pending_cache_pointer();
+
+    if initialized.is_empty() {
+        // First time — do a full scan from last_block to height
+        // This happens once on upgrade, then incremental updates after
+        println!("Building pending unwraps cache (one-time initialization)...");
+
+        let last_block = std::cmp::max(
+            fr_btc_storage_pointer()
+                .keyword("/last_block")
+                .get_value::<u128>(),
+            genesis::GENESIS_BLOCK as u128,
+        );
+
+        for i in last_block..=height {
+            for payment_list_bytes in fr_btc_payments_at_block(i) {
+                let deserialized_payments = deserialize_payments(&payment_list_bytes)?;
+                for payment in deserialized_payments {
+                    if is_payment_unfulfilled(&payment)? {
+                        let entry = serialize_pending_entry(&payment, i)?;
+                        cache_ptr.append(Arc::new(entry));
+                    }
+                }
+            }
+        }
+
+        // Mark as initialized
+        pending_cache_initialized_pointer().set(Arc::new(vec![1u8]));
+        pending_cache_height_pointer().set_value::<u64>(height as u64);
+        println!("Pending unwraps cache initialized.");
+    } else {
+        // Incremental update — only scan the new block
+        let cache_height = pending_cache_height_pointer().get_value::<u64>() as u128;
+
+        if height > cache_height {
+            // Add new pending payments from blocks since last update
+            for i in (cache_height + 1)..=height {
+                for payment_list_bytes in fr_btc_payments_at_block(i) {
+                    let deserialized_payments = deserialize_payments(&payment_list_bytes)?;
+                    for payment in deserialized_payments {
+                        if is_payment_unfulfilled(&payment)? {
+                            let entry = serialize_pending_entry(&payment, i)?;
+                            cache_ptr.append(Arc::new(entry));
+                        }
+                    }
+                }
+            }
+
+            // Prune fulfilled payments from the cache
+            let list = cache_ptr.get_list();
+            let mut kept = Vec::new();
+            for entry_arc in &list {
+                if let Ok((blk, payment)) = deserialize_pending_entry(entry_arc.as_ref()) {
+                    if is_payment_unfulfilled(&payment)? {
+                        kept.push((blk, payment));
+                    }
+                }
+            }
+
+            // Rewrite the cache with only unfulfilled entries
+            // Clear old list by setting length to 0 and overwriting entries
+            let old_len = list.len() as u32;
+            cache_ptr.keyword("/length").set_value::<u32>(0);
+            for (blk, payment) in &kept {
+                let entry = serialize_pending_entry(payment, *blk)?;
+                cache_ptr.append(Arc::new(entry));
+            }
+            // Clean up any leftover entries beyond the new length
+            let new_len = kept.len() as u32;
+            for i in new_len..old_len {
+                cache_ptr.select_index(i).set(Arc::new(vec![]));
+            }
+
+            pending_cache_height_pointer().set_value::<u64>(height as u64);
+        }
+    }
+
+    Ok(())
+}
+
+/// Optimized view: reads from precomputed pending cache if available,
+/// falls back to full scan if cache not yet initialized.
 pub fn view(height: u128) -> Result<PendingUnwrapsResponse> {
+    let initialized = pending_cache_initialized_pointer().get();
+
+    if !initialized.is_empty() {
+        // Fast path: read from cache
+        let cache_ptr = pending_cache_pointer();
+        let list = cache_ptr.get_list();
+        let mut response = PendingUnwrapsResponse::default();
+
+        for entry_arc in &list {
+            if let Ok((_blk, payment)) = deserialize_pending_entry(entry_arc.as_ref()) {
+                // Re-check fulfillment status (might have changed since cache was built)
+                if is_payment_unfulfilled(&payment)? {
+                    response.payments.push(ProtoPayment {
+                        spendable: Some(pb::Outpoint {
+                            txid: payment.spendable.txid.as_byte_array().to_vec(),
+                            vout: payment.spendable.vout,
+                        }),
+                        output: consensus_encode::<TxOut>(&payment.output)?,
+                        fulfilled: false,
+                    });
+                }
+            }
+        }
+
+        return Ok(response);
+    }
+
+    // Slow path fallback: full scan (only until cache is built)
     let last_block = std::cmp::max(
         fr_btc_storage_pointer()
             .keyword("/last_block")
@@ -108,7 +265,6 @@ pub fn view(height: u128) -> Result<PendingUnwrapsResponse> {
             for mut payment in deserialized_payments {
                 let spendable_bytes = consensus_encode(&payment.spendable)?;
                 let spendable_by = OUTPOINT_SPENDABLE_BY.select(&spendable_bytes).get();
-                // 0 is possible if the outpoint is never set. 1 is possible if it was set then nullified
                 if spendable_by.len() <= 1 {
                     payment.fulfilled = true;
                 }
@@ -128,7 +284,12 @@ pub fn view(height: u128) -> Result<PendingUnwrapsResponse> {
     Ok(response)
 }
 
+/// Called during block indexing to update last_block and maintain the pending cache.
 pub fn update_last_block(height: u128) -> Result<()> {
+    // Build/update the pending cache
+    build_pending_cache(height)?;
+
+    // Original last_block advancement logic
     let mut last_block_key = fr_btc_storage_pointer().keyword("/last_block");
     let mut last_block = std::cmp::max(
         last_block_key.get_value::<u128>(),
