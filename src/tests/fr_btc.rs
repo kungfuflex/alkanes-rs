@@ -481,3 +481,107 @@ fn test_last_block_updated_after_unwrap_fulfillment() -> Result<()> {
 
     Ok(())
 }
+
+#[wasm_bindgen_test]
+fn test_fr_btc_unwrap_with_multiple_protostones_and_late_op_return() -> Result<()> {
+    // Reproduces the case where an unwrap tx has:
+    // - 2 protostones in the runestone
+    // - OP_RETURN at vout:4 (not vout:1)
+    // - Multiple outputs before the OP_RETURN
+    // This matches tx 86a9b677... which was not indexed
+    clear();
+    let (wrap_outpoint, fr_btc_amount) = wrap_btc()?;
+
+    let fr_btc_id = AlkaneId { block: 32, tx: 0 };
+    let height = 2;
+
+    // Build tx with 2 protostones
+    let protostone1 = Protostone {
+        message: Cellpack {
+            target: fr_btc_id.clone(),
+            inputs: vec![78, 0, fr_btc_amount as u128], // unwrap opcode
+        }
+        .encipher(),
+        pointer: Some(0),
+        refund: Some(0),
+        edicts: vec![],
+        from: None,
+        burn: None,
+        protocol_tag: 1,
+    };
+
+    // Second protostone (e.g., a transfer or another operation)
+    let protostone2 = Protostone {
+        message: Cellpack {
+            target: fr_btc_id.clone(),
+            inputs: vec![99], // get_name opcode (read-only, shouldn't affect state)
+        }
+        .encipher(),
+        pointer: Some(0),
+        refund: Some(0),
+        edicts: vec![],
+        from: None,
+        burn: None,
+        protocol_tag: 1,
+    };
+
+    let protostones = vec![protostone1, protostone2];
+    let runestone: ScriptBuf = (Runestone {
+        etching: None,
+        pointer: Some(0),
+        edicts: Vec::new(),
+        mint: None,
+        protocol: protostones.encipher().ok(),
+    })
+    .encipher();
+
+    let op_return = TxOut {
+        value: Amount::from_sat(0),
+        script_pubkey: runestone,
+    };
+
+    let signer_output = create_frbtc_signer_output();
+    let dummy_output1 = TxOut {
+        value: Amount::from_sat(546),
+        script_pubkey: get_address(&ADDRESS1()).script_pubkey(),
+    };
+    let dummy_output2 = TxOut {
+        value: Amount::from_sat(546),
+        script_pubkey: get_address(&ADDRESS1()).script_pubkey(),
+    };
+    let dummy_output3 = TxOut {
+        value: Amount::from_sat(17000),
+        script_pubkey: get_address(&ADDRESS1()).script_pubkey(),
+    };
+
+    // Place OP_RETURN at vout:4 (after 4 regular outputs)
+    let unwrap_tx = Transaction {
+        version: Version::ONE,
+        lock_time: bitcoin::absolute::LockTime::ZERO,
+        input: vec![TxIn {
+            previous_output: wrap_outpoint,
+            script_sig: ScriptBuf::new(),
+            sequence: Sequence::MAX,
+            witness: Witness::default(),
+        }],
+        output: vec![signer_output, dummy_output1, dummy_output2, dummy_output3, op_return],
+    };
+
+    let mut block = create_block_with_coinbase_tx(height);
+    block.txdata.push(unwrap_tx.clone());
+    index_block(&block, height)?;
+
+    // The unwrap view should find the pending payment
+    let response = unwrap_view::view(height as u128)?;
+    println!(
+        "Pending unwraps with 2 protostones + late OP_RETURN: {} payments",
+        response.payments.len()
+    );
+    assert!(
+        !response.payments.is_empty(),
+        "Expected at least 1 pending unwrap, got 0. \
+         The indexer did not process the unwrap with 2 protostones and OP_RETURN at vout:4."
+    );
+
+    Ok(())
+}
