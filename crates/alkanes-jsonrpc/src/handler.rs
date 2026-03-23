@@ -1084,6 +1084,15 @@ async fn handle_metashrew_method(
     request: &JsonRpcRequest,
     proxy: &ProxyClient,
 ) -> Result<JsonRpcResponse> {
+    // Route metashrew_view "unwrap" calls to the dedicated unwrap endpoint
+    // if configured, to avoid contention with the main metashrew node
+    if request.method == "metashrew_view" {
+        if let Some(first_param) = request.params.first() {
+            if first_param.as_str() == Some("unwrap") {
+                return proxy.forward_to_metashrew_unwrap(request).await;
+            }
+        }
+    }
     proxy.forward_to_metashrew(request).await
 }
 

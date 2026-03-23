@@ -10,6 +10,7 @@ pub struct Config {
     pub bitcoin_rpc_password: String,
 
     pub metashrew_url: String,
+    pub metashrew_unwrap_url: Option<String>,
     pub memshrew_url: String,
 
     pub ord_url: String,
@@ -38,6 +39,7 @@ impl Config {
 
             metashrew_url: env::var("METASHREW_URL")
                 .unwrap_or_else(|_| "http://localhost:8080".to_string()),
+            metashrew_unwrap_url: env::var("METASHREW_UNWRAP_URL").ok(),
             memshrew_url: env::var("MEMSHREW_URL")
                 .unwrap_or_else(|_| "http://localhost:8081".to_string()),
 

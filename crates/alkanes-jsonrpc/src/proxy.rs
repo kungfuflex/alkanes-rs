@@ -45,6 +45,38 @@ impl ProxyClient {
         }
     }
 
+    /// Forward to the dedicated metashrew-unwrap endpoint if configured,
+    /// otherwise fall back to the main metashrew endpoint.
+    pub async fn forward_to_metashrew_unwrap(&self, request: &JsonRpcRequest) -> Result<JsonRpcResponse> {
+        let url = self.config.metashrew_unwrap_url.as_deref()
+            .unwrap_or(&self.config.metashrew_url);
+
+        let response = self
+            .client
+            .post(url)
+            .json(request)
+            .send()
+            .await?;
+
+        let json_response: Value = response.json().await?;
+
+        if let Some(error) = json_response.get("error") {
+            Ok(JsonRpcResponse::Error {
+                jsonrpc: "2.0".to_string(),
+                error: serde_json::from_value(error.clone())?,
+                id: request.id.clone(),
+            })
+        } else if let Some(result) = json_response.get("result") {
+            Ok(JsonRpcResponse::success(result.clone(), request.id.clone()))
+        } else {
+            Ok(JsonRpcResponse::error(
+                INTERNAL_ERROR,
+                "Invalid response from metashrew-unwrap".to_string(),
+                request.id.clone(),
+            ))
+        }
+    }
+
     pub async fn forward_to_memshrew(&self, request: &JsonRpcRequest) -> Result<JsonRpcResponse> {
         let response = self
             .client
