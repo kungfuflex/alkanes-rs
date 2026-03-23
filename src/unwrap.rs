@@ -189,29 +189,31 @@ fn build_pending_cache(height: u128) -> Result<()> {
                 }
             }
 
-            // Prune fulfilled payments from the cache
-            let list = cache_ptr.get_list();
-            let mut kept = Vec::new();
-            for entry_arc in &list {
-                if let Ok((blk, payment)) = deserialize_pending_entry(entry_arc.as_ref()) {
-                    if is_payment_unfulfilled(&payment)? {
-                        kept.push((blk, payment));
+            // Prune fulfilled payments from the cache every 10 blocks
+            // to avoid expensive full-list rewrite on every block
+            if height % 10 == 0 {
+                let list = cache_ptr.get_list();
+                let mut kept = Vec::new();
+                for entry_arc in &list {
+                    if let Ok((blk, payment)) = deserialize_pending_entry(entry_arc.as_ref()) {
+                        if is_payment_unfulfilled(&payment)? {
+                            kept.push((blk, payment));
+                        }
                     }
                 }
-            }
 
-            // Rewrite the cache with only unfulfilled entries
-            // Clear old list by setting length to 0 and overwriting entries
-            let old_len = list.len() as u32;
-            cache_ptr.keyword("/length").set_value::<u32>(0);
-            for (blk, payment) in &kept {
-                let entry = serialize_pending_entry(payment, *blk)?;
-                cache_ptr.append(Arc::new(entry));
-            }
-            // Clean up any leftover entries beyond the new length
-            let new_len = kept.len() as u32;
-            for i in new_len..old_len {
-                cache_ptr.select_index(i).set(Arc::new(vec![]));
+                // Rewrite the cache with only unfulfilled entries
+                let old_len = list.len() as u32;
+                cache_ptr.keyword("/length").set_value::<u32>(0);
+                for (blk, payment) in &kept {
+                    let entry = serialize_pending_entry(payment, *blk)?;
+                    cache_ptr.append(Arc::new(entry));
+                }
+                // Clean up any leftover entries beyond the new length
+                let new_len = kept.len() as u32;
+                for i in new_len..old_len {
+                    cache_ptr.select_index(i).set(Arc::new(vec![]));
+                }
             }
 
             pending_cache_height_pointer().set_value::<u64>(height as u64);
