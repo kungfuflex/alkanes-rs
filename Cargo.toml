@@ -45,9 +45,9 @@ alkanes-web-sys = { path = "./crates/alkanes-web-sys" }
 alkanes-web-leptos = { path = "./crates/alkanes-web-leptos" }
 alkanes-pretty-print-macro = { path = "./crates/alkanes-pretty-print-macro" }
 ruint = "1.12.3"
-wasm-bindgen = "0.2.100"
+wasm-bindgen = "0.2.114"
 byteorder = "1.5"
-wasm-bindgen-test = "0.3.49"
+wasm-bindgen-test = "0.3.50"
 wasmi = "0.37.2"
 serde = "1.0.210"
 serde_json = "1.0.128"
