@@ -291,44 +291,41 @@ pub fn update_last_block(height: u128) -> Result<()> {
     // Build/update the pending cache
     build_pending_cache(height)?;
 
-    // Only run the original last_block advancement scan if the cache
-    // is NOT yet initialized. Once the cache is built, it replaces
-    // the need for last_block tracking entirely.
-    let initialized = pending_cache_initialized_pointer().get();
-    if initialized.is_empty() {
-        let mut last_block_key = fr_btc_storage_pointer().keyword("/last_block");
-        let mut last_block = std::cmp::max(
-            last_block_key.get_value::<u128>(),
-            genesis::GENESIS_BLOCK as u128,
-        );
-        for i in last_block..=height {
-            let mut all_fulfilled = true;
-            let all_payment_list_bytes = fr_btc_payments_at_block(i);
-            if all_payment_list_bytes.len() == 0 {
-                last_block = i + 1;
-                continue;
-            }
-            for payment_list_bytes in all_payment_list_bytes {
-                let deserialized_payments = deserialize_payments(&payment_list_bytes)?;
-                for payment in deserialized_payments {
-                    let spendable_bytes = consensus_encode(&payment.spendable)?;
-                    let spendable_by = OUTPOINT_SPENDABLE_BY.select(&spendable_bytes).get();
-                    if spendable_by.len() > 1 {
-                        all_fulfilled = false;
-                        break;
-                    }
-                }
-                if !all_fulfilled {
+    // Always run last_block advancement — it tracks the lowest block with
+    // unfulfilled payments so both the view() slow path and cache initialization
+    // start from the right place.
+    let mut last_block_key = fr_btc_storage_pointer().keyword("/last_block");
+    let mut last_block = std::cmp::max(
+        last_block_key.get_value::<u128>(),
+        genesis::GENESIS_BLOCK as u128,
+    );
+    for i in last_block..=height {
+        let mut all_fulfilled = true;
+        let all_payment_list_bytes = fr_btc_payments_at_block(i);
+        if all_payment_list_bytes.len() == 0 {
+            last_block = i + 1;
+            continue;
+        }
+        for payment_list_bytes in all_payment_list_bytes {
+            let deserialized_payments = deserialize_payments(&payment_list_bytes)?;
+            for payment in deserialized_payments {
+                let spendable_bytes = consensus_encode(&payment.spendable)?;
+                let spendable_by = OUTPOINT_SPENDABLE_BY.select(&spendable_bytes).get();
+                if spendable_by.len() > 1 {
+                    all_fulfilled = false;
                     break;
                 }
             }
-            if all_fulfilled {
-                last_block = i + 1;
-            } else {
+            if !all_fulfilled {
                 break;
             }
         }
-        last_block_key.set_value::<u128>(last_block);
+        if all_fulfilled {
+            last_block = i + 1;
+        } else {
+            break;
+        }
     }
+    last_block_key.set_value::<u128>(last_block);
     Ok(())
 }
