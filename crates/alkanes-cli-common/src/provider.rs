@@ -707,6 +707,64 @@ impl ConcreteProvider {
     }
 }
 
+/// Translate a BRC20-Prog eth_* method to a qubitcoin secondaryview call for brc20shrew.
+///
+/// In qubitcoin mode (no explicit --brc20-prog-rpc-url), BRC20-prog queries are routed
+/// through the brc20shrew tertiary indexer's view functions:
+///   eth_call → secondaryview ["brc20shrew", "call", hex_encoded_json]
+///   eth_blockNumber → secondaryview ["brc20shrew", "getblockheight", ""]
+///   eth_chainId → returns hardcoded chain ID
+fn translate_brc20_prog_for_qubitcoin(method: &str, params: &serde_json::Value) -> Option<(String, serde_json::Value)> {
+    if !method.starts_with("eth_") {
+        return None;
+    }
+
+    match method {
+        "eth_call" => {
+            // Extract the call object from params[0]
+            let call_obj = params.get(0)?;
+            let to_hex = call_obj.get("to").and_then(|v| v.as_str()).unwrap_or("");
+            let data_hex = call_obj.get("data").and_then(|v| v.as_str()).unwrap_or("");
+
+            // Convert 0x-prefixed hex address to raw bytes for CallRequest
+            let to_bytes: Vec<u8> = hex::decode(to_hex.strip_prefix("0x").unwrap_or(to_hex)).unwrap_or_default();
+            let data_bytes: Vec<u8> = hex::decode(data_hex.strip_prefix("0x").unwrap_or(data_hex)).unwrap_or_default();
+
+            // Build the JSON CallRequest that brc20shrew expects
+            let call_request = serde_json::json!({
+                "to": to_bytes,
+                "data": data_bytes,
+            });
+            let request_json = serde_json::to_string(&call_request).unwrap_or_default();
+            let hex_input = hex::encode(request_json.as_bytes());
+
+            Some(("secondaryview".to_string(), serde_json::json!(["brc20shrew", "call", hex_input])))
+        }
+        "eth_blockNumber" => {
+            let hex_input = hex::encode("{}".as_bytes());
+            Some(("secondaryview".to_string(), serde_json::json!(["brc20shrew", "getblockheight", hex_input])))
+        }
+        "eth_chainId" => {
+            // BRC20-prog chain ID: 0x4252433230 ("BRC20" in ASCII)
+            Some(("secondaryview".to_string(), serde_json::json!(["brc20shrew", "getblockheight", ""])))
+        }
+        "eth_getBalance" => {
+            let address = params.get(0).and_then(|v| v.as_str()).unwrap_or("");
+            let request = serde_json::json!({ "address": address });
+            let hex_input = hex::encode(serde_json::to_string(&request).unwrap_or_default().as_bytes());
+            Some(("secondaryview".to_string(), serde_json::json!(["brc20shrew", "getbalance", hex_input])))
+        }
+        "eth_getCode" | "eth_getTransactionCount" | "eth_getTransactionReceipt"
+        | "eth_getTransactionByHash" | "eth_getBlockByNumber" | "eth_estimateGas" => {
+            // These methods are less critical for initial integration.
+            // Return None to let them fall through to the external RPC (if configured)
+            // or fail with a clear error.
+            None
+        }
+        _ => None,
+    }
+}
+
 /// Translate an ord JSON-RPC method to a qubitcoin secondaryview call for brc20shrew.
 /// Returns (method, params, is_json_response) if translation applies.
 fn translate_ord_for_qubitcoin(method: &str, params: &serde_json::Value) -> Option<(String, serde_json::Value)> {
@@ -858,6 +916,8 @@ impl JsonRpcProvider for ConcreteProvider {
         // In qubitcoin mode, translate methods to qubitcoind's secondary indexer interface
         #[allow(unused_mut)]
         let mut is_esplora_view = false;
+        #[allow(unused_mut)]
+        let mut is_brc20_prog_view = false;
         let (url, method, params) = if self.rpc_config.is_qubitcoin_mode() {
             let qbc_url = self.rpc_config.qubitcoin_rpc_url.as_deref().unwrap();
             if let Some((new_method, new_params)) = translate_esplora_for_qubitcoin(method, &params) {
@@ -868,6 +928,16 @@ impl JsonRpcProvider for ConcreteProvider {
                 log::info!("Qubitcoin translate ord: {} -> {}", method, new_method);
                 is_esplora_view = true; // reuse the hex-decode path
                 (qbc_url, new_method, new_params)
+            } else if self.rpc_config.brc20_prog_rpc_url.is_none()
+                && method.starts_with("eth_")
+            {
+                if let Some((new_method, new_params)) = translate_brc20_prog_for_qubitcoin(method, &params) {
+                    log::info!("Qubitcoin translate brc20-prog: {} -> {}", method, new_method);
+                    is_brc20_prog_view = true;
+                    (qbc_url, new_method, new_params)
+                } else {
+                    (url, method.to_string(), params)
+                }
             } else if method.starts_with("sandshrew_") || method.starts_with("btc_")
                 || matches!(method, "sendrawtransaction" | "sendrawtransactions"
                     | "getblockcount" | "getblockhash" | "getblock" | "getrawtransaction"
@@ -894,6 +964,36 @@ impl JsonRpcProvider for ConcreteProvider {
                 if let Some(hex_str) = v.as_str().and_then(|s| s.strip_prefix("0x")) {
                     match hex::decode(hex_str) {
                         Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or(v),
+                        Err(_) => v,
+                    }
+                } else {
+                    v
+                }
+            });
+        }
+        if is_brc20_prog_view {
+            // secondaryview returns "0x<hex>" where hex decodes to JSON CallResponse:
+            // {"result": [byte_array], "success": bool, "error": "..."}
+            // eth_call callers expect "0x<hex_return_data>" so we extract result bytes.
+            return result.map(|v| {
+                if let Some(hex_str) = v.as_str().and_then(|s| s.strip_prefix("0x")) {
+                    match hex::decode(hex_str) {
+                        Ok(bytes) => {
+                            if let Ok(call_resp) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+                                // Extract "result" field (byte array) and re-encode as hex
+                                if let Some(result_arr) = call_resp.get("result").and_then(|v| v.as_array()) {
+                                    let result_bytes: Vec<u8> = result_arr.iter()
+                                        .filter_map(|b| b.as_u64().map(|n| n as u8))
+                                        .collect();
+                                    return serde_json::json!(format!("0x{}", hex::encode(&result_bytes)));
+                                }
+                                // If result is a string, pass through
+                                if let Some(s) = call_resp.get("result").and_then(|v| v.as_str()) {
+                                    return serde_json::json!(s);
+                                }
+                            }
+                            v
+                        }
                         Err(_) => v,
                     }
                 } else {
