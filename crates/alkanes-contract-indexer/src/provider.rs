@@ -24,6 +24,7 @@ pub async fn build_provider(
         provider: network_provider,
         timeout_seconds: 600,
         jsonrpc_headers: Vec::new(),  // No custom headers needed for indexer
+        qubitcoin_rpc_url: None,
     };
 
     let args = Args {
