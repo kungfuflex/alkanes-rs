@@ -1,0 +1,17 @@
+[package]
+name = "alkanes-gpu"
+version = "0.1.0"
+edition = "2021"
+description = "GPU-accelerated WASM execution for alkanes indexer"
+license = "MIT"
+
+[dependencies]
+wgpu = "24"
+bytemuck = { version = "1.14", features = ["derive"] }
+anyhow = "1.0.90"
+pollster = "0.4"
+log = "0.4"
+env_logger = "0.11"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "macros"] }
