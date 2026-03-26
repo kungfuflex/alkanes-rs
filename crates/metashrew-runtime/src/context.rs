@@ -98,26 +98,17 @@ pub struct MetashrewRuntimeContext<T: KeyValueStoreLike> {
     /// indexer requirements.
     pub block: Vec<u8>,
     
-    /// WASM execution state tracking
+    /// WASM execution state tracking (atomic for lock-free access)
     ///
     /// Tracks the progress of WASM module execution:
     /// - `0`: Execution starting or in progress
     /// - `1`: Execution completed successfully
     /// - Other values may indicate error conditions
-    pub state: u32,
-
-    /// Enable Sparse Merkle Tree (SMT) state commitments
     ///
-    /// When `true`, the runtime computes and stores SMT state roots for
-    /// cryptographic state commitments and Merkle proofs. This adds overhead
-    /// but enables trustless state verification.
-    ///
-    /// When `false`, uses plain key-value storage with append-only history.
-    /// This is faster and uses less storage, while still supporting historical
-    /// queries and rollback/reorg handling through the append-only structure.
-    ///
-    /// Default: `false` (SMT disabled for better performance)
-    pub enable_smt: bool,
+    /// Uses AtomicU32 so that setting state=1 after __flush does not
+    /// require a write lock on the entire context, which would block
+    /// concurrent view function read locks.
+    pub state: std::sync::atomic::AtomicU32,
 }
 
 impl<T: KeyValueStoreLike> Clone for MetashrewRuntimeContext<T>
@@ -129,8 +120,7 @@ where
             db: self.db.clone(),
             height: self.height,
             block: self.block.clone(),
-            state: self.state,
-            enable_smt: self.enable_smt,
+            state: std::sync::atomic::AtomicU32::new(self.state.load(std::sync::atomic::Ordering::SeqCst)),
         }
     }
 }
@@ -185,32 +175,7 @@ impl<T: KeyValueStoreLike> MetashrewRuntimeContext<T> {
             db,
             height,
             block,
-            state: 0,
-            enable_smt: false, // Default to disabled for backward compatibility
-        }
-    }
-
-    /// Create a new runtime context with SMT configuration
-    ///
-    /// Like [`Self::new`] but allows specifying whether to enable SMT state commitments.
-    ///
-    /// # Parameters
-    ///
-    /// - `db`: Storage backend implementing [`KeyValueStoreLike`]
-    /// - `height`: Block height for this execution context
-    /// - `block`: Raw block data to be processed
-    /// - `enable_smt`: Whether to compute SMT state roots
-    ///
-    /// # Returns
-    ///
-    /// A new [`MetashrewRuntimeContext`] with the specified SMT configuration
-    pub fn new_with_smt(db: T, height: u32, block: Vec<u8>, enable_smt: bool) -> Self {
-        Self {
-            db,
-            height,
-            block,
-            state: 0,
-            enable_smt,
+            state: std::sync::atomic::AtomicU32::new(0),
         }
     }
 }

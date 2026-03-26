@@ -1,13 +1,13 @@
 //! Generic MetashrewRuntime that works with any storage backend
 
 use anyhow::Result;
-use std::sync::OnceLock;
 
 // Core modules
 pub mod context;
 pub mod helpers;
 pub mod key_utils;
 pub mod proto;
+pub mod rollback;
 pub mod runtime;
 pub mod smt;
 pub mod traits;
@@ -21,8 +21,8 @@ pub use traits::{BatchLike, KVTrackerFn, KeyValueStoreLike};
 // Re-export helper types
 pub use smt::{BatchedSMTHelper, SMTHelper, SMTNode};
 
-// Thread-safe label storage using OnceLock for deterministic behavior
-static LABEL: OnceLock<String> = OnceLock::new();
+// Utility functions that are storage-backend agnostic
+static mut _LABEL: Option<String> = None;
 
 const TIMEOUT: u64 = 1500;
 
@@ -32,24 +32,20 @@ pub fn wait_timeout() {
     thread::sleep(time::Duration::from_millis(TIMEOUT));
 }
 
-/// Sets the label prefix for all database keys.
-/// This can only be called once - subsequent calls will be ignored.
-/// For deterministic behavior, this should be called during initialization.
-pub fn set_label(s: String) {
-    // OnceLock::set returns Err if already set, which we ignore
-    // This ensures the label can only be set once for determinism
-    let _ = LABEL.set(s + "://");
+pub fn set_label(s: String) -> () {
+    unsafe {
+        _LABEL = Some(s + "://");
+    }
 }
 
-/// Gets the label prefix if set.
-/// Returns the label string reference, panics if not set.
+#[allow(static_mut_refs)]
 pub fn get_label() -> &'static String {
-    LABEL.get().expect("Label not initialized - call set_label first")
+    unsafe { _LABEL.as_ref().unwrap() }
 }
 
-/// Checks if a label has been set.
+#[allow(static_mut_refs)]
 pub fn has_label() -> bool {
-    LABEL.get().is_some()
+    unsafe { _LABEL.is_some() }
 }
 
 pub fn to_labeled_key(key: &Vec<u8>) -> Vec<u8> {

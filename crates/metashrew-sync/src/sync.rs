@@ -91,6 +91,7 @@
 //! - **API services**: JSON-RPC endpoints for accessing indexed data
 
 use async_trait::async_trait;
+use bitcoin::hashes::Hash as _;
 use log::{debug, error, info, warn};
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -100,7 +101,6 @@ use tokio::sync::{mpsc, Mutex, RwLock};
 use tokio::time::sleep;
 
 use crate::{
-    chain_validator::ChainValidator, reorg_handler::{ReorgConfig, ReorgHandler},
     BitcoinNodeAdapter, BlockResult, JsonRpcProvider, PreviewCall, RuntimeAdapter, StorageAdapter,
     SyncConfig, SyncEngine, SyncError, SyncResult, SyncStatus, ViewCall,
 };
@@ -108,9 +108,9 @@ use crate::{
 /// Generic Bitcoin indexer synchronization engine
 pub struct MetashrewSync<N, S, R>
 where
-    N: BitcoinNodeAdapter + 'static,
-    S: StorageAdapter + 'static,
-    R: RuntimeAdapter + 'static,
+    N: BitcoinNodeAdapter,
+    S: StorageAdapter,
+    R: RuntimeAdapter,
 {
     node: Arc<N>,
     storage: Arc<RwLock<S>>,
@@ -121,8 +121,6 @@ where
     last_block_time: Arc<RwLock<Option<SystemTime>>>,
     blocks_processed: Arc<AtomicU32>,
     processing_heights: Arc<Mutex<HashSet<u32>>>,
-    reorg_handler: ReorgHandler<N, S, R>,
-    chain_validator: ChainValidator<S>,
 }
 
 impl<N, S, R> MetashrewSync<N, S, R>
@@ -133,31 +131,16 @@ where
 {
     /// Create a new sync engine
     pub fn new(node: N, storage: S, runtime: R, config: SyncConfig) -> Self {
-        let node = Arc::new(node);
-        let storage = Arc::new(RwLock::new(storage));
-        let runtime = Arc::new(runtime);
-
-        let reorg_config = ReorgConfig::from(&config);
-        let reorg_handler = ReorgHandler::new(
-            node.clone(),
-            storage.clone(),
-            runtime.clone(),
-            reorg_config,
-        );
-        let chain_validator = ChainValidator::new(storage.clone());
-
         Self {
-            node,
-            storage,
-            runtime,
+            node: Arc::new(node),
+            storage: Arc::new(RwLock::new(storage)),
+            runtime: Arc::new(runtime),
             config,
             is_running: Arc::new(AtomicBool::new(false)),
             current_height: Arc::new(AtomicU32::new(0)),
             last_block_time: Arc::new(RwLock::new(None)),
             blocks_processed: Arc::new(AtomicU32::new(0)),
             processing_heights: Arc::new(Mutex::new(HashSet::new())),
-            reorg_handler,
-            chain_validator,
         }
     }
 
@@ -219,8 +202,16 @@ where
         let remote_tip = self.node.get_tip_height().await?;
 
         // Check for reorgs only when close to the tip
-        if self.reorg_handler.should_check_for_reorg(current_height, remote_tip) {
-            match self.reorg_handler.check_and_handle_reorg(current_height).await {
+        if remote_tip.saturating_sub(current_height) <= self.config.reorg_check_threshold {
+            match handle_reorg(
+                current_height,
+                self.node.clone(),
+                self.storage.clone(),
+                self.runtime.clone(),
+                &self.config,
+            )
+            .await
+            {
                 Ok(new_height) => {
                     if new_height != current_height {
                         info!("Reorg handled. Resuming from height {}", new_height);
@@ -269,21 +260,115 @@ where
         }
     }
 
-    /// Validate that a block connects to the previous block in the chain
+    /// Validate block chain continuity like a light client (SPV-style)
     ///
-    /// This ensures chain continuity by verifying that the block's prev_blockhash
-    /// matches the stored hash of the previous block.
-    async fn validate_block_connects(&self, height: u32, block_data: &[u8]) -> SyncResult<()> {
-        // Delegate to ChainValidator
-        self.chain_validator.validate_single_block(height, block_data).await
+    /// This performs two validations:
+    /// 1. Computes the block hash from the header and verifies it matches the provided hash
+    /// 2. Verifies the block's prev_blockhash matches our computed hash of the previous block
+    ///
+    /// This is more secure than trusting stored hashes - we verify the actual block data.
+    async fn validate_block_connects(&self, height: u32, block_data: &[u8], provided_hash: &[u8]) -> SyncResult<bool> {
+        use bitcoin::consensus::Encodable;
+        use sha2::{Sha256, Digest};
+
+        // Decode the block
+        let block: bitcoin::Block = bitcoin::consensus::deserialize(block_data)
+            .map_err(|e| SyncError::BlockProcessing {
+                height,
+                message: format!("Failed to deserialize block: {}", e),
+            })?;
+
+        // Step 1: Compute block hash from header (double SHA256)
+        let mut header_bytes = Vec::with_capacity(80);
+        block.header.consensus_encode(&mut header_bytes)
+            .map_err(|e| SyncError::BlockProcessing {
+                height,
+                message: format!("Failed to encode block header: {}", e),
+            })?;
+
+        let first_hash = Sha256::digest(&header_bytes);
+        let second_hash = Sha256::digest(&first_hash);
+        let mut computed_hash: Vec<u8> = second_hash.to_vec();
+        computed_hash.reverse(); // Convert to display order (big-endian) to match bitcoind
+
+        // Verify computed hash matches provided hash
+        if computed_hash != provided_hash {
+            error!(
+                "⚠ BLOCK HASH MISMATCH at height {}: Computed {} but received {}",
+                height,
+                hex::encode(&computed_hash),
+                hex::encode(provided_hash)
+            );
+            return Ok(false);
+        }
+
+        debug!(
+            "✓ Block {} hash verified: {}...{}",
+            height,
+            hex::encode(&computed_hash[..4]),
+            hex::encode(&computed_hash[28..])
+        );
+
+        // Genesis block has no previous block to check
+        if height == 0 {
+            return Ok(true);
+        }
+
+        // Step 2: Verify prev_blockhash matches stored hash of previous block
+        // Convert prev_blockhash to display order to match stored format
+        let mut block_prev_hash: Vec<u8> = block.header.prev_blockhash.to_byte_array().to_vec();
+        block_prev_hash.reverse();
+
+        // Get the stored hash of the previous block
+        let storage = self.storage.read().await;
+        let stored_prev_hash = storage.get_block_hash(height - 1).await?;
+        drop(storage);
+
+        match stored_prev_hash {
+            Some(stored_hash) => {
+                if stored_hash != block_prev_hash {
+                    error!(
+                        "⚠ CHAIN DISCONTINUITY at height {}: Block's prev_blockhash {} does not match stored hash {} of block {}",
+                        height,
+                        hex::encode(&block_prev_hash),
+                        hex::encode(&stored_hash),
+                        height - 1
+                    );
+                    Ok(false)
+                } else {
+                    debug!(
+                        "✓ Block {} connects to previous block {} (prev_hash: {}...{})",
+                        height,
+                        height - 1,
+                        hex::encode(&block_prev_hash[..4]),
+                        hex::encode(&block_prev_hash[28..])
+                    );
+                    Ok(true)
+                }
+            }
+            None => {
+                warn!(
+                    "No stored hash for block {} - unable to validate chain continuity for block {}",
+                    height - 1,
+                    height
+                );
+                // Allow processing to continue, but log the issue
+                Ok(true)
+            }
+        }
     }
 
     /// Process a single block atomically
     pub async fn process_block(&self, height: u32, block_data: Vec<u8>, block_hash: Vec<u8>) -> SyncResult<()> {
-        // Validate that this block connects to the previous one
-        // ChainValidator will return ChainDiscontinuity error if invalid
-        self.validate_block_connects(height, &block_data).await?;
-
+        // Validate block hash and chain continuity (SPV-style)
+        if !self.validate_block_connects(height, &block_data, &block_hash).await? {
+            return Err(SyncError::BlockProcessing {
+                height,
+                message: format!(
+                    "Block does not connect to previous block - possible reorg or chain inconsistency"
+                ),
+            });
+        }
         info!(
             "Processing block {} ({} bytes) atomically",
             height,
@@ -311,6 +396,7 @@ where
                 // Update metrics
                 self.blocks_processed.fetch_add(1, Ordering::SeqCst);
                 {
+                    // NOTE: Timestamp is for monitoring/metrics only, not used in state calculation
                     let mut last_time = self.last_block_time.write().await;
                     *last_time = Some(SystemTime::now());
                 }
@@ -321,11 +407,21 @@ where
                 );
                 Ok(())
             }
-            Err(_) => {
-                // Fallback to non-atomic processing
-                warn!(
-                    "Atomic processing failed for height {}, falling back to non-atomic",
-                    height
+            Err(atomic_err) => {
+                // CRITICAL WARNING: Fallback to non-atomic processing can cause state divergence
+                // between instances under different load conditions. This should be investigated.
+                error!(
+                    "CRITICAL: Atomic processing failed for height {}, falling back to non-atomic. \
+                     This may cause STATE DIVERGENCE between indexer instances! Error: {:?}",
+                    height, atomic_err
+                );
+
+                // Log memory and resource state to help diagnose why atomic processing failed
+                log::warn!(
+                    "Block {} triggered fallback: block_size={} bytes, consider investigating \
+                     if this happens frequently under load",
+                    height,
+                    block_data.len()
                 );
 
                 // Process with runtime (non-atomic fallback)
@@ -334,7 +430,7 @@ where
                     .await
                     .map_err(|e| SyncError::BlockProcessing {
                         height,
-                        message: e.to_string(),
+                        message: format!("Fallback processing also failed: {}", e),
                     })?;
 
                 // Get state root after processing
@@ -351,6 +447,7 @@ where
                 // Update metrics
                 self.blocks_processed.fetch_add(1, Ordering::SeqCst);
                 {
+                    // NOTE: Timestamp is for monitoring/metrics only, not used in state calculation
                     let mut last_time = self.last_block_time.write().await;
                     *last_time = Some(SystemTime::now());
                 }
@@ -367,9 +464,19 @@ where
     /// Run the sync pipeline with parallel fetching and processing
     async fn run_pipeline(&self) -> SyncResult<()> {
         // Determine pipeline size
+        // NOTE: For deterministic behavior across instances, pipeline_size should be
+        // explicitly configured rather than auto-detected from CPU count.
+        // CPU-based sizing can cause different instances to process blocks in different
+        // concurrent patterns, potentially affecting resource contention and timing.
         let pipeline_size = self.config.pipeline_size.unwrap_or_else(|| {
             let cpu_count = num_cpus::get();
-            std::cmp::min(std::cmp::max(5, cpu_count / 2), 16)
+            let auto_size = std::cmp::min(std::cmp::max(5, cpu_count / 2), 16);
+            warn!(
+                "Pipeline size not configured, using auto-detected value {} based on {} CPUs. \
+                 For deterministic behavior, explicitly set pipeline_size in config.",
+                auto_size, cpu_count
+            );
+            auto_size
         });
 
         info!("Starting sync pipeline with size {}", pipeline_size);
@@ -402,8 +509,16 @@ where
                     };
 
                     // Check for reorgs only when close to the tip
-                    if self_clone.reorg_handler.should_check_for_reorg(current_height, remote_tip) {
-                        match self_clone.reorg_handler.check_and_handle_reorg(current_height).await {
+                    if remote_tip.saturating_sub(current_height) <= self_clone.config.reorg_check_threshold {
+                        match handle_reorg(
+                            current_height,
+                            self_clone.node.clone(),
+                            self_clone.storage.clone(),
+                            self_clone.runtime.clone(),
+                            &self_clone.config,
+                        )
+                        .await
+                        {
                             Ok(new_height) => {
                                 if new_height != current_height {
                                     info!("Reorg handled. Resuming from height {}", new_height);
@@ -516,54 +631,49 @@ where
                     }
                     processed_height + 1
                 }
-                BlockResult::Error(failed_height, error_msg) => {
-                    error!("Failed to process block {}: {}", failed_height, error_msg);
+                BlockResult::Error(failed_height, error) => {
+                    error!("Failed to process block {}: {}", failed_height, error);
                     {
                         let mut processing_heights = self.processing_heights.lock().await;
                         processing_heights.remove(&failed_height);
                     }
 
-                    // Convert error string to SyncError for categorization
-                    let sync_error = if error_msg.contains("does not connect to previous block") || error_msg.contains("CHAIN DISCONTINUITY") {
-                        // Chain discontinuity detected - this should trigger reorg
-                        SyncError::ChainDiscontinuity {
-                            height: failed_height,
-                            prev_height: failed_height.saturating_sub(1),
-                            expected: "unknown".to_string(),
-                            got: "unknown".to_string(),
+                    // Check if this is a chain validation error - trigger reorg handling
+                    if error.contains("does not connect to previous block") || error.contains("CHAIN DISCONTINUITY") {
+                        warn!("Chain discontinuity detected at height {}. Triggering reorg handling.", failed_height);
+
+                        // Trigger reorg handling to find common ancestor and rollback
+                        match handle_reorg(
+                            failed_height,
+                            self.node.clone(),
+                            self.storage.clone(),
+                            self.runtime.clone(),
+                            &self.config,
+                        )
+                        .await
+                        {
+                            Ok(rollback_height) => {
+                                info!("Rolled back to height {}. Resuming sync.", rollback_height);
+                                self.current_height.store(rollback_height, Ordering::SeqCst);
+                                rollback_height
+                            }
+                            Err(e) => {
+                                error!("Failed to handle reorg: {}", e);
+                                sleep(Duration::from_secs(5)).await;
+                                failed_height
+                            }
                         }
-                    } else if error_msg.contains("indexer exited unexpectedly") {
+                    } else if error.contains("indexer exited unexpectedly") {
                         error!("Critical error: Indexer exited unexpectedly. Aborting.");
                         self.is_running.store(false, Ordering::SeqCst);
                         return Err(SyncError::BlockProcessing {
                             height: failed_height,
-                            message: error_msg,
+                            message: error,
                         });
                     } else {
-                        SyncError::BlockProcessing {
-                            height: failed_height,
-                            message: error_msg,
-                        }
-                    };
-
-                    // Use ReorgHandler to handle the error appropriately
-                    match self.reorg_handler.handle_processing_error(sync_error, failed_height).await {
-                        Ok(Some(rollback_height)) => {
-                            // Reorg was triggered and handled
-                            self.current_height.store(rollback_height, Ordering::SeqCst);
-                            rollback_height
-                        }
-                        Ok(None) => {
-                            // Retryable error - wait and retry
-                            sleep(Duration::from_secs(5)).await;
-                            failed_height
-                        }
-                        Err(e) => {
-                            // Permanent error or reorg handling failed
-                            error!("Failed to handle error at height {}: {}", failed_height, e);
-                            sleep(Duration::from_secs(5)).await;
-                            failed_height
-                        }
+                        // Other errors: retry after delay
+                        sleep(Duration::from_secs(5)).await;
+                        failed_height
                     }
                 }
             };
@@ -601,7 +711,6 @@ where
             is_running: self.is_running.clone(),
             current_height: self.current_height.clone(),
             processing_heights: self.processing_heights.clone(),
-            reorg_handler: self.reorg_handler.clone(),
         }
     }
 }
@@ -610,9 +719,9 @@ where
 #[derive(Clone)]
 struct ProcessingClone<N, S, R>
 where
-    N: BitcoinNodeAdapter + 'static,
-    S: StorageAdapter + 'static,
-    R: RuntimeAdapter + 'static,
+    N: BitcoinNodeAdapter,
+    S: StorageAdapter,
+    R: RuntimeAdapter,
 {
     node: Arc<N>,
     storage: Arc<RwLock<S>>,
@@ -621,7 +730,6 @@ where
     is_running: Arc<AtomicBool>,
     current_height: Arc<AtomicU32>,
     processing_heights: Arc<Mutex<HashSet<u32>>>,
-    reorg_handler: ReorgHandler<N, S, R>,
 }
 
 impl<N, S, R> ProcessingClone<N, S, R>
@@ -654,11 +762,21 @@ where
 
                 Ok(())
             }
-            Err(_) => {
-                // Fallback to non-atomic processing
-                warn!(
-                    "Atomic processing failed for height {} in pipeline, falling back",
-                    height
+            Err(atomic_err) => {
+                // CRITICAL WARNING: Fallback to non-atomic processing can cause state divergence
+                // between instances under different load conditions. This should be investigated.
+                error!(
+                    "CRITICAL: Atomic processing failed for height {} in pipeline, falling back. \
+                     This may cause STATE DIVERGENCE between indexer instances! Error: {:?}",
+                    height, atomic_err
+                );
+
+                // Log memory and resource state to help diagnose why atomic processing failed
+                log::warn!(
+                    "Block {} in pipeline triggered fallback: block_size={} bytes, \
+                     investigate if this happens frequently under load",
+                    height,
+                    block_data.len()
                 );
 
                 // Process with runtime (non-atomic fallback)
@@ -667,7 +785,7 @@ where
                     .await
                     .map_err(|e| SyncError::BlockProcessing {
                         height,
-                        message: e.to_string(),
+                        message: format!("Pipeline fallback processing also failed: {}", e),
                     })?;
 
                 // Get state root after processing

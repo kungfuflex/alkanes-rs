@@ -1,11 +1,19 @@
 [package]
 name = "rockshrew-mono"
-version.workspace = true
+version = "9.0.1-rc.2"
 edition = "2021"
 
 [lib]
 name = "rockshrew_mono"
 path = "src/lib.rs"
+
+[[bin]]
+name = "rockshrew-mono"
+path = "src/main.rs"
+
+[[bin]]
+name = "rockshrew-rollback"
+path = "src/bin/rollback.rs"
 
 [dependencies]
 async-trait = "0.1"
@@ -51,8 +59,6 @@ tokio-test = "0.4"
 tempfile = "3.8"
 memshrew-runtime = { workspace = true }
 metashrew-core = { path = "../metashrew-core" }
-bitcoin = { workspace = true }
-metashrew-support = { path = "../metashrew-support" }
 
 
 [profile.release]

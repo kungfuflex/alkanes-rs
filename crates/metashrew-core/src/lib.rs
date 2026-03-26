@@ -94,6 +94,7 @@ pub mod proto;
 use crate::compat::panic_hook;
 use crate::imports::{__flush, __get, __get_len, __host_len, __load_input};
 pub use crate::stdio::stdout;
+pub use metashrew_macros::{main, view};
 #[allow(unused_imports)]
 use metashrew_support::{
 	compat::{to_arraybuffer_layout, to_passback_ptr, to_ptr},
@@ -169,13 +170,13 @@ pub fn get(v: Arc<Vec<u8>>) -> Arc<Vec<u8>> {
         if CACHE.as_ref().unwrap().contains_key(&v.clone()) {
             return CACHE.as_ref().unwrap().get(&v.clone()).unwrap().clone();
         }
-        let length: i32 = __get_len(to_passback_ptr(&mut to_arraybuffer_layout(v.as_ref())) as u32);
+        let length: i32 = __get_len(to_passback_ptr(&mut to_arraybuffer_layout(v.as_ref())));
         let mut buffer = Vec::<u8>::new();
         buffer.extend_from_slice(&length.to_le_bytes());
         buffer.resize((length as usize) + 4, 0);
         __get(
-            to_passback_ptr(&mut to_arraybuffer_layout(v.as_ref())) as u32,
-            to_passback_ptr(&mut buffer) as u32,
+            to_passback_ptr(&mut to_arraybuffer_layout(v.as_ref())),
+            to_passback_ptr(&mut buffer),
         );
         let value = Arc::new(buffer[4..].to_vec());
         CACHE.as_mut().unwrap().insert(v.clone(), value.clone());
@@ -266,7 +267,7 @@ pub fn flush() {
         let mut buffer = KeyValueFlush::default();
         buffer.list = to_encode;
         let serialized = buffer.encode_to_vec();
-        __flush((to_ptr(&mut to_arraybuffer_layout(&serialized)) + 4) as u32);
+        __flush(to_ptr(&mut to_arraybuffer_layout(&serialized)) + 4);
     }
 }
 
@@ -308,7 +309,7 @@ pub fn input() -> Vec<u8> {
         let mut buffer = Vec::<u8>::new();
         buffer.extend_from_slice(&length.to_le_bytes());
         buffer.resize((length as usize) + 4, 0);
-        __load_input((to_ptr(&mut buffer) + 4) as u32);
+        __load_input(to_ptr(&mut buffer) + 4);
         buffer[4..].to_vec()
     }
 }
@@ -380,7 +381,7 @@ pub fn initialize() -> () {
 /// let ptr = export_bytes(result_data);
 /// // Return ptr from your view function
 /// ```
-pub fn export_bytes(bytes: Vec<u8>) -> u32 {
+pub fn export_bytes(bytes: Vec<u8>) -> i32 {
     // Create a buffer with the length prefix
     let mut buffer = Vec::with_capacity(bytes.len() + 4);
     let len = bytes.len() as u32;

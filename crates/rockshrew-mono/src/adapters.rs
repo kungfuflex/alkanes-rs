@@ -129,9 +129,18 @@ impl BitcoinRpcAdapter {
                 }
             }
 
+            // CRITICAL: Use deterministic jitter based on method name and attempt number
+            // This ensures reproducible retry timing across different instances
+            // Random jitter would cause non-deterministic block fetching patterns
             let jitter = {
-                use rand::Rng;
-                rand::thread_rng().gen_range(0..=100) as u64
+                use std::collections::hash_map::DefaultHasher;
+                use std::hash::{Hash, Hasher};
+
+                let mut hasher = DefaultHasher::new();
+                method.hash(&mut hasher);
+                attempt.hash(&mut hasher);
+                let hash = hasher.finish();
+                (hash % 101) as u64 // 0-100 milliseconds, deterministic for same method+attempt
             };
             retry_delay = std::cmp::min(max_delay, retry_delay * 2 + Duration::from_millis(jitter));
             tokio::time::sleep(retry_delay).await;
@@ -257,7 +266,7 @@ where
     async fn get_state_root(&self, height: u32) -> SyncResult<Vec<u8>> {
         // Briefly lock to get DB clone, then release for concurrent access
         let db = {
-            let context = self.runtime.context.lock().await;
+            let context = self.runtime.context.read().await;
             context.db.clone()
         };
         let smt_helper = metashrew_runtime::smt::SMTHelper::new(db);
@@ -308,7 +317,7 @@ where
     async fn get_stats(&self) -> SyncResult<RuntimeStats> {
         // Briefly lock to get height, then release
         let blocks_processed = {
-            let context = self.runtime.context.lock().await;
+            let context = self.runtime.context.read().await;
             context.height
         };
         Ok(RuntimeStats {

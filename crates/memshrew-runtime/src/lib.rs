@@ -1,9 +1,11 @@
 //! In-memory implementation of MetashrewRuntime for fast testing
 
 pub mod adapter;
+pub mod buggy_adapter;
 
 // Re-export the adapter and related types
 pub use adapter::{MemStoreAdapter, MemStoreBatch};
+pub use buggy_adapter::BuggyMemStoreAdapter;
 
 // Re-export core runtime with MemStore adapter
 pub use metashrew_runtime::{MetashrewRuntime, MetashrewRuntimeContext};

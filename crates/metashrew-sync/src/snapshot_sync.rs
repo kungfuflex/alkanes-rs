@@ -7,6 +7,7 @@
 //! - Combined snapshot server mode
 
 use async_trait::async_trait;
+use bitcoin::hashes::Hash as _;
 use log::{debug, error, info, warn};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
@@ -28,14 +29,14 @@ use tokio::sync::Mutex;
 
 pub struct SnapshotMetashrewSync<N, S, R>
 where
-    N: BitcoinNodeAdapter + 'static,
-    S: StorageAdapter + 'static,
-    R: RuntimeAdapter + 'static,
+    N: BitcoinNodeAdapter,
+    S: StorageAdapter,
+    R: RuntimeAdapter,
 {
     node: Arc<N>,
     storage: Arc<RwLock<S>>,
     runtime: Arc<R>,
-    config: SyncConfig,
+    pub config: SyncConfig,
     sync_mode: Arc<RwLock<SyncMode>>,
 
     // Snapshot components
@@ -56,10 +57,6 @@ where
     // Timing
     last_block_time: Arc<RwLock<Option<SystemTime>>>,
     last_snapshot_check: Arc<RwLock<Option<SystemTime>>>,
-
-    // Reorg handling
-    reorg_handler: crate::reorg_handler::ReorgHandler<N, S, R>,
-    chain_validator: crate::chain_validator::ChainValidator<S>,
 }
 
 impl<N, S, R> SnapshotMetashrewSync<N, S, R>
@@ -70,23 +67,10 @@ where
 {
     /// Create a new snapshot-enabled sync engine
     pub fn new(node: N, storage: S, runtime: R, config: SyncConfig, sync_mode: SyncMode) -> Self {
-        let node = Arc::new(node);
-        let storage = Arc::new(RwLock::new(storage));
-        let runtime = Arc::new(runtime);
-
-        let reorg_config = crate::reorg_handler::ReorgConfig::from(&config);
-        let reorg_handler = crate::reorg_handler::ReorgHandler::new(
-            node.clone(),
-            storage.clone(),
-            runtime.clone(),
-            reorg_config,
-        );
-        let chain_validator = crate::chain_validator::ChainValidator::new(storage.clone());
-
         Self {
-            node,
-            storage,
-            runtime,
+            node: Arc::new(node),
+            storage: Arc::new(RwLock::new(storage)),
+            runtime: Arc::new(runtime),
             config,
             sync_mode: Arc::new(RwLock::new(sync_mode)),
 
@@ -105,9 +89,6 @@ where
 
             last_block_time: Arc::new(RwLock::new(None)),
             last_snapshot_check: Arc::new(RwLock::new(None)),
-
-            reorg_handler,
-            chain_validator,
         }
     }
 
@@ -137,6 +118,21 @@ where
         self.current_height.load(Ordering::SeqCst)
     }
 
+    /// Get a reference to the node adapter
+    pub fn node(&self) -> &Arc<N> {
+        &self.node
+    }
+
+    /// Get a reference to the storage adapter
+    pub fn storage(&self) -> &Arc<RwLock<S>> {
+        &self.storage
+    }
+
+    /// Get a reference to the runtime adapter
+    pub fn runtime(&self) -> &Arc<R> {
+        &self.runtime
+    }
+
     pub async fn get_height(&self) -> SyncResult<u32> {
         let storage = self.storage.read().await;
         storage.get_indexed_height().await
@@ -149,8 +145,16 @@ where
         let remote_tip = self.node.get_tip_height().await?;
 
         // Check for reorgs only when close to the tip
-        if self.reorg_handler.should_check_for_reorg(current_height, remote_tip) {
-             match self.reorg_handler.check_and_handle_reorg(current_height).await {
+        if remote_tip.saturating_sub(current_height) <= self.config.reorg_check_threshold {
+             match crate::sync::handle_reorg(
+                current_height,
+                self.node.clone(),
+                self.storage.clone(),
+                self.runtime.clone(),
+                &self.config,
+            )
+            .await
+            {
                 Ok(new_height) => {
                     if new_height != current_height {
                         info!("Reorg handled. Resuming from height {}", new_height);
@@ -199,12 +203,120 @@ where
         }
     }
 
+    /// Validate block chain continuity like a light client (SPV-style)
+    ///
+    /// This performs two validations:
+    /// 1. Computes the block hash from the header and verifies it matches the provided hash
+    /// 2. Verifies the block's prev_blockhash matches our computed hash of the previous block
+    ///
+    /// This is more secure than trusting stored hashes - we verify the actual block data.
+    async fn validate_block_connects(&self, height: u32, block_data: &[u8], provided_hash: &[u8]) -> SyncResult<bool> {
+        use bitcoin::consensus::Encodable;
+        use sha2::{Sha256, Digest};
+
+        // Decode the block
+        let block: bitcoin::Block = bitcoin::consensus::deserialize(block_data)
+            .map_err(|e| SyncError::BlockProcessing {
+                height,
+                message: format!("Failed to deserialize block: {}", e),
+            })?;
+
+        // Step 1: Compute block hash from header (double SHA256)
+        let mut header_bytes = Vec::with_capacity(80);
+        block.header.consensus_encode(&mut header_bytes)
+            .map_err(|e| SyncError::BlockProcessing {
+                height,
+                message: format!("Failed to encode block header: {}", e),
+            })?;
+
+        let first_hash = Sha256::digest(&header_bytes);
+        let second_hash = Sha256::digest(&first_hash);
+        let mut computed_hash: Vec<u8> = second_hash.to_vec();
+        computed_hash.reverse(); // Convert to display order (big-endian) to match bitcoind
+
+        // Verify computed hash matches provided hash
+        if computed_hash != provided_hash {
+            error!(
+                "⚠ BLOCK HASH MISMATCH at height {}: Computed {} but received {}",
+                height,
+                hex::encode(&computed_hash),
+                hex::encode(provided_hash)
+            );
+            return Ok(false);
+        }
+
+        debug!(
+            "✓ Block {} hash verified: {}...{}",
+            height,
+            hex::encode(&computed_hash[..4]),
+            hex::encode(&computed_hash[28..])
+        );
+
+        // Genesis block has no previous block to check
+        if height == 0 {
+            return Ok(true);
+        }
+
+        // Step 2: Verify prev_blockhash matches stored hash of previous block
+        // Convert prev_blockhash to display order to match stored format
+        let mut block_prev_hash: Vec<u8> = block.header.prev_blockhash.to_byte_array().to_vec();
+        block_prev_hash.reverse();
+
+        // Get the stored hash of the previous block
+        let storage = self.storage.read().await;
+        let stored_prev_hash = storage.get_block_hash(height - 1).await?;
+        drop(storage);
+
+        match stored_prev_hash {
+            Some(stored_hash) => {
+                if stored_hash != block_prev_hash {
+                    error!(
+                        "⚠ CHAIN DISCONTINUITY at height {}: Block's prev_blockhash {} does not match stored hash {} of block {}",
+                        height,
+                        hex::encode(&block_prev_hash),
+                        hex::encode(&stored_hash),
+                        height - 1
+                    );
+                    Ok(false)
+                } else {
+                    debug!(
+                        "✓ Block {} connects to previous block {} (prev_hash: {}...{})",
+                        height,
+                        height - 1,
+                        hex::encode(&block_prev_hash[..4]),
+                        hex::encode(&block_prev_hash[28..])
+                    );
+                    Ok(true)
+                }
+            }
+            None => {
+                warn!(
+                    "No stored hash for block {} - unable to validate chain continuity for block {}",
+                    height - 1,
+                    height
+                );
+                // Allow processing to continue, but log the issue
+                Ok(true)
+            }
+        }
+    }
+
     pub async fn process_block(
         &self,
         height: u32,
         block_data: Vec<u8>,
         block_hash: Vec<u8>,
     ) -> SyncResult<()> {
+        // Validate block hash and chain continuity (SPV-style)
+        if !self.validate_block_connects(height, &block_data, &block_hash).await? {
+            return Err(SyncError::BlockProcessing {
+                height,
+                message: format!(
+                    "Block does not connect to previous block - possible reorg or chain inconsistency"
+                ),
+            });
+        }
+
         // Try atomic processing first
         let atomic_result = self.runtime
             .process_block_atomic(height, &block_data, &block_hash)
@@ -436,8 +548,16 @@ where
             };
 
             // Check for reorgs only when close to the tip
-            if height > 0 && self.reorg_handler.should_check_for_reorg(height, remote_tip) {
-                match self.reorg_handler.check_and_handle_reorg(height).await {
+            if height > 0 && remote_tip.saturating_sub(height) <= self.config.reorg_check_threshold {
+                match crate::sync::handle_reorg(
+                    height,
+                    self.node.clone(),
+                    self.storage.clone(),
+                    self.runtime.clone(),
+                    &self.config,
+                )
+                .await
+                {
                     Ok(reorg_height) => {
                         if reorg_height < height {
                             height = reorg_height;
@@ -630,7 +750,15 @@ where
         }
 
         if height > 0 {
-            match self.reorg_handler.check_and_handle_reorg(height).await {
+            match crate::sync::handle_reorg(
+                height,
+                self.node.clone(),
+                self.storage.clone(),
+                self.runtime.clone(),
+                &self.config,
+            )
+            .await
+            {
                 Ok(reorg_height) => {
                     if reorg_height < height {
                         self.current_height.store(reorg_height, Ordering::SeqCst);

@@ -45,18 +45,11 @@
 // - The `run` function should be generic over the adapter traits to support both
 //   production (RocksDB) and testing (in-memory) environments.
 
-pub mod adapters;
 pub mod smt_helper;
+pub mod adapters;
 pub mod snapshot;
 pub mod snapshot_adapters;
 pub mod ssh_tunnel;
-
-#[cfg(test)]
-pub mod block_builder;
-#[cfg(test)]
-pub mod test_utils;
-#[cfg(test)]
-pub mod in_memory_adapters;
 
 #[cfg(test)]
 mod tests;
@@ -78,16 +71,16 @@ use crate::adapters::MetashrewRuntimeAdapter;
 use crate::ssh_tunnel::parse_daemon_rpc_url;
 use metashrew_runtime::{set_label, MetashrewRuntime};
 use metashrew_sync::{
-    BitcoinNodeAdapter, JsonRpcProvider, RuntimeAdapter, SnapshotMetashrewSync, SnapshotProvider,
-    StorageAdapter, SyncConfig, SyncMode,
+    BitcoinNodeAdapter, JsonRpcProvider, RuntimeAdapter, SnapshotMetashrewSync,
+    SnapshotProvider, StorageAdapter, SyncConfig, SyncMode,
 };
-use num_cpus;
 use rockshrew_runtime::{
     adapter::{query_height_legacy, RocksDBRuntimeAdapter},
     fork_adapter::{ForkAdapter, LegacyRocksDBRuntimeAdapter},
     query_height, RocksDBStorageAdapter,
 };
 use tokio::sync::mpsc;
+use num_cpus;
 
 #[derive(Debug)]
 struct BlockData {
@@ -142,11 +135,6 @@ pub struct Args {
     pub max_reorg_depth: u32,
     #[arg(long, default_value_t = 6)]
     pub reorg_check_threshold: u32,
-    /// Enable Sparse Merkle Tree (SMT) state commitments.
-    /// When disabled, uses plain key-value storage which is faster but doesn't provide
-    /// cryptographic state proofs. Rollback/reorg handling works in both modes.
-    #[arg(long, default_value_t = false)]
-    pub enable_smt: bool,
 }
 
 /// Shared application state for the JSON-RPC server.
@@ -210,43 +198,21 @@ where
                 .metashrew_preview(block_hex, function_name, input_hex, height)
                 .await
         }
-        "metashrew_height" => state
-            .sync_engine
-            .read()
-            .await
-            .metashrew_height()
-            .await
-            .map(|h| h.to_string()),
+        "metashrew_height" => state.sync_engine.read().await.metashrew_height().await.map(|h| h.to_string()),
         "metashrew_getblockhash" => {
             let height = params[0].as_u64().unwrap_or_default() as u32;
-            state
-                .sync_engine
-                .read()
-                .await
-                .metashrew_getblockhash(height)
-                .await
+            state.sync_engine.read().await.metashrew_getblockhash(height).await
         }
         "metashrew_stateroot" => {
             let height = params[0].as_str().unwrap_or("latest").to_string();
-            state
-                .sync_engine
-                .read()
-                .await
-                .metashrew_stateroot(height)
-                .await
+            state.sync_engine.read().await.metashrew_stateroot(height).await
         }
-        "metashrew_snapshot" => state
-            .sync_engine
-            .read()
-            .await
-            .metashrew_snapshot()
-            .await
-            .map(|v| v.to_string()),
+        "metashrew_snapshot" => state.sync_engine.read().await.metashrew_snapshot().await.map(|v| v.to_string()),
         _ => Err(anyhow::anyhow!("Method not found").into()),
     };
 
     let duration = start_time.elapsed();
-
+    
     // Log slow RPC calls
     if duration > std::time::Duration::from_millis(100) {
         warn!("Slow RPC call: {} took {:?}", method, duration);
@@ -281,9 +247,7 @@ async fn setup_signal_handler() -> Arc<AtomicBool> {
     let shutdown_requested = Arc::new(AtomicBool::new(false));
     let shutdown_clone = shutdown_requested.clone();
     tokio::spawn(async move {
-        signal::ctrl_c()
-            .await
-            .expect("Failed to install CTRL+C signal handler");
+        signal::ctrl_c().await.expect("Failed to install CTRL+C signal handler");
         shutdown_clone.store(true, Ordering::SeqCst);
         info!("Shutdown signal received, initiating graceful shutdown...");
     });
@@ -357,6 +321,14 @@ where
         sync_engine: sync_engine_arc.clone(),
     });
 
+    // Pipeline size is no longer used - we enforce serial processing with channel size 1
+    let _pipeline_size = args.pipeline_size.unwrap_or_else(|| {
+        let available_cpus = num_cpus::get();
+        let auto_size = std::cmp::min(std::cmp::max(5, available_cpus / 2), 16);
+        info!("Note: Pipeline size configuration ({}) is ignored - using serial processing", auto_size);
+        auto_size
+    });
+
     // CRITICAL: Use channel size of 1 to enforce strict serial processing
     // This ensures block N+1 cannot be fetched until block N is fully processed and committed
     // Prevents out-of-order processing and duplicate block indexing
@@ -374,14 +346,14 @@ where
                 let engine = sync_engine_clone.read().await;
                 if let Some(exit_at) = exit_at {
                     let current_indexed_height = match engine.get_height().await {
-                        Ok(h) => h,
-                        Err(e) => {
-                            error!("Failed to get current indexed height: {}", e);
-                            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                            continue;
-                        }
-                    };
-                    if current_indexed_height >= exit_at {
+                    Ok(h) => h,
+                    Err(e) => {
+                        error!("Failed to get current indexed height: {}", e);
+                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                        continue;
+                    }
+                };
+                if current_indexed_height >= exit_at {
                         info!("Fetcher reached exit-at block {}, shutting down", exit_at);
                         break;
                     }
@@ -398,11 +370,7 @@ where
 
                 match engine.get_next_block_data().await {
                     Ok(Some((height, block_data, block_hash))) => {
-                        info!(
-                            "FETCHER: Fetched block {} ({} bytes), adding to processing queue",
-                            height,
-                            block_data.len()
-                        );
+                        info!("FETCHER: Fetched block {} ({} bytes), adding to processing queue", height, block_data.len());
                         {
                             let mut processing_heights = engine.processing_heights.lock().await;
                             if !processing_heights.insert(height) {
@@ -411,15 +379,7 @@ where
                         }
                         // This send will block if channel is full (size=1), ensuring serial processing
                         info!("FETCHER: Sending block {} to processor", height);
-                        if block_sender_clone
-                            .send(BlockData {
-                                height,
-                                block_data,
-                                block_hash,
-                            })
-                            .await
-                            .is_err()
-                        {
+                        if block_sender_clone.send(BlockData { height, block_data, block_hash }).await.is_err() {
                             break;
                         }
                         info!("FETCHER: Block {} sent to processor", height);
@@ -439,132 +399,138 @@ where
         }
     });
 
-    let processor_handle = tokio::spawn({
-        let sync_engine_clone = sync_engine_arc.clone();
-        let result_sender_clone = result_sender.clone();
+    // Block processor runs on a dedicated tokio runtime so it never competes
+    // with RPC view calls for thread pool time. This ensures indexing progresses
+    // steadily regardless of RPC load, and views are never starved by indexing.
+    let processor_handle = std::thread::Builder::new()
+        .name("block-processor".into())
+        .spawn({
+            let sync_engine_clone = sync_engine_arc.clone();
+            let result_sender_clone = result_sender.clone();
 
-        async move {
-            info!("Block processor task started.");
-            while let Some(block_data) = block_receiver.recv().await {
-                let block_start = Instant::now();
-                info!(
-                    "PROCESSOR: Starting block {} ({} bytes)",
-                    block_data.height,
-                    block_data.block_data.len()
-                );
+            move || {
+                let rt = tokio::runtime::Builder::new_multi_thread()
+                    .worker_threads(8)
+                    .thread_name("processor-worker")
+                    .enable_all()
+                    .build()
+                    .expect("Failed to create processor runtime");
 
-                // Don't hold the write lock during block processing - just get a reference
-                // The runtime handles its own internal synchronization
-                let engine = sync_engine_clone.read().await;
-                let result = match engine
-                    .process_block(
-                        block_data.height,
-                        block_data.block_data,
-                        block_data.block_hash,
-                    )
-                    .await
-                {
-                    Ok(_) => {
-                        info!(
-                            "PROCESSOR: Completed block {} in {:?}",
-                            block_data.height,
-                            block_start.elapsed()
-                        );
-                        BlockResult::Success(block_data.height)
+                rt.block_on(async move {
+                    info!("Block processor task started (dedicated runtime).");
+                    while let Some(block_data) = block_receiver.recv().await {
+                        let block_start = Instant::now();
+                        info!("PROCESSOR: Starting block {} ({} bytes)", block_data.height, block_data.block_data.len());
+
+                        let engine = sync_engine_clone.read().await;
+                        let result = match engine.process_block(block_data.height, block_data.block_data, block_data.block_hash).await {
+                            Ok(_) => {
+                                info!("PROCESSOR: Completed block {} in {:?}", block_data.height, block_start.elapsed());
+                                BlockResult::Success(block_data.height)
+                            },
+                            Err(e) => {
+                                error!("PROCESSOR: Failed block {} after {:?}: {}", block_data.height, block_start.elapsed(), e);
+                                BlockResult::Error(block_data.height, e.into())
+                            },
+                        };
+                        drop(engine);
+
+                        if result_sender_clone.send(result).await.is_err() {
+                            break;
+                        }
                     }
-                    Err(e) => {
-                        error!(
-                            "PROCESSOR: Failed block {} after {:?}: {}",
-                            block_data.height,
-                            block_start.elapsed(),
-                            e
-                        );
-                        BlockResult::Error(block_data.height, e.into())
-                    }
-                };
-                drop(engine); // Explicitly release the read lock
-
-                // Send result - this will block until indexer consumes it (channel size = 1)
-                if result_sender_clone.send(result).await.is_err() {
-                    break;
-                }
+                    debug!("Block processor task completed.");
+                });
             }
-            debug!("Block processor task completed.");
-        }
-    });
+        })
+        .expect("Failed to spawn processor thread");
 
     let indexer_handle = tokio::spawn({
         let sync_engine_clone = sync_engine_arc.clone();
         async move {
-            info!("Starting block indexing process...");
-            let mut block_count = 0u64;
-            let mut total_processing_time = std::time::Duration::ZERO;
-            let start_time = Instant::now();
+        info!("Starting block indexing process...");
+        let mut block_count = 0u64;
+        let mut total_processing_time = std::time::Duration::ZERO;
+        let start_time = Instant::now();
 
-            while let Some(result) = result_receiver.recv().await {
-                match result {
-                    BlockResult::Success(height) => {
+        while let Some(result) = result_receiver.recv().await {
+            match result {
+                BlockResult::Success(height) => {
+                    info!("INDEXER: Received success for block {}, updating state", height);
+                    let engine = sync_engine_clone.read().await;
+                    let mut processing_heights = engine.processing_heights.lock().await;
+                    let was_processing = processing_heights.remove(&height);
+                    if !was_processing {
+                        error!("INDEXER: Block {} was not in processing_heights! Possible duplicate processing!", height);
+                    }
+                    drop(processing_heights);
+                    drop(engine);
+                    
+                    let block_duration = start_time.elapsed(); // This is not block duration, but time since start
+                    block_count += 1;
+                    total_processing_time += block_duration;
+
+                    if block_duration > std::time::Duration::from_millis(500) {
+                        warn!("Slow block processing at height {}: {:?}", height, block_duration);
+                    }
+
+                    if block_count % 100 == 0 {
+                        let avg_time = total_processing_time / block_count as u32;
+                        let elapsed = start_time.elapsed();
+                        let blocks_per_sec = block_count as f64 / elapsed.as_secs_f64();
                         info!(
-                            "INDEXER: Received success for block {}, updating state",
-                            height
-                        );
-                        let engine = sync_engine_clone.read().await;
-                        let mut processing_heights = engine.processing_heights.lock().await;
-                        let was_processing = processing_heights.remove(&height);
-                        if !was_processing {
-                            error!("INDEXER: Block {} was not in processing_heights! Possible duplicate processing!", height);
-                        }
-                        drop(processing_heights);
-                        drop(engine);
-
-                        let block_duration = start_time.elapsed(); // This is not block duration, but time since start
-                        block_count += 1;
-                        total_processing_time += block_duration;
-
-                        if block_duration > std::time::Duration::from_millis(500) {
-                            warn!(
-                                "Slow block processing at height {}: {:?}",
-                                height, block_duration
-                            );
-                        }
-
-                        if block_count % 100 == 0 {
-                            let avg_time = total_processing_time / block_count as u32;
-                            let elapsed = start_time.elapsed();
-                            let blocks_per_sec = block_count as f64 / elapsed.as_secs_f64();
-                            info!(
                             "Performance: {} blocks processed, avg: {:?}/block, rate: {:.2} blocks/sec",
                             block_count, avg_time, blocks_per_sec
                         );
-                        }
-                        info!(
-                            "INDEXER: Block {} fully committed, ready for next block",
-                            height
-                        );
                     }
-                    BlockResult::Error(height, error) => {
-                        error!("INDEXER: Received error for block {}: {}", height, error);
-                        let engine = sync_engine_clone.read().await;
-                        let mut processing_heights = engine.processing_heights.lock().await;
-                        processing_heights.remove(&height);
-                        drop(processing_heights);
-                        drop(engine);
-                        error!("Failed to process block {}: {}", height, error);
-                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                    }
+                    info!("INDEXER: Block {} fully committed, ready for next block", height);
                 }
-                if let Some(exit_at) = args.exit_at {
-                    if block_count as u32 >= exit_at {
-                        info!(
-                            "Reached exit-at block {}, shutting down gracefully",
-                            exit_at
-                        );
-                        break;
+                BlockResult::Error(height, error) => {
+                    error!("INDEXER: Received error for block {}: {}", height, error);
+                    let engine = sync_engine_clone.read().await;
+                    let mut processing_heights = engine.processing_heights.lock().await;
+                    processing_heights.remove(&height);
+                    drop(processing_heights);
+
+                    let error_str = error.to_string();
+
+                    // Check if this is a chain validation error - trigger reorg handling
+                    if error_str.contains("does not connect to previous block") || error_str.contains("CHAIN DISCONTINUITY") {
+                        warn!("Chain discontinuity detected at height {}. Triggering reorg handling.", height);
+
+                        // Trigger reorg handling to find common ancestor and rollback
+                        match metashrew_sync::sync::handle_reorg(
+                            height,
+                            engine.node().clone(),
+                            engine.storage().clone(),
+                            engine.runtime().clone(),
+                            &engine.config,
+                        )
+                        .await
+                        {
+                            Ok(rollback_height) => {
+                                info!("Rolled back to height {}. Resuming sync.", rollback_height);
+                                // The sync engine will pick up from the new height
+                            }
+                            Err(e) => {
+                                error!("Failed to handle reorg: {}", e);
+                            }
+                        }
                     }
+
+                    drop(engine);
+                    error!("Failed to process block {}: {}", height, error_str);
+                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                }
+            }
+            if let Some(exit_at) = args.exit_at {
+                if block_count as u32 >= exit_at {
+                    info!("Reached exit-at block {}, shutting down gracefully", exit_at);
+                    break;
                 }
             }
         }
-    });
+    }});
 
     let server_handle = tokio::spawn({
         let args_clone = Arc::new(args.clone());
@@ -586,16 +552,16 @@ where
             App::new()
                 .wrap(cors)
                 .app_data(app_state.clone())
-                .service(web::resource("/").route(web::post().to(handle_jsonrpc::<N, S, R>)))
+                .service(
+                    web::resource("/")
+                        .route(web::post().to(handle_jsonrpc::<N, S, R>))
+                )
         })
         .bind((args.host.as_str(), args.port))?
         .run()
     });
 
-    info!(
-        "JSON-RPC server running at http://{}:{}",
-        args.host, args.port
-    );
+    info!("JSON-RPC server running at http://{}:{}", args.host, args.port);
     info!("Indexer is ready and processing blocks.");
 
     let shutdown_signal = setup_signal_handler().await;
@@ -605,9 +571,11 @@ where
                 error!("Fetcher task failed: {}", e);
             }
         }
-        result = processor_handle => {
-            if let Err(e) = result {
-                error!("Processor task failed: {}", e);
+        result = tokio::task::spawn_blocking(move || processor_handle.join()) => {
+            match result {
+                Ok(Ok(_)) => {},
+                Ok(Err(_)) => error!("Processor thread panicked"),
+                Err(e) => error!("Processor join task failed: {}", e),
             }
         }
         result = indexer_handle => {
@@ -644,9 +612,9 @@ async fn run_generic<R: RuntimeAdapter + 'static>(
     runtime_adapter: R,
     storage_adapter: RocksDBStorageAdapter,
 ) -> Result<()> {
-    let (rpc_url, bypass_ssl, tunnel_config) = parse_daemon_rpc_url(&args.daemon_rpc_url).await?;
-    let node_adapter =
-        BitcoinRpcAdapter::new(rpc_url, args.auth.clone(), bypass_ssl, tunnel_config);
+    let (rpc_url, bypass_ssl, tunnel_config) =
+        parse_daemon_rpc_url(&args.daemon_rpc_url).await?;
+    let node_adapter = BitcoinRpcAdapter::new(rpc_url, args.auth.clone(), bypass_ssl, tunnel_config);
     run(args, node_adapter, storage_adapter, runtime_adapter, None).await
 }
 
@@ -678,9 +646,8 @@ pub async fn run_prod(args: Args) -> Result<()> {
         let mut config_engine = wasmtime::Config::default();
         config_engine.async_support(true);
         let engine = wasmtime::Engine::new(&config_engine)?;
-
-        let runtime = MetashrewRuntime::load(args.indexer.clone(), adapter, engine, None, args.enable_smt).await?;
-        let storage_adapter = match runtime.context.lock().await.db {
+        let runtime = MetashrewRuntime::load(args.indexer.clone(), adapter, engine).await?;
+        let storage_adapter = match runtime.context.read().await.db {
             ForkAdapter::Modern(ref modern_adapter) => {
                 RocksDBStorageAdapter::new(modern_adapter.db.clone())
             }
@@ -688,7 +655,8 @@ pub async fn run_prod(args: Args) -> Result<()> {
                 RocksDBStorageAdapter::new(legacy_adapter.db.clone())
             }
         };
-        let runtime_adapter = MetashrewRuntimeAdapter::new(Arc::new(runtime));
+        let runtime_adapter =
+            MetashrewRuntimeAdapter::new(Arc::new(runtime));
         run_generic(args, runtime_adapter, storage_adapter).await
     } else {
         let adapter =
@@ -696,10 +664,10 @@ pub async fn run_prod(args: Args) -> Result<()> {
         let mut config_engine = wasmtime::Config::default();
         config_engine.async_support(true);
         let engine = wasmtime::Engine::new(&config_engine)?;
-
-        let runtime = MetashrewRuntime::load(args.indexer.clone(), adapter.clone(), engine, None, args.enable_smt).await?;
+        let runtime = MetashrewRuntime::load(args.indexer.clone(), adapter.clone(), engine).await?;
         let storage_adapter = RocksDBStorageAdapter::new(adapter.db.clone());
-        let runtime_adapter = MetashrewRuntimeAdapter::new(Arc::new(runtime));
+        let runtime_adapter =
+            MetashrewRuntimeAdapter::new(Arc::new(runtime));
         run_generic(args, runtime_adapter, storage_adapter).await
     }
 }

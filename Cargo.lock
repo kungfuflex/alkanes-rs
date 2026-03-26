@@ -291,7 +291,7 @@ dependencies = [
  "metashrew-support",
  "num",
  "once_cell",
- "ordinals 10.0.0",
+ "ordinals",
  "prost",
  "prost-types",
  "protorune",
@@ -407,7 +407,7 @@ dependencies = [
  "metashrew-support",
  "mockall",
  "once_cell",
- "ordinals 10.0.0",
+ "ordinals",
  "pbkdf2",
  "prost",
  "prost-build",
@@ -2050,12 +2050,6 @@ dependencies = [
 
 [[package]]
 name = "bech32"
-version = "0.9.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d86b93f97252c47b41663388e6d155714a9d0c398b99f1005cbc5f978b29f445"
-
-[[package]]
-name = "bech32"
 version = "0.10.0-beta"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "98f7eed2b2781a6f0b5c903471d48e15f56fb4e1165df8a9a2337fd1a59d45ea"
@@ -2159,19 +2153,6 @@ checksum = "5e764a1d40d510daf35e07be9eb06e75770908c27d411ee6c92109c9840eaaf7"
 
 [[package]]
 name = "bitcoin"
-version = "0.30.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1945a5048598e4189e239d3f809b19bdad4845c4b2ba400d304d2dcf26d2c462"
-dependencies = [
- "bech32 0.9.1",
- "bitcoin-private",
- "bitcoin_hashes 0.12.0",
- "hex_lit",
- "secp256k1 0.27.0",
-]
-
-[[package]]
-name = "bitcoin"
 version = "0.31.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6c85783c2fe40083ea54a33aa2f0ba58831d90fcd190f5bdc47e74e84d2a96ae"
@@ -2224,12 +2205,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b47c4ab7a93edb0c7198c5535ed9b52b63095f4e9b45279c6736cec4b856baf"
 
 [[package]]
-name = "bitcoin-private"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "73290177011694f38ec25e165d0387ab7ea749a4b81cd4c80dae5988229f7a57"
-
-[[package]]
 name = "bitcoin-units"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2237,15 +2212,6 @@ checksum = "5285c8bcaa25876d07f37e3d30c303f2609179716e11d688f51e8f1fe70063e2"
 dependencies = [
  "bitcoin-internals 0.3.0",
  "serde",
-]
-
-[[package]]
-name = "bitcoin_hashes"
-version = "0.12.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5d7066118b13d4b20b23645932dfb3a81ce7e29f95726c2036fa33cd7b092501"
-dependencies = [
- "bitcoin-private",
 ]
 
 [[package]]
@@ -5789,7 +5755,7 @@ dependencies = [
 
 [[package]]
 name = "memshrew-p2p"
-version = "10.0.0"
+version = "9.0.1"
 dependencies = [
  "actix-cors",
  "actix-web",
@@ -5810,7 +5776,7 @@ dependencies = [
 
 [[package]]
 name = "memshrew-runtime"
-version = "10.0.0"
+version = "9.0.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5822,15 +5788,16 @@ dependencies = [
 
 [[package]]
 name = "metashrew-core"
-version = "10.0.0"
+version = "9.0.1"
 dependencies = [
  "anyhow",
- "bitcoin 0.31.2",
+ "bitcoin 0.32.7",
  "bytes",
  "cfg-if",
  "hex",
+ "metashrew-macros",
  "metashrew-support",
- "ordinals 0.0.8",
+ "ordinals",
  "prost",
  "prost-build",
  "wasm-bindgen",
@@ -5838,8 +5805,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "metashrew-macros"
+version = "9.0.1"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.110",
+]
+
+[[package]]
 name = "metashrew-minimal"
-version = "10.0.0"
+version = "9.0.1"
 dependencies = [
  "anyhow",
  "bitcoin 0.32.7",
@@ -5850,7 +5826,7 @@ dependencies = [
 
 [[package]]
 name = "metashrew-runtime"
-version = "10.0.0"
+version = "9.0.1"
 dependencies = [
  "anyhow",
  "hex",
@@ -5865,7 +5841,7 @@ dependencies = [
 
 [[package]]
 name = "metashrew-support"
-version = "10.0.0"
+version = "9.0.1"
 dependencies = [
  "anyhow",
  "bech32 0.11.0",
@@ -5877,7 +5853,7 @@ dependencies = [
 
 [[package]]
 name = "metashrew-sync"
-version = "10.0.0"
+version = "9.0.1-rc.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5889,6 +5865,7 @@ dependencies = [
  "rocksdb",
  "serde",
  "serde_json",
+ "sha2",
  "thiserror 1.0.69",
  "tokio",
 ]
@@ -6333,19 +6310,6 @@ name = "option-ext"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
-
-[[package]]
-name = "ordinals"
-version = "0.0.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f69dc8f090e996b63e1f96972f0d619f497c9545464c7bddf65e42d38576b3f3"
-dependencies = [
- "bitcoin 0.30.2",
- "derive_more 0.99.20",
- "serde",
- "serde_with",
- "thiserror 1.0.69",
-]
 
 [[package]]
 name = "ordinals"
@@ -7029,7 +6993,7 @@ dependencies = [
  "metashrew-core",
  "metashrew-support",
  "once_cell",
- "ordinals 10.0.0",
+ "ordinals",
  "prost",
  "prost-types",
  "protorune",
@@ -7051,7 +7015,7 @@ dependencies = [
  "bitcoin 0.32.7",
  "hex",
  "metashrew-support",
- "ordinals 10.0.0",
+ "ordinals",
  "prost",
  "prost-build",
  "prost-types",
@@ -7513,7 +7477,7 @@ dependencies = [
 
 [[package]]
 name = "rockshrew-diff"
-version = "10.0.0"
+version = "9.0.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -7522,13 +7486,12 @@ dependencies = [
 
 [[package]]
 name = "rockshrew-mono"
-version = "10.0.0"
+version = "9.0.1-rc.2"
 dependencies = [
  "actix-cors",
  "actix-web",
  "anyhow",
  "async-trait",
- "bitcoin 0.32.7",
  "bytes",
  "clap",
  "console-subscriber",
@@ -7540,7 +7503,6 @@ dependencies = [
  "memshrew-runtime",
  "metashrew-core",
  "metashrew-runtime",
- "metashrew-support",
  "metashrew-sync",
  "num_cpus",
  "once_cell",
@@ -7565,7 +7527,7 @@ dependencies = [
 
 [[package]]
 name = "rockshrew-runtime"
-version = "10.0.0"
+version = "9.0.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -8146,17 +8108,6 @@ dependencies = [
 
 [[package]]
 name = "secp256k1"
-version = "0.27.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "25996b82292a7a57ed3508f052cfff8640d38d32018784acd714758b43da9c8f"
-dependencies = [
- "bitcoin_hashes 0.12.0",
- "rand 0.8.5",
- "secp256k1-sys 0.8.2",
-]
-
-[[package]]
-name = "secp256k1"
 version = "0.28.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d24b59d129cdadea20aea4fb2352fa053712e5d713eee47d700cd4b2bc002f10"
@@ -8175,15 +8126,6 @@ dependencies = [
  "rand 0.8.5",
  "secp256k1-sys 0.10.1",
  "serde",
-]
-
-[[package]]
-name = "secp256k1-sys"
-version = "0.8.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4473013577ec77b4ee3668179ef1186df3146e2cf2d927bd200974c6fe60fd99"
-dependencies = [
- "cc",
 ]
 
 [[package]]

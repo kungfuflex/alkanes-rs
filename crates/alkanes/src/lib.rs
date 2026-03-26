@@ -61,7 +61,7 @@ Thus, going to add not(test) to all these functions
 
 #[cfg(not(test))]
 #[no_mangle]
-pub fn multisimluate() -> u32 {
+pub fn multisimluate() -> i32 {
     configure_network();
     let data = input();
     let _height = u32::from_le_bytes((&data[0..4]).try_into().unwrap());
@@ -92,7 +92,7 @@ pub fn multisimluate() -> u32 {
 
 #[cfg(not(test))]
 #[no_mangle]
-pub fn simulate() -> u32 {
+pub fn simulate() -> i32 {
     configure_network();
     let data = input();
     let _height = u32::from_le_bytes((&data[0..4]).try_into().unwrap());
@@ -115,13 +115,13 @@ pub fn simulate() -> u32 {
 
 #[cfg(not(test))]
 #[no_mangle]
-pub fn sequence() -> u32 {
+pub fn sequence() -> i32 {
     export_bytes(view::sequence().unwrap())
 }
 
 #[cfg(not(test))]
 #[no_mangle]
-pub fn meta() -> u32 {
+pub fn meta() -> i32 {
     configure_network();
     let data = input();
     let _height = u32::from_le_bytes((&data[0..4]).try_into().unwrap());
@@ -136,7 +136,7 @@ pub fn meta() -> u32 {
 
 #[cfg(not(test))]
 #[no_mangle]
-pub fn runesbyaddress() -> u32 {
+pub fn runesbyaddress() -> i32 {
     configure_network();
     let mut data: Cursor<Vec<u8>> = Cursor::new(input());
     let _height = consume_sized_int::<u32>(&mut data).unwrap();
@@ -148,7 +148,7 @@ pub fn runesbyaddress() -> u32 {
 
 #[cfg(not(test))]
 #[no_mangle]
-pub fn unwrap() -> u32 {
+pub fn unwrap() -> i32 {
     configure_network();
     let mut data: Cursor<Vec<u8>> = Cursor::new(input());
     let height = consume_sized_int::<u32>(&mut data).unwrap();
@@ -157,7 +157,7 @@ pub fn unwrap() -> u32 {
 
 #[cfg(not(test))]
 #[no_mangle]
-pub fn runesbyoutpoint() -> u32 {
+pub fn runesbyoutpoint() -> i32 {
     configure_network();
     let mut data: Cursor<Vec<u8>> = Cursor::new(input());
     let _height = consume_sized_int::<u32>(&mut data).unwrap();
@@ -169,7 +169,7 @@ pub fn runesbyoutpoint() -> u32 {
 
 #[cfg(not(test))]
 #[no_mangle]
-pub fn spendablesbyaddress() -> u32 {
+pub fn spendablesbyaddress() -> i32 {
     configure_network();
     let mut data: Cursor<Vec<u8>> = Cursor::new(input());
     let _height = consume_sized_int::<u32>(&mut data).unwrap();
@@ -181,7 +181,7 @@ pub fn spendablesbyaddress() -> u32 {
 
 #[cfg(not(test))]
 #[no_mangle]
-pub fn protorunesbyaddress() -> u32 {
+pub fn protorunesbyaddress() -> i32 {
     configure_network();
     let mut data: Cursor<Vec<u8>> = Cursor::new(input());
     let _height = consume_sized_int::<u32>(&mut data).unwrap();
@@ -215,7 +215,7 @@ pub fn protorunesbyaddress() -> u32 {
 
 #[cfg(not(test))]
 #[no_mangle]
-pub fn getblock() -> u32 {
+pub fn getblock() -> i32 {
     configure_network();
     let mut data: Cursor<Vec<u8>> = Cursor::new(input());
     let _height = consume_sized_int::<u32>(&mut data).unwrap();
@@ -225,7 +225,7 @@ pub fn getblock() -> u32 {
 
 #[cfg(not(test))]
 #[no_mangle]
-pub fn protorunesbyheight() -> u32 {
+pub fn protorunesbyheight() -> i32 {
     configure_network();
     let mut data: Cursor<Vec<u8>> = Cursor::new(input());
     let _height = consume_sized_int::<u32>(&mut data).unwrap();
@@ -237,7 +237,7 @@ pub fn protorunesbyheight() -> u32 {
 
 #[cfg(not(test))]
 #[no_mangle]
-pub fn alkanes_id_to_outpoint() -> u32 {
+pub fn alkanes_id_to_outpoint() -> i32 {
     configure_network();
     let mut data: Cursor<Vec<u8>> = Cursor::new(input());
     // first 4 bytes come in as height, not used
@@ -253,7 +253,7 @@ pub fn alkanes_id_to_outpoint() -> u32 {
 
 #[cfg(not(test))]
 #[no_mangle]
-pub fn traceblock() -> u32 {
+pub fn traceblock() -> i32 {
     configure_network();
     let mut data: Cursor<Vec<u8>> = Cursor::new(input());
     let height = consume_sized_int::<u32>(&mut data).unwrap();
@@ -262,7 +262,7 @@ pub fn traceblock() -> u32 {
 
 #[cfg(not(test))]
 #[no_mangle]
-pub fn trace() -> u32 {
+pub fn trace() -> i32 {
     configure_network();
     let mut data: Cursor<Vec<u8>> = Cursor::new(input());
     let _height = consume_sized_int::<u32>(&mut data).unwrap();
@@ -276,7 +276,7 @@ pub fn trace() -> u32 {
 
 #[cfg(not(test))]
 #[no_mangle]
-pub fn getbytecode() -> u32 {
+pub fn getbytecode() -> i32 {
     configure_network();
     let mut data: Cursor<Vec<u8>> = Cursor::new(input());
     let _height = consume_sized_int::<u32>(&mut data).unwrap();
@@ -285,7 +285,7 @@ pub fn getbytecode() -> u32 {
 
 #[cfg(not(test))]
 #[no_mangle]
-pub fn protorunesbyoutpoint() -> u32 {
+pub fn protorunesbyoutpoint() -> i32 {
     configure_network();
     let mut data: Cursor<Vec<u8>> = Cursor::new(input());
     let _height = consume_sized_int::<u32>(&mut data).unwrap();
@@ -298,7 +298,7 @@ pub fn protorunesbyoutpoint() -> u32 {
 
 #[cfg(not(test))]
 #[no_mangle]
-pub fn runesbyheight() -> u32 {
+pub fn runesbyheight() -> i32 {
     configure_network();
     let mut data: Cursor<Vec<u8>> = Cursor::new(input());
     let _height = consume_sized_int::<u32>(&mut data).unwrap();
@@ -311,7 +311,7 @@ pub fn runesbyheight() -> u32 {
 // TODO: this function needs to improve the way it stores all alkane ids, it doesn't handle duplicates right now
 #[cfg(not(test))]
 #[no_mangle]
-pub fn getinventory() -> u32 {
+pub fn getinventory() -> i32 {
     let data = input();
     let _height = u32::from_le_bytes((&data[0..4]).try_into().unwrap());
     let reader = &data[4..];
@@ -326,7 +326,7 @@ pub fn getinventory() -> u32 {
 
 #[cfg(not(test))]
 #[no_mangle]
-pub fn getstorageat() -> u32 {
+pub fn getstorageat() -> i32 {
     configure_network();
     let data = input();
     let _height = u32::from_le_bytes((&data[0..4]).try_into().unwrap());
