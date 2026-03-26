@@ -55,9 +55,8 @@ impl AlkaneId {
         AlkaneId { block, tx }
     }
     pub fn is_created(&self, next_sequence: u128) -> bool {
-        self.block == 2 && self.tx < next_sequence 
-            || self.block == 4 
-            || self.block == 31  // ftrBTC block for futures - allows [31, n] for any n
+        self.block == 2 && self.tx < next_sequence
+            || self.block == 4
             || self.block == 32  // frBTC block for Bitcoin
             || self.block == 42  // frZEC block for Zcash
     }
@@ -65,23 +64,10 @@ impl AlkaneId {
         self.block == 1 && self.tx == 0
     }
     pub fn is_deployment(&self) -> bool {
-        if self.block == 1 || self.block == 3 || self.block == 5 || self.block == 6 || self.block == 800_000_000 {
+        if self.block == 1 || self.block == 3 || self.block == 5 || self.block == 6 {
             true
         } else {
             false
-        }
-    }
-    pub fn is_precompiled(&self) -> bool {
-        self.block == 800_000_000
-    }
-    pub fn precompiled_op(&self) -> Option<PrecompiledOp> {
-        if self.block == 800_000_000 {
-            match self.tx {
-                31 => Some(PrecompiledOp::CloneFuture),
-                _ => None,
-            }
-        } else {
-            None
         }
     }
     pub fn reserved(&self) -> Option<u128> {
@@ -143,10 +129,3 @@ impl Hash for AlkaneId {
     }
 }
 
-/// Precompiled operations for special cellpack targets
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PrecompiledOp {
-    /// Clone ftrBTC template [31, 0] to [31, height]
-    /// Only callable by [32, 0] (frBTC contract)
-    CloneFuture,
-}

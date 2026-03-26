@@ -19,7 +19,7 @@ use metashrew_core::{
 };
 use metashrew_support::address::Payload;
 use metashrew_support::index_pointer::KeyValuePointer;
-use ordinals::{Artifact, Runestone};
+use ordinals::{Artifact, RuneId, Runestone};
 use ordinals::{Etching, Rune};
 use prost::Message;
 use protorune_support::balance_sheet::BalanceSheetOperations;
@@ -81,15 +81,22 @@ pub fn num_non_op_return_outputs(tx: &Transaction) -> usize {
         .count()
 }
 
+#[cfg(not(feature = "mainnet"))]
+pub const V217_FIX_HEIGHT: u64 = 0;
+#[cfg(feature = "mainnet")]
+pub const V217_FIX_HEIGHT: u64 = 943_500;
+
 /// vout : the vout to transfer runes to
 /// amount : the amount to transfer to the vout
 /// max_amount : max amount available to transfer
 /// tx : Transaction
+/// height : block height (used for activation gating)
 pub fn handle_transfer_runes_to_vout(
     vout: u128,
     amount: u128,
     max_amount: u128,
     tx: &Transaction,
+    height: u64,
 ) -> Result<BTreeMap<u32, u128>> {
     // pointer should not call this function if amount is 0
     let mut output: BTreeMap<u32, u128> = BTreeMap::<u32, u128>::new();
@@ -114,7 +121,21 @@ pub fn handle_transfer_runes_to_vout(
                     output.insert(i, max_amount / count + rem);
                 }
             }
+        } else if height >= V217_FIX_HEIGHT {
+            let count = num_non_op_return_outputs(tx) as u128;
+            let mut remaining = max_amount;
+            if count != 0 {
+                for i in 0..tx.output.len() as u32 {
+                    if tx.output[i as usize].script_pubkey.is_op_return() {
+                        continue;
+                    }
+                    let amount_outpoint = std::cmp::min(remaining, amount);
+                    remaining -= amount_outpoint;
+                    output.insert(i, amount_outpoint);
+                }
+            }
         } else {
+            // Pre-fix behavior: must match v2.1.6 exactly
             let count = num_non_op_return_outputs(tx) as u128;
             let mut remaining = max_amount;
             if count != 0 {
@@ -212,8 +233,8 @@ impl Protorune {
             Some(v) => v,
             None => default_output(tx),
         };
-        if let Some(etching) = runestone.etching.as_ref() {
-            Self::index_etching(
+        let etched = if let Some(etching) = runestone.etching.as_ref() {
+            let success = Self::index_etching(
                 atomic,
                 etching,
                 index,
@@ -222,21 +243,60 @@ impl Protorune {
                 unallocated_to,
                 tx,
             )?;
-        }
+            if success {
+                // Add premine to unallocated pool (balance_sheet) so edicts can consume it
+                // This matches canonical ord behavior where premine goes to `unallocated`
+                if let Some(premine) = etching.premine {
+                    if premine > 0 {
+                        let rune = ProtoruneRuneId {
+                            block: u128::from(height),
+                            tx: u128::from(index),
+                        };
+                        balance_sheet.increase(&rune, premine)?;
+                    }
+                }
+            }
+            success
+        } else {
+            false
+        };
         if let Some(mint) = runestone.mint {
             if !mint.to_string().is_empty() {
                 Self::index_mint(&mint.into(), height, &mut balance_sheet)?;
             }
         }
+        // Resolve RuneId(0,0) to the etched rune id in edicts
+        let resolved_edicts: Vec<ordinals::Edict> = runestone.edicts.iter().filter_map(|e| {
+            if e.id == RuneId::default() {
+                if etched {
+                    // RuneId(0,0) refers to the rune etched in this tx
+                    Some(ordinals::Edict {
+                        id: RuneId { block: height as u64, tx: index },
+                        amount: e.amount,
+                        output: e.output,
+                    })
+                } else {
+                    // No successful etching, skip this edict (canonical ord behavior)
+                    None
+                }
+            } else {
+                Some(e.clone())
+            }
+        }).collect();
         Self::process_edicts(
             tx,
-            &into_protostone_edicts(runestone.edicts.clone()),
+            &into_protostone_edicts(resolved_edicts),
             &mut balances_by_output,
             &mut balance_sheet,
             &tx.output,
+            height,
         )?;
         Self::handle_leftover_runes(&mut balance_sheet, &mut balances_by_output, unallocated_to)?;
         for (vout, sheet) in balances_by_output.clone() {
+            // Skip OP_RETURN outputs — runes sent to OP_RETURN are burned (canonical ord behavior)
+            if (vout as usize) < tx.output.len() && tx.output[vout as usize].script_pubkey.is_op_return() {
+                continue;
+            }
             let outpoint = OutPoint::new(tx.compute_txid(), vout);
             // println!(
             //     "Saving balance sheet {:?} to outpoint {:?}",
@@ -295,6 +355,7 @@ impl Protorune {
         balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer>>,
         balances: &mut BalanceSheet<AtomicPointer>,
         _outs: &Vec<TxOut>,
+        height: u64,
     ) -> Result<()> {
         if edict.id.block == 0 && edict.id.tx != 0 {
             Err(anyhow!("invalid edict"))
@@ -302,7 +363,7 @@ impl Protorune {
             let max = balances.get_and_update(&edict.id.into());
 
             let transfer_targets =
-                handle_transfer_runes_to_vout(edict.output, edict.amount, max, tx)?;
+                handle_transfer_runes_to_vout(edict.output, edict.amount, max, tx, height)?;
 
             transfer_targets.iter().try_for_each(|(vout, amount)| {
                 Self::update_balances_for_edict(
@@ -323,9 +384,10 @@ impl Protorune {
         balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer>>,
         balances: &mut BalanceSheet<AtomicPointer>,
         outs: &Vec<TxOut>,
+        height: u64,
     ) -> Result<()> {
         for edict in edicts {
-            Self::process_edict(tx, edict, balances_by_output, balances, outs)?;
+            Self::process_edict(tx, edict, balances_by_output, balances, outs, height)?;
         }
         Ok(())
     }
@@ -393,10 +455,28 @@ impl Protorune {
                 .RUNE_ID_TO_HEIGHT
                 .select(&mint.to_owned().into())
                 .get_value();
-            if (height_start == 0 || height >= height_start)
-                && (height_end == 0 || height < height_end)
-                && (offset_start == 0 || height >= offset_start + etching_height)
-                && (offset_end == 0 || height < etching_height + offset_end)
+            // Compute effective start: max of absolute and relative, if both exist
+            let absolute_start = if height_start != 0 { Some(height_start) } else { None };
+            let relative_start = if offset_start != 0 { Some(offset_start + etching_height) } else { None };
+            let effective_start = match (absolute_start, relative_start) {
+                (Some(a), Some(r)) => Some(std::cmp::max(a, r)),
+                (Some(a), None) => Some(a),
+                (None, Some(r)) => Some(r),
+                (None, None) => None,
+            };
+
+            // Compute effective end: min of absolute and relative, if both exist
+            let absolute_end = if height_end != 0 { Some(height_end) } else { None };
+            let relative_end = if offset_end != 0 { Some(offset_end + etching_height) } else { None };
+            let effective_end = match (absolute_end, relative_end) {
+                (Some(a), Some(r)) => Some(std::cmp::min(a, r)),
+                (Some(a), None) => Some(a),
+                (None, Some(r)) => Some(r),
+                (None, None) => None,
+            };
+
+            if effective_start.map_or(true, |s| height >= s)
+                && effective_end.map_or(true, |e| height < e)
             {
                 tables::RUNES
                     .MINTS_REMAINING
@@ -416,6 +496,7 @@ impl Protorune {
         Ok(())
     }
 
+    /// Returns Ok(true) if etching succeeded, Ok(false) if it was skipped (duplicate, invalid name, etc.)
     pub fn index_etching(
         atomic: &mut AtomicPointer,
         etching: &Etching,
@@ -424,7 +505,7 @@ impl Protorune {
         balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer>>,
         unallocated_to: u32,
         tx: &Transaction,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         let etching_rune = match etching.rune {
             Some(rune) => {
                 if Self::verify_non_reserved_name(height.try_into()?, &rune).is_ok()
@@ -433,7 +514,7 @@ impl Protorune {
                     rune
                 } else {
                     // if the non reserved name is incorrect, the etching is ignored
-                    return Ok(());
+                    return Ok(false);
                 }
             }
             None => Rune::reserved(height, index),
@@ -455,7 +536,7 @@ impl Protorune {
                 "Found duplicate rune name {} with rune id {:?}: . Skipping this etching.",
                 name, rune_id
             );
-            return Ok(());
+            return Ok(false);
         }
         let rune_id = ProtoruneRuneId::new(height.into(), index.into());
         atomic
@@ -477,13 +558,9 @@ impl Protorune {
             atomic
                 .derive(&tables::RUNES.PREMINE.select(&indexer_rune_name))
                 .set_value(premine);
-            let rune = ProtoruneRuneId {
-                block: u128::from(height),
-                tx: u128::from(index),
-            };
-            let sheet = BalanceSheet::from_pairs(vec![rune], vec![premine]);
-            //.pipe(balance_sheet);
-            balances_by_output.insert(unallocated_to, sheet);
+            // Note: premine is now added to the unallocated pool (balance_sheet)
+            // in index_runestone, matching canonical ord behavior where edicts
+            // can consume premine tokens before leftover goes to pointer.
         }
         if let Some(terms) = etching.terms {
             if let Some(amount) = terms.amount {
@@ -499,19 +576,22 @@ impl Protorune {
                     .derive(&tables::RUNES.MINTS_REMAINING.select(&indexer_rune_name))
                     .set_value(cap);
             }
-            if let (Some(height_start), Some(height_end)) = (terms.height.0, terms.height.1) {
+            if let Some(height_start) = terms.height.0 {
                 atomic
                     .derive(&tables::RUNES.HEIGHTSTART.select(&indexer_rune_name))
                     .set_value(height_start);
-
+            }
+            if let Some(height_end) = terms.height.1 {
                 atomic
                     .derive(&tables::RUNES.HEIGHTEND.select(&indexer_rune_name))
                     .set_value(height_end);
             }
-            if let (Some(offset_start), Some(offset_end)) = (terms.offset.0, terms.offset.1) {
+            if let Some(offset_start) = terms.offset.0 {
                 atomic
                     .derive(&tables::RUNES.OFFSETSTART.select(&indexer_rune_name))
                     .set_value(offset_start);
+            }
+            if let Some(offset_end) = terms.offset.1 {
                 atomic
                     .derive(&tables::RUNES.OFFSETEND.select(&indexer_rune_name))
                     .set_value(offset_end);
@@ -538,7 +618,7 @@ impl Protorune {
             .derive(&tables::HEIGHT_TO_RUNES.select_value(height))
             .append(Arc::new(indexer_rune_name.clone()));
 
-        Ok(())
+        Ok(true)
     }
 
     fn verify_non_reserved_name(block: u32, rune: &Rune) -> Result<()> {
@@ -582,26 +662,56 @@ impl Protorune {
 
     pub fn index_unspendables<T: MessageContext>(block: &Block, height: u64) -> Result<()> {
         for (index, tx) in block.txdata.iter().enumerate() {
-            if let Some(Artifact::Runestone(ref runestone)) = Runestone::decipher(tx) {
-                let mut atomic = AtomicPointer::default();
-                let runestone_output_index: u32 = Self::get_runestone_output_index(tx)?;
-                match Self::index_runestone::<T>(
-                    &mut atomic,
-                    tx,
-                    runestone,
-                    height,
-                    index as u32,
-                    block,
-                    runestone_output_index,
-                ) {
-                    Err(e) => {
-                        println!("err: {:?}", e);
-                        atomic.rollback();
+            match Runestone::decipher(tx) {
+                Some(Artifact::Runestone(ref runestone)) => {
+                    let mut atomic = AtomicPointer::default();
+                    let runestone_output_index: u32 = Self::get_runestone_output_index(tx)?;
+                    match Self::index_runestone::<T>(
+                        &mut atomic,
+                        tx,
+                        runestone,
+                        height,
+                        index as u32,
+                        block,
+                        runestone_output_index,
+                    ) {
+                        Err(e) => {
+                            println!("err: {:?}", e);
+                            atomic.rollback();
+                        }
+                        _ => {
+                            atomic.commit();
+                        }
+                    };
+                }
+                Some(Artifact::Cenotaph(ref cenotaph)) => {
+                    if let Some(rune) = cenotaph.etching {
+                        // Cenotaph etchings create the rune but with zeroed metadata
+                        let mut atomic = AtomicPointer::default();
+                        let etching = Etching {
+                            divisibility: None,
+                            premine: None,
+                            rune: Some(rune),
+                            spacers: None,
+                            symbol: None,
+                            turbo: false,
+                            terms: None,
+                        };
+                        match Self::index_etching(
+                            &mut atomic,
+                            &etching,
+                            index as u32,
+                            height,
+                            &mut BTreeMap::new(),
+                            0,
+                            tx,
+                        ) {
+                            Err(_) => atomic.rollback(),
+                            _ => atomic.commit(),
+                        }
                     }
-                    _ => {
-                        atomic.commit();
-                    }
-                };
+                }
+                None => {}
             }
             for input in &tx.input {
                 //all inputs must be used up, even in cenotaphs
@@ -964,6 +1074,7 @@ impl Protorune {
                             &mut proto_balances_by_output,
                             &mut prior_balance_sheet,
                             &tx.output,
+                            height,
                         )?;
 
                         // Handle any remaining balance

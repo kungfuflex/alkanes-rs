@@ -9,7 +9,6 @@ use crate::precompiled::{
     alkanes_std_genesis_alkane_upgraded_eoa_regtest_build,
     alkanes_std_genesis_alkane_upgraded_mainnet_build,
     alkanes_std_genesis_alkane_upgraded_regtest_build, fr_btc_build, fr_sigil_build,
-    ftr_btc_build,
 };
 use crate::utils::pipe_storagemap_to;
 use crate::view::simulate_parcel;
@@ -333,17 +332,6 @@ pub fn setup_frbtc(block: &Block) -> Result<()> {
         &mut atomic.derive(&IndexPointer::from_keyword("/alkanes/").select(&fr_btc.clone().into())),
     );
     atomic.commit();
-    Ok(())
-}
-
-pub fn setup_ftrbtc(_block: &Block) -> Result<()> {
-    // ftrBTC uses alkane ID [31, 0] - reserved for futures master contract
-    let ftr_btc_id = AlkaneId { block: 31, tx: 0 };
-
-    let mut ptr = IndexPointer::from_keyword("/alkanes/").select(&ftr_btc_id.into());
-    if ptr.get().len() == 0 {
-        ptr.set(Arc::new(compress(ftr_btc_build::get_bytes())?));
-    }
     Ok(())
 }
 
