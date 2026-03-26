@@ -1,5 +1,6 @@
 [workspace]
 members = ["crates/*"]
+exclude = ["crates/alkanes-web-leptos"]
 resolver = "2"
 
 [workspace.metadata.alkanes-data-api]
