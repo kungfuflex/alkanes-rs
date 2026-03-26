@@ -5,9 +5,11 @@
 //! and sequential wasmi execution.
 
 pub mod device;
+pub mod host;
 pub mod pipeline;
 pub mod tracking;
 pub mod types;
+pub mod wasm_parser;
 
 use anyhow::Result;
 use bytemuck::Zeroable;
