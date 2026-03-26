@@ -6561,6 +6561,17 @@ impl WebProvider {
 #[async_trait(?Send)]
 impl JsonRpcProvider for WebProvider {
     async fn call(&self, url: &str, method: &str, params: JsonValue, id: u64) -> Result<JsonValue> {
+        // In qubitcoin mode, intercept eth_* calls and route through brc20prog_call_routed
+        if self.rpc_config.is_qubitcoin_mode()
+            && self.rpc_config.brc20_prog_rpc_url.is_none()
+            && method.starts_with("eth_")
+        {
+            self.logger.info(&format!(
+                "JsonRpcProvider::call -> intercepting {} for qubitcoin brc20prog routing", method
+            ));
+            return self.brc20prog_call_routed(method, params).await;
+        }
+
         self.logger.info(&format!(
             "JsonRpcProvider::call -> URL: {}, Method: {}, Params: {}",
             url,
