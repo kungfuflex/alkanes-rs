@@ -2903,7 +2903,7 @@ impl WebProvider {
             return self.call(url, method, params, 1).await;
         }
 
-        // In qubitcoin/devnet mode, translate eth_* to secondaryview
+        // In qubitcoin/devnet mode, translate eth_* to metashrew_view on brc20shrew views
         if self.rpc_config.is_qubitcoin_mode() {
             let sandshrew_url = self.sandshrew_rpc_url();
             match method {
@@ -2914,9 +2914,9 @@ impl WebProvider {
                     let to_bytes: Vec<u8> = hex::decode(to_hex.strip_prefix("0x").unwrap_or(to_hex)).unwrap_or_default();
                     let data_bytes: Vec<u8> = hex::decode(data_hex.strip_prefix("0x").unwrap_or(data_hex)).unwrap_or_default();
                     let call_request = serde_json::json!({ "to": to_bytes, "data": data_bytes });
-                    let hex_input = hex::encode(serde_json::to_string(&call_request).unwrap_or_default().as_bytes());
-                    let sv_params = serde_json::json!(["brc20shrew", "call", hex_input]);
-                    let result = self.call(&sandshrew_url, "secondaryview", sv_params, 1).await?;
+                    let hex_input = format!("0x{}", hex::encode(serde_json::to_string(&call_request).unwrap_or_default().as_bytes()));
+                    let mv_params = serde_json::json!(["call", hex_input, "latest"]);
+                    let result = self.call(&sandshrew_url, "metashrew_view", mv_params, 1).await?;
                     // Decode: "0x<hex>" → JSON CallResponse → extract result → "0x<hex_result>"
                     if let Some(hex_str) = result.as_str().and_then(|s| s.strip_prefix("0x")) {
                         if let Ok(bytes) = hex::decode(hex_str) {
@@ -2931,16 +2931,16 @@ impl WebProvider {
                     Ok(result)
                 }
                 "eth_blockNumber" => {
-                    let hex_input = hex::encode("{}".as_bytes());
-                    let sv_params = serde_json::json!(["brc20shrew", "getblockheight", hex_input]);
-                    self.call(&sandshrew_url, "secondaryview", sv_params, 1).await
+                    let hex_input = format!("0x{}", hex::encode("{}".as_bytes()));
+                    let mv_params = serde_json::json!(["getblockheight", hex_input, "latest"]);
+                    self.call(&sandshrew_url, "metashrew_view", mv_params, 1).await
                 }
                 "eth_getBalance" => {
                     let address = params.get(0).and_then(|v| v.as_str()).unwrap_or("");
                     let req = serde_json::json!({ "address": address });
-                    let hex_input = hex::encode(serde_json::to_string(&req).unwrap_or_default().as_bytes());
-                    let sv_params = serde_json::json!(["brc20shrew", "getbalance", hex_input]);
-                    self.call(&sandshrew_url, "secondaryview", sv_params, 1).await
+                    let hex_input = format!("0x{}", hex::encode(serde_json::to_string(&req).unwrap_or_default().as_bytes()));
+                    let mv_params = serde_json::json!(["getbalance", hex_input, "latest"]);
+                    self.call(&sandshrew_url, "metashrew_view", mv_params, 1).await
                 }
                 _ => {
                     // Unsupported in qubitcoin mode — fall through to default URL
