@@ -80,6 +80,12 @@ pub struct GpuMessageResult {
     pub return_data: [u8; MAX_RETURN_DATA_SIZE],
 }
 
+impl Default for GpuMessageResult {
+    fn default() -> Self {
+        Self::zeroed()
+    }
+}
+
 /// K/V write produced by a message during execution.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]

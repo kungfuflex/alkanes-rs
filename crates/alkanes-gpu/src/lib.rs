@@ -5,6 +5,8 @@
 //! and sequential wasmi execution.
 
 pub mod device;
+pub mod pipeline;
+pub mod tracking;
 pub mod types;
 
 use anyhow::Result;
