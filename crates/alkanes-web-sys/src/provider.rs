@@ -230,6 +230,9 @@ impl WebProvider {
                     if let Some(subfrost_api_key) = obj.get("subfrost_api_key").and_then(|v| v.as_str()) {
                         rpc_config.subfrost_api_key = Some(subfrost_api_key.to_string());
                     }
+                    if let Some(qubitcoin_rpc_url) = obj.get("qubitcoin_rpc_url").and_then(|v| v.as_str()) {
+                        rpc_config.qubitcoin_rpc_url = Some(qubitcoin_rpc_url.to_string());
+                    }
                     if let Some(timeout) = obj.get("timeout_seconds").and_then(|v| v.as_u64()) {
                         rpc_config.timeout_seconds = timeout;
                     }
