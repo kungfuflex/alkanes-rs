@@ -105,7 +105,23 @@ pub fn index_block(block: &Block, height: u32) -> Result<()> {
         check_and_upgrade_precompiled(height)?;
         FuelTank::initialize(&block, height);
     }
+
+    // GPU acceleration: pre-process parallelizable messages on GPU
+    #[cfg(feature = "gpu")]
+    if is_active(height.into()) {
+        if let Some(gpu_result) = crate::gpu::try_gpu_accelerate(block, height) {
+            // TODO: Apply GPU-completed message results to state
+            // For now this just logs stats and identifies which messages
+            // completed on GPU vs need sequential processing.
+            // Full state application requires mapping GPU K/V writes
+            // back to AtomicPointer operations.
+            let _ = gpu_result;
+        }
+    }
+
     // Get the set of updated addresses from the indexing process
+    // NOTE: When GPU is fully integrated, this will skip messages that
+    // already completed on GPU and only process the remaining ones.
     let _updated_addresses =
         Protorune::index_block::<AlkaneMessageContext>(block.clone(), height.into())?;
 

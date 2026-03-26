@@ -24,6 +24,8 @@ use std::io::Cursor;
 use view::parcels_from_protobuf;
 pub mod block;
 pub mod etl;
+#[cfg(feature = "gpu")]
+pub mod gpu;
 pub mod indexer;
 pub mod message;
 pub mod network;

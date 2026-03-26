@@ -41,8 +41,10 @@ merkle_distributor = []
 free_mint = []
 upgradeable = []
 debug-log = []
+gpu = ["alkanes-gpu"]
 
 [dependencies]
+alkanes-gpu = { path = "../alkanes-gpu", optional = true }
 anyhow = { workspace = true }
 num = { workspace = true }
 bitcoin = { workspace = true }
