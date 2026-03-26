@@ -30,6 +30,12 @@ const MAX_LABELS: u32 = 128u;
 // Max bytecode size per contract (256 KB in u32 words)
 const MAX_BYTECODE_WORDS: u32 = 65536u;
 
+// Function table: maps function index to code offset + local count
+// Stored after bytecode in input buffer
+// Each entry: [code_offset: u32, local_count: u32]
+const MAX_FUNCTIONS: u32 = 256u;
+const FUNC_ENTRY_U32S: u32 = 2u;
+
 // K/V limits
 const MAX_KV_PAIRS: u32 = 1024u;
 const MAX_KEY_BYTES: u32 = 256u;
@@ -213,11 +219,13 @@ var<storage, read_write> thread_state: array<u32>;
 //   [5]:  bytecode_len (in bytes)
 //   [6]:  import_count (number of imported functions)
 //   [7]:  entry_pc (byte offset of entry function in bytecode)
-//   [8..8+bytecode_words]: bytecode (packed as u32)
-//   Then: messages (288 bytes each = 72 u32s)
+//   [8]:  func_count (number of entries in function table)
+//   [9]:  func_table_offset (u32 offset from start of input_data to function table)
+//   [10..]: bytecode (packed as u32)
+//   Then: function table (func_count * 2 u32s: code_offset, local_count)
 //   Then: kv pairs
 
-const HEADER_SIZE: u32 = 8u;
+const HEADER_SIZE: u32 = 10u;
 
 fn get_message_count() -> u32 { return input_data[0]; }
 fn get_kv_count() -> u32 { return input_data[1]; }
@@ -227,8 +235,22 @@ fn get_base_fuel_hi() -> u32 { return input_data[4]; }
 fn get_bytecode_len() -> u32 { return input_data[5]; }
 fn get_import_count() -> u32 { return input_data[6]; }
 fn get_entry_pc() -> u32 { return input_data[7]; }
+fn get_func_count() -> u32 { return input_data[8]; }
+fn get_func_table_offset() -> u32 { return input_data[9]; }
 
 fn bytecode_base() -> u32 { return HEADER_SIZE; }
+
+// Look up a function's code offset and local count from the function table
+fn get_func_entry(func_idx: u32) -> vec2<u32> {
+    let import_count = get_import_count();
+    let internal_idx = func_idx - import_count;
+    let table_base = get_func_table_offset();
+    let entry_base = table_base + internal_idx * FUNC_ENTRY_U32S;
+    return vec2<u32>(
+        input_data[entry_base + 0u],  // code_offset (byte offset in bytecode)
+        input_data[entry_base + 1u],  // local_count
+    );
+}
 
 // Read a byte from bytecode at byte offset `pos`
 fn read_bytecode_byte(pos: u32) -> u32 {
@@ -504,7 +526,98 @@ fn set_local(tid: u32, idx: u32, val: u32) {
     thread_state[ts_locals_base(tid) + idx] = val;
 }
 
+// ── K/V Storage lookup ───────────────────────────────────────────────
+// Preloaded K/V pairs sit after the bytecode and messages in the input buffer.
+// Layout per pair: [key_len: u32, value_len: u32, pad: u32, pad: u32,
+//                   key: MAX_KEY_WORDS u32s, value: MAX_VALUE_WORDS u32s]
+const KV_PAIR_U32S: u32 = 4u + MAX_KEY_WORDS + MAX_VALUE_WORDS; // 4 + 64 + 256 = 324
+
+// Per-thread K/V write tracking in thread_state (after scalars)
+// We store a write count and up to 32 writes per thread
+const MAX_KV_WRITES_PER_THREAD: u32 = 32u;
+// Each write: key_len(1) + key(MAX_KEY_WORDS=64) + value_len(1) + value(MAX_VALUE_WORDS=256) = 322
+const KV_WRITE_ENTRY_U32S: u32 = 322u;
+
+// Temporary storage for the last requested storage pointer (per thread)
+// We use a region in WASM memory at a known high address for this
+const STORAGE_TEMP_ADDR: u32 = 1040384u; // near end of 1MB, 8KB reserved
+const STORAGE_TEMP_SIZE: u32 = 4096u;
+
+fn get_kv_base() -> u32 {
+    // K/V pairs start after the function table in input buffer
+    let func_table_end = get_func_table_offset() + get_func_count() * FUNC_ENTRY_U32S;
+    return func_table_end;
+}
+
+// Search preloaded K/V pairs for a key. Returns value offset in input_data, or 0xFFFFFFFF if not found.
+fn kv_lookup(key_ptr: u32, key_len: u32, tid: u32) -> u32 {
+    let kv_count = get_kv_count();
+    let kv_base = get_kv_base();
+
+    for (var i: u32 = 0u; i < kv_count; i = i + 1u) {
+        let pair_base = kv_base + i * KV_PAIR_U32S;
+        let stored_key_len = input_data[pair_base + 0u];
+
+        if stored_key_len != key_len {
+            continue;
+        }
+
+        // Compare key bytes
+        var match_found = true;
+        let key_word_count = (key_len + 3u) >> 2u;
+        let stored_key_base = pair_base + 4u; // after header
+        for (var w: u32 = 0u; w < key_word_count; w = w + 1u) {
+            // Read key from WASM memory
+            let mem_word = wasm_load_u32(tid, key_ptr + w * 4u);
+            let stored_word = input_data[stored_key_base + w];
+            if mem_word != stored_word {
+                match_found = false;
+                break;
+            }
+        }
+
+        if match_found {
+            // Return offset to the value section of this pair
+            return pair_base;
+        }
+    }
+
+    return 0xFFFFFFFFu; // not found
+}
+
+// Copy value from a K/V pair in input_data to a WASM memory address
+fn kv_copy_value_to_memory(tid: u32, pair_base: u32, dest_addr: u32) -> u32 {
+    let value_len = input_data[pair_base + 1u]; // value_len at offset 1
+    let value_base = pair_base + 4u + MAX_KEY_WORDS; // after header + key
+
+    let word_count = (value_len + 3u) >> 2u;
+    for (var w: u32 = 0u; w < word_count; w = w + 1u) {
+        wasm_store_u32(tid, dest_addr + w * 4u, input_data[value_base + w]);
+    }
+    return value_len;
+}
+
+// ── Per-thread K/V write buffer ──────────────────────────────────────
+// Stored in the output buffer after the per-message results.
+// Layout: output_data[KV_WRITES_BASE + tid * ...]
+
+fn get_kv_write_count(tid: u32) -> u32 {
+    // Stored as the kv_write_count field in the result header
+    let base = tid * RESULT_U32S;
+    return output_data[base + 6u];
+}
+
+fn set_kv_write_count(tid: u32, count: u32) {
+    let base = tid * RESULT_U32S;
+    output_data[base + 6u] = count;
+}
+
 // ── Host function dispatch ───────────────────────────────────────────
+
+// Temporary per-thread storage for request_storage result
+// We reuse a scalar slot to track the last found pair_base
+fn get_last_kv_pair(tid: u32) -> u32 { return thread_state[ts_scalars_base(tid) + 11u]; }
+fn set_last_kv_pair(tid: u32, v: u32) { thread_state[ts_scalars_base(tid) + 11u] = v; }
 
 fn dispatch_host_function(tid: u32, func_id: u32) {
     switch func_id {
@@ -512,23 +625,103 @@ fn dispatch_host_function(tid: u32, func_id: u32) {
             set_ejected(tid, 1u);
             set_ejection_reason(tid, EJECTION_TRAP);
         }
-        case HOST_SEQUENCE, HOST_FUEL, HOST_HEIGHT: {
-            // These return simple preloaded values
-            // For now push block_height as a placeholder
+
+        case HOST_REQUEST_STORAGE: {
+            // Args on stack: key_ptr, key_len (pushed by WASM caller)
+            // Returns: length of value (i32)
+            if !consume_fuel(tid, 1u) { return; }
+            let key_len = pop_i32(tid);
+            let key_ptr = pop_i32(tid);
+            let pair_base = kv_lookup(key_ptr, key_len, tid);
+            if pair_base == 0xFFFFFFFFu {
+                // Key not in preloaded context — eject to CPU
+                set_ejected(tid, 1u);
+                set_ejection_reason(tid, EJECTION_STORAGE_OVERFLOW);
+                return;
+            }
+            set_last_kv_pair(tid, pair_base);
+            let value_len = input_data[pair_base + 1u];
+            if !consume_fuel(tid, value_len) { return; } // fuel per load byte
+            push_i32(tid, value_len);
+        }
+
+        case HOST_LOAD_STORAGE: {
+            // Copies the last requested value into WASM memory
+            // Args: dest_ptr (where to write in WASM memory)
+            if !consume_fuel(tid, 2u) { return; }
+            let dest_ptr = pop_i32(tid);
+            let pair_base = get_last_kv_pair(tid);
+            if pair_base == 0xFFFFFFFFu {
+                set_ejected(tid, 1u);
+                set_ejection_reason(tid, EJECTION_STORAGE_OVERFLOW);
+                return;
+            }
+            _ = kv_copy_value_to_memory(tid, pair_base, dest_ptr);
+        }
+
+        case HOST_SEQUENCE: {
             if !consume_fuel(tid, 5u) { return; }
+            // Return sequence as 0 for GPU execution (placeholder)
+            push_i32(tid, 0u);
+        }
+
+        case HOST_FUEL: {
+            if !consume_fuel(tid, 5u) { return; }
+            push_i32(tid, get_fuel_lo(tid));
+        }
+
+        case HOST_HEIGHT: {
+            if !consume_fuel(tid, 10u) { return; }
             push_i32(tid, get_block_height());
         }
+
+        case HOST_REQUEST_CONTEXT: {
+            // Returns length of serialized context
+            if !consume_fuel(tid, 1u) { return; }
+            // Context not fully supported on GPU yet — eject
+            set_ejected(tid, 1u);
+            set_ejection_reason(tid, EJECTION_UNSUPPORTED);
+        }
+
+        case HOST_LOAD_CONTEXT: {
+            if !consume_fuel(tid, 2u) { return; }
+            set_ejected(tid, 1u);
+            set_ejection_reason(tid, EJECTION_UNSUPPORTED);
+        }
+
+        case HOST_BALANCE: {
+            if !consume_fuel(tid, 10u) { return; }
+            // Balance queries not preloaded yet — eject
+            set_ejected(tid, 1u);
+            set_ejection_reason(tid, EJECTION_UNSUPPORTED);
+        }
+
+        case HOST_RETURNDATACOPY: {
+            if !consume_fuel(tid, 1u) { return; }
+            // No return data from previous calls on GPU
+            push_i32(tid, 0u); // 0 bytes
+        }
+
+        case HOST_REQUEST_TRANSACTION, HOST_LOAD_TRANSACTION,
+             HOST_REQUEST_BLOCK, HOST_LOAD_BLOCK: {
+            // Transaction/block data too large for GPU — eject
+            set_ejected(tid, 1u);
+            set_ejection_reason(tid, EJECTION_UNSUPPORTED);
+        }
+
         case HOST_CALL, HOST_DELEGATECALL, HOST_STATICCALL: {
             // External calls cannot be emulated on GPU — eject
             set_ejected(tid, 1u);
             set_ejection_reason(tid, EJECTION_EXTCALL);
         }
+
         case HOST_LOG: {
             // Ignore logs on GPU, just consume the args
-            _ =pop_i32(tid); // length
-            _ =pop_i32(tid); // ptr
+            _ = pop_i32(tid); // length
+            _ = pop_i32(tid); // ptr
             if !consume_fuel(tid, 1u) { return; }
         }
+
         default: {
             // Unhandled host function — eject to CPU
             set_ejected(tid, 1u);
@@ -745,9 +938,21 @@ fn interpret(tid: u32) {
                     // Host function call
                     dispatch_host_function(tid, func_idx);
                 } else {
-                    // For now, eject on internal calls (Phase 2 TODO: function table)
-                    set_ejected(tid, 1u);
-                    set_ejection_reason(tid, EJECTION_UNSUPPORTED);
+                    // Internal function call via function table
+                    let func_entry = get_func_entry(func_idx);
+                    let code_offset = func_entry.x;
+
+                    if code_offset == 0u && func_idx != get_import_count() {
+                        set_ejected(tid, 1u);
+                        set_ejection_reason(tid, EJECTION_TRAP);
+                    } else {
+                        // Save current frame
+                        push_frame(tid, get_pc(tid), 0u, get_sp(tid), func_idx);
+                        // Jump to callee code
+                        set_pc(tid, code_offset);
+                        // Push a label for the function body
+                        push_label(tid, 0u, get_sp(tid), 0u);
+                    }
                 }
             }
 
