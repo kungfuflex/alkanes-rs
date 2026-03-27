@@ -322,11 +322,10 @@ impl<'a> Brc20ProgExecutor<'a> {
         }
         log::info!("   🎯 All {} transactions broadcast atomically in single RPC call!", tx_hexes.len());
 
-        // Step 6: Skip monitoring for presign strategy
-        // Since all transactions were broadcast atomically in a single RPC call,
-        // frontrunning protection is inherent - there's no window for attackers.
-        // The monitoring step would require waiting for propagation and is not needed.
-        log::info!("🔍 Step 6/7: Skipping frontrunning monitoring (atomic broadcast provides protection)");
+        // Step 6: Mine on regtest if requested
+        if params.mine_enabled {
+            self.mine_blocks_if_regtest(&params).await?;
+        }
 
         log::info!("✅ Presign+RBF strategy completed successfully!");
 
@@ -3131,7 +3130,6 @@ impl<'a> Brc20ProgExecutor<'a> {
     async fn mine_blocks_if_regtest(&self, params: &Brc20ProgExecuteParams) -> Result<()> {
         if self.provider.get_network() == bitcoin::Network::Regtest {
             log::info!("Mining block on regtest network...");
-            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
             let address = if let Some(ref change_address) = params.change_address {
                 change_address.clone()
             } else {

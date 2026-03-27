@@ -8077,6 +8077,24 @@ impl BitcoinRpcProvider for WebProvider {
     }
 
     async fn send_raw_transactions(&self, tx_hexes: &[String]) -> Result<Vec<String>> {
+        // Use batch sendrawtransactions RPC to mine all txs in a single block.
+        // This is required for the 3-tx activation pattern (commit+reveal+activation)
+        // where the activation tx spends the reveal tx's output.
+        let target = self.rpc_config.get_bitcoin_rpc_target();
+        let params = serde_json::json!([tx_hexes]);
+        let result = self.call(&target.url, "sendrawtransactions", params, 1).await?;
+
+        // Parse response: should be array of txids
+        if let Some(arr) = result.as_array() {
+            let txids: Vec<String> = arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect();
+            if txids.len() == tx_hexes.len() {
+                return Ok(txids);
+            }
+        }
+
+        // Fallback: sequential broadcast if batch RPC not available
         let mut txids = Vec::new();
         for tx_hex in tx_hexes {
             let txid = self.send_raw_transaction(tx_hex).await?;
