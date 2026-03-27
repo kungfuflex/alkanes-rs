@@ -3859,6 +3859,7 @@ impl WebProvider {
 
             let wrap_params = FrBtcWrapParams {
                 amount,
+                contract_address: params.get("contract_address").and_then(|v| v.as_str()).map(|s| s.to_string()),
                 from_addresses: params.get("from_addresses").and_then(|v| v.as_array()).map(|arr| {
                     arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect()
                 }),
@@ -3906,6 +3907,7 @@ impl WebProvider {
                 amount,
                 vout,
                 recipient_address,
+                contract_address: params.get("contract_address").and_then(|v| v.as_str()).map(|s| s.to_string()),
                 from_addresses: params.get("from_addresses").and_then(|v| v.as_array()).map(|arr| {
                     arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect()
                 }),
@@ -3952,6 +3954,7 @@ impl WebProvider {
             let wrap_params = FrBtcWrapAndExecuteParams {
                 amount,
                 script_bytecode,
+                contract_address: params.get("contract_address").and_then(|v| v.as_str()).map(|s| s.to_string()),
                 from_addresses: params.get("from_addresses").and_then(|v| v.as_array()).map(|arr| {
                     arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect()
                 }),
@@ -4000,6 +4003,7 @@ impl WebProvider {
                 target_address,
                 signature,
                 calldata_args,
+                contract_address: params.get("contract_address").and_then(|v| v.as_str()).map(|s| s.to_string()),
                 from_addresses: params.get("from_addresses").and_then(|v| v.as_array()).map(|arr| {
                     arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect()
                 }),

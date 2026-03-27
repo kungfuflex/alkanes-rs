@@ -50,6 +50,9 @@ pub fn get_frbtc_contract_address(network: bitcoin::Network) -> &'static str {
 pub struct FrBtcWrapParams {
     /// Amount of BTC to wrap (in satoshis)
     pub amount: u64,
+    /// Override FrBTC contract address (for regtest/devnet where address is dynamic)
+    #[serde(default)]
+    pub contract_address: Option<String>,
     /// Addresses to source UTXOs from
     pub from_addresses: Option<Vec<String>>,
     /// Change address
@@ -95,6 +98,9 @@ pub struct FrBtcUnwrapParams {
     pub vout: u64,
     /// Recipient address for the unwrapped BTC
     pub recipient_address: String,
+    /// Override FrBTC contract address (for regtest/devnet where address is dynamic)
+    #[serde(default)]
+    pub contract_address: Option<String>,
     /// Addresses to source UTXOs from
     pub from_addresses: Option<Vec<String>>,
     /// Change address
@@ -138,6 +144,9 @@ pub struct FrBtcWrapAndExecuteParams {
     pub amount: u64,
     /// Script bytecode to deploy and execute (hex-encoded)
     pub script_bytecode: String,
+    /// Override FrBTC contract address (for regtest/devnet where address is dynamic)
+    #[serde(default)]
+    pub contract_address: Option<String>,
     /// Addresses to source UTXOs from
     pub from_addresses: Option<Vec<String>>,
     /// Change address
@@ -181,6 +190,9 @@ pub struct FrBtcWrapAndExecute2Params {
     pub amount: u64,
     /// Target contract address to call
     pub target_address: String,
+    /// Override FrBTC contract address (for regtest/devnet where address is dynamic)
+    #[serde(default)]
+    pub contract_address: Option<String>,
     /// Function signature (e.g., "deposit()")
     pub signature: String,
     /// Calldata arguments (comma-separated)
@@ -236,11 +248,22 @@ impl<'a> FrBtcExecutor<'a> {
         Self { provider }
     }
 
-    /// Get the FrBTC signer address (p2tr) for the current network
-    /// This calls getSignerAddress() on the FrBTC contract
-    pub async fn get_signer_address(&self) -> Result<String> {
+    /// Resolve the FrBTC contract address, using override if provided.
+    fn resolve_contract_address(&self, override_addr: &Option<String>) -> String {
+        if let Some(addr) = override_addr {
+            if !addr.is_empty() {
+                return addr.clone();
+            }
+        }
         let network = self.provider.get_network();
-        let frbtc_address = get_frbtc_contract_address(network);
+        get_frbtc_contract_address(network).to_string()
+    }
+
+    /// Get the FrBTC signer address (p2tr) for the current network.
+    /// Optionally specify a contract address override (for regtest/devnet).
+    pub async fn get_signer_address_for(&self, contract_address: &Option<String>) -> Result<String> {
+        let network = self.provider.get_network();
+        let frbtc_address = self.resolve_contract_address(contract_address);
 
         let brc20_prog_rpc_url = self.provider.get_brc20_prog_rpc_url()
             .ok_or_else(|| AlkanesError::Configuration("brc20_prog_rpc_url not configured".to_string()))?;
@@ -250,13 +273,18 @@ impl<'a> FrBtcExecutor<'a> {
         let signer_script = get_signer_address(
             self.provider as &dyn JsonRpcProvider,
             &brc20_prog_rpc_url,
-            frbtc_address,
+            &frbtc_address,
         ).await?;
 
         let signer_address = script_pubkey_to_address(&signer_script, network)?;
         log::info!("FrBTC signer address: {}", signer_address);
 
         Ok(signer_address)
+    }
+
+    /// Get the FrBTC signer address using the default contract address.
+    pub async fn get_signer_address(&self) -> Result<String> {
+        self.get_signer_address_for(&None).await
     }
 
     /// Execute wrap() - wrap BTC to frBTC
@@ -268,11 +296,10 @@ impl<'a> FrBtcExecutor<'a> {
     pub async fn wrap(&mut self, params: FrBtcWrapParams) -> Result<Brc20ProgExecuteResult> {
         log::info!("Starting FrBTC wrap operation for {} sats", params.amount);
 
-        let network = self.provider.get_network();
-        let frbtc_address = get_frbtc_contract_address(network);
+        let frbtc_address = self.resolve_contract_address(&params.contract_address);
 
         // Get the signer address to send BTC to
-        let signer_address = self.get_signer_address().await?;
+        let signer_address = self.get_signer_address_for(&params.contract_address).await?;
         log::info!("Will send {} sats to signer address: {}", params.amount, signer_address);
 
         // Build the wrap() calldata
@@ -349,10 +376,10 @@ impl<'a> FrBtcExecutor<'a> {
         log::info!("Starting FrBTC unwrap operation for {} sats", params.amount);
 
         let network = self.provider.get_network();
-        let frbtc_address = get_frbtc_contract_address(network);
+        let frbtc_address = self.resolve_contract_address(&params.contract_address);
 
         // Get the signer address for the dust output
-        let signer_address = self.get_signer_address().await?;
+        let signer_address = self.get_signer_address_for(&params.contract_address).await?;
         log::info!("Signer address for dust output: {}", signer_address);
 
         // Parse the recipient address and get its script_pubkey
@@ -444,11 +471,10 @@ impl<'a> FrBtcExecutor<'a> {
     pub async fn wrap_and_execute(&mut self, params: FrBtcWrapAndExecuteParams) -> Result<Brc20ProgExecuteResult> {
         log::info!("Starting FrBTC wrapAndExecute operation for {} sats", params.amount);
 
-        let network = self.provider.get_network();
-        let frbtc_address = get_frbtc_contract_address(network);
+        let frbtc_address = self.resolve_contract_address(&params.contract_address);
 
         // Get the signer address for reference
-        let signer_address = self.get_signer_address().await?;
+        let signer_address = self.get_signer_address_for(&params.contract_address).await?;
         log::info!("FrBTC signer address: {}", signer_address);
 
         // Build the wrapAndExecute(bytes memory script) calldata
@@ -529,11 +555,10 @@ impl<'a> FrBtcExecutor<'a> {
         log::info!("Starting FrBTC wrapAndExecute2 operation for {} sats", params.amount);
         log::info!("Target contract: {}", params.target_address);
 
-        let network = self.provider.get_network();
-        let frbtc_address = get_frbtc_contract_address(network);
+        let frbtc_address = self.resolve_contract_address(&params.contract_address);
 
         // Get the signer address for reference
-        let signer_address = self.get_signer_address().await?;
+        let signer_address = self.get_signer_address_for(&params.contract_address).await?;
         log::info!("FrBTC signer address: {}", signer_address);
 
         // Build the inner calldata (the data passed to the target contract)

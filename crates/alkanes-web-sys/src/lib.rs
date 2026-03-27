@@ -559,6 +559,7 @@ pub fn frbtc_wrap(
         // Parse base parameters
         #[derive(serde::Deserialize, Default)]
         struct BaseParams {
+            contract_address: Option<String>,
             from_addresses: Option<Vec<String>>,
             change_address: Option<String>,
             fee_rate: Option<f32>,
@@ -572,6 +573,7 @@ pub fn frbtc_wrap(
 
         let params = FrBtcWrapParams {
             amount,
+            contract_address: base_params.contract_address.clone(),
             from_addresses: base_params.from_addresses,
             change_address: base_params.change_address,
             fee_rate: base_params.fee_rate,
@@ -634,6 +636,7 @@ pub fn frbtc_unwrap(
     future_to_promise(async move {
         #[derive(serde::Deserialize, Default)]
         struct BaseParams {
+            contract_address: Option<String>,
             from_addresses: Option<Vec<String>>,
             change_address: Option<String>,
             fee_rate: Option<f32>,
@@ -649,6 +652,7 @@ pub fn frbtc_unwrap(
             amount,
             vout,
             recipient_address,
+            contract_address: base_params.contract_address.clone(),
             from_addresses: base_params.from_addresses,
             change_address: base_params.change_address,
             fee_rate: base_params.fee_rate,
@@ -709,6 +713,7 @@ pub fn frbtc_wrap_and_execute(
     future_to_promise(async move {
         #[derive(serde::Deserialize, Default)]
         struct BaseParams {
+            contract_address: Option<String>,
             from_addresses: Option<Vec<String>>,
             change_address: Option<String>,
             fee_rate: Option<f32>,
@@ -723,6 +728,7 @@ pub fn frbtc_wrap_and_execute(
         let params = FrBtcWrapAndExecuteParams {
             amount,
             script_bytecode,
+            contract_address: base_params.contract_address.clone(),
             from_addresses: base_params.from_addresses,
             change_address: base_params.change_address,
             fee_rate: base_params.fee_rate,
@@ -789,6 +795,7 @@ pub fn frbtc_wrap_and_execute2(
     future_to_promise(async move {
         #[derive(serde::Deserialize, Default)]
         struct BaseParams {
+            contract_address: Option<String>,
             from_addresses: Option<Vec<String>>,
             change_address: Option<String>,
             fee_rate: Option<f32>,
@@ -805,6 +812,7 @@ pub fn frbtc_wrap_and_execute2(
             target_address,
             signature,
             calldata_args,
+            contract_address: base_params.contract_address.clone(),
             from_addresses: base_params.from_addresses,
             change_address: base_params.change_address,
             fee_rate: base_params.fee_rate,
