@@ -1,8 +1,12 @@
+#[allow(unused_imports, dead_code, clippy::all)]
+mod generated {
+    include!(concat!(env!("OUT_DIR"), "/generated.rs"));
+}
+
 use std::collections::BTreeSet;
 
-use alkanes_runtime::{
-    declare_alkane, message::MessageDispatch, runtime::AlkaneResponder, storage::StoragePointer,
-};
+use alkanes_runtime::runtime::AlkaneResponder;
+use alkanes_runtime::storage::StoragePointer;
 use alkanes_support::{
     cellpack::Cellpack,
     id::AlkaneId,
@@ -22,144 +26,50 @@ use {
     std::fmt::Write,
 };
 
+use generated::LoggerAlkaneInterface;
+
 #[derive(Default)]
 pub struct LoggerAlkane(());
 
-#[derive(MessageDispatch)]
-enum LoggerAlkaneMessage {
-    #[opcode(0)]
-    Initialize,
+impl LoggerAlkane {
+    fn claimable_fees_pointer(&self) -> StoragePointer {
+        StoragePointer::from_keyword("/claimablefees")
+    }
 
-    #[opcode(2)]
-    SelfCall,
-
-    #[opcode(3)]
-    CheckIncoming,
-
-    #[opcode(4)]
-    MintTokens,
-
-    #[opcode(5)]
-    #[returns(Vec<u8>)]
-    ReturnData1,
-
-    #[opcode(6)]
-    #[returns(Vec<u8>)]
-    TestOrderedIncoming,
-
-    #[opcode(7)]
-    Donate,
-
-    #[opcode(11)]
-    ProcessNumbers { numbers: Vec<u128> },
-
-    #[opcode(12)]
-    ProcessStrings { strings: Vec<String> },
-
-    #[opcode(13)]
-    ProcessNestedVec { nested: Vec<Vec<u128>> },
-
-    #[opcode(20)]
-    TestInfiniteLoop,
-
-    #[opcode(21)]
-    TestInfiniteExtcall,
-
-    #[opcode(22)]
-    TestSelfMint { amount: u128 },
-
-    #[opcode(30)]
-    TestArbitraryMint { alkane: AlkaneId, amount: u128 },
-
-    #[opcode(31)]
-    TestExtCall { target: AlkaneId, inputs: Vec<u128> },
-
-    #[opcode(32)]
-    TestExtDelegateCall { target: AlkaneId, inputs: Vec<u128> },
-
-    #[opcode(33)]
-    TestStaticCall { target: AlkaneId, inputs: Vec<u128> },
-
-    #[opcode(34)]
-    TestMultipleExtCall {
-        target: AlkaneId,
-        inputs: Vec<u128>,
-        target2: AlkaneId,
-        inputs2: Vec<u128>,
-    },
-
-    #[opcode(40)]
-    TestLargeTransferParcel,
-
-    #[opcode(41)]
-    TestLargeTransferParcelExtcall,
-
-    #[opcode(50)]
-    GetTransaction,
-
-    #[opcode(78)]
-    HashLoop,
-
-    #[opcode(99)]
-    #[returns(Vec<u8>)]
-    ReturnDefaultData,
-
-    #[opcode(100)]
-    Revert,
-
-    #[opcode(101)]
-    MyGetBlockHeader,
-
-    #[opcode(102)]
-    MyGetCoinbaseTx,
-
-    #[opcode(103)]
-    ClaimableFees,
-
-    #[opcode(104)]
-    SetClaimableFees { v: u128 },
-
-    #[opcode(105)]
-    IncClaimableFees,
-
-    #[opcode(106)]
-    MyGetNumberDieselMints,
-
-    #[opcode(107)]
-    MyGetTotalMinerFee,
-
-    #[opcode(110)]
-    TestExtCallReturnLeftovers { target: AlkaneId, inputs: Vec<u128> },
+    fn _return_leftovers(
+        &self,
+        myself: AlkaneId,
+        result: CallResponse,
+        input_alkanes: AlkaneTransferParcel,
+    ) -> Result<CallResponse> {
+        let mut response = CallResponse::default();
+        let mut unique_ids: BTreeSet<AlkaneId> = BTreeSet::new();
+        for transfer in input_alkanes.0 {
+            unique_ids.insert(transfer.id);
+        }
+        for transfer in result.alkanes.0 {
+            unique_ids.insert(transfer.id);
+        }
+        for id in unique_ids {
+            response.alkanes.pay(AlkaneTransfer {
+                id: id,
+                value: self.balance(&myself, &id),
+            });
+        }
+        Ok(response)
+    }
 }
 
-impl LoggerAlkane {
+impl AlkaneResponder for LoggerAlkane {}
+
+impl LoggerAlkaneInterface for LoggerAlkane {
     fn initialize(&self) -> Result<CallResponse> {
         self.observe_initialization()?;
         let context = self.context()?;
         let response: CallResponse = CallResponse::forward(&context.incoming_alkanes);
         Ok(response)
     }
-    fn claimable_fees_pointer(&self) -> StoragePointer {
-        StoragePointer::from_keyword("/claimablefees")
-    }
-    fn claimable_fees(&self) -> Result<CallResponse> {
-        let context = self.context()?;
-        let mut response = CallResponse::forward(&context.incoming_alkanes);
-        let fees = self.claimable_fees_pointer().get_value::<u128>();
-        response.data = fees.to_le_bytes().to_vec();
-        Ok(response)
-    }
-    fn set_claimable_fees(&self, v: u128) -> Result<CallResponse> {
-        let context = self.context()?;
-        self.claimable_fees_pointer().set_value::<u128>(v);
-        Ok(CallResponse::forward(&context.incoming_alkanes))
-    }
-    fn inc_claimable_fees(&self) -> Result<CallResponse> {
-        let context = self.context()?;
-        self.claimable_fees_pointer()
-            .set_value::<u128>(self.claimable_fees_pointer().get_value::<u128>() + 1);
-        Ok(CallResponse::forward(&context.incoming_alkanes))
-    }
+
     fn self_call(&self) -> Result<CallResponse> {
         let context = self.context()?;
         let mut response = CallResponse::forward(&context.incoming_alkanes);
@@ -189,10 +99,6 @@ impl LoggerAlkane {
         }
     }
 
-    fn donate(&self) -> Result<CallResponse> {
-        Ok(CallResponse::default())
-    }
-
     fn mint_tokens(&self) -> Result<CallResponse> {
         let context = self.context()?;
         let mut response = CallResponse::forward(&context.incoming_alkanes);
@@ -205,7 +111,7 @@ impl LoggerAlkane {
         Ok(response)
     }
 
-    fn return_data_1(&self) -> Result<CallResponse> {
+    fn return_data1(&self) -> Result<CallResponse> {
         let context = self.context()?;
         let mut response = CallResponse::forward(&context.incoming_alkanes);
 
@@ -228,29 +134,39 @@ impl LoggerAlkane {
         Ok(response)
     }
 
-    fn get_transaction(&self) -> Result<CallResponse> {
+    fn donate(&self) -> Result<CallResponse> {
+        Ok(CallResponse::default())
+    }
+
+    fn process_numbers(&self, numbers: Vec<u128>) -> Result<CallResponse> {
         let context = self.context()?;
         let mut response = CallResponse::forward(&context.incoming_alkanes);
 
-        self.transaction();
+        // Sum the numbers and store in response data
+        let sum: u128 = numbers.iter().sum();
+        response.data = sum.to_le_bytes().to_vec();
 
         Ok(response)
     }
 
-    fn hash_loop(&self) -> Result<CallResponse> {
+    fn process_strings(&self, strings: Vec<String>) -> Result<CallResponse> {
         let context = self.context()?;
         let mut response = CallResponse::forward(&context.incoming_alkanes);
 
-        let mut data = vec![0x01, 0x02];
-        loop {
-            let mut hasher = Sha256::new();
-            hasher.update(&data);
-            let buffer = hasher.finalize();
-            data.extend(&buffer);
-            if !"1".is_ascii() {
-                break;
-            }
-        }
+        // Concatenate the strings and store in response data
+        let concat = strings.join(",");
+        response.data = concat.into_bytes();
+
+        Ok(response)
+    }
+
+    fn process_nested_vec(&self, nested: Vec<Vec<u128>>) -> Result<CallResponse> {
+        let context = self.context()?;
+        let mut response = CallResponse::forward(&context.incoming_alkanes);
+
+        // Count total elements in the nested vector
+        let total_elements: usize = nested.iter().map(|v| v.len()).sum();
+        response.data = (total_elements as u128).to_le_bytes().to_vec();
 
         Ok(response)
     }
@@ -274,18 +190,6 @@ impl LoggerAlkane {
         Ok(response)
     }
 
-    fn test_arbitrary_mint(&self, alkane: AlkaneId, amount: u128) -> Result<CallResponse> {
-        let context = self.context()?;
-        let mut response = CallResponse::forward(&context.incoming_alkanes);
-
-        response.alkanes.pay(AlkaneTransfer {
-            id: alkane,
-            value: amount,
-        });
-
-        Ok(response)
-    }
-
     fn test_self_mint(&self, amount: u128) -> Result<CallResponse> {
         let context = self.context()?;
         let mut response = CallResponse::forward(&context.incoming_alkanes);
@@ -298,26 +202,15 @@ impl LoggerAlkane {
         Ok(response)
     }
 
-    fn _return_leftovers(
-        &self,
-        myself: AlkaneId,
-        result: CallResponse,
-        input_alkanes: AlkaneTransferParcel,
-    ) -> Result<CallResponse> {
-        let mut response = CallResponse::default();
-        let mut unique_ids: BTreeSet<AlkaneId> = BTreeSet::new();
-        for transfer in input_alkanes.0 {
-            unique_ids.insert(transfer.id);
-        }
-        for transfer in result.alkanes.0 {
-            unique_ids.insert(transfer.id);
-        }
-        for id in unique_ids {
-            response.alkanes.pay(AlkaneTransfer {
-                id: id,
-                value: self.balance(&myself, &id),
-            });
-        }
+    fn test_arbitrary_mint(&self, alkane: AlkaneId, amount: u128) -> Result<CallResponse> {
+        let context = self.context()?;
+        let mut response = CallResponse::forward(&context.incoming_alkanes);
+
+        response.alkanes.pay(AlkaneTransfer {
+            id: alkane,
+            value: amount,
+        });
+
         Ok(response)
     }
 
@@ -329,20 +222,6 @@ impl LoggerAlkane {
         };
         let response = self.call(&cellpack, &context.incoming_alkanes, self.fuel())?;
         Ok(response)
-    }
-
-    fn test_ext_call_return_leftovers(
-        &self,
-        target: AlkaneId,
-        inputs: Vec<u128>,
-    ) -> Result<CallResponse> {
-        let context = self.context()?;
-        let cellpack = Cellpack {
-            target: target,
-            inputs: inputs,
-        };
-        let response = self.call(&cellpack, &context.incoming_alkanes, self.fuel())?;
-        self._return_leftovers(context.myself, response, context.incoming_alkanes)
     }
 
     fn test_ext_delegate_call(&self, target: AlkaneId, inputs: Vec<u128>) -> Result<CallResponse> {
@@ -416,44 +295,38 @@ impl LoggerAlkane {
         Ok(response)
     }
 
+    fn get_transaction(&self) -> Result<CallResponse> {
+        let context = self.context()?;
+        let mut response = CallResponse::forward(&context.incoming_alkanes);
+
+        self.transaction();
+
+        Ok(response)
+    }
+
+    fn hash_loop(&self) -> Result<CallResponse> {
+        let context = self.context()?;
+        let mut response = CallResponse::forward(&context.incoming_alkanes);
+
+        let mut data = vec![0x01, 0x02];
+        loop {
+            let mut hasher = Sha256::new();
+            hasher.update(&data);
+            let buffer = hasher.finalize();
+            data.extend(&buffer);
+            if !"1".is_ascii() {
+                break;
+            }
+        }
+
+        Ok(response)
+    }
+
     fn return_default_data(&self) -> Result<CallResponse> {
         let context = self.context()?;
         let mut response = CallResponse::forward(&context.incoming_alkanes);
 
         response.data = vec![0x01, 0x02, 0x03, 0x04];
-
-        Ok(response)
-    }
-
-    fn process_numbers(&self, numbers: Vec<u128>) -> Result<CallResponse> {
-        let context = self.context()?;
-        let mut response = CallResponse::forward(&context.incoming_alkanes);
-
-        // Sum the numbers and store in response data
-        let sum: u128 = numbers.iter().sum();
-        response.data = sum.to_le_bytes().to_vec();
-
-        Ok(response)
-    }
-
-    fn process_strings(&self, strings: Vec<String>) -> Result<CallResponse> {
-        let context = self.context()?;
-        let mut response = CallResponse::forward(&context.incoming_alkanes);
-
-        // Concatenate the strings and store in response data
-        let concat = strings.join(",");
-        response.data = concat.into_bytes();
-
-        Ok(response)
-    }
-
-    fn process_nested_vec(&self, nested: Vec<Vec<u128>>) -> Result<CallResponse> {
-        let context = self.context()?;
-        let mut response = CallResponse::forward(&context.incoming_alkanes);
-
-        // Count total elements in the nested vector
-        let total_elements: usize = nested.iter().map(|v| v.len()).sum();
-        response.data = (total_elements as u128).to_le_bytes().to_vec();
 
         Ok(response)
     }
@@ -480,6 +353,27 @@ impl LoggerAlkane {
         Ok(response)
     }
 
+    fn claimable_fees(&self) -> Result<CallResponse> {
+        let context = self.context()?;
+        let mut response = CallResponse::forward(&context.incoming_alkanes);
+        let fees = self.claimable_fees_pointer().get_value::<u128>();
+        response.data = fees.to_le_bytes().to_vec();
+        Ok(response)
+    }
+
+    fn set_claimable_fees(&self, v: u128) -> Result<CallResponse> {
+        let context = self.context()?;
+        self.claimable_fees_pointer().set_value::<u128>(v);
+        Ok(CallResponse::forward(&context.incoming_alkanes))
+    }
+
+    fn inc_claimable_fees(&self) -> Result<CallResponse> {
+        let context = self.context()?;
+        self.claimable_fees_pointer()
+            .set_value::<u128>(self.claimable_fees_pointer().get_value::<u128>() + 1);
+        Ok(CallResponse::forward(&context.incoming_alkanes))
+    }
+
     fn my_get_number_diesel_mints(&self) -> Result<CallResponse> {
         let context = self.context()?;
         let mut response = CallResponse::forward(&context.incoming_alkanes);
@@ -497,13 +391,18 @@ impl LoggerAlkane {
 
         Ok(response)
     }
-}
 
-impl AlkaneResponder for LoggerAlkane {}
-
-// Use the new macro format
-declare_alkane! {
-    impl AlkaneResponder for LoggerAlkane {
-        type Message = LoggerAlkaneMessage;
+    fn test_ext_call_return_leftovers(
+        &self,
+        target: AlkaneId,
+        inputs: Vec<u128>,
+    ) -> Result<CallResponse> {
+        let context = self.context()?;
+        let cellpack = Cellpack {
+            target: target,
+            inputs: inputs,
+        };
+        let response = self.call(&cellpack, &context.incoming_alkanes, self.fuel())?;
+        self._return_leftovers(context.myself, response, context.incoming_alkanes)
     }
 }

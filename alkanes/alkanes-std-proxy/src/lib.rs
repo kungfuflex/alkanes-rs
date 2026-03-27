@@ -1,5 +1,8 @@
-use alkanes_runtime::declare_alkane;
-use alkanes_runtime::message::MessageDispatch;
+#[allow(unused_imports, dead_code, clippy::all)]
+mod generated {
+    include!(concat!(env!("OUT_DIR"), "/generated.rs"));
+}
+
 use alkanes_runtime::runtime::AlkaneResponder;
 #[allow(unused_imports)]
 use alkanes_runtime::{
@@ -15,26 +18,10 @@ use bitcoin::blockdata::transaction::Transaction;
 use metashrew_support::compat::{to_arraybuffer_layout, to_passback_ptr};
 use protorune_support::utils::consensus_decode;
 
+use generated::ProxyInterface;
+
 #[derive(Default)]
 pub struct Proxy(());
-
-#[derive(MessageDispatch)]
-enum ProxyMessage {
-    #[opcode(0)]
-    Initialize,
-
-    #[opcode(1)]
-    CallWitness { witness_index: u128 },
-
-    #[opcode(2)]
-    DelegatecallWitness { witness_index: u128 },
-
-    #[opcode(3)]
-    CallInputs,
-
-    #[opcode(4)]
-    DelegatecallInputs,
-}
 
 impl Proxy {
     pub fn pull_incoming(&self, context: &mut Context) -> Option<AlkaneTransfer> {
@@ -61,7 +48,16 @@ impl Proxy {
             ))
         }
     }
+}
 
+fn unwrap_auth(v: Option<AlkaneTransfer>) -> Result<AlkaneTransfer> {
+    v.ok_or("")
+        .map_err(|_| anyhow!("authentication token not present"))
+}
+
+impl AlkaneResponder for Proxy {}
+
+impl ProxyInterface for Proxy {
     fn initialize(&self) -> Result<CallResponse> {
         self.observe_initialization()?;
         let context = self.context()?;
@@ -132,19 +128,5 @@ impl Proxy {
             self.delegatecall(&cellpack, &context.incoming_alkanes, self.fuel())?;
         response.alkanes.0.push(unwrap_auth(auth)?);
         Ok(response)
-    }
-}
-
-fn unwrap_auth(v: Option<AlkaneTransfer>) -> Result<AlkaneTransfer> {
-    v.ok_or("")
-        .map_err(|_| anyhow!("authentication token not present"))
-}
-
-impl AlkaneResponder for Proxy {}
-
-// Use the new macro format
-declare_alkane! {
-    impl AlkaneResponder for Proxy {
-        type Message = ProxyMessage;
     }
 }

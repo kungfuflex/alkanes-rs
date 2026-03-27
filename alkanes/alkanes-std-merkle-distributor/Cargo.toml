@@ -27,3 +27,6 @@ ordinals = { workspace = true }
 ruint = { workspace = true }
 borsh = { version = "1.5.7", features = ["derive"] }
 sha2 = "0.10.9"
+
+[build-dependencies]
+alkanes-wit-build = { path = "../../crates/alkanes-wit-build" }

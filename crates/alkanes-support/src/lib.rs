@@ -19,6 +19,7 @@ pub mod trace;
 pub mod unified;
 pub mod utils;
 pub mod witness;
+pub mod wit_abi;
 
 #[cfg(feature = "zcash")]
 pub mod zcash;

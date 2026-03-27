@@ -1,5 +1,22 @@
 [workspace]
-members = ["crates/*"]
+members = [
+    "crates/*",
+    "alkanes/alkanes-std-owned-token-wit",
+    "alkanes/alkanes-std-auth-token",
+    "alkanes/alkanes-std-orbital",
+    "alkanes/alkanes-std-genesis-alkane",
+    "alkanes/alkanes-std-genesis-protorune",
+    "alkanes/alkanes-std-genesis-alkane-upgraded",
+    "alkanes/alkanes-std-genesis-alkane-upgraded-eoa",
+    "alkanes/alkanes-std-proxy",
+    "alkanes/alkanes-std-upgradeable",
+    "alkanes/alkanes-std-upgradeable-beacon",
+    "alkanes/alkanes-std-beacon-proxy",
+    "alkanes/alkanes-std-owned-token",
+    "alkanes/alkanes-std-merkle-distributor",
+    "alkanes/alkanes-std-test",
+    "alkanes/alkanes-std-test-2",
+]
 exclude = ["crates/alkanes-web-leptos"]
 resolver = "2"
 
@@ -34,7 +51,7 @@ protorune-support = { path = "./crates/protorune-support" }
 alkanes-support = { path = "./crates/alkanes-support" }
 alkanes-runtime = { path = "./crates/alkanes-runtime" }
 alkanes-macros = { path = "./crates/alkanes-macros" }
-# alkanes-std-factory-support = { path = "./alkanes/alkanes-std-factory-support" }
+alkanes-std-factory-support = { path = "./alkanes/alkanes-std-factory-support" }
 alkanes-cli-common = { path = "./crates/alkanes-cli-common" }
 alkanes-rpc-core = { path = "./crates/alkanes-rpc-core" }
 alkanes-cli-sys = { path = "./crates/alkanes-cli-sys" }

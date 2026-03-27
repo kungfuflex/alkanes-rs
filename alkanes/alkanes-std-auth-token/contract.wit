@@ -1,0 +1,12 @@
+package example:auth-token;
+
+interface auth-token {
+    initialize: func(name: string, symbol: string, amount: u64) -> result<_, string>;
+    authenticate: func() -> result<_, string>;
+    get-name: func() -> result<string, string>;
+    get-symbol: func() -> result<string, string>;
+}
+
+world auth-token-world {
+    export auth-token;
+}

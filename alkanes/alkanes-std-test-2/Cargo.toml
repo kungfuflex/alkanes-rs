@@ -13,3 +13,6 @@ anyhow = { workspace = true }
 hex = { workspace = true }
 metashrew-support = { workspace = true }
 sha2 = "0.10.8"
+
+[build-dependencies]
+alkanes-wit-build = { path = "../../crates/alkanes-wit-build" }

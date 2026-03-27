@@ -1,0 +1,13 @@
+[package]
+name = "alkanes-wit-parser"
+version.workspace = true
+edition.workspace = true
+description = "WIT parser and IR for alkanes contract interfaces"
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+wit-parser = "0.13.2"
+toml = "0.8"
+serde = { version = "1.0", features = ["derive"] }
+anyhow.workspace = true

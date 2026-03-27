@@ -230,6 +230,9 @@ impl WebProvider {
                     if let Some(subfrost_api_key) = obj.get("subfrost_api_key").and_then(|v| v.as_str()) {
                         rpc_config.subfrost_api_key = Some(subfrost_api_key.to_string());
                     }
+                    if let Some(qubitcoin_rpc_url) = obj.get("qubitcoin_rpc_url").and_then(|v| v.as_str()) {
+                        rpc_config.qubitcoin_rpc_url = Some(qubitcoin_rpc_url.to_string());
+                    }
                     if let Some(timeout) = obj.get("timeout_seconds").and_then(|v| v.as_u64()) {
                         rpc_config.timeout_seconds = timeout;
                     }
@@ -2889,18 +2892,205 @@ impl WebProvider {
 
     // === BRC20-PROG METHODS ===
 
+    /// Deploy a BRC20-Prog contract using the loaded wallet.
+    /// Unlike the standalone brc20_prog_deploy_contract(), this uses the
+    /// provider's already-loaded wallet instead of reading from disk.
+    #[wasm_bindgen(js_name = brc20ProgDeploy)]
+    pub fn brc20prog_deploy_js(&mut self, foundry_json: String, params_json: String) -> js_sys::Promise {
+        use alkanes_cli_common::brc20_prog::{
+            Brc20ProgExecutor, Brc20ProgExecuteParams, Brc20ProgDeployInscription,
+            parse_foundry_json_from_str, extract_deployment_bytecode,
+        };
+        use wasm_bindgen_futures::future_to_promise;
+        let mut provider = self.clone();
+        future_to_promise(async move {
+            let contract_data = parse_foundry_json_from_str(&foundry_json)
+                .map_err(|e| JsValue::from_str(&format!("Failed to parse Foundry JSON: {:?}", e)))?;
+            let bytecode = extract_deployment_bytecode(&contract_data)
+                .map_err(|e| JsValue::from_str(&format!("Failed to extract bytecode: {:?}", e)))?;
+
+            let inscription = Brc20ProgDeployInscription::new(bytecode);
+            let inscription_json = serde_json::to_string(&inscription)
+                .map_err(|e| JsValue::from_str(&format!("Failed to serialize inscription: {}", e)))?;
+
+            // Build params with defaults, overriding from user-provided JSON
+            let user_params: serde_json::Value = serde_json::from_str(&params_json)
+                .map_err(|e| JsValue::from_str(&format!("Invalid params JSON: {}", e)))?;
+            let obj = user_params.as_object().cloned().unwrap_or_default();
+
+            let params = Brc20ProgExecuteParams {
+                inscription_content: inscription_json,
+                from_addresses: obj.get("from_addresses").and_then(|v| serde_json::from_value(v.clone()).ok()),
+                change_address: obj.get("change_address").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                fee_rate: obj.get("fee_rate").and_then(|v| v.as_f64()).map(|f| f as f32),
+                raw_output: obj.get("raw_output").and_then(|v| v.as_bool()).unwrap_or(false),
+                trace_enabled: obj.get("trace_enabled").and_then(|v| v.as_bool()).unwrap_or(false),
+                mine_enabled: obj.get("mine_enabled").and_then(|v| v.as_bool()).unwrap_or(false),
+                auto_confirm: obj.get("auto_confirm").and_then(|v| v.as_bool()).unwrap_or(true),
+                use_activation: obj.get("use_activation").and_then(|v| v.as_bool()).unwrap_or(false),
+                use_slipstream: obj.get("use_slipstream").and_then(|v| v.as_bool()).unwrap_or(false),
+                use_rebar: obj.get("use_rebar").and_then(|v| v.as_bool()).unwrap_or(false),
+                rebar_tier: obj.get("rebar_tier").and_then(|v| v.as_u64()).map(|v| v as u8),
+                strategy: None,
+                resume_from_commit: obj.get("resume_from_commit").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                additional_outputs: None,
+                return_unsigned: obj.get("return_unsigned").and_then(|v| v.as_bool()).unwrap_or(false),
+                ordinals_strategy: Default::default(),
+                mempool_indexer: obj.get("mempool_indexer").and_then(|v| v.as_bool()).unwrap_or(false),
+                mint_diesel: obj.get("mint_diesel").and_then(|v| v.as_bool()).unwrap_or(false),
+            };
+
+            let mut executor = Brc20ProgExecutor::new(&mut provider);
+            let result = executor.execute(params).await
+                .map_err(|e| JsValue::from_str(&format!("Deployment failed: {:?}", e)))?;
+
+            serde_json::to_string(&result)
+                .map(|json| JsValue::from_str(&json))
+                .map_err(|e| JsValue::from_str(&format!("JSON serialization error: {}", e)))
+        })
+    }
+
+    /// Call a BRC20-Prog contract function using the loaded wallet.
+    /// Unlike the standalone brc20_prog_transact(), this uses the provider's loaded wallet.
+    #[wasm_bindgen(js_name = brc20ProgTransact)]
+    pub fn brc20prog_transact_js(
+        &mut self,
+        contract_address: String,
+        function_signature: String,
+        calldata: String,
+        params_json: String,
+    ) -> js_sys::Promise {
+        use alkanes_cli_common::brc20_prog::{
+            Brc20ProgExecutor, Brc20ProgExecuteParams,
+            calldata::encode_function_call,
+            types::Brc20ProgCallInscription,
+        };
+        use wasm_bindgen_futures::future_to_promise;
+        let mut provider = self.clone();
+        future_to_promise(async move {
+            // Encode the function call
+            let calldata_hex = encode_function_call(&function_signature, &calldata)
+                .map_err(|e| JsValue::from_str(&format!("Failed to encode calldata: {:?}", e)))?;
+
+            // Create the call inscription
+            let inscription = Brc20ProgCallInscription::new(
+                contract_address.clone(),
+                calldata_hex,
+            );
+            let inscription_json = serde_json::to_string(&inscription)
+                .map_err(|e| JsValue::from_str(&format!("Failed to serialize inscription: {}", e)))?;
+
+            // Build params with defaults
+            let user_params: serde_json::Value = serde_json::from_str(&params_json)
+                .map_err(|e| JsValue::from_str(&format!("Invalid params JSON: {}", e)))?;
+            let obj = user_params.as_object().cloned().unwrap_or_default();
+
+            let params = Brc20ProgExecuteParams {
+                inscription_content: inscription_json,
+                from_addresses: obj.get("from_addresses").and_then(|v| serde_json::from_value(v.clone()).ok()),
+                change_address: obj.get("change_address").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                fee_rate: obj.get("fee_rate").and_then(|v| v.as_f64()).map(|f| f as f32),
+                raw_output: false,
+                trace_enabled: false,
+                mine_enabled: obj.get("mine_enabled").and_then(|v| v.as_bool()).unwrap_or(false),
+                auto_confirm: true,
+                use_activation: obj.get("use_activation").and_then(|v| v.as_bool()).unwrap_or(true),
+                use_slipstream: false,
+                use_rebar: false,
+                rebar_tier: None,
+                strategy: None,
+                resume_from_commit: None,
+                additional_outputs: None,
+                return_unsigned: false,
+                ordinals_strategy: Default::default(),
+                mempool_indexer: false,
+                mint_diesel: false,
+            };
+
+            let mut executor = Brc20ProgExecutor::new(&mut provider);
+            let result = executor.execute(params).await
+                .map_err(|e| JsValue::from_str(&format!("Transact failed: {:?}", e)))?;
+
+            serde_json::to_string(&result)
+                .map(|json| JsValue::from_str(&json))
+                .map_err(|e| JsValue::from_str(&format!("JSON serialization error: {}", e)))
+        })
+    }
+
+    /// Route a BRC20-Prog eth_* call — either to external RPC or through qubitcoin secondaryview.
+    ///
+    /// In qubitcoin mode (no explicit brc20_prog_rpc_url), eth_call is translated to:
+    ///   secondaryview ["brc20shrew", "call", hex_encoded_call_request_json]
+    /// and the response is decoded from CallResponse JSON → "0x<hex_result>".
+    async fn brc20prog_call_routed(&self, method: &str, params: serde_json::Value) -> alkanes_cli_common::Result<serde_json::Value> {
+        // If explicit brc20_prog_rpc_url is set, use it directly
+        if let Some(ref url) = self.rpc_config.brc20_prog_rpc_url {
+            return self.call(url, method, params, 1).await;
+        }
+
+        // In qubitcoin/devnet mode, translate eth_* to metashrew_view on brc20shrew views
+        if self.rpc_config.is_qubitcoin_mode() {
+            let sandshrew_url = self.sandshrew_rpc_url();
+            match method {
+                "eth_call" => {
+                    let call_obj = params.get(0).cloned().unwrap_or_default();
+                    let to_hex = call_obj.get("to").and_then(|v| v.as_str()).unwrap_or("");
+                    let data_hex = call_obj.get("data").and_then(|v| v.as_str()).unwrap_or("");
+                    let to_bytes: Vec<u8> = hex::decode(to_hex.strip_prefix("0x").unwrap_or(to_hex)).unwrap_or_default();
+                    let data_bytes: Vec<u8> = hex::decode(data_hex.strip_prefix("0x").unwrap_or(data_hex)).unwrap_or_default();
+                    let call_request = serde_json::json!({ "to": to_bytes, "data": data_bytes });
+                    let hex_input = format!("0x{}", hex::encode(serde_json::to_string(&call_request).unwrap_or_default().as_bytes()));
+                    let mv_params = serde_json::json!(["call", hex_input, "latest"]);
+                    let result = self.call(&sandshrew_url, "metashrew_view", mv_params, 1).await?;
+                    // Decode: "0x<hex>" → JSON CallResponse → extract result → "0x<hex_result>"
+                    if let Some(hex_str) = result.as_str().and_then(|s| s.strip_prefix("0x")) {
+                        if let Ok(bytes) = hex::decode(hex_str) {
+                            if let Ok(resp) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+                                if let Some(arr) = resp.get("result").and_then(|v| v.as_array()) {
+                                    let result_bytes: Vec<u8> = arr.iter().filter_map(|b| b.as_u64().map(|n| n as u8)).collect();
+                                    return Ok(serde_json::json!(format!("0x{}", hex::encode(&result_bytes))));
+                                }
+                            }
+                        }
+                    }
+                    Ok(result)
+                }
+                "eth_blockNumber" => {
+                    let hex_input = format!("0x{}", hex::encode("{}".as_bytes()));
+                    let mv_params = serde_json::json!(["getblockheight", hex_input, "latest"]);
+                    self.call(&sandshrew_url, "metashrew_view", mv_params, 1).await
+                }
+                "eth_getBalance" => {
+                    let address = params.get(0).and_then(|v| v.as_str()).unwrap_or("");
+                    let req = serde_json::json!({ "address": address });
+                    let hex_input = format!("0x{}", hex::encode(serde_json::to_string(&req).unwrap_or_default().as_bytes()));
+                    let mv_params = serde_json::json!(["getbalance", hex_input, "latest"]);
+                    self.call(&sandshrew_url, "metashrew_view", mv_params, 1).await
+                }
+                _ => {
+                    // Unsupported in qubitcoin mode — fall through to default URL
+                    let brc20_url = alkanes_cli_common::network::get_default_brc20_prog_rpc_url(self.network);
+                    self.call(&brc20_url, method, params, 1).await
+                }
+            }
+        } else {
+            // Standard mode — use default brc20-prog RPC URL
+            let brc20_url = alkanes_cli_common::network::get_default_brc20_prog_rpc_url(self.network);
+            self.call(&brc20_url, method, params, 1).await
+        }
+    }
+
     #[wasm_bindgen(js_name = brc20progCall)]
     pub fn brc20prog_call_js(&self, to: String, data: String, block: Option<String>) -> js_sys::Promise {
         use wasm_bindgen_futures::future_to_promise;
         let provider = self.clone();
         future_to_promise(async move {
-            let brc20_url = alkanes_cli_common::network::get_default_brc20_prog_rpc_url(provider.network);
             let params = serde_json::json!([{
                 "to": to,
                 "data": data
             }, block.unwrap_or_else(|| "latest".to_string())]);
-            
-            provider.call(&brc20_url, "eth_call", params, 1).await
+
+            provider.brc20prog_call_routed("eth_call", params).await
                 .map(|r| serde_wasm_bindgen::to_value(&r).unwrap_or(JsValue::NULL))
                 .map_err(|e| JsValue::from_str(&format!("BRC20-Prog call failed: {}", e)))
         })
@@ -2911,10 +3101,8 @@ impl WebProvider {
         use wasm_bindgen_futures::future_to_promise;
         let provider = self.clone();
         future_to_promise(async move {
-            let brc20_url = alkanes_cli_common::network::get_default_brc20_prog_rpc_url(provider.network);
             let params = serde_json::json!([address, block.unwrap_or_else(|| "latest".to_string())]);
-            
-            provider.call(&brc20_url, "eth_getBalance", params, 1).await
+            provider.brc20prog_call_routed("eth_getBalance", params).await
                 .map(|r| serde_wasm_bindgen::to_value(&r).unwrap_or(JsValue::NULL))
                 .map_err(|e| JsValue::from_str(&format!("Get balance failed: {}", e)))
         })
@@ -2925,10 +3113,8 @@ impl WebProvider {
         use wasm_bindgen_futures::future_to_promise;
         let provider = self.clone();
         future_to_promise(async move {
-            let brc20_url = alkanes_cli_common::network::get_default_brc20_prog_rpc_url(provider.network);
             let params = serde_json::json!([address]);
-            
-            provider.call(&brc20_url, "eth_getCode", params, 1).await
+            provider.brc20prog_call_routed("eth_getCode", params).await
                 .map(|r| serde_wasm_bindgen::to_value(&r).unwrap_or(JsValue::NULL))
                 .map_err(|e| JsValue::from_str(&format!("Get code failed: {}", e)))
         })
@@ -2939,10 +3125,8 @@ impl WebProvider {
         use wasm_bindgen_futures::future_to_promise;
         let provider = self.clone();
         future_to_promise(async move {
-            let brc20_url = alkanes_cli_common::network::get_default_brc20_prog_rpc_url(provider.network);
             let params = serde_json::json!([address, block.unwrap_or_else(|| "latest".to_string())]);
-            
-            provider.call(&brc20_url, "eth_getTransactionCount", params, 1).await
+            provider.brc20prog_call_routed("eth_getTransactionCount", params).await
                 .map(|r| serde_wasm_bindgen::to_value(&r).unwrap_or(JsValue::NULL))
                 .map_err(|e| JsValue::from_str(&format!("Get transaction count failed: {}", e)))
         })
@@ -2953,10 +3137,8 @@ impl WebProvider {
         use wasm_bindgen_futures::future_to_promise;
         let provider = self.clone();
         future_to_promise(async move {
-            let brc20_url = alkanes_cli_common::network::get_default_brc20_prog_rpc_url(provider.network);
             let params = serde_json::json!([]);
-            
-            provider.call(&brc20_url, "eth_blockNumber", params, 1).await
+            provider.brc20prog_call_routed("eth_blockNumber", params).await
                 .map(|r| serde_wasm_bindgen::to_value(&r).unwrap_or(JsValue::NULL))
                 .map_err(|e| JsValue::from_str(&format!("Get block number failed: {}", e)))
         })
@@ -2967,10 +3149,8 @@ impl WebProvider {
         use wasm_bindgen_futures::future_to_promise;
         let provider = self.clone();
         future_to_promise(async move {
-            let brc20_url = alkanes_cli_common::network::get_default_brc20_prog_rpc_url(provider.network);
             let params = serde_json::json!([]);
-            
-            provider.call(&brc20_url, "eth_chainId", params, 1).await
+            provider.brc20prog_call_routed("eth_chainId", params).await
                 .map(|r| serde_wasm_bindgen::to_value(&r).unwrap_or(JsValue::NULL))
                 .map_err(|e| JsValue::from_str(&format!("Get chain ID failed: {}", e)))
         })
@@ -2981,10 +3161,8 @@ impl WebProvider {
         use wasm_bindgen_futures::future_to_promise;
         let provider = self.clone();
         future_to_promise(async move {
-            let brc20_url = alkanes_cli_common::network::get_default_brc20_prog_rpc_url(provider.network);
             let params = serde_json::json!([tx_hash]);
-            
-            provider.call(&brc20_url, "eth_getTransactionReceipt", params, 1).await
+            provider.brc20prog_call_routed("eth_getTransactionReceipt", params).await
                 .map(|r| serde_wasm_bindgen::to_value(&r).unwrap_or(JsValue::NULL))
                 .map_err(|e| JsValue::from_str(&format!("Get transaction receipt failed: {}", e)))
         })
@@ -2995,10 +3173,8 @@ impl WebProvider {
         use wasm_bindgen_futures::future_to_promise;
         let provider = self.clone();
         future_to_promise(async move {
-            let brc20_url = alkanes_cli_common::network::get_default_brc20_prog_rpc_url(provider.network);
             let params = serde_json::json!([tx_hash]);
-            
-            provider.call(&brc20_url, "eth_getTransactionByHash", params, 1).await
+            provider.brc20prog_call_routed("eth_getTransactionByHash", params).await
                 .map(|r| serde_wasm_bindgen::to_value(&r).unwrap_or(JsValue::NULL))
                 .map_err(|e| JsValue::from_str(&format!("Get transaction failed: {}", e)))
         })
@@ -3009,10 +3185,8 @@ impl WebProvider {
         use wasm_bindgen_futures::future_to_promise;
         let provider = self.clone();
         future_to_promise(async move {
-            let brc20_url = alkanes_cli_common::network::get_default_brc20_prog_rpc_url(provider.network);
             let params = serde_json::json!([block, full_tx]);
-            
-            provider.call(&brc20_url, "eth_getBlockByNumber", params, 1).await
+            provider.brc20prog_call_routed("eth_getBlockByNumber", params).await
                 .map(|r| serde_wasm_bindgen::to_value(&r).unwrap_or(JsValue::NULL))
                 .map_err(|e| JsValue::from_str(&format!("Get block failed: {}", e)))
         })
@@ -3023,13 +3197,11 @@ impl WebProvider {
         use wasm_bindgen_futures::future_to_promise;
         let provider = self.clone();
         future_to_promise(async move {
-            let brc20_url = alkanes_cli_common::network::get_default_brc20_prog_rpc_url(provider.network);
             let params = serde_json::json!([{
                 "to": to,
                 "data": data
             }, block.unwrap_or_else(|| "latest".to_string())]);
-            
-            provider.call(&brc20_url, "eth_estimateGas", params, 1).await
+            provider.brc20prog_call_routed("eth_estimateGas", params).await
                 .map(|r| serde_wasm_bindgen::to_value(&r).unwrap_or(JsValue::NULL))
                 .map_err(|e| JsValue::from_str(&format!("Estimate gas failed: {}", e)))
         })
@@ -3040,13 +3212,11 @@ impl WebProvider {
         use wasm_bindgen_futures::future_to_promise;
         let provider = self.clone();
         future_to_promise(async move {
-            let brc20_url = alkanes_cli_common::network::get_default_brc20_prog_rpc_url(provider.network);
             // Convert JsValue filter to serde_json::Value
             let filter_json: serde_json::Value = serde_wasm_bindgen::from_value(filter)
                 .map_err(|e| JsValue::from_str(&format!("Invalid filter: {}", e)))?;
             let params = serde_json::json!([filter_json]);
-            
-            provider.call(&brc20_url, "eth_getLogs", params, 1).await
+            provider.brc20prog_call_routed("eth_getLogs", params).await
                 .map(|r| serde_wasm_bindgen::to_value(&r).unwrap_or(JsValue::NULL))
                 .map_err(|e| JsValue::from_str(&format!("Get logs failed: {}", e)))
         })
@@ -3057,10 +3227,8 @@ impl WebProvider {
         use wasm_bindgen_futures::future_to_promise;
         let provider = self.clone();
         future_to_promise(async move {
-            let brc20_url = alkanes_cli_common::network::get_default_brc20_prog_rpc_url(provider.network);
             let params = serde_json::json!([]);
-            
-            provider.call(&brc20_url, "web3_clientVersion", params, 1).await
+            provider.brc20prog_call_routed("web3_clientVersion", params).await
                 .map(|r| serde_wasm_bindgen::to_value(&r).unwrap_or(JsValue::NULL))
                 .map_err(|e| JsValue::from_str(&format!("Get client version failed: {}", e)))
         })
@@ -6521,6 +6689,17 @@ impl WebProvider {
 #[async_trait(?Send)]
 impl JsonRpcProvider for WebProvider {
     async fn call(&self, url: &str, method: &str, params: JsonValue, id: u64) -> Result<JsonValue> {
+        // In qubitcoin mode, intercept eth_* calls and route through brc20prog_call_routed
+        if self.rpc_config.is_qubitcoin_mode()
+            && self.rpc_config.brc20_prog_rpc_url.is_none()
+            && method.starts_with("eth_")
+        {
+            self.logger.info(&format!(
+                "JsonRpcProvider::call -> intercepting {} for qubitcoin brc20prog routing", method
+            ));
+            return self.brc20prog_call_routed(method, params).await;
+        }
+
         self.logger.info(&format!(
             "JsonRpcProvider::call -> URL: {}, Method: {}, Params: {}",
             url,
