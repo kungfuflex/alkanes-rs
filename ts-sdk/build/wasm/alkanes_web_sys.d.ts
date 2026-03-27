@@ -280,6 +280,11 @@ export class WebProvider {
      * provider's already-loaded wallet instead of reading from disk.
      */
     brc20ProgDeploy(foundry_json: string, params_json: string): Promise<any>;
+    /**
+     * Call a BRC20-Prog contract function using the loaded wallet.
+     * Unlike the standalone brc20_prog_transact(), this uses the provider's loaded wallet.
+     */
+    brc20ProgTransact(contract_address: string, function_signature: string, calldata: string, params_json: string): Promise<any>;
     brc20_prog_rpc_url(): string;
     brc20progBlockNumber(): Promise<any>;
     brc20progCall(to: string, data: string, block?: string | null): Promise<any>;
