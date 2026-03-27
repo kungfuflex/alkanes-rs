@@ -647,6 +647,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "alkanes-std-auth-token"
+version = "10.0.0"
+dependencies = [
+ "alkanes-runtime",
+ "alkanes-std-factory-support",
+ "alkanes-support",
+ "alkanes-wit-build",
+ "anyhow",
+ "bitcoin 0.32.7",
+ "metashrew-support",
+ "protorune-support",
+]
+
+[[package]]
+name = "alkanes-std-beacon-proxy"
+version = "10.0.0"
+dependencies = [
+ "alkanes-macros",
+ "alkanes-runtime",
+ "alkanes-support",
+ "alkanes-wit-build",
+ "anyhow",
+ "bitcoin 0.32.7",
+ "metashrew-support",
+ "protorune-support",
+]
+
+[[package]]
 name = "alkanes-std-factory-support"
 version = "10.0.0"
 dependencies = [
@@ -659,6 +687,110 @@ dependencies = [
 ]
 
 [[package]]
+name = "alkanes-std-genesis-alkane"
+version = "10.0.0"
+dependencies = [
+ "alkanes-runtime",
+ "alkanes-support",
+ "alkanes-wit-build",
+ "anyhow",
+ "bitcoin 0.32.7",
+ "hex",
+ "metashrew-support",
+ "protorune-support",
+]
+
+[[package]]
+name = "alkanes-std-genesis-alkane-upgraded"
+version = "10.0.0"
+dependencies = [
+ "alkanes-runtime",
+ "alkanes-support",
+ "alkanes-wit-build",
+ "anyhow",
+ "bitcoin 0.32.7",
+ "hex",
+ "metashrew-support",
+ "protorune-support",
+]
+
+[[package]]
+name = "alkanes-std-genesis-alkane-upgraded-eoa"
+version = "10.0.0"
+dependencies = [
+ "alkanes-runtime",
+ "alkanes-support",
+ "alkanes-wit-build",
+ "anyhow",
+ "bitcoin 0.32.7",
+ "hex",
+ "metashrew-support",
+ "protorune-support",
+]
+
+[[package]]
+name = "alkanes-std-genesis-protorune"
+version = "10.0.0"
+dependencies = [
+ "alkanes-runtime",
+ "alkanes-support",
+ "alkanes-wit-build",
+ "anyhow",
+ "bitcoin 0.32.7",
+ "hex",
+ "metashrew-support",
+ "protorune-support",
+]
+
+[[package]]
+name = "alkanes-std-merkle-distributor"
+version = "10.0.0"
+dependencies = [
+ "alkanes-runtime",
+ "alkanes-support",
+ "alkanes-wit-build",
+ "anyhow",
+ "bitcoin 0.32.7",
+ "borsh",
+ "metashrew-support",
+ "num",
+ "ordinals",
+ "protorune-support",
+ "ruint",
+ "sha2",
+]
+
+[[package]]
+name = "alkanes-std-orbital"
+version = "10.0.0"
+dependencies = [
+ "alkanes-runtime",
+ "alkanes-support",
+ "alkanes-wit-build",
+ "anyhow",
+ "bitcoin 0.32.7",
+ "hex",
+ "hex_lit",
+ "metashrew-support",
+ "protorune-support",
+]
+
+[[package]]
+name = "alkanes-std-owned-token"
+version = "10.0.0"
+dependencies = [
+ "alkanes-runtime",
+ "alkanes-std-factory-support",
+ "alkanes-support",
+ "alkanes-wit-build",
+ "anyhow",
+ "bitcoin 0.32.7",
+ "metashrew-support",
+ "ordinals",
+ "protorune-support",
+]
+
+[[package]]
 name = "alkanes-std-owned-token-wit"
 version = "10.0.0"
 dependencies = [
@@ -668,6 +800,71 @@ dependencies = [
  "alkanes-wit-build",
  "anyhow",
  "metashrew-support",
+]
+
+[[package]]
+name = "alkanes-std-proxy"
+version = "10.0.0"
+dependencies = [
+ "alkanes-runtime",
+ "alkanes-support",
+ "alkanes-wit-build",
+ "anyhow",
+ "bitcoin 0.32.7",
+ "metashrew-support",
+ "protorune-support",
+]
+
+[[package]]
+name = "alkanes-std-test"
+version = "10.0.0"
+dependencies = [
+ "alkanes-runtime",
+ "alkanes-support",
+ "alkanes-wit-build",
+ "anyhow",
+ "hex",
+ "metashrew-support",
+ "sha2",
+]
+
+[[package]]
+name = "alkanes-std-test-2"
+version = "10.0.0"
+dependencies = [
+ "alkanes-runtime",
+ "alkanes-support",
+ "alkanes-wit-build",
+ "anyhow",
+ "hex",
+ "metashrew-support",
+ "sha2",
+]
+
+[[package]]
+name = "alkanes-std-upgradeable"
+version = "10.0.0"
+dependencies = [
+ "alkanes-runtime",
+ "alkanes-support",
+ "alkanes-wit-build",
+ "anyhow",
+ "bitcoin 0.32.7",
+ "metashrew-support",
+ "protorune-support",
+]
+
+[[package]]
+name = "alkanes-std-upgradeable-beacon"
+version = "10.0.0"
+dependencies = [
+ "alkanes-runtime",
+ "alkanes-support",
+ "alkanes-wit-build",
+ "anyhow",
+ "bitcoin 0.32.7",
+ "metashrew-support",
+ "protorune-support",
 ]
 
 [[package]]

@@ -1,0 +1,13 @@
+package example:proxy;
+
+interface proxy {
+    initialize: func() -> result<_, string>;
+    call-witness: func(witness-index: u64) -> result<_, string>;
+    delegatecall-witness: func(witness-index: u64) -> result<_, string>;
+    call-inputs: func() -> result<_, string>;
+    delegatecall-inputs: func() -> result<_, string>;
+}
+
+world proxy-world {
+    export proxy;
+}

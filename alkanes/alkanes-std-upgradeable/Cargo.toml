@@ -13,3 +13,6 @@ anyhow = { workspace = true }
 bitcoin = { workspace = true }
 metashrew-support = { workspace = true }
 protorune-support = { workspace = true }
+
+[build-dependencies]
+alkanes-wit-build = { path = "../../crates/alkanes-wit-build" }

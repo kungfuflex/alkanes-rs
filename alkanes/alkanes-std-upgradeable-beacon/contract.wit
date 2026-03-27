@@ -1,0 +1,19 @@
+package example:upgradeable-beacon;
+
+interface upgradeable-beacon {
+    record alkane-id {
+        block: u64,
+        block-hi: u64,
+        tx: u64,
+        tx-hi: u64,
+    }
+
+    initialize: func(implementation: alkane-id, auth-token-units: u64) -> result<_, string>;
+    implementation: func() -> result<_, string>;
+    upgrade-to: func(implementation: alkane-id) -> result<_, string>;
+    forward: func() -> result<_, string>;
+}
+
+world upgradeable-beacon-world {
+    export upgradeable-beacon;
+}

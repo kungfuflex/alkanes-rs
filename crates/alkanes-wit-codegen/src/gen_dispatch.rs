@@ -211,7 +211,8 @@ fn generate_extraction(
         }
         _ => {
             // For complex types, use CellpackDecode
-            let rust_type = crate::type_utils::type_to_tokens(ty);
+            // Use widened types to match the enum field types (all integers widen to u128)
+            let rust_type = crate::type_utils::type_to_tokens_widened(ty);
             quote! {
                 let #field_name = <#rust_type as CellpackDecode>::decode_cellpack(&__macro_inputs, &mut __offset)?;
             }

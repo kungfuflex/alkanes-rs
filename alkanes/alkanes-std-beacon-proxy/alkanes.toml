@@ -1,0 +1,6 @@
+[contract]
+name = "BeaconProxy"
+
+[opcodes]
+initialize = 32767
+forward = 36863
