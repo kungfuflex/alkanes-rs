@@ -331,23 +331,34 @@ impl<'a> Brc20ProgExecutor<'a> {
         log::info!("✅ Presign+RBF strategy completed successfully!");
 
         // Compute contract address for deploy operations.
-        // The deployer ETH address is derived from the change address pkscript,
-        // then the contract address is keccak256(rlp([deployer, nonce=0]))[12:].
+        // The deployer ETH address is derived from the reveal inscription output's pkscript
+        // using keccak256(pkscript)[12:], matching the canonical brc20-prog derivation.
+        // The contract address is then keccak256(rlp([deployer, nonce=0]))[12:].
         let contract_address = if params.use_activation {
-            // Use explicit change_address, or from_addresses[0], or try wallet
-            let effective_change = params.change_address.clone()
-                .or_else(|| params.from_addresses.as_ref()
-                    .and_then(|addrs| addrs.first().cloned()));
-
-            effective_change.and_then(|addr| {
-                let parsed = bitcoin::Address::from_str(&addr).ok()?;
-                let assumed = parsed.assume_checked();
-                let pkscript_hex = hex::encode(assumed.script_pubkey().as_bytes());
-                let deployer_eth = crate::brc20_prog::pkscript_to_eth_address(&pkscript_hex).ok()?;
-                let contract = crate::brc20_prog::compute_contract_address(&deployer_eth, 0).ok()?;
-                log::info!("📋 Computed contract address: {} (deployer: {}, from: {})", contract, deployer_eth, addr);
-                Some(contract)
-            })
+            // Use the reveal inscription output's pkscript that was captured earlier
+            let pkscript_bytes = reveal_tx.output.iter()
+                .find(|o| o.value.to_sat() == 546 && !o.script_pubkey.is_op_return())
+                .map(|o| o.script_pubkey.as_bytes().to_vec())
+                .unwrap_or_default();
+            let pkscript_hex = hex::encode(&pkscript_bytes);
+            match crate::brc20_prog::pkscript_to_eth_address(&pkscript_hex) {
+                Ok(deployer_eth) => {
+                    match crate::brc20_prog::compute_contract_address(&deployer_eth, 0) {
+                        Ok(contract) => {
+                            log::info!("📋 Contract address: {} (deployer: {}, pkscript: {})", contract, deployer_eth, pkscript_hex);
+                            Some(contract)
+                        }
+                        Err(e) => {
+                            log::warn!("Failed to compute contract address: {}", e);
+                            None
+                        }
+                    }
+                }
+                Err(e) => {
+                    log::warn!("Failed to derive deployer ETH address: {}", e);
+                    None
+                }
+            }
         } else {
             None
         };
