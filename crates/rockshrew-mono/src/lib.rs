@@ -47,6 +47,8 @@
 
 pub mod smt_helper;
 pub mod adapters;
+#[cfg(feature = "gpu")]
+pub mod gpu;
 pub mod snapshot;
 pub mod snapshot_adapters;
 pub mod ssh_tunnel;
@@ -135,6 +137,9 @@ pub struct Args {
     pub max_reorg_depth: u32,
     #[arg(long, default_value_t = 6)]
     pub reorg_check_threshold: u32,
+    /// Enable GPU acceleration for parallel message execution
+    #[arg(long)]
+    pub enable_gpu: bool,
 }
 
 /// Shared application state for the JSON-RPC server.
@@ -270,6 +275,18 @@ where
     if let Some(ref label) = args.label {
         set_label(label.clone());
     }
+
+    // Initialize GPU if requested
+    #[cfg(feature = "gpu")]
+    if args.enable_gpu {
+        if gpu::init() {
+            info!("GPU acceleration enabled for block processing");
+        } else {
+            warn!("GPU requested but not available — running CPU-only");
+        }
+    }
+
+    let _enable_gpu = args.enable_gpu;
 
     let start_block = if let Some(fork_path) = &args.fork {
         let fork_db_path = fork_path.to_string_lossy().to_string();
@@ -421,6 +438,20 @@ where
                     while let Some(block_data) = block_receiver.recv().await {
                         let block_start = Instant::now();
                         info!("PROCESSOR: Starting block {} ({} bytes)", block_data.height, block_data.block_data.len());
+
+                        // GPU pre-processing: analyze and dispatch eligible messages
+                        #[cfg(feature = "gpu")]
+                        {
+                            if let Ok(stats) = gpu::pre_process_block(block_data.height, &block_data.block_data) {
+                                if stats.gpu_dispatched > 0 {
+                                    info!(
+                                        "PROCESSOR: GPU block {} — {} dispatched, {} completed, {} ejected in {:?}",
+                                        block_data.height, stats.gpu_dispatched, stats.gpu_completed,
+                                        stats.gpu_ejected, block_start.elapsed()
+                                    );
+                                }
+                            }
+                        }
 
                         let engine = sync_engine_clone.read().await;
                         let result = match engine.process_block(block_data.height, block_data.block_data, block_data.block_hash).await {
