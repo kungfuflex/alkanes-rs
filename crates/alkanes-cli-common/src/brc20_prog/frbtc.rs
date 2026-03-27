@@ -344,6 +344,7 @@ impl<'a> FrBtcExecutor<'a> {
             mempool_indexer: params.mempool_indexer,
             mint_diesel: params.mint_diesel,
             return_unsigned: params.return_unsigned,
+                deployer_nonce: None,
         };
 
         let mut executor = Brc20ProgExecutor::new(self.provider);
@@ -441,6 +442,7 @@ impl<'a> FrBtcExecutor<'a> {
             mempool_indexer: params.mempool_indexer,
             mint_diesel: params.mint_diesel,
             return_unsigned: params.return_unsigned,
+                deployer_nonce: None,
         };
 
         let mut executor = Brc20ProgExecutor::new(self.provider);
@@ -525,6 +527,7 @@ impl<'a> FrBtcExecutor<'a> {
             mempool_indexer: params.mempool_indexer,
             mint_diesel: params.mint_diesel,
             return_unsigned: params.return_unsigned,
+                deployer_nonce: None,
         };
 
         let mut executor = Brc20ProgExecutor::new(self.provider);
@@ -610,6 +613,7 @@ impl<'a> FrBtcExecutor<'a> {
             mempool_indexer: params.mempool_indexer,
             mint_diesel: params.mint_diesel,
             return_unsigned: params.return_unsigned,
+                deployer_nonce: None,
         };
 
         let mut executor = Brc20ProgExecutor::new(self.provider);

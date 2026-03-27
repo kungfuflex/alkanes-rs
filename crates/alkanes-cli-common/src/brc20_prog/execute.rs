@@ -332,9 +332,9 @@ impl<'a> Brc20ProgExecutor<'a> {
         // Compute contract address for deploy operations.
         // The deployer ETH address is derived from the reveal inscription output's pkscript
         // using keccak256(pkscript)[12:], matching the canonical brc20-prog derivation.
-        // The contract address is then keccak256(rlp([deployer, nonce=0]))[12:].
+        // The contract address is keccak256(rlp([deployer, nonce]))[12:] where nonce is
+        // the deployer's current account nonce BEFORE this transaction.
         let contract_address = if params.use_activation {
-            // Use the reveal inscription output's pkscript that was captured earlier
             let pkscript_bytes = reveal_tx.output.iter()
                 .find(|o| o.value.to_sat() == 546 && !o.script_pubkey.is_op_return())
                 .map(|o| o.script_pubkey.as_bytes().to_vec())
@@ -342,9 +342,13 @@ impl<'a> Brc20ProgExecutor<'a> {
             let pkscript_hex = hex::encode(&pkscript_bytes);
             match crate::brc20_prog::pkscript_to_eth_address(&pkscript_hex) {
                 Ok(deployer_eth) => {
-                    match crate::brc20_prog::compute_contract_address(&deployer_eth, 0) {
+                    // Use the deployer nonce hint from params if provided,
+                    // otherwise default to 0 (first deploy from this address).
+                    // On devnet, callers should track nonces across deploys.
+                    let nonce = params.deployer_nonce.unwrap_or(0);
+                    match crate::brc20_prog::compute_contract_address(&deployer_eth, nonce) {
                         Ok(contract) => {
-                            log::info!("📋 Contract address: {} (deployer: {}, pkscript: {})", contract, deployer_eth, pkscript_hex);
+                            log::info!("📋 Contract address: {} (deployer: {}, nonce: {})", contract, deployer_eth, nonce);
                             Some(contract)
                         }
                         Err(e) => {

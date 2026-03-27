@@ -148,6 +148,12 @@ pub struct Brc20ProgExecuteParams {
     /// by an external signer (e.g., browser wallet)
     #[serde(default)]
     pub return_unsigned: bool,
+    /// Deployer account nonce hint for contract address computation.
+    /// The EVM uses CREATE which derives the address from keccak256(rlp([deployer, nonce])).
+    /// On devnet, callers should track nonces across sequential deploys.
+    /// If not set, defaults to 0 (first deploy from this address).
+    #[serde(default)]
+    pub deployer_nonce: Option<u64>,
 }
 
 /// Result of a BRC20-prog execution

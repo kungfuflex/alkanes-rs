@@ -4769,6 +4769,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
                 mempool_indexer: false, // TODO: Add CLI flag when needed
                 mint_diesel,
                 return_unsigned: false,
+                deployer_nonce: None,
             };
 
             let mut executor = Brc20ProgExecutor::new(provider);
@@ -4848,6 +4849,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
                 mempool_indexer: false, // TODO: Add CLI flag when needed
                 mint_diesel,
                 return_unsigned: false,
+                deployer_nonce: None,
             };
 
             let mut executor = Brc20ProgExecutor::new(provider);
@@ -4899,6 +4901,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
                 resume_from_commit: resume,
                 mint_diesel,
                 return_unsigned: false,
+                deployer_nonce: None,
                 ordinals_strategy: Default::default(),
                 mempool_indexer: false,
             };
@@ -4956,6 +4959,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
                 resume_from_commit: resume,
                 mint_diesel,
                 return_unsigned: false,
+                deployer_nonce: None,
                 ordinals_strategy: Default::default(),
                 mempool_indexer: false,
             };
@@ -5011,6 +5015,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
                 resume_from_commit: resume,
                 mint_diesel,
                 return_unsigned: false,
+                deployer_nonce: None,
                 ordinals_strategy: Default::default(),
                 mempool_indexer: false,
             };
@@ -5067,6 +5072,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
                 resume_from_commit: resume,
                 mint_diesel,
                 return_unsigned: false,
+                deployer_nonce: None,
                 ordinals_strategy: Default::default(),
                 mempool_indexer: false,
             };
