@@ -416,4 +416,229 @@ mod tests {
         assert_eq!(v2, "hi");
         assert_eq!(v3, AlkaneId::new(1, 2));
     }
+
+    // =================================================================
+    // Additional edge case tests
+    // =================================================================
+
+    #[test]
+    fn test_very_large_u128_boundary_values() {
+        // Test u128::MAX - 1
+        let near_max = u128::MAX - 1;
+        let mut encoded = Vec::new();
+        near_max.encode_cellpack(&mut encoded);
+        let decoded = u128::decode_cellpack(&encoded, &mut 0).unwrap();
+        assert_eq!(decoded, near_max);
+
+        // Test a value that uses all 128 bits meaningfully
+        let big_val: u128 = (1u128 << 127) | (1u128 << 64) | 42;
+        let mut encoded2 = Vec::new();
+        big_val.encode_cellpack(&mut encoded2);
+        let decoded2 = u128::decode_cellpack(&encoded2, &mut 0).unwrap();
+        assert_eq!(decoded2, big_val);
+
+        // Test zero
+        let zero: u128 = 0;
+        let mut encoded3 = Vec::new();
+        zero.encode_cellpack(&mut encoded3);
+        let decoded3 = u128::decode_cellpack(&encoded3, &mut 0).unwrap();
+        assert_eq!(decoded3, 0);
+    }
+
+    #[test]
+    fn test_nested_vec_with_empty_inner() {
+        // Vec<Vec<u128>> with a mix of empty and non-empty inner vecs
+        let val: Vec<Vec<u128>> = vec![
+            vec![1, 2, 3],
+            vec![],
+            vec![100, 200],
+        ];
+        let mut encoded = Vec::new();
+        val.encode_cellpack(&mut encoded);
+
+        // Expected: 3, 3, 1, 2, 3, 0, 2, 100, 200
+        assert_eq!(encoded, vec![3, 3, 1, 2, 3, 0, 2, 100, 200]);
+
+        let decoded = Vec::<Vec<u128>>::decode_cellpack(&encoded, &mut 0).unwrap();
+        assert_eq!(decoded, val);
+    }
+
+    #[test]
+    fn test_empty_vec_of_strings_roundtrip() {
+        let val: Vec<String> = vec![];
+        let mut encoded = Vec::new();
+        val.encode_cellpack(&mut encoded);
+        assert_eq!(encoded, vec![0]);
+
+        let decoded = Vec::<String>::decode_cellpack(&encoded, &mut 0).unwrap();
+        assert!(decoded.is_empty());
+    }
+
+    #[test]
+    fn test_three_strings_in_sequence() {
+        let s1 = String::from("hello");
+        let s2 = String::from("world");
+        let s3 = String::from("!");
+
+        let mut encoded = Vec::new();
+        s1.encode_cellpack(&mut encoded);
+        s2.encode_cellpack(&mut encoded);
+        s3.encode_cellpack(&mut encoded);
+
+        let mut offset = 0;
+        let d1 = String::decode_cellpack(&encoded, &mut offset).unwrap();
+        let d2 = String::decode_cellpack(&encoded, &mut offset).unwrap();
+        let d3 = String::decode_cellpack(&encoded, &mut offset).unwrap();
+
+        assert_eq!(d1, "hello");
+        assert_eq!(d2, "world");
+        assert_eq!(d3, "!");
+    }
+
+    #[test]
+    fn test_string_exactly_16_bytes() {
+        // 16 bytes exactly; with null terminator = 17 bytes, needs 2 chunks
+        let val = String::from("0123456789abcdef"); // 16 bytes
+        let mut encoded = Vec::new();
+        val.encode_cellpack(&mut encoded);
+        assert_eq!(encoded.len(), 2, "16-byte string + null should use 2 u128 slots");
+
+        let decoded = String::decode_cellpack(&encoded, &mut 0).unwrap();
+        assert_eq!(decoded, val);
+    }
+
+    #[test]
+    fn test_string_exactly_15_bytes() {
+        // 15 bytes + null = 16 = exactly one u128 chunk
+        let val = String::from("0123456789abcde"); // 15 bytes
+        let mut encoded = Vec::new();
+        val.encode_cellpack(&mut encoded);
+        assert_eq!(encoded.len(), 1, "15-byte string + null should fit in exactly 1 u128 slot");
+
+        let decoded = String::decode_cellpack(&encoded, &mut 0).unwrap();
+        assert_eq!(decoded, val);
+    }
+
+    #[test]
+    fn test_option_invalid_discriminant() {
+        let data: Vec<u128> = vec![99]; // invalid: not 0 or 1
+        let result = Option::<u128>::decode_cellpack(&data, &mut 0);
+        assert!(result.is_err(), "Option with invalid discriminant should fail");
+    }
+
+    #[test]
+    fn test_vec_of_strings_roundtrip() {
+        let val: Vec<String> = vec![
+            "alpha".to_string(),
+            "beta".to_string(),
+            "gamma".to_string(),
+        ];
+        let mut encoded = Vec::new();
+        val.encode_cellpack(&mut encoded);
+
+        let decoded = Vec::<String>::decode_cellpack(&encoded, &mut 0).unwrap();
+        assert_eq!(decoded, val);
+    }
+
+    #[test]
+    fn test_nested_option_roundtrip() {
+        let some_some: Option<Option<u128>> = Some(Some(42));
+        let some_none: Option<Option<u128>> = Some(None);
+        let none: Option<Option<u128>> = None;
+
+        let mut enc1 = Vec::new();
+        some_some.encode_cellpack(&mut enc1);
+        assert_eq!(enc1, vec![1, 1, 42]);
+
+        let mut enc2 = Vec::new();
+        some_none.encode_cellpack(&mut enc2);
+        assert_eq!(enc2, vec![1, 0]);
+
+        let mut enc3 = Vec::new();
+        none.encode_cellpack(&mut enc3);
+        assert_eq!(enc3, vec![0]);
+
+        assert_eq!(Option::<Option<u128>>::decode_cellpack(&enc1, &mut 0).unwrap(), some_some);
+        assert_eq!(Option::<Option<u128>>::decode_cellpack(&enc2, &mut 0).unwrap(), some_none);
+        assert_eq!(Option::<Option<u128>>::decode_cellpack(&enc3, &mut 0).unwrap(), none);
+    }
+
+    #[test]
+    fn test_u64_max_roundtrip() {
+        let val = u64::MAX;
+        let mut encoded = Vec::new();
+        val.encode_cellpack(&mut encoded);
+        assert_eq!(encoded, vec![u64::MAX as u128]);
+        let decoded = u64::decode_cellpack(&encoded, &mut 0).unwrap();
+        assert_eq!(decoded, u64::MAX);
+    }
+
+    #[test]
+    fn test_bool_various_nonzero_values() {
+        // Any nonzero value should decode as true
+        let data: Vec<u128> = vec![0, 1, 2, 255, u128::MAX];
+        assert!(!bool::decode_cellpack(&data, &mut 0).unwrap());
+        assert!(bool::decode_cellpack(&data, &mut 1).unwrap());
+        assert!(bool::decode_cellpack(&data, &mut 2).unwrap());
+        assert!(bool::decode_cellpack(&data, &mut 3).unwrap());
+        assert!(bool::decode_cellpack(&data, &mut 4).unwrap());
+    }
+
+    #[test]
+    fn test_u8_roundtrip() {
+        let val: u8 = 255;
+        let mut encoded = Vec::new();
+        val.encode_cellpack(&mut encoded);
+        assert_eq!(encoded, vec![255u128]);
+        let decoded = u8::decode_cellpack(&encoded, &mut 0).unwrap();
+        assert_eq!(decoded, 255);
+    }
+
+    #[test]
+    fn test_u16_roundtrip() {
+        let val: u16 = 65535;
+        let mut encoded = Vec::new();
+        val.encode_cellpack(&mut encoded);
+        assert_eq!(encoded, vec![65535u128]);
+        let decoded = u16::decode_cellpack(&encoded, &mut 0).unwrap();
+        assert_eq!(decoded, 65535);
+    }
+
+    #[test]
+    fn test_u32_roundtrip() {
+        let val: u32 = u32::MAX;
+        let mut encoded = Vec::new();
+        val.encode_cellpack(&mut encoded);
+        assert_eq!(encoded, vec![u32::MAX as u128]);
+        let decoded = u32::decode_cellpack(&encoded, &mut 0).unwrap();
+        assert_eq!(decoded, u32::MAX);
+    }
+
+    #[test]
+    fn test_vec_of_alkane_ids_roundtrip() {
+        let val: Vec<AlkaneId> = vec![
+            AlkaneId::new(1, 2),
+            AlkaneId::new(3, 4),
+        ];
+        let mut encoded = Vec::new();
+        val.encode_cellpack(&mut encoded);
+        // length(2), block1(1), tx1(2), block2(3), tx2(4)
+        assert_eq!(encoded, vec![2, 1, 2, 3, 4]);
+
+        let decoded = Vec::<AlkaneId>::decode_cellpack(&encoded, &mut 0).unwrap();
+        assert_eq!(decoded.len(), 2);
+        assert_eq!(decoded[0], AlkaneId::new(1, 2));
+        assert_eq!(decoded[1], AlkaneId::new(3, 4));
+    }
+
+    #[test]
+    fn test_option_string_none_roundtrip() {
+        let val: Option<String> = None;
+        let mut encoded = Vec::new();
+        val.encode_cellpack(&mut encoded);
+        assert_eq!(encoded, vec![0]);
+
+        let decoded = Option::<String>::decode_cellpack(&encoded, &mut 0).unwrap();
+        assert_eq!(decoded, None);
+    }
 }

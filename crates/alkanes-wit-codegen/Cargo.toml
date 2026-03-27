@@ -11,3 +11,6 @@ alkanes-wit-parser = { path = "../alkanes-wit-parser" }
 quote = "1.0"
 proc-macro2 = "1.0"
 anyhow.workspace = true
+
+[dev-dependencies]
+serde_json = { workspace = true }

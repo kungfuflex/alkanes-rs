@@ -754,6 +754,7 @@ dependencies = [
  "anyhow",
  "proc-macro2",
  "quote",
+ "serde_json",
 ]
 
 [[package]]

@@ -64,26 +64,36 @@ pub fn parse(wit_path: &Path, manifest_path: &Path) -> Result<AlkaneContractIR> 
 
         // Process imports - these become cross-contract call clients
         for (import_key, import_item) in &world.imports {
-            if let wit_parser::WorldKey::Name(ref iface_name) = import_key {
-                if let wit_parser::WorldItem::Interface(iface_id) = import_item {
-                    let iface = &resolve.interfaces[*iface_id];
-                    let mut import_methods = Vec::new();
-                    for (func_name, func) in &iface.functions {
-                        let opcode = manifest.get_import_opcode(iface_name, func_name)?;
-                        let mut method =
-                            convert_function(&resolve, func_name, func, &manifest, true)?;
-                        method.opcode = opcode;
-                        import_methods.push(method);
+            if let wit_parser::WorldItem::Interface(iface_id) = import_item {
+                // Determine the interface name from the key
+                let iface_name = match import_key {
+                    wit_parser::WorldKey::Name(name) => name.clone(),
+                    wit_parser::WorldKey::Interface(id) => {
+                        let iface = &resolve.interfaces[*id];
+                        iface
+                            .name
+                            .clone()
+                            .unwrap_or_else(|| format!("import_{}", id.index()))
                     }
-                    imports.push(AlkaneImportIR {
-                        interface_name: iface_name.clone(),
-                        rust_client_name: format!(
-                            "{}Client",
-                            wit_name_to_pascal_case(iface_name)
-                        ),
-                        methods: import_methods,
-                    });
+                };
+
+                let iface = &resolve.interfaces[*iface_id];
+                let mut import_methods = Vec::new();
+                for (func_name, func) in &iface.functions {
+                    let opcode = manifest.get_import_opcode(&iface_name, func_name)?;
+                    let mut method =
+                        convert_function(&resolve, func_name, func, &manifest, true)?;
+                    method.opcode = opcode;
+                    import_methods.push(method);
                 }
+                imports.push(AlkaneImportIR {
+                    interface_name: iface_name.clone(),
+                    rust_client_name: format!(
+                        "{}Client",
+                        wit_name_to_pascal_case(&iface_name)
+                    ),
+                    methods: import_methods,
+                });
             }
         }
     }
