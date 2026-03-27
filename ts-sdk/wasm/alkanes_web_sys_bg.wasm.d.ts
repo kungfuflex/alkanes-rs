@@ -148,6 +148,7 @@ export const webprovider_alkanesView: (a: number, b: number, c: number, d: numbe
 export const webprovider_alkanesInspect: (a: number, b: number, c: number, d: any) => any;
 export const webprovider_alkanesInspectBytecode: (a: number, b: number, c: number, d: number, e: number, f: any) => any;
 export const webprovider_alkanesPendingUnwraps: (a: number, b: number, c: number) => any;
+export const webprovider_brc20ProgDeploy: (a: number, b: number, c: number, d: number, e: number) => any;
 export const webprovider_brc20progCall: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => any;
 export const webprovider_brc20progGetBalance: (a: number, b: number, c: number, d: number, e: number) => any;
 export const webprovider_brc20progGetCode: (a: number, b: number, c: number) => any;

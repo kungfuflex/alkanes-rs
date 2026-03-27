@@ -932,6 +932,22 @@ export class WebProvider {
         return ret;
     }
     /**
+     * Deploy a BRC20-Prog contract using the loaded wallet.
+     * Unlike the standalone brc20_prog_deploy_contract(), this uses the
+     * provider's already-loaded wallet instead of reading from disk.
+     * @param {string} foundry_json
+     * @param {string} params_json
+     * @returns {Promise<any>}
+     */
+    brc20ProgDeploy(foundry_json, params_json) {
+        const ptr0 = passStringToWasm0(foundry_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(params_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_brc20ProgDeploy(this.__wbg_ptr, ptr0, len0, ptr1, len1);
+        return ret;
+    }
+    /**
      * @returns {string}
      */
     brc20_prog_rpc_url() {
@@ -5026,17 +5042,17 @@ export function __wbg_wasmbrowserwalletprovider_new(arg0) {
     return ret;
 }
 export function __wbindgen_cast_0000000000000001(arg0, arg1) {
-    // Cast intrinsic for `Closure(Closure { dtor_idx: 3165, function: Function { arguments: [], shim_idx: 3166, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+    // Cast intrinsic for `Closure(Closure { dtor_idx: 3153, function: Function { arguments: [], shim_idx: 3154, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
     const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h2734ba064662ab68, wasm_bindgen__convert__closures_____invoke__h455513963c9e1b53);
     return ret;
 }
 export function __wbindgen_cast_0000000000000002(arg0, arg1) {
-    // Cast intrinsic for `Closure(Closure { dtor_idx: 3850, function: Function { arguments: [], shim_idx: 3851, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+    // Cast intrinsic for `Closure(Closure { dtor_idx: 3838, function: Function { arguments: [], shim_idx: 3839, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
     const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h1d0669ed74bc8e06, wasm_bindgen__convert__closures_____invoke__h59e39e4e43f2f72d);
     return ret;
 }
 export function __wbindgen_cast_0000000000000003(arg0, arg1) {
-    // Cast intrinsic for `Closure(Closure { dtor_idx: 4592, function: Function { arguments: [Externref], shim_idx: 4593, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
+    // Cast intrinsic for `Closure(Closure { dtor_idx: 4580, function: Function { arguments: [Externref], shim_idx: 4581, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
     const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h07405935f6e373f9, wasm_bindgen__convert__closures_____invoke__h2270663853d2b7ca);
     return ret;
 }

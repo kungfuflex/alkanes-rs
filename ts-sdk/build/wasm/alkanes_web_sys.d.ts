@@ -274,6 +274,12 @@ export class WebProvider {
     bitcoindGetRawTransaction(txid: string, block_hash?: string | null): Promise<any>;
     bitcoindGetTxOut(txid: string, vout: number, include_mempool: boolean): Promise<any>;
     bitcoindSendRawTransaction(tx_hex: string): Promise<any>;
+    /**
+     * Deploy a BRC20-Prog contract using the loaded wallet.
+     * Unlike the standalone brc20_prog_deploy_contract(), this uses the
+     * provider's already-loaded wallet instead of reading from disk.
+     */
+    brc20ProgDeploy(foundry_json: string, params_json: string): Promise<any>;
     brc20_prog_rpc_url(): string;
     brc20progBlockNumber(): Promise<any>;
     brc20progCall(to: string, data: string, block?: string | null): Promise<any>;

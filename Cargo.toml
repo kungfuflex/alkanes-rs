@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/*"]
+members = ["crates/*", "alkanes/alkanes-std-owned-token-wit"]
 exclude = ["crates/alkanes-web-leptos"]
 resolver = "2"
 

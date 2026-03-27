@@ -1,0 +1,13 @@
+[package]
+name = "alkanes-wit-codegen"
+version.workspace = true
+edition.workspace = true
+description = "Code generator for WIT-based alkanes contracts"
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+alkanes-wit-parser = { path = "../alkanes-wit-parser" }
+quote = "1.0"
+proc-macro2 = "1.0"
+anyhow.workspace = true

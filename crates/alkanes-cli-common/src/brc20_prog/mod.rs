@@ -20,7 +20,7 @@ pub use eth_call::{eth_call, get_payments_length, get_signer_address, get_paymen
 pub use contract_address::{compute_contract_address, pkscript_to_eth_address};
 pub use envelope::Brc20ProgEnvelope;
 pub use execute::Brc20ProgExecutor;
-pub use foundry::{parse_foundry_json, extract_deployment_bytecode};
+pub use foundry::{parse_foundry_json, parse_foundry_json_from_str, extract_deployment_bytecode};
 pub use types::{
     Brc20ProgDeployParams, Brc20ProgTransactParams, Brc20ProgExecuteParams,
     Brc20ProgExecuteResult, Brc20ProgInscriptionType, Brc20ProgDeployInscription,

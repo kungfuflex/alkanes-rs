@@ -2892,6 +2892,64 @@ impl WebProvider {
 
     // === BRC20-PROG METHODS ===
 
+    /// Deploy a BRC20-Prog contract using the loaded wallet.
+    /// Unlike the standalone brc20_prog_deploy_contract(), this uses the
+    /// provider's already-loaded wallet instead of reading from disk.
+    #[wasm_bindgen(js_name = brc20ProgDeploy)]
+    pub fn brc20prog_deploy_js(&mut self, foundry_json: String, params_json: String) -> js_sys::Promise {
+        use alkanes_cli_common::brc20_prog::{
+            Brc20ProgExecutor, Brc20ProgExecuteParams, Brc20ProgDeployInscription,
+            parse_foundry_json_from_str, extract_deployment_bytecode,
+        };
+        use wasm_bindgen_futures::future_to_promise;
+        let mut provider = self.clone();
+        future_to_promise(async move {
+            let contract_data = parse_foundry_json_from_str(&foundry_json)
+                .map_err(|e| JsValue::from_str(&format!("Failed to parse Foundry JSON: {:?}", e)))?;
+            let bytecode = extract_deployment_bytecode(&contract_data)
+                .map_err(|e| JsValue::from_str(&format!("Failed to extract bytecode: {:?}", e)))?;
+
+            let inscription = Brc20ProgDeployInscription::new(bytecode);
+            let inscription_json = serde_json::to_string(&inscription)
+                .map_err(|e| JsValue::from_str(&format!("Failed to serialize inscription: {}", e)))?;
+
+            // Build params with defaults, overriding from user-provided JSON
+            let user_params: serde_json::Value = serde_json::from_str(&params_json)
+                .map_err(|e| JsValue::from_str(&format!("Invalid params JSON: {}", e)))?;
+            let obj = user_params.as_object().cloned().unwrap_or_default();
+
+            let params = Brc20ProgExecuteParams {
+                inscription_content: inscription_json,
+                from_addresses: obj.get("from_addresses").and_then(|v| serde_json::from_value(v.clone()).ok()),
+                change_address: obj.get("change_address").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                fee_rate: obj.get("fee_rate").and_then(|v| v.as_f64()).map(|f| f as f32),
+                raw_output: obj.get("raw_output").and_then(|v| v.as_bool()).unwrap_or(false),
+                trace_enabled: obj.get("trace_enabled").and_then(|v| v.as_bool()).unwrap_or(false),
+                mine_enabled: obj.get("mine_enabled").and_then(|v| v.as_bool()).unwrap_or(false),
+                auto_confirm: obj.get("auto_confirm").and_then(|v| v.as_bool()).unwrap_or(true),
+                use_activation: obj.get("use_activation").and_then(|v| v.as_bool()).unwrap_or(false),
+                use_slipstream: obj.get("use_slipstream").and_then(|v| v.as_bool()).unwrap_or(false),
+                use_rebar: obj.get("use_rebar").and_then(|v| v.as_bool()).unwrap_or(false),
+                rebar_tier: obj.get("rebar_tier").and_then(|v| v.as_u64()).map(|v| v as u8),
+                strategy: None,
+                resume_from_commit: obj.get("resume_from_commit").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                additional_outputs: None,
+                return_unsigned: obj.get("return_unsigned").and_then(|v| v.as_bool()).unwrap_or(false),
+                ordinals_strategy: Default::default(),
+                mempool_indexer: obj.get("mempool_indexer").and_then(|v| v.as_bool()).unwrap_or(false),
+                mint_diesel: obj.get("mint_diesel").and_then(|v| v.as_bool()).unwrap_or(false),
+            };
+
+            let mut executor = Brc20ProgExecutor::new(&mut provider);
+            let result = executor.execute(params).await
+                .map_err(|e| JsValue::from_str(&format!("Deployment failed: {:?}", e)))?;
+
+            serde_json::to_string(&result)
+                .map(|json| JsValue::from_str(&json))
+                .map_err(|e| JsValue::from_str(&format!("JSON serialization error: {}", e)))
+        })
+    }
+
     /// Route a BRC20-Prog eth_* call — either to external RPC or through qubitcoin secondaryview.
     ///
     /// In qubitcoin mode (no explicit brc20_prog_rpc_url), eth_call is translated to:

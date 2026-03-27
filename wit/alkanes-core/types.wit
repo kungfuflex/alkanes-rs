@@ -1,0 +1,25 @@
+package alkanes:core;
+
+/// Core types for the alkanes smart contract system.
+interface types {
+    /// Identifies an alkane contract. Each field pair (lo, hi) represents a u128.
+    record alkane-id {
+        block: u64,
+        block-hi: u64,
+        tx: u64,
+        tx-hi: u64,
+    }
+
+    /// A transfer of alkane tokens.
+    record alkane-transfer {
+        id: alkane-id,
+        value-lo: u64,
+        value-hi: u64,
+    }
+
+    /// Response from a contract call.
+    record call-response {
+        data: list<u8>,
+        alkanes: list<alkane-transfer>,
+    }
+}
