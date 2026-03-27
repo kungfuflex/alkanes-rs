@@ -223,6 +223,7 @@ impl<'a> Brc20ProgExecutor<'a> {
                 inputs_used: vec![],
                 outputs_created: vec![],
                 traces: None,
+            contract_address: None,
                 unsigned_split_psbt,
                 unsigned_commit_psbt: Some(unsigned_commit_psbt),
                 // Reveal is already signed - return the signed tx hex, not unsigned PSBT
@@ -329,6 +330,28 @@ impl<'a> Brc20ProgExecutor<'a> {
 
         log::info!("✅ Presign+RBF strategy completed successfully!");
 
+        // Compute contract address for deploy operations.
+        // The deployer ETH address is derived from the change address pkscript,
+        // then the contract address is keccak256(rlp([deployer, nonce=0]))[12:].
+        let contract_address = if params.use_activation {
+            // Use explicit change_address, or from_addresses[0], or try wallet
+            let effective_change = params.change_address.clone()
+                .or_else(|| params.from_addresses.as_ref()
+                    .and_then(|addrs| addrs.first().cloned()));
+
+            effective_change.and_then(|addr| {
+                let parsed = bitcoin::Address::from_str(&addr).ok()?;
+                let assumed = parsed.assume_checked();
+                let pkscript_hex = hex::encode(assumed.script_pubkey().as_bytes());
+                let deployer_eth = crate::brc20_prog::pkscript_to_eth_address(&pkscript_hex).ok()?;
+                let contract = crate::brc20_prog::compute_contract_address(&deployer_eth, 0).ok()?;
+                log::info!("📋 Computed contract address: {} (deployer: {}, from: {})", contract, deployer_eth, addr);
+                Some(contract)
+            })
+        } else {
+            None
+        };
+
         Ok(Brc20ProgExecuteResult {
             split_txid: final_split_txid,
             split_fee: split_fee_opt,
@@ -341,6 +364,7 @@ impl<'a> Brc20ProgExecutor<'a> {
             inputs_used: vec![],
             outputs_created: vec![],
             traces: None,
+            contract_address,
             // No unsigned PSBTs - transactions were signed and broadcast
             unsigned_split_psbt: None,
             unsigned_commit_psbt: None,
@@ -488,6 +512,7 @@ impl<'a> Brc20ProgExecutor<'a> {
             inputs_used: vec![],
             outputs_created: vec![],
             traces: None,
+            contract_address: None,
             // No unsigned PSBTs - transactions were signed and broadcast
             unsigned_split_psbt: None,
             unsigned_commit_psbt: None,

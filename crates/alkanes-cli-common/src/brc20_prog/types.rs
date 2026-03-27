@@ -180,6 +180,11 @@ pub struct Brc20ProgExecuteResult {
     /// Trace results (if tracing was enabled)
     pub traces: Option<Vec<serde_json::Value>>,
 
+    /// Deployed contract address (for deploy operations)
+    /// Computed from the deployer's pkscript-derived ETH address at nonce 0.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub contract_address: Option<String>,
+
     // === EXTERNAL SIGNER SUPPORT ===
     // When return_unsigned=true, these fields contain PSBTs/transactions for external signing.
     // NOTE: The reveal transaction is signed INTERNALLY with the ephemeral key (the SDK
