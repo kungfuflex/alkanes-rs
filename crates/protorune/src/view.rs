@@ -26,6 +26,16 @@ use prost::Message;
 use std::fmt::Write;
 use std::io::Cursor;
 
+use bitcoin::address::{Address, NetworkUnchecked};
+use metashrew_support::address::Payload;
+
+pub fn script_pubkey_from_address(address_str: &str) -> Result<Vec<u8>> {
+    let address: Address<NetworkUnchecked> = address_str.parse()?;
+    let address = address.require_network(bitcoin::Network::Bitcoin)?;
+    let script_pubkey = address.script_pubkey();
+    Ok(script_pubkey.to_bytes())
+}
+
 pub fn outpoint_to_bytes(outpoint: &OutPoint) -> Result<Vec<u8>> {
     Ok(outpoint_encode(outpoint)?)
 }
@@ -161,8 +171,9 @@ pub fn outpoint_to_outpoint_response(outpoint: &OutPoint) -> Result<OutpointResp
 pub fn runes_by_address(input: &Vec<u8>) -> Result<WalletResponse> {
     let mut result: WalletResponse = WalletResponse::default();
     if let Some(req) = proto::protorune::WalletRequest::decode(input.as_ref()).ok() {
+        let script_pubkey = script_pubkey_from_address(&String::from_utf8(req.wallet.clone())?)?;
         result.outpoints = tables::OUTPOINTS_FOR_ADDRESS
-            .select(&req.wallet)
+            .select(&script_pubkey)
             .get_list()
             .into_iter()
             .map(|v| -> Result<OutPoint> {
@@ -172,18 +183,7 @@ pub fn runes_by_address(input: &Vec<u8>) -> Result<WalletResponse> {
             .collect::<Result<Vec<OutPoint>>>()?
             .into_iter()
             .filter_map(|v| -> Option<Result<OutpointResponse>> {
-                let outpoint_bytes = match outpoint_to_bytes(&v) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        return Some(Err(e));
-                    }
-                };
-                let _address = tables::OUTPOINT_SPENDABLE_BY.select(&outpoint_bytes).get();
-                if req.wallet.len() == _address.len() {
-                    Some(outpoint_to_outpoint_response(&v))
-                } else {
-                    None
-                }
+                Some(outpoint_to_outpoint_response(&v))
             })
             .collect::<Result<Vec<OutpointResponse>>>()?;
     }
@@ -222,46 +222,14 @@ pub fn runes_by_outpoint(input: &Vec<u8>) -> Result<OutpointResponse> {
     }
 }
 
-pub fn protorunes_by_address(input: &Vec<u8>) -> Result<WalletResponse> {
-    let mut result: WalletResponse = WalletResponse::default();
-    if let Some(req) = proto::protorune::ProtorunesWalletRequest::decode(input.as_ref()).ok() {
-        result.outpoints = tables::OUTPOINTS_FOR_ADDRESS
-            .select(&req.wallet)
-            .get_list()
-            .into_iter()
-            .map(|v| -> Result<OutPoint> {
-                let mut cursor = Cursor::new(v.as_ref().clone());
-                Ok(consensus_decode::<bitcoin::blockdata::transaction::OutPoint>(&mut cursor)?)
-            })
-            .collect::<Result<Vec<OutPoint>>>()?
-            .into_iter()
-            .filter_map(|v| -> Option<Result<OutpointResponse>> {
-                let outpoint_bytes = match outpoint_to_bytes(&v) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        return Some(Err(e));
-                    }
-                };
-                let _address = tables::OUTPOINT_SPENDABLE_BY.select(&outpoint_bytes).get();
-                if req.wallet.len() == _address.len() {
-                    Some(protorune_outpoint_to_outpoint_response(
-                        &v,
-                        req.clone().protocol_tag.unwrap().into(),
-                    ))
-                } else {
-                    None
-                }
-            })
-            .collect::<Result<Vec<OutpointResponse>>>()?;
-    }
-    Ok(result)
-}
+
 
 pub fn protorunes_by_address2(input: &Vec<u8>) -> Result<WalletResponse> {
     let mut result: WalletResponse = WalletResponse::default();
     if let Some(req) = proto::protorune::ProtorunesWalletRequest::decode(input.as_ref()).ok() {
+        let script_pubkey = script_pubkey_from_address(&String::from_utf8(req.wallet.clone())?)?;
         result.outpoints = tables::OUTPOINT_SPENDABLE_BY_ADDRESS
-            .select(&req.wallet)
+            .select(&script_pubkey)
             .map_ll(|ptr, _| -> Result<OutpointResponse> {
                 let mut cursor = Cursor::new(ptr.get().as_ref().clone());
                 let outpoint =
@@ -272,7 +240,7 @@ pub fn protorunes_by_address2(input: &Vec<u8>) -> Result<WalletResponse> {
                 )
             })
             .into_iter()
-            .collect::<Result<Vec<OutpointResponse>>>()?
+            .collect::<Result<Vec<OutpointResponse>>>()?;
     }
     Ok(result)
 }
