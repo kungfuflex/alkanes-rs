@@ -44,8 +44,8 @@ impl GpuDevice {
                     label: Some("alkanes-gpu"),
                     required_features: wgpu::Features::empty(),
                     required_limits: wgpu::Limits {
-                        max_storage_buffer_binding_size: 128 * 1024 * 1024, // 128 MB
-                        max_buffer_size: 256 * 1024 * 1024, // 256 MB
+                        max_storage_buffer_binding_size: 1024 * 1024 * 1024, // 1 GB
+                        max_buffer_size: 1024 * 1024 * 1024, // 1 GB
                         max_compute_workgroup_size_x: 64,
                         ..wgpu::Limits::default()
                     },

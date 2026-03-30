@@ -1,0 +1,22 @@
+[package]
+name = "alkanes-kiln"
+version = "0.1.0"
+edition = "2021"
+description = "GPU execution runtime for alkanes contracts - manages compiled kernels and dispatch"
+
+[dependencies]
+sha2 = "0.10"
+hex = "0.4"
+anyhow = "1.0"
+log = "0.4"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+alkanes-llvm = { path = "../alkanes-llvm", optional = true }
+alkanes-gpu = { path = "../alkanes-gpu", optional = true }
+wgpu = { version = "24", optional = true }
+bytemuck = { version = "1.14", optional = true }
+pollster = { version = "0.4", optional = true }
+
+[features]
+default = []
+gpu = ["alkanes-llvm", "alkanes-gpu", "wgpu", "bytemuck", "pollster"]

@@ -19,12 +19,12 @@ use types::*;
 /// The embedded WGSL shader source.
 pub const SHADER_SOURCE: &str = include_str!("shader.wgsl");
 
-/// Per-thread WASM memory size in u32 words (1 MB = 262144 words).
-const WASM_MEMORY_WORDS_PER_THREAD: usize = 262144;
+/// Per-thread WASM memory size in u32 words (2 MB = 524288 words).
+const WASM_MEMORY_WORDS_PER_THREAD: usize = 4194304; // 32 pages = 2MB
 /// Per-thread execution state size in u32 words.
 /// Must match THREAD_STATE_SIZE in shader.wgsl:
-///   STACK_SIZE(512) + LOCALS_SIZE(256) + MAX_CALL_FRAMES(64)*4 + MAX_LABELS(128)*3 + SCALARS(12)
-const THREAD_STATE_WORDS: usize = 512 + 256 + 64 * 4 + 128 * 3 + 12;
+///   STACK_SIZE(512) + LOCALS_SIZE(256) + MAX_CALL_FRAMES(64)*4 + MAX_LABELS(128)*3 + SCALARS(12) + CONTRACT_STATE(22)
+const THREAD_STATE_WORDS: usize = 512 + 256 + 64 * 4 + 128 * 3 + 12 + 22;
 
 /// Top-level GPU pipeline for alkanes message execution.
 pub struct AlkanesGpu {
@@ -112,7 +112,10 @@ impl AlkanesGpu {
             0, // import_count
             0, // entry_pc
             0, // func_count
-            10, // func_table_offset (right after header)
+            13, // func_table_offset (right after header)
+            1, // contract_count
+            0, // contract_table_offset
+            13, // import_map_offset (right after header, no bytecode)
         ];
         self.execute_shard_raw(&input, header.message_count as usize)
     }
@@ -140,7 +143,7 @@ mod tests {
             bytecode_words[i / 4] |= (b as u32) << ((i % 4) * 8);
         }
 
-        let func_table_offset = 10 + bytecode_words.len() as u32;
+        let func_table_offset = 17 + bytecode_words.len() as u32;
 
         let mut input: Vec<u32> = vec![
             message_count,
@@ -153,8 +156,24 @@ mod tests {
             entry_pc,
             0,
             func_table_offset,
+            1, // contract_count (1 = primary only)
+            0, // contract_table_offset (unused when count=1)
+            0, // import_map_offset — placeholder, filled below
+            0, // globals_count
+            0, // globals_offset (none)
+            0, // data_segments_count
+            0, // data_segments_offset (none)
         ];
         input.extend_from_slice(&bytecode_words);
+        // Identity import map (import index i -> host function i)
+        let import_map_offset = input.len() as u32;
+        input[12] = import_map_offset;
+        for i in 0..import_count {
+            input.push(i);
+        }
+        // Set globals_offset and data_segments_offset to end of import map
+        input[14] = input.len() as u32;
+        input[16] = input.len() as u32;
         input
     }
 
@@ -289,6 +308,74 @@ mod tests {
         assert_eq!(results[0].ejection_reason, 5, "reason should be EXTCALL (5)");
     }
 
+
+    #[test]
+    fn test_extcall_extracts_target_alkane_id() {
+        let _ = env_logger::try_init();
+
+        let gpu = match AlkanesGpu::new() {
+            Ok(gpu) => gpu,
+            Err(e) => {
+                eprintln!("Skipping GPU test (no adapter): {}", e);
+                return;
+            }
+        };
+
+        // Build bytecode that:
+        // 1. Writes a mock cellpack at WASM memory address 100
+        //    (AlkaneId: block=42, tx=7 — two u128 LE values)
+        // 2. Pushes HOST_CALL args onto stack
+        // 3. Calls HOST_CALL (func 15)
+        //
+        // We need to write the cellpack data into WASM memory first,
+        // then push the args and call.
+        //
+        // Memory layout at addr 100: [42 as u128 LE][7 as u128 LE]
+        // Bytecode:
+        //   i32.const 100   (dest addr)
+        //   i32.const 42    (block value to store)
+        //   i32.store 0 0   (store block low word at addr 100)
+        //   -- push args for HOST_CALL --
+        //   i32.const 100   (cellpack_ptr)
+        //   i32.const 0     (incoming_alkanes_ptr)
+        //   i32.const 0     (checkpoint_ptr)
+        //   i64.const 0     (start_fuel)
+        //   call 15          (HOST_CALL)
+        //   end
+
+        let bytecode: Vec<u8> = vec![
+            // Store block=42 at memory offset 100 (little-endian u32)
+            0x41, 0xe4, 0x00,       // i32.const 100
+            0x41, 0x2A,             // i32.const 42
+            0x36, 0x02, 0x00,       // i32.store align=4 offset=0
+            // Store tx=7 at memory offset 116 (100 + 16)
+            0x41, 0xf4, 0x00,       // i32.const 116
+            0x41, 0x07,             // i32.const 7
+            0x36, 0x02, 0x00,       // i32.store align=4 offset=0
+            // Push HOST_CALL args (i64 as two i32 words on the stack)
+            0x41, 0xe4, 0x00,       // i32.const 100  (cellpack_ptr)
+            0x41, 0x00,             // i32.const 0    (incoming_alkanes_ptr)
+            0x41, 0x00,             // i32.const 0    (checkpoint_ptr)
+            0x41, 0x00,             // i32.const 0    (start_fuel lo)
+            0x41, 0x00,             // i32.const 0    (start_fuel hi)
+            0x10, 0x0F,             // call 15        (HOST_CALL)
+            0x0B,                   // end
+        ];
+
+        let input_bytes = build_input(1, 0, 100, 1_000_000, &bytecode, 18, 0);
+        let results = gpu.execute_shard_raw(&input_bytes, 1).unwrap();
+
+        assert_eq!(results[0].ejected, 1, "should be ejected");
+        assert_eq!(results[0].ejection_reason, 5, "reason should be EXTCALL");
+        assert_eq!(results[0].return_data_len, 32, "should have 32-byte return data");
+
+        // Extract AlkaneId from return_data
+        let block = u128::from_le_bytes(results[0].return_data[0..16].try_into().unwrap());
+        let tx = u128::from_le_bytes(results[0].return_data[16..32].try_into().unwrap());
+        assert_eq!(block, 42, "target block should be 42");
+        assert_eq!(tx, 7, "target tx should be 7");
+    }
+
     #[test]
     fn test_fuel_exhaustion() {
         let _ = env_logger::try_init();
@@ -317,3 +404,521 @@ mod tests {
         assert_eq!(results[0].ejection_reason, 6, "reason should be FUEL_EXHAUSTED (6)");
     }
 }
+
+#[cfg(test)]
+mod tests_i64 {
+    use super::*;
+
+    /// Build a minimal input buffer with the shader header layout.
+    fn build_input(
+        message_count: u32,
+        kv_count: u32,
+        block_height: u32,
+        fuel: u32,
+        bytecode: &[u8],
+        import_count: u32,
+        entry_pc: u32,
+    ) -> Vec<u32> {
+        let bytecode_len = bytecode.len() as u32;
+        let word_count = ((bytecode.len() + 3) / 4) as usize;
+        let mut bytecode_words: Vec<u32> = vec![0u32; word_count];
+        for (i, &b) in bytecode.iter().enumerate() {
+            bytecode_words[i / 4] |= (b as u32) << ((i % 4) * 8);
+        }
+        let func_table_offset = 17 + bytecode_words.len() as u32;
+        let mut input: Vec<u32> = vec![
+            message_count, kv_count, block_height, fuel, 0,
+            bytecode_len, import_count, entry_pc, 0, func_table_offset,
+            1, // contract_count (1 = primary only)
+            0, // contract_table_offset (unused when count=1)
+            0, // import_map_offset — placeholder
+            0, // globals_count
+            0, // globals_offset
+            0, // data_segments_count
+            0, // data_segments_offset
+        ];
+        input.extend_from_slice(&bytecode_words);
+        // Identity import map
+        let import_map_offset = input.len() as u32;
+        input[12] = import_map_offset;
+        for i in 0..import_count {
+            input.push(i);
+        }
+        // Set globals_offset and data_segments_offset to end of import map
+        input[14] = input.len() as u32;
+        input[16] = input.len() as u32;
+        input
+    }
+
+    /// Encode an i64 value as signed LEB128.
+    fn leb128_i64(mut val: i64) -> Vec<u8> {
+        let mut result = Vec::new();
+        loop {
+            let mut byte = (val & 0x7f) as u8;
+            val >>= 7;
+            let more = !(((val == 0) && (byte & 0x40 == 0)) ||
+                         ((val == -1) && (byte & 0x40 != 0)));
+            if more {
+                byte |= 0x80;
+            }
+            result.push(byte);
+            if !more { break; }
+        }
+        result
+    }
+
+    #[test]
+    fn test_i64_const_small() {
+        let _ = env_logger::try_init();
+        let gpu = match AlkanesGpu::new() {
+            Ok(gpu) => gpu,
+            Err(e) => { eprintln!("Skipping GPU test: {}", e); return; }
+        };
+        let mut bytecode: Vec<u8> = vec![0x42];
+        bytecode.extend_from_slice(&leb128_i64(42));
+        bytecode.push(0xA7); // i32.wrap_i64
+        bytecode.push(0x0B);
+        let input = build_input(1, 0, 100, 1_000_000, &bytecode, 0, 0);
+        let results = gpu.execute_shard_raw(&input, 1).unwrap();
+        assert_eq!(results[0].ejected, 0, "should not eject: reason={}", results[0].ejection_reason);
+    }
+
+    #[test]
+    fn test_i64_const_large() {
+        let _ = env_logger::try_init();
+        let gpu = match AlkanesGpu::new() {
+            Ok(gpu) => gpu,
+            Err(e) => { eprintln!("Skipping GPU test: {}", e); return; }
+        };
+        let mut bytecode: Vec<u8> = vec![0x42];
+        bytecode.extend_from_slice(&leb128_i64(0x100000001i64));
+        bytecode.push(0xA7);
+        bytecode.push(0x0B);
+        let input = build_input(1, 0, 100, 1_000_000, &bytecode, 0, 0);
+        let results = gpu.execute_shard_raw(&input, 1).unwrap();
+        assert_eq!(results[0].ejected, 0, "should not eject: reason={}", results[0].ejection_reason);
+    }
+
+    #[test]
+    fn test_i64_const_negative() {
+        let _ = env_logger::try_init();
+        let gpu = match AlkanesGpu::new() {
+            Ok(gpu) => gpu,
+            Err(e) => { eprintln!("Skipping GPU test: {}", e); return; }
+        };
+        let mut bytecode: Vec<u8> = vec![0x42];
+        bytecode.extend_from_slice(&leb128_i64(-1i64));
+        bytecode.push(0xA7);
+        bytecode.push(0x0B);
+        let input = build_input(1, 0, 100, 1_000_000, &bytecode, 0, 0);
+        let results = gpu.execute_shard_raw(&input, 1).unwrap();
+        assert_eq!(results[0].ejected, 0, "should not eject: reason={}", results[0].ejection_reason);
+    }
+
+    #[test]
+    fn test_i64_add_with_carry() {
+        let _ = env_logger::try_init();
+        let gpu = match AlkanesGpu::new() {
+            Ok(gpu) => gpu,
+            Err(e) => { eprintln!("Skipping GPU test: {}", e); return; }
+        };
+        // 0xFFFFFFFF + 1 = 0x100000000 (tests carry into hi word)
+        let mut bytecode: Vec<u8> = Vec::new();
+        bytecode.push(0x42); bytecode.extend_from_slice(&leb128_i64(0xFFFFFFFFi64));
+        bytecode.push(0x42); bytecode.extend_from_slice(&leb128_i64(1i64));
+        bytecode.push(0x7C); // i64.add
+        bytecode.push(0x50); // i64.eqz -> 0 (not zero)
+        bytecode.push(0x0B);
+        let input = build_input(1, 0, 100, 1_000_000, &bytecode, 0, 0);
+        let results = gpu.execute_shard_raw(&input, 1).unwrap();
+        assert_eq!(results[0].ejected, 0, "should not eject: reason={}", results[0].ejection_reason);
+    }
+
+    #[test]
+    fn test_i64_add_simple() {
+        let _ = env_logger::try_init();
+        let gpu = match AlkanesGpu::new() {
+            Ok(gpu) => gpu,
+            Err(e) => { eprintln!("Skipping GPU test: {}", e); return; }
+        };
+        let mut bytecode: Vec<u8> = Vec::new();
+        bytecode.push(0x42); bytecode.extend_from_slice(&leb128_i64(10));
+        bytecode.push(0x42); bytecode.extend_from_slice(&leb128_i64(32));
+        bytecode.push(0x7C); // i64.add
+        bytecode.push(0xA7); // i32.wrap_i64
+        bytecode.push(0x1A); // drop
+        bytecode.push(0x0B);
+        let input = build_input(1, 0, 100, 1_000_000, &bytecode, 0, 0);
+        let results = gpu.execute_shard_raw(&input, 1).unwrap();
+        assert_eq!(results[0].ejected, 0, "should not eject: reason={}", results[0].ejection_reason);
+    }
+
+    #[test]
+    fn test_i64_sub() {
+        let _ = env_logger::try_init();
+        let gpu = match AlkanesGpu::new() {
+            Ok(gpu) => gpu,
+            Err(e) => { eprintln!("Skipping GPU test: {}", e); return; }
+        };
+        let mut bytecode: Vec<u8> = Vec::new();
+        bytecode.push(0x42); bytecode.extend_from_slice(&leb128_i64(100));
+        bytecode.push(0x42); bytecode.extend_from_slice(&leb128_i64(58));
+        bytecode.push(0x7D); // i64.sub
+        bytecode.push(0xA7); bytecode.push(0x1A); bytecode.push(0x0B);
+        let input = build_input(1, 0, 100, 1_000_000, &bytecode, 0, 0);
+        let results = gpu.execute_shard_raw(&input, 1).unwrap();
+        assert_eq!(results[0].ejected, 0, "should not eject: reason={}", results[0].ejection_reason);
+    }
+
+    #[test]
+    fn test_i64_mul() {
+        let _ = env_logger::try_init();
+        let gpu = match AlkanesGpu::new() {
+            Ok(gpu) => gpu,
+            Err(e) => { eprintln!("Skipping GPU test: {}", e); return; }
+        };
+        let mut bytecode: Vec<u8> = Vec::new();
+        bytecode.push(0x42); bytecode.extend_from_slice(&leb128_i64(6));
+        bytecode.push(0x42); bytecode.extend_from_slice(&leb128_i64(7));
+        bytecode.push(0x7E); // i64.mul
+        bytecode.push(0xA7); bytecode.push(0x1A); bytecode.push(0x0B);
+        let input = build_input(1, 0, 100, 1_000_000, &bytecode, 0, 0);
+        let results = gpu.execute_shard_raw(&input, 1).unwrap();
+        assert_eq!(results[0].ejected, 0, "should not eject: reason={}", results[0].ejection_reason);
+    }
+
+    #[test]
+    fn test_i64_extend_i32_u() {
+        let _ = env_logger::try_init();
+        let gpu = match AlkanesGpu::new() {
+            Ok(gpu) => gpu,
+            Err(e) => { eprintln!("Skipping GPU test: {}", e); return; }
+        };
+        let bytecode: Vec<u8> = vec![
+            0x41, 0x2A, // i32.const 42
+            0xAD,       // i64.extend_i32_u
+            0xA7,       // i32.wrap_i64
+            0x1A, 0x0B,
+        ];
+        let input = build_input(1, 0, 100, 1_000_000, &bytecode, 0, 0);
+        let results = gpu.execute_shard_raw(&input, 1).unwrap();
+        assert_eq!(results[0].ejected, 0, "should not eject: reason={}", results[0].ejection_reason);
+    }
+
+    #[test]
+    fn test_i64_extend_i32_s() {
+        let _ = env_logger::try_init();
+        let gpu = match AlkanesGpu::new() {
+            Ok(gpu) => gpu,
+            Err(e) => { eprintln!("Skipping GPU test: {}", e); return; }
+        };
+        let bytecode: Vec<u8> = vec![
+            0x41, 0x7F, // i32.const -1
+            0xAC,       // i64.extend_i32_s
+            0x50,       // i64.eqz -> 0 (non-zero)
+            0x1A, 0x0B,
+        ];
+        let input = build_input(1, 0, 100, 1_000_000, &bytecode, 0, 0);
+        let results = gpu.execute_shard_raw(&input, 1).unwrap();
+        assert_eq!(results[0].ejected, 0, "should not eject: reason={}", results[0].ejection_reason);
+    }
+
+    #[test]
+    fn test_i64_store_load() {
+        let _ = env_logger::try_init();
+        let gpu = match AlkanesGpu::new() {
+            Ok(gpu) => gpu,
+            Err(e) => { eprintln!("Skipping GPU test: {}", e); return; }
+        };
+        let mut bytecode: Vec<u8> = Vec::new();
+        bytecode.extend_from_slice(&[0x41, 0xe4, 0x00]); // i32.const 100
+        bytecode.push(0x42); bytecode.extend_from_slice(&leb128_i64(0x0000000200000001i64));
+        bytecode.extend_from_slice(&[0x37, 0x00, 0x00]); // i64.store
+        bytecode.extend_from_slice(&[0x41, 0xe4, 0x00]); // i32.const 100
+        bytecode.extend_from_slice(&[0x29, 0x00, 0x00]); // i64.load
+        bytecode.push(0xA7); // i32.wrap_i64
+        bytecode.push(0x1A); bytecode.push(0x0B);
+        let input = build_input(1, 0, 100, 1_000_000, &bytecode, 0, 0);
+        let results = gpu.execute_shard_raw(&input, 1).unwrap();
+        assert_eq!(results[0].ejected, 0, "should not eject: reason={}", results[0].ejection_reason);
+    }
+
+    #[test]
+    fn test_i64_bitwise() {
+        let _ = env_logger::try_init();
+        let gpu = match AlkanesGpu::new() {
+            Ok(gpu) => gpu,
+            Err(e) => { eprintln!("Skipping GPU test: {}", e); return; }
+        };
+        let mut bytecode: Vec<u8> = Vec::new();
+        bytecode.push(0x42); bytecode.extend_from_slice(&leb128_i64(0xFF));
+        bytecode.push(0x42); bytecode.extend_from_slice(&leb128_i64(0x0F));
+        bytecode.push(0x83); // i64.and
+        bytecode.push(0xA7); bytecode.push(0x1A); bytecode.push(0x0B);
+        let input = build_input(1, 0, 100, 1_000_000, &bytecode, 0, 0);
+        let results = gpu.execute_shard_raw(&input, 1).unwrap();
+        assert_eq!(results[0].ejected, 0, "should not eject: reason={}", results[0].ejection_reason);
+    }
+
+    #[test]
+    fn test_i64_shl() {
+        let _ = env_logger::try_init();
+        let gpu = match AlkanesGpu::new() {
+            Ok(gpu) => gpu,
+            Err(e) => { eprintln!("Skipping GPU test: {}", e); return; }
+        };
+        let mut bytecode: Vec<u8> = Vec::new();
+        bytecode.push(0x42); bytecode.extend_from_slice(&leb128_i64(1));
+        bytecode.push(0x42); bytecode.extend_from_slice(&leb128_i64(32));
+        bytecode.push(0x86); // i64.shl
+        bytecode.push(0x50); // i64.eqz -> 0
+        bytecode.push(0x1A); bytecode.push(0x0B);
+        let input = build_input(1, 0, 100, 1_000_000, &bytecode, 0, 0);
+        let results = gpu.execute_shard_raw(&input, 1).unwrap();
+        assert_eq!(results[0].ejected, 0, "should not eject: reason={}", results[0].ejection_reason);
+    }
+
+    #[test]
+    fn test_i64_comparisons() {
+        let _ = env_logger::try_init();
+        let gpu = match AlkanesGpu::new() {
+            Ok(gpu) => gpu,
+            Err(e) => { eprintln!("Skipping GPU test: {}", e); return; }
+        };
+        let mut bytecode: Vec<u8> = Vec::new();
+        bytecode.push(0x42); bytecode.extend_from_slice(&leb128_i64(10));
+        bytecode.push(0x42); bytecode.extend_from_slice(&leb128_i64(20));
+        bytecode.push(0x54); // i64.lt_u
+        bytecode.push(0x1A); bytecode.push(0x0B);
+        let input = build_input(1, 0, 100, 1_000_000, &bytecode, 0, 0);
+        let results = gpu.execute_shard_raw(&input, 1).unwrap();
+        assert_eq!(results[0].ejected, 0, "should not eject: reason={}", results[0].ejection_reason);
+    }
+
+    #[test]
+    fn test_i64_clz() {
+        let _ = env_logger::try_init();
+        let gpu = match AlkanesGpu::new() {
+            Ok(gpu) => gpu,
+            Err(e) => { eprintln!("Skipping GPU test: {}", e); return; }
+        };
+        let mut bytecode: Vec<u8> = Vec::new();
+        bytecode.push(0x42); bytecode.extend_from_slice(&leb128_i64(1));
+        bytecode.push(0x79); // i64.clz
+        bytecode.push(0xA7); bytecode.push(0x1A); bytecode.push(0x0B);
+        let input = build_input(1, 0, 100, 1_000_000, &bytecode, 0, 0);
+        let results = gpu.execute_shard_raw(&input, 1).unwrap();
+        assert_eq!(results[0].ejected, 0, "should not eject: reason={}", results[0].ejection_reason);
+    }
+
+    #[test]
+    fn test_i64_div_u() {
+        let _ = env_logger::try_init();
+        let gpu = match AlkanesGpu::new() {
+            Ok(gpu) => gpu,
+            Err(e) => { eprintln!("Skipping GPU test: {}", e); return; }
+        };
+        let mut bytecode: Vec<u8> = Vec::new();
+        bytecode.push(0x42); bytecode.extend_from_slice(&leb128_i64(84));
+        bytecode.push(0x42); bytecode.extend_from_slice(&leb128_i64(2));
+        bytecode.push(0x80); // i64.div_u
+        bytecode.push(0xA7); bytecode.push(0x1A); bytecode.push(0x0B);
+        let input = build_input(1, 0, 100, 1_000_000, &bytecode, 0, 0);
+        let results = gpu.execute_shard_raw(&input, 1).unwrap();
+        assert_eq!(results[0].ejected, 0, "should not eject: reason={}", results[0].ejection_reason);
+    }
+
+    #[test]
+    fn test_i64_div_by_zero_traps() {
+        let _ = env_logger::try_init();
+        let gpu = match AlkanesGpu::new() {
+            Ok(gpu) => gpu,
+            Err(e) => { eprintln!("Skipping GPU test: {}", e); return; }
+        };
+        let mut bytecode: Vec<u8> = Vec::new();
+        bytecode.push(0x42); bytecode.extend_from_slice(&leb128_i64(42));
+        bytecode.push(0x42); bytecode.extend_from_slice(&leb128_i64(0));
+        bytecode.push(0x80); // i64.div_u
+        bytecode.push(0x0B);
+        let input = build_input(1, 0, 100, 1_000_000, &bytecode, 0, 0);
+        let results = gpu.execute_shard_raw(&input, 1).unwrap();
+        assert_eq!(results[0].ejected, 1, "should eject on div by zero");
+        assert_eq!(results[0].ejection_reason, 7, "should trap (reason=7)");
+    }
+
+    #[test]
+    fn test_i64_in_if_else_skip() {
+        let _ = env_logger::try_init();
+        let gpu = match AlkanesGpu::new() {
+            Ok(gpu) => gpu,
+            Err(e) => { eprintln!("Skipping GPU test: {}", e); return; }
+        };
+        // Test that label-skipping correctly handles i64.const LEB128 in dead branch
+        let mut bytecode: Vec<u8> = vec![
+            0x41, 0x00, // i32.const 0 (false)
+            0x04, 0x40, // if [void]
+        ];
+        bytecode.push(0x42); // i64.const (in dead branch)
+        bytecode.extend_from_slice(&leb128_i64(99999i64));
+        bytecode.push(0x1A); // drop
+        bytecode.push(0x05); // else
+        bytecode.push(0x01); // nop
+        bytecode.push(0x0B); // end (if)
+        bytecode.push(0x0B); // end (func)
+        let input = build_input(1, 0, 100, 1_000_000, &bytecode, 0, 0);
+        let results = gpu.execute_shard_raw(&input, 1).unwrap();
+        assert_eq!(results[0].ejected, 0, "should not eject: reason={}", results[0].ejection_reason);
+    }
+}
+
+
+#[cfg(test)]
+mod tests_multi_contract {
+    use super::*;
+    use crate::pipeline::{build_shard_input_multi, ContractInfo};
+
+    #[test]
+    fn test_multi_contract_dispatch() {
+        let _ = env_logger::try_init();
+
+        let gpu = match AlkanesGpu::new() {
+            Ok(gpu) => gpu,
+            Err(e) => {
+                eprintln!("Skipping GPU test (no adapter): {}", e);
+                return;
+            }
+        };
+
+        // Contract B: simple contract that pushes 42 and returns
+        // Bytecode: i32.const 42, end
+        let contract_b_bytecode: Vec<u8> = vec![
+            0x41, 0x2A, // i32.const 42
+            0x0B,       // end
+        ];
+
+        // Contract A: writes target AlkaneId (block=2, tx=1) to memory,
+        // then calls HOST_CALL targeting that contract.
+        // After the call returns, the return value (42) is on the stack.
+        // We drop it and end.
+        let contract_a_bytecode: Vec<u8> = vec![
+            // Store block=2 at memory offset 100 (little-endian u32)
+            0x41, 0xe4, 0x00,       // i32.const 100
+            0x41, 0x02,             // i32.const 2
+            0x36, 0x02, 0x00,       // i32.store align=4 offset=0
+            // Store tx=1 at memory offset 116 (100 + 16)
+            0x41, 0xf4, 0x00,       // i32.const 116
+            0x41, 0x01,             // i32.const 1
+            0x36, 0x02, 0x00,       // i32.store align=4 offset=0
+            // Push HOST_CALL args
+            0x41, 0xe4, 0x00,       // i32.const 100  (cellpack_ptr)
+            0x41, 0x00,             // i32.const 0    (incoming_alkanes_ptr)
+            0x41, 0x00,             // i32.const 0    (checkpoint_ptr)
+            0x41, 0x00,             // i32.const 0    (start_fuel lo)
+            0x41, 0x00,             // i32.const 0    (start_fuel hi)
+            0x10, 0x0F,             // call 15        (HOST_CALL)
+            // After HOST_CALL returns, result is on stack
+            0x1A,                   // drop (the return value)
+            0x0B,                   // end
+        ];
+
+        // Build multi-contract shard
+        let additional = vec![ContractInfo {
+            alkane_id: (2, 1),  // block=2, tx=1
+            bytecode: contract_b_bytecode,
+            import_count: 0,
+            entry_pc: 0,
+            func_table: vec![],
+            import_map: vec![],
+            globals_packed: vec![],
+            globals_count: 0,
+            data_segments_packed: vec![],
+            data_segments_count: 0,
+        }];
+
+        // Identity import map for 18 host functions
+        let identity_map: Vec<u32> = (0..18).collect();
+        let input = build_shard_input_multi(
+            1,     // 1 message
+            100,   // block_height
+            1_000_000, // fuel
+            &contract_a_bytecode,
+            18,    // import_count (18 host functions)
+            0,     // entry_pc
+            &[],   // no func_table for primary
+            &identity_map,
+            &[], 0, &[], 0,  // no globals or data segments
+            &additional,
+            &[],   // no kv pairs
+        );
+
+        let results = gpu.execute_shard_raw(&input, 1).unwrap();
+
+        assert_eq!(
+            results[0].ejected, 0,
+            "Contract A should complete without ejection. reason={}",
+            results[0].ejection_reason
+        );
+        assert_eq!(
+            results[0].success, 1,
+            "Contract A should succeed"
+        );
+    }
+
+    #[test]
+    fn test_multi_contract_ejects_when_not_found() {
+        let _ = env_logger::try_init();
+
+        let gpu = match AlkanesGpu::new() {
+            Ok(gpu) => gpu,
+            Err(e) => {
+                eprintln!("Skipping GPU test (no adapter): {}", e);
+                return;
+            }
+        };
+
+        // Contract A calls a contract that is NOT in the multi-contract table
+        let contract_a_bytecode: Vec<u8> = vec![
+            // Store block=99 at memory offset 100
+            0x41, 0xe4, 0x00,       // i32.const 100
+            0x41, 0xe3, 0x00,       // i32.const 99
+            0x36, 0x02, 0x00,       // i32.store align=4 offset=0
+            // Store tx=88 at memory offset 116
+            0x41, 0xf4, 0x00,       // i32.const 116
+            0x41, 0xd8, 0x00,       // i32.const 88
+            0x36, 0x02, 0x00,       // i32.store align=4 offset=0
+            // Push HOST_CALL args
+            0x41, 0xe4, 0x00,       // i32.const 100  (cellpack_ptr)
+            0x41, 0x00,             // i32.const 0    (incoming_alkanes_ptr)
+            0x41, 0x00,             // i32.const 0    (checkpoint_ptr)
+            0x41, 0x00,             // i32.const 0    (start_fuel lo)
+            0x41, 0x00,             // i32.const 0    (start_fuel hi)
+            0x10, 0x0F,             // call 15        (HOST_CALL)
+            0x0B,                   // end
+        ];
+
+        // Build with NO additional contracts
+        let identity_map2: Vec<u32> = (0..18).collect();
+        let input = build_shard_input_multi(
+            1, 100, 1_000_000,
+            &contract_a_bytecode,
+            18, 0, &[],
+            &identity_map2,
+            &[], 0, &[], 0,  // no globals or data segments
+            &[],  // no additional contracts
+            &[],
+        );
+
+        let results = gpu.execute_shard_raw(&input, 1).unwrap();
+
+        assert_eq!(results[0].ejected, 1, "should be ejected");
+        assert_eq!(results[0].ejection_reason, 5, "reason should be EXTCALL (5)");
+        assert_eq!(results[0].return_data_len, 32, "should have 32-byte return data");
+
+        // Verify extracted AlkaneId
+        let block = u128::from_le_bytes(results[0].return_data[0..16].try_into().unwrap());
+        let tx = u128::from_le_bytes(results[0].return_data[16..32].try_into().unwrap());
+        assert_eq!(block, 99, "target block should be 99");
+        assert_eq!(tx, 88, "target tx should be 88");
+    }
+}
+

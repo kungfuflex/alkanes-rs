@@ -566,6 +566,7 @@ dependencies = [
  "anyhow",
  "bytemuck",
  "env_logger 0.11.10",
+ "flate2",
  "log",
  "pollster",
  "tokio",
@@ -609,6 +610,35 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "url",
+]
+
+[[package]]
+name = "alkanes-kiln"
+version = "0.1.0"
+dependencies = [
+ "alkanes-gpu",
+ "alkanes-llvm",
+ "anyhow",
+ "bytemuck",
+ "hex",
+ "log",
+ "pollster",
+ "sha2",
+ "wgpu",
+]
+
+[[package]]
+name = "alkanes-llvm"
+version = "0.1.0"
+dependencies = [
+ "alkanes-gpu",
+ "anyhow",
+ "either",
+ "env_logger 0.11.10",
+ "inkwell",
+ "log",
+ "pollster",
+ "wgpu",
 ]
 
 [[package]]
@@ -5292,6 +5322,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "inkwell"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "40fb405537710d51f6bdbc8471365ddd4cd6d3a3c3ad6e0c8291691031ba94b2"
+dependencies = [
+ "either",
+ "inkwell_internals",
+ "libc",
+ "llvm-sys",
+ "once_cell",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "inkwell_internals"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9dd28cfd4cfba665d47d31c08a6ba637eed16770abca2eccbbc3ca831fef1e44"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
+
+[[package]]
 name = "inout"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5713,6 +5768,20 @@ name = "litrs"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "11d3d7f243d5c5a8b9bb5d6dd2b1602c0cb0b9db1621bafc7ed66e35ff9fe092"
+
+[[package]]
+name = "llvm-sys"
+version = "180.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "778fa5fa02e32728e718f11eec147e6f134137399ab02fd2c13d32476337affa"
+dependencies = [
+ "anyhow",
+ "cc",
+ "lazy_static",
+ "libc",
+ "regex-lite",
+ "semver 1.0.27",
+]
 
 [[package]]
 name = "local-channel"

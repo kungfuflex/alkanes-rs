@@ -1,0 +1,17 @@
+[package]
+name = "alkanes-llvm"
+version = "0.1.0"
+edition = "2021"
+description = "WASM-to-SPIR-V compiler for GPU-accelerated alkanes contract execution"
+
+[dependencies]
+inkwell = { version = "0.5", features = ["llvm18-0"] }
+anyhow = "1.0"
+log = "0.4"
+env_logger = "0.11"
+either = "1"
+alkanes-gpu = { path = "../alkanes-gpu" }
+
+[dev-dependencies]
+pollster = "0.4"
+wgpu = "24"
