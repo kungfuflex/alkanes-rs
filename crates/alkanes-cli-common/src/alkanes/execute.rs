@@ -1723,8 +1723,10 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                     amount: e.amount as u128,
                     output: match e.target {
                         OutputTarget::Output(v) => v as u128,
-                        // Protostone targets: physical_outputs + 1 (OP_RETURN) + 1 (base offset) + protostone_index
-                        OutputTarget::Protostone(p) => (num_physical_outputs + 2 + p) as u128,
+                        // Protostone targets: physical_outputs + 1 (OP_RETURN) + protostone_index
+                        // After OP_RETURN is appended, tx.output.len() = num_physical_outputs + 1
+                        // The indexer considers protostone N at vout = tx.output.len() + N
+                        OutputTarget::Protostone(p) => (num_physical_outputs + 1 + p) as u128,
                         OutputTarget::Split => 0, // Split not supported in ProtostoneEdict
                     },
                 })
@@ -1740,8 +1742,8 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                     Some(*v)
                 }
                 Some(OutputTarget::Protostone(p)) => {
-                    let calculated = num_physical_outputs + 2 + p;
-                    log::info!("  Pointer: p{} (shadow output = {} + 1 + 1 + {} = {})", p, num_physical_outputs, p, calculated);
+                    let calculated = num_physical_outputs + 1 + p;
+                    log::info!("  Pointer: p{} (shadow output = {} + 1 + {} = {})", p, num_physical_outputs, p, calculated);
                     Some(calculated)
                 }
                 Some(OutputTarget::Split) => {
@@ -1761,8 +1763,8 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                     Some(*v)
                 }
                 Some(OutputTarget::Protostone(p)) => {
-                    let calculated = num_physical_outputs + 2 + p;
-                    log::info!("  Refund: p{} (shadow output = {} + 1 + 1 + {} = {})", p, num_physical_outputs, p, calculated);
+                    let calculated = num_physical_outputs + 1 + p;
+                    log::info!("  Refund: p{} (shadow output = {} + 1 + {} = {})", p, num_physical_outputs, p, calculated);
                     Some(calculated)
                 }
                 Some(OutputTarget::Split) => {
@@ -1789,8 +1791,8 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
 
     fn construct_runestone_script(&self, protostones: &[ProtostoneSpec], num_outputs: usize) -> Result<ScriptBuf> {
         log::info!("Constructing runestone with {} protostones and {} outputs (before OP_RETURN)", protostones.len(), num_outputs);
-        log::info!("  After OP_RETURN is added, protostone vouts will start at: {} + 1 = {}", num_outputs, num_outputs + 1);
-        log::info!("  Formula: pN -> vout = {} + N (OP_RETURN gets added later)", num_outputs);
+        log::info!("  After OP_RETURN is added, tx.output.len() = {} + 1 = {}", num_outputs, num_outputs + 1);
+        log::info!("  Formula: pN -> vout = {} + 1 + N = {} + N", num_outputs, num_outputs + 1);
         
         let converted_protostones = self.convert_protostone_specs_with_output_count(protostones, num_outputs as u32)?;
 

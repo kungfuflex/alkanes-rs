@@ -4901,9 +4901,9 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
                 resume_from_commit: resume,
                 mint_diesel,
                 return_unsigned: false,
-                deployer_nonce: None,
                 ordinals_strategy: Default::default(),
                 mempool_indexer: false,
+                contract_address: None,
             };
 
             let mut executor = FrBtcExecutor::new(provider);
@@ -4959,9 +4959,9 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
                 resume_from_commit: resume,
                 mint_diesel,
                 return_unsigned: false,
-                deployer_nonce: None,
                 ordinals_strategy: Default::default(),
                 mempool_indexer: false,
+                contract_address: None,
             };
 
             let mut executor = FrBtcExecutor::new(provider);
@@ -5015,9 +5015,9 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
                 resume_from_commit: resume,
                 mint_diesel,
                 return_unsigned: false,
-                deployer_nonce: None,
                 ordinals_strategy: Default::default(),
                 mempool_indexer: false,
+                contract_address: None,
             };
 
             let mut executor = FrBtcExecutor::new(provider);
@@ -5072,9 +5072,9 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
                 resume_from_commit: resume,
                 mint_diesel,
                 return_unsigned: false,
-                deployer_nonce: None,
                 ordinals_strategy: Default::default(),
                 mempool_indexer: false,
+                contract_address: None,
             };
 
             let mut executor = FrBtcExecutor::new(provider);
