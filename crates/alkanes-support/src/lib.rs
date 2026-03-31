@@ -4,12 +4,14 @@ pub mod context;
 pub mod envelope;
 pub mod gz;
 pub mod id;
+pub mod logging;
 pub mod parcel;
 pub mod proto;
 pub mod response;
 pub mod storage;
 pub mod trace;
 pub mod utils;
+pub mod virtual_fuel;
 pub mod witness;
 
 use crate::id::AlkaneId;

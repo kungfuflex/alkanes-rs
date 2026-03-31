@@ -10,7 +10,7 @@ use bitcoin::blockdata::transaction::Version;
 use bitcoin::{
     address::NetworkChecked, Address, Amount, OutPoint, ScriptBuf, Sequence, TxIn, TxOut, Witness,
 };
-use bitcoin::{Block, Network, Transaction};
+use bitcoin::{Block, Transaction};
 use metashrew_core::index_pointer::IndexPointer;
 #[allow(unused_imports)]
 use metashrew_core::{
@@ -429,17 +429,12 @@ pub fn get_sheet_for_outpoint(
         .OUTPOINT_TO_RUNES
         .select(&consensus_encode(&outpoint)?);
     let sheet = load_sheet(&ptr);
-    println!(
-        "balances at outpoint tx {} vout {}: {:?}",
-        tx_num, vout, sheet
-    );
     Ok(sheet)
 }
 
 pub fn get_sheet_for_runtime() -> BalanceSheet<IndexPointer> {
     let ptr = RuneTable::for_protocol(AlkaneMessageContext::protocol_tag()).RUNTIME_BALANCE;
     let sheet = load_sheet(&ptr);
-    println!("runtime balances: {:?}", sheet);
     sheet
 }
 

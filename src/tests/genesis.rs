@@ -170,7 +170,6 @@ fn test_genesis() -> Result<()> {
         .select(&consensus_encode(&outpoint)?);
     let sheet = load_sheet(&ptr);
 
-    println!("Balances at end: {:?}", sheet);
 
     // Display fuel benchmarks
     println!("\n=== FUEL BENCHMARKS ===");
@@ -249,7 +248,6 @@ fn test_genesis_indexer_premine() -> Result<()> {
         .select(&consensus_encode(&outpoint)?);
     let sheet = load_sheet(&ptr);
 
-    println!("Balances at end: {:?}", sheet);
     let genesis_id = ProtoruneRuneId { block: 2, tx: 0 };
     assert_eq!(sheet.get(&genesis_id), 50_000_000u128);
     let out = protorune_outpoint_to_outpoint_response(&outpoint, 1)?;

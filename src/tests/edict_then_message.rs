@@ -7,7 +7,6 @@ use alkanes_support::cellpack::Cellpack;
 use alkanes_support::envelope::RawEnvelope;
 use alkanes_support::id::AlkaneId;
 use anyhow::Result;
-use bitcoin::address::NetworkChecked;
 use bitcoin::{transaction::Version, ScriptBuf, Sequence};
 use bitcoin::{Address, Amount, Block, OutPoint, Transaction, TxIn, TxOut, Witness};
 use metashrew_core::{
@@ -134,8 +133,6 @@ fn test_edict_to_protomessage() -> Result<()> {
             .OUTPOINT_TO_RUNES
             .select(&consensus_encode(&result_outpoint)?),
     );
-    println!("edict sheet: {:?}", edict_sheet);
-    println!("output sheet: {:?}", sheet);
     Ok(())
 }
 
@@ -192,7 +189,6 @@ fn test_edict_message_same_protostone() -> Result<()> {
 
     let sheet = alkane_helpers::get_last_outpoint_sheet(&test_block2)?;
 
-    println!("Last sheet: {:?}", sheet);
 
     assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 1 }), 1);
 
@@ -252,7 +248,6 @@ fn test_edict_message_same_protostone_revert() -> Result<()> {
 
     let sheet = alkane_helpers::get_last_outpoint_sheet(&test_block2)?;
 
-    println!("Last sheet: {:?}", sheet);
 
     assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 1 }), 1);
 
