@@ -1,0 +1,40 @@
+[package]
+name = "alkanes-integ-tests"
+version.workspace = true
+edition = "2021"
+publish = false
+description = "Native integration tests for alkanes using real wasmtime multi-indexer harness"
+
+[dependencies]
+metashrew-support = { path = "../metashrew-support" }
+alkanes-cli-common = { path = "../alkanes-cli-common", default-features = false, features = ["test-utils", "std", "native-deps"] }
+alkanes-support = { path = "../alkanes-support" }
+protorune-support = { path = "../protorune-support" }
+protorune = { path = "../protorune", features = ["test-utils"] }
+ordinals = { path = "../ordinals" }
+bitcoin = { workspace = true }
+wasmtime = "18.0.4"
+tokio = { workspace = true, features = ["full"] }
+anyhow = { workspace = true }
+log = { workspace = true }
+hex = { workspace = true }
+serde_json = "1"
+serde = { version = "1", features = ["derive"] }
+prost = { workspace = true }
+
+# Vendored qubitcoin crates for full-stack testing
+qubitcoin-node = { path = "../../vendor/qubitcoin-node", default-features = false }
+qubitcoin-indexer = { path = "../../vendor/qubitcoin-indexer" }
+qubitcoin-indexer-core = { path = "../../vendor/qubitcoin-indexer-core" }
+qubitcoin-rpc = { path = "../../vendor/qubitcoin-rpc" }
+qubitcoin-consensus = { path = "../../vendor/qubitcoin-consensus", features = ["rust-bitcoin-compat"] }
+qubitcoin-serialize = { path = "../../vendor/qubitcoin-serialize" }
+qubitcoin-common = { path = "../../vendor/qubitcoin-common" }
+qubitcoin-storage = { path = "../../vendor/qubitcoin-storage", default-features = false }
+
+tempfile = "3"
+
+[dev-dependencies]
+env_logger = "0.10"
+alkanes = { path = "../alkanes", default-features = false, features = ["test-utils"] }
+metashrew-core = { path = "../metashrew-core" }

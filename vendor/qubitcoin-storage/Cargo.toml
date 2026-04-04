@@ -1,0 +1,20 @@
+[package]
+name = "qubitcoin-storage"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Database abstraction for Qubitcoin: trait-based with RocksDB and MemoryDb backends"
+
+[features]
+default = ["rocksdb-backend"]
+rocksdb-backend = ["rocksdb", "rand"]
+
+[dependencies]
+qubitcoin-serialize = { path = "../qubitcoin-serialize" }
+rocksdb = { version = "0.21.0", features = ["multi-threaded-cf"], optional = true }
+thiserror = "1"
+parking_lot = "0.12"
+rand = { version = "0.8", optional = true }
+
+[dev-dependencies]
+tempfile = "3"

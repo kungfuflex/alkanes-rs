@@ -117,6 +117,7 @@ impl<'a> Brc20ProgWrapBtcExecutor<'a> {
             mempool_indexer: false,
             mint_diesel: false,
             return_unsigned: false,
+                deployer_nonce: None,
         };
 
         let mut brc20_executor = Brc20ProgExecutor::new(self.provider);

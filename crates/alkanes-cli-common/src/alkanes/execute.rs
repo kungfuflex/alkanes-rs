@@ -748,6 +748,8 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         let alkanes_excess = self.calculate_excess(&utxo_selection.alkanes_found, &alkanes_needed);
         
         // Handle excess alkanes by generating automatic protostone
+        // DISABLED: auto-change protostone causes extcall failures in both runtimes.
+        // Excess alkanes flow to runestone default pointer (output 0) matching ts-sdk.
         let final_protostones = if !alkanes_excess.is_empty() {
             log::info!("🔄 Handling excess alkanes with automatic protostone generation");
             
@@ -1723,10 +1725,11 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                     amount: e.amount as u128,
                     output: match e.target {
                         OutputTarget::Output(v) => v as u128,
-                        // Protostone targets: physical_outputs + 1 (OP_RETURN) + protostone_index
-                        // After OP_RETURN is appended, tx.output.len() = num_physical_outputs + 1
-                        // The indexer considers protostone N at vout = tx.output.len() + N
-                        OutputTarget::Protostone(p) => (num_physical_outputs + 1 + p) as u128,
+                        // Protostone targets use shadow vouts above physical outputs.
+                        // After OP_RETURN is appended, tx.output.len() = num_physical_outputs + 1.
+                        // Protorune indexer maps protostone N to vout = tx.output.len() + 1 + N
+                        //   = (num_physical_outputs + 1) + 1 + N = num_physical_outputs + 2 + N.
+                        OutputTarget::Protostone(p) => (num_physical_outputs + 2 + p) as u128,
                         OutputTarget::Split => 0, // Split not supported in ProtostoneEdict
                     },
                 })
@@ -1742,8 +1745,8 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                     Some(*v)
                 }
                 Some(OutputTarget::Protostone(p)) => {
-                    let calculated = num_physical_outputs + 1 + p;
-                    log::info!("  Pointer: p{} (shadow output = {} + 1 + {} = {})", p, num_physical_outputs, p, calculated);
+                    let calculated = num_physical_outputs + 2 + p;
+                    log::info!("  Pointer: p{} (shadow output = {} + 2 + {} = {})", p, num_physical_outputs, p, calculated);
                     Some(calculated)
                 }
                 Some(OutputTarget::Split) => {
@@ -1756,15 +1759,15 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                 }
             };
 
-            // Convert refund: v{N} -> N, p{N} -> num_physical_outputs + 1 (OP_RETURN) + 1 (base offset) + N
+            // Convert refund: v{N} -> N, p{N} -> num_physical_outputs + 2 + N
             let refund = match &spec.refund {
                 Some(OutputTarget::Output(v)) => {
                     log::info!("  Refund: v{} (physical output {})", v, v);
                     Some(*v)
                 }
                 Some(OutputTarget::Protostone(p)) => {
-                    let calculated = num_physical_outputs + 1 + p;
-                    log::info!("  Refund: p{} (shadow output = {} + 1 + {} = {})", p, num_physical_outputs, p, calculated);
+                    let calculated = num_physical_outputs + 2 + p;
+                    log::info!("  Refund: p{} (shadow output = {} + 2 + {} = {})", p, num_physical_outputs, p, calculated);
                     Some(calculated)
                 }
                 Some(OutputTarget::Split) => {

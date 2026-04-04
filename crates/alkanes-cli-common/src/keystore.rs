@@ -214,6 +214,22 @@ impl Keystore {
             account_xpubs.insert(format!("{}:testnet", address_type), testnet_xpub.to_string());
         }
 
+        // Zcash (coin_type = 133 mainnet, 1 testnet) — P2PKH only, uses ECDSA not Schnorr
+        // BIP-44: m/44'/133'/0'/0/0 (Zcash mainnet)
+        // BIP-44: m/44'/1'/0'/0/0 (Zcash testnet — same coin_type as Bitcoin testnet)
+        {
+            let zcash_mainnet_path = DerivationPath::from_str("m/44'/133'/0'")?;
+            let zcash_mainnet_xpriv = mainnet_root.derive_priv(&secp, &zcash_mainnet_path)?;
+            let zcash_mainnet_xpub = Xpub::from_priv(&secp, &zcash_mainnet_xpriv);
+            account_xpubs.insert("p2pkh-zec:mainnet".to_string(), zcash_mainnet_xpub.to_string());
+
+            // Zcash testnet uses coin_type=1 (same as Bitcoin testnet, per SLIP-0044)
+            let zcash_testnet_path = DerivationPath::from_str("m/44'/1'/0'")?;
+            let zcash_testnet_xpriv = testnet_root.derive_priv(&secp, &zcash_testnet_path)?;
+            let zcash_testnet_xpub = Xpub::from_priv(&secp, &zcash_testnet_xpriv);
+            account_xpubs.insert("p2pkh-zec:testnet".to_string(), zcash_testnet_xpub.to_string());
+        }
+
         // Set account_xpub for backward compatibility with old code paths
         // Always default to mainnet p2tr for maximum portability across networks
         // Modern code should use account_xpubs map to select network-specific xpubs
@@ -227,6 +243,8 @@ impl Keystore {
         hd_paths.insert("p2wpkh".to_string(), "m/84'/COIN'/0'/0/0".to_string());
         hd_paths.insert("p2sh-p2wpkh".to_string(), "m/49'/COIN'/0'/0/0".to_string());
         hd_paths.insert("p2pkh".to_string(), "m/44'/COIN'/0'/0/0".to_string());
+        // Zcash-specific: coin_type 133 for mainnet, 1 for testnet
+        hd_paths.insert("p2pkh-zec".to_string(), "m/44'/ZEC_COIN'/0'/0/0".to_string());
 
         Ok(Self {
             encrypted_mnemonic: String::from_utf8(armored_mnemonic)?,

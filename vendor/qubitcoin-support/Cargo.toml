@@ -1,0 +1,7 @@
+[package]
+name = "qubitcoin-support"
+version = "0.1.0"
+edition = "2021"
+description = "Generic support traits for qubitcoin indexers — ByteView, KeyValuePointer"
+
+[dependencies]

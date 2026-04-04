@@ -106,7 +106,11 @@ pub struct EsploraTxIn {
     pub scriptsig: String,
     pub scriptsig_asm: String,
     pub witness: Option<Vec<String>>,
+    /// True if this input is a coinbase transaction input.
+    /// Defaults to false when not present in the response.
+    #[serde(default)]
     pub is_coinbase: bool,
+    #[serde(default)]
     pub sequence: u32,
     pub inner_redeemscript_asm: Option<String>,
     pub inner_witnessscript_asm: Option<String>,

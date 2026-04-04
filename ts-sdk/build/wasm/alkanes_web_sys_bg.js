@@ -5063,17 +5063,17 @@ export function __wbg_wasmbrowserwalletprovider_new(arg0) {
     return ret;
 }
 export function __wbindgen_cast_0000000000000001(arg0, arg1) {
-    // Cast intrinsic for `Closure(Closure { dtor_idx: 3179, function: Function { arguments: [], shim_idx: 3180, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+    // Cast intrinsic for `Closure(Closure { dtor_idx: 3201, function: Function { arguments: [], shim_idx: 3202, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
     const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h2734ba064662ab68, wasm_bindgen__convert__closures_____invoke__h455513963c9e1b53);
     return ret;
 }
 export function __wbindgen_cast_0000000000000002(arg0, arg1) {
-    // Cast intrinsic for `Closure(Closure { dtor_idx: 3864, function: Function { arguments: [], shim_idx: 3865, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+    // Cast intrinsic for `Closure(Closure { dtor_idx: 3886, function: Function { arguments: [], shim_idx: 3887, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
     const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h1d0669ed74bc8e06, wasm_bindgen__convert__closures_____invoke__h59e39e4e43f2f72d);
     return ret;
 }
 export function __wbindgen_cast_0000000000000003(arg0, arg1) {
-    // Cast intrinsic for `Closure(Closure { dtor_idx: 4606, function: Function { arguments: [Externref], shim_idx: 4607, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
+    // Cast intrinsic for `Closure(Closure { dtor_idx: 4628, function: Function { arguments: [Externref], shim_idx: 4629, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
     const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h07405935f6e373f9, wasm_bindgen__convert__closures_____invoke__h2270663853d2b7ca);
     return ret;
 }

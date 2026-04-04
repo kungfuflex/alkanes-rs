@@ -8,6 +8,7 @@
 
 use crate::{Result, AlkanesError};
 use crate::traits::DeezelProvider;
+use prost::Message as ProstMessage;
 #[allow(unused_imports)]
 use crate::NetworkProvider;
 use crate::wallet::AddressType;
@@ -91,8 +92,9 @@ impl<P: DeezelProvider> AddressResolver<P> {
         
         // Check if first part is a valid address type
         let address_type = parts[0].to_lowercase();
-        let valid_types = ["p2pk", "p2tr", "p2pkh", "p2sh", "p2wpkh", "p2wsh", "p2sh-p2wpkh", "p2sh-p2wsh"];
-        
+        let valid_types = ["p2pk", "p2tr", "p2pkh", "p2sh", "p2wpkh", "p2wsh", "p2sh-p2wpkh", "p2sh-p2wsh",
+                           "subfrost-alkanes", "subfrost-brc20"];
+
         if !valid_types.contains(&address_type.as_str()) {
             return false;
         }
@@ -169,7 +171,8 @@ impl<P: DeezelProvider> AddressResolver<P> {
     
     /// Check if string is a valid address type
     fn is_valid_address_type(&self, s: &str) -> bool {
-        matches!(s.to_lowercase().as_str(), "p2pk" | "p2tr" | "p2pkh" | "p2sh" | "p2wpkh" | "p2wsh" | "p2sh-p2wpkh" | "p2sh-p2wsh")
+        matches!(s.to_lowercase().as_str(), "p2pk" | "p2tr" | "p2pkh" | "p2sh" | "p2wpkh" | "p2wsh" | "p2sh-p2wpkh" | "p2sh-p2wsh"
+            | "subfrost-alkanes" | "subfrost-brc20")
     }
     
     /// Resolve a single identifier to an address
@@ -178,12 +181,18 @@ impl<P: DeezelProvider> AddressResolver<P> {
         if let Some(cached) = self.cache.get(identifier) {
             return Ok(cached.clone());
         }
-        
+
         let parsed = self.parse_identifier(identifier)?;
-        
+
         let address = match parsed {
-            AddressIdentifier::SelfWallet { address_type, index } => {
-                crate::traits::AddressResolver::get_address(&self.provider, address_type.as_str(), index).await?
+            AddressIdentifier::SelfWallet { ref address_type, index } => {
+                let type_str = address_type.as_str().to_lowercase();
+                // Handle subfrost dynamic signer addresses
+                if type_str.starts_with("subfrost-") {
+                    self.resolve_subfrost_signer(&type_str, index).await?
+                } else {
+                    crate::traits::AddressResolver::get_address(&self.provider, address_type.as_str(), index).await?
+                }
             },
             AddressIdentifier::External { address } => address,
             AddressIdentifier::Raw { address } => {
@@ -192,11 +201,115 @@ impl<P: DeezelProvider> AddressResolver<P> {
                 address
             },
         };
-        
+
         // Cache the result
         self.cache.insert(identifier.to_string(), address.clone());
-        
+
         Ok(address)
+    }
+
+    /// Resolve a subfrost dynamic signer address by calling the contract's
+    /// GetSignerAddress opcode (103) via simulate, then computing P2TR.
+    ///
+    /// Address types:
+    /// - `subfrost-alkanes:N` → simulate [32:N] with input [103]
+    /// - `subfrost-brc20:N` → simulate BRC20 prog frBTC at equivalent ID
+    async fn resolve_subfrost_signer(&self, type_str: &str, index: u32) -> Result<String> {
+        use crate::traits::AlkanesProvider;
+
+        // Determine the contract to call based on the address type
+        let contract_id = match type_str {
+            "subfrost-alkanes" => format!("32:{}", index),
+            "subfrost-brc20" => format!("32:{}", index), // Same contract, different protocol
+            _ => return Err(AlkanesError::AddressResolution(
+                format!("Unknown subfrost address type: {}", type_str)
+            )),
+        };
+
+        log::info!("Resolving subfrost signer address for {} via simulate on {}", type_str, contract_id);
+
+        // Build simulate context with opcode 103 (GetSignerAddress)
+        let context = crate::proto::alkanes::MessageContextParcel {
+            alkanes: vec![],
+            transaction: vec![],
+            block: vec![],
+            height: 0,
+            txindex: 0,
+            calldata: {
+                use alkanes_support::cellpack::Cellpack;
+                use alkanes_support::id::AlkaneId;
+                let parts: Vec<&str> = contract_id.split(':').collect();
+                let block = parts[0].parse::<u128>().unwrap_or(32);
+                let tx = parts[1].parse::<u128>().unwrap_or(0);
+                Cellpack {
+                    target: AlkaneId { block, tx },
+                    inputs: vec![103], // GetSignerAddress opcode
+                }.encipher()
+            },
+            vout: 0,
+            pointer: 0,
+            refund_pointer: 0,
+        };
+
+        let sim_result = self.provider.simulate(&contract_id, &context, None).await
+            .map_err(|e| AlkanesError::AddressResolution(
+                format!("Failed to simulate GetSignerAddress on {}: {}", contract_id, e)
+            ))?;
+
+        // The simulate returns a hex string (protobuf-encoded SimulateResponse).
+        // We need to decode it to get the execution data.
+        let result_hex = sim_result.as_str().unwrap_or("");
+        let result_hex = result_hex.strip_prefix("0x").unwrap_or(result_hex);
+
+        // Decode the protobuf SimulateResponse
+        let result_bytes = hex::decode(result_hex)
+            .map_err(|e| AlkanesError::AddressResolution(
+                format!("Failed to decode simulate response: {}", e)
+            ))?;
+
+        // The SimulateResponse has: execution.data which contains the signer pubkey
+        let sim_response = crate::proto::alkanes::SimulateResponse::decode(&*result_bytes)
+            .map_err(|e| AlkanesError::AddressResolution(
+                format!("Failed to decode SimulateResponse protobuf: {}", e)
+            ))?;
+
+        let data_hex = sim_response.execution
+            .as_ref()
+            .map(|e| hex::encode(&e.data))
+            .unwrap_or_default();
+        if data_hex.len() < 64 {
+            return Err(AlkanesError::AddressResolution(
+                format!("GetSignerAddress returned invalid data ({}): expected 32-byte pubkey", data_hex)
+            ));
+        }
+
+        let pubkey_bytes = hex::decode(&data_hex[..64])
+            .map_err(|e| AlkanesError::AddressResolution(
+                format!("Failed to decode signer pubkey: {}", e)
+            ))?;
+
+        // Compute P2TR address from x-only pubkey
+        let secp = bitcoin::secp256k1::Secp256k1::new();
+        let xonly = bitcoin::key::UntweakedPublicKey::from_slice(&pubkey_bytes)
+            .map_err(|e| AlkanesError::AddressResolution(
+                format!("Invalid x-only pubkey: {}", e)
+            ))?;
+
+        use bitcoin::key::TapTweak;
+        let (tweaked, _) = xonly.tap_tweak(&secp, None);
+        let script = bitcoin::ScriptBuf::new_p2tr_tweaked(tweaked);
+
+        // Convert to address using network from provider
+        use crate::traits::StorageProvider;
+        let network = self.provider.get_network();
+        let address = bitcoin::Address::from_script(&script, network)
+            .map_err(|e| AlkanesError::AddressResolution(
+                format!("Failed to derive address from signer script: {}", e)
+            ))?;
+
+        let addr_str = address.to_string();
+        log::info!("Resolved {} → {}", type_str, addr_str);
+        Ok(addr_str)
     }
     
     /// Parse address range specification (e.g., "p2tr:0-1000", "p2sh:0-500", "p2tr:50")
@@ -258,7 +371,12 @@ impl<P: DeezelProvider> AddressResolver<P> {
                         // Resolve all addresses in the range
                         for i in 0..count {
                             let index = start_index + i;
-                            let address = crate::traits::AddressResolver::get_address(&self.provider, &address_type, index).await?;
+                            let at_lower = address_type.to_lowercase();
+                            let address = if at_lower.starts_with("subfrost-") {
+                                self.resolve_subfrost_signer(&at_lower, index).await?
+                            } else {
+                                crate::traits::AddressResolver::get_address(&self.provider, &address_type, index).await?
+                            };
                             result.push(address);
                         }
                     }

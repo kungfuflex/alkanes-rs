@@ -217,6 +217,7 @@ impl ConcreteProvider {
             data_api_url: None,
             espo_rpc_url: None,
             qubitcoin_rpc_url: None,
+            quzec_rpc_url: None,
             subfrost_api_key: None,
             timeout_seconds: 600,
             jsonrpc_headers,
@@ -286,6 +287,7 @@ impl ConcreteProvider {
             data_api_url: None,
             espo_rpc_url: None,
             qubitcoin_rpc_url: None,
+            quzec_rpc_url: None,
             subfrost_api_key: None,
             timeout_seconds: 600,
             jsonrpc_headers,
@@ -1529,15 +1531,30 @@ impl WalletProvider for ConcreteProvider {
                                 0
                             };
                             
-                            // Check if coinbase from the included transaction data
+                            // Check if coinbase from the included transaction data.
+                            // Detect via: explicit is_coinbase flag, OR null prevout (all-zero txid).
                             let is_coinbase = if let Some(tx) = utxo_entry.get("tx") {
                                 if let Some(vin) = tx.get("vin").and_then(|v| v.as_array()) {
-                                    vin.len() == 1 && vin[0].get("is_coinbase").and_then(|c| c.as_bool()).unwrap_or(false)
+                                    vin.len() == 1 && {
+                                        let input = &vin[0];
+                                        // Check explicit flag
+                                        input.get("is_coinbase").and_then(|c| c.as_bool()).unwrap_or(false)
+                                        // Also check for null prevout (universal coinbase indicator)
+                                        || input.get("txid").and_then(|t| t.as_str())
+                                            .map(|t| t.chars().all(|c| c == '0'))
+                                            .unwrap_or(false)
+                                        || input.get("prevout").is_none()
+                                            && input.get("scriptsig").map(|s| s.as_str().unwrap_or("").is_empty()).unwrap_or(false)
+                                    }
                                 } else {
                                     false
                                 }
                             } else {
-                                false
+                                // No tx data included — can't determine coinbase status.
+                                // Only flag as potentially-coinbase if we have a real tip height
+                                // AND the UTXO has < 100 confirmations.
+                                // When tip height is 0 (chain syncing), don't filter anything.
+                                current_height > 0 && confirmations > 0 && confirmations < 100 && block_height.is_some()
                             };
                             
                             let utxo_info = UtxoInfo {
@@ -1593,17 +1610,26 @@ impl WalletProvider for ConcreteProvider {
                         0
                     };
                     
-                    // Check if this UTXO is from a coinbase transaction
+                    // Check if this UTXO is from a coinbase transaction.
+                    // Detect via: is_coinbase flag, null prevout txid, or no prevout.
                     let is_coinbase = match self.get_tx(&utxo.txid).await {
                         Ok(tx_json) => {
                             if let Ok(tx) = serde_json::from_value::<crate::esplora::EsploraTransaction>(tx_json) {
-                                // A transaction is coinbase if it has exactly 1 input with a null previous output
-                                tx.vin.len() == 1 && tx.vin[0].is_coinbase
+                                tx.vin.len() == 1 && {
+                                    let vin = &tx.vin[0];
+                                    vin.is_coinbase
+                                    || vin.txid.chars().all(|c| c == '0')
+                                    || vin.prevout.is_none()
+                                }
                             } else {
                                 false
                             }
                         }
-                        Err(_) => false, // If we can't fetch the tx, assume it's not coinbase
+                        Err(_) => {
+                            // Can't fetch tx — be conservative: treat recent UTXOs as possibly coinbase
+                            // But only when we have a real chain height (avoid filtering everything during sync)
+                            current_height > 0 && confirmations > 0 && confirmations < 100
+                        }
                     };
                     
                     let utxo_info = UtxoInfo {
@@ -4625,7 +4651,9 @@ impl BitcoinRpcProvider for ConcreteProvider {
         let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind {
             command: crate::commands::BitcoindCommands::Getblockcount { raw: false }
         })?;
-        let maxfeerate = 0.1;
+        // Use maxfeerate=0 in qubitcoin mode: qubitcoind's block storage may not support
+        // UTXO value lookups needed for fee calculation, causing false "0 sat/kvB" errors.
+        let maxfeerate: f64 = if self.rpc_config.is_qubitcoin_mode() { 0.0 } else { 0.1 };
         // Only pass maxfeerate - maxburnamount is not supported in Bitcoin Core < 26.0
         let params = json!([tx_hex, maxfeerate]);
         let result = self.call(&rpc_url, "sendrawtransaction", params, 1).await?;

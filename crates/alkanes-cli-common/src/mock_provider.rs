@@ -57,6 +57,8 @@ pub struct MockProvider {
     pub secp: Secp256k1<All>,
     pub secret_key: SecretKey,
     pub internal_key: XOnlyPublicKey,
+    /// Mock alkane balances per outpoint: (txid_hex, vout) → Vec<(block, tx, amount)>
+    pub alkane_balances: Arc<Mutex<HashMap<String, Vec<(u64, u64, u64)>>>>,
 }
 
 impl Default for MockProvider {
@@ -78,6 +80,7 @@ impl MockProvider {
             secp,
             secret_key,
             internal_key,
+            alkane_balances: Arc::new(Mutex::new(HashMap::new())),
         }
     }
     
@@ -534,6 +537,10 @@ impl BitcoinRpcProvider for MockProvider {
         Ok("mock_txid".to_string())
     }
 
+    async fn subfrost_thieve(&self, _address: &str, _amount: u64) -> Result<JsonValue> {
+        Ok(serde_json::json!(null))
+    }
+
     async fn send_raw_transactions(&self, tx_hexes: &[String]) -> Result<Vec<String>> {
         Ok(tx_hexes.iter().enumerate().map(|(i, _)| format!("mock_txid_{}", i)).collect())
     }
@@ -618,7 +625,30 @@ impl MetashrewRpcProvider for MockProvider {
     }
     
     async fn get_protorunes_by_address(&self, _address: &str, _block_tag: Option<String>, _protocol_tag: u128) -> Result<ProtoruneWalletResponse> {
-        Ok(ProtoruneWalletResponse::default())
+        use crate::alkanes::balance_sheet::{BalanceSheet, CachedBalanceSheet, ProtoruneRuneId};
+
+        let ab = self.alkane_balances.lock().unwrap();
+        let utxos = self.utxos.lock().unwrap();
+
+        let mut outpoints = Vec::new();
+        for (outpoint, txout) in utxos.iter() {
+            let key = format!("{}:{}", outpoint.txid, outpoint.vout);
+            if let Some(balances) = ab.get(&key) {
+                let mut cached = CachedBalanceSheet { balances: alloc::collections::BTreeMap::new() };
+                for &(block, tx, amount) in balances {
+                    cached.balances.insert(
+                        ProtoruneRuneId { block: block as u128, tx: tx as u128 },
+                        amount as u128,
+                    );
+                }
+                outpoints.push(ProtoruneOutpointResponse {
+                    output: txout.clone(),
+                    outpoint: *outpoint,
+                    balance_sheet: BalanceSheet { cached, load_ptrs: vec![] },
+                });
+            }
+        }
+        Ok(ProtoruneWalletResponse { balances: outpoints })
     }
     
     async fn get_protorunes_by_outpoint(&self, _txid: &str, _vout: u32, _block_tag: Option<String>, _protocol_tag: u128) -> Result<ProtoruneOutpointResponse> {
@@ -886,6 +916,9 @@ impl AlkanesProvider for MockProvider {
     ) -> Result<Vec<u8>> {
         Err(AlkanesError::NotImplemented("tx_script".to_string()))
     }
+    async fn meta(&self, _alkane_id: &str, _block_tag: Option<String>) -> Result<Vec<u8>> {
+        Err(AlkanesError::NotImplemented("meta".to_string()))
+    }
 }
 
 #[async_trait(?Send)]
@@ -993,8 +1026,29 @@ impl OrdProvider for MockProvider {
     async fn get_inscriptions(&self, _page: Option<u32>) -> Result<OrdInscriptions> {
         todo!()
     }
-    async fn get_output(&self, _output: &str) -> Result<OrdOutput> {
-        todo!()
+    async fn get_output(&self, output: &str) -> Result<OrdOutput> {
+        // Return a minimal output with no inscriptions
+        let parts: Vec<&str> = output.split(':').collect();
+        let (txid_str, vout) = if parts.len() == 2 {
+            (parts[0], parts[1].parse::<u32>().unwrap_or(0))
+        } else {
+            (output, 0)
+        };
+        let txid = bitcoin::Txid::from_str(txid_str)
+            .unwrap_or_else(|_| bitcoin::Txid::from_str("0000000000000000000000000000000000000000000000000000000000000000").unwrap());
+        Ok(OrdOutput {
+            address: None,
+            confirmations: 100,
+            indexed: true,
+            inscriptions: Some(vec![]),
+            outpoint: OutPoint::new(txid, vout),
+            runes: None,
+            sat_ranges: None,
+            script_pubkey: bitcoin::ScriptBuf::new(),
+            spent: false,
+            transaction: txid,
+            value: 0,
+        })
     }
     async fn get_parents(&self, _inscription_id: &str, _page: Option<u32>) -> Result<OrdParents> {
         todo!()
@@ -1049,6 +1103,13 @@ impl DeezelProvider for MockProvider {
 
     fn get_brc20_prog_rpc_url(&self) -> Option<String> {
         None
+    }
+
+    fn is_qubitcoin_mode(&self) -> bool {
+        // Enable qubitcoin mode so alkane UTXO selection uses
+        // get_protorunes_by_address (which reads from alkane_balances)
+        // instead of espo/lua paths that require network access.
+        true
     }
 
     fn secp(&self) -> &Secp256k1<All> {

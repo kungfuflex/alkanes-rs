@@ -3137,6 +3137,7 @@ impl From<&DeezelCommands> for alkanes_cli_common::commands::Args {
                 data_api_url: None,  // Not used in deezel commands
                 espo_rpc_url: args.espo_rpc_url.clone(),
                 qubitcoin_rpc_url: args.qubitcoin_rpc_url.clone(),
+                quzec_rpc_url: None,
                 timeout_seconds: 600,
                 jsonrpc_headers: args.jsonrpc_headers.clone(),
             },

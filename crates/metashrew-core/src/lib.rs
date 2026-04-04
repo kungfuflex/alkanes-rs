@@ -75,7 +75,7 @@
 
 extern crate alloc;
 use prost::Message;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 #[allow(unused_imports)]
 use std::fmt::Write;
 #[cfg(feature = "panic-hook")]
@@ -105,7 +105,7 @@ use metashrew_support::{
 ///
 /// This cache avoids repeated host calls for the same key during block processing.
 /// It's automatically managed by the library and should not be accessed directly.
-static mut CACHE: Option<HashMap<Arc<Vec<u8>>, Arc<Vec<u8>>>> = None;
+static mut CACHE: Option<BTreeMap<Arc<Vec<u8>>, Arc<Vec<u8>>>> = None;
 
 /// Global buffer for tracking keys that need to be flushed to the database
 ///
@@ -128,7 +128,7 @@ static mut TO_FLUSH: Option<Vec<Arc<Vec<u8>>>> = None;
 ///
 /// A reference to the internal cache HashMap.
 #[allow(static_mut_refs)]
-pub fn get_cache() -> &'static HashMap<Arc<Vec<u8>>, Arc<Vec<u8>>> {
+pub fn get_cache() -> &'static BTreeMap<Arc<Vec<u8>>, Arc<Vec<u8>>> {
     unsafe { CACHE.as_ref().unwrap() }
 }
 
@@ -343,7 +343,7 @@ pub fn initialize() -> () {
     unsafe {
         if CACHE.is_none() {
             reset();
-            CACHE = Some(HashMap::<Arc<Vec<u8>>, Arc<Vec<u8>>>::new());
+            CACHE = Some(BTreeMap::<Arc<Vec<u8>>, Arc<Vec<u8>>>::new());
             #[cfg(feature = "panic-hook")]
             panic::set_hook(Box::new(panic_hook));
         }
@@ -446,6 +446,6 @@ pub fn reset() -> () {
 pub fn clear() -> () {
     unsafe {
         reset();
-        CACHE = Some(HashMap::<Arc<Vec<u8>>, Arc<Vec<u8>>>::new());
+        CACHE = Some(BTreeMap::<Arc<Vec<u8>>, Arc<Vec<u8>>>::new());
     }
 }

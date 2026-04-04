@@ -1,0 +1,31 @@
+[package]
+name = "qubitcoin-consensus"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Embeddable consensus library for Qubitcoin: Block, Tx, merkle, validation, params"
+
+[features]
+default = ["std"]
+std = []
+rust-bitcoin-compat = ["bitcoin"]
+metashrew-compat = ["rust-bitcoin-compat"]
+
+[dependencies]
+qubitcoin-script = { path = "../qubitcoin-script" }
+qubitcoin-serialize = { path = "../qubitcoin-serialize" }
+qubitcoin-primitives = { path = "../qubitcoin-primitives" }
+qubitcoin-crypto = { path = "../qubitcoin-crypto" }
+secp256k1 = "0.29"
+bitcoin = { version = "0.32", optional = true }
+thiserror = "1"
+
+[dev-dependencies]
+hex = "0.4"
+serde_json = "1"
+criterion = { version = "0.5", features = ["html_reports"] }
+bitcoin = "0.32"
+
+[[bench]]
+name = "consensus_bench"
+harness = false

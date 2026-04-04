@@ -24,6 +24,18 @@ use bitcoin::Script;
 use metashrew_support::address::{AddressEncoding, Payload};
 static mut _NETWORK: Option<NetworkParams> = None;
 
+/// Distinguishes the underlying blockchain type for address encoding,
+/// derivation paths, and RPC routing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ChainType {
+    Bitcoin,
+    Zcash,
+}
+
+impl Default for ChainType {
+    fn default() -> Self { ChainType::Bitcoin }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetworkParams {
     pub network: Network,
@@ -37,6 +49,16 @@ pub struct NetworkParams {
     pub bitcoin_rpc_url: Option<String>,
     pub metashrew_rpc_url: Option<String>,
     pub esplora_url: Option<String>,
+    /// Blockchain type — determines address encoding, derivation paths, signing.
+    #[serde(default)]
+    pub chain_type: ChainType,
+    /// Zcash 2-byte P2PKH version prefix (e.g. [0x1c, 0xb8] for t1...).
+    /// When present, overrides the single-byte `p2pkh_prefix` for Base58Check encoding.
+    #[serde(default)]
+    pub p2pkh_prefix_bytes: Option<Vec<u8>>,
+    /// Zcash 2-byte P2SH version prefix (e.g. [0x1c, 0xbd] for t3...).
+    #[serde(default)]
+    pub p2sh_prefix_bytes: Option<Vec<u8>>,
 }
 
 #[allow(static_mut_refs)]
@@ -58,13 +80,50 @@ pub fn get_network_option() -> Option<&'static NetworkParams> {
 
 pub fn to_address_str(script: &Script) -> Result<String, anyhow::Error> {
     let config = get_network();
+    let payload = Payload::from_script(script)?;
+
+    // Zcash transparent addresses use 2-byte version prefixes in Base58Check.
+    // Handle this separately since AddressEncoding only supports 1-byte prefixes.
+    if config.chain_type == ChainType::Zcash {
+        return zcash_address_str(config, &payload);
+    }
+
     Ok(AddressEncoding {
         p2pkh_prefix: config.p2pkh_prefix,
         p2sh_prefix: config.p2sh_prefix,
         hrp: Hrp::parse_unchecked(&config.bech32_hrp),
-        payload: &Payload::from_script(script)?,
+        payload: &payload,
     }
     .to_string())
+}
+
+/// Encode a Zcash transparent address with 2-byte version prefix Base58Check.
+/// Produces t1... (P2PKH) or t3... (P2SH) addresses on mainnet.
+fn zcash_address_str(config: &NetworkParams, payload: &Payload) -> Result<String, anyhow::Error> {
+    use bitcoin::base58;
+
+    match payload {
+        Payload::PubkeyHash(hash) => {
+            let prefix = config.p2pkh_prefix_bytes.as_ref()
+                .ok_or_else(|| anyhow::anyhow!("Zcash network missing p2pkh_prefix_bytes"))?;
+            let mut prefixed = Vec::with_capacity(prefix.len() + 20);
+            prefixed.extend_from_slice(prefix);
+            prefixed.extend_from_slice(&hash[..]);
+            Ok(base58::encode_check(&prefixed))
+        }
+        Payload::ScriptHash(hash) => {
+            let prefix = config.p2sh_prefix_bytes.as_ref()
+                .ok_or_else(|| anyhow::anyhow!("Zcash network missing p2sh_prefix_bytes"))?;
+            let mut prefixed = Vec::with_capacity(prefix.len() + 20);
+            prefixed.extend_from_slice(prefix);
+            prefixed.extend_from_slice(&hash[..]);
+            Ok(base58::encode_check(&prefixed))
+        }
+        Payload::WitnessProgram(_) => {
+            Err(anyhow::anyhow!("Zcash does not support SegWit/Taproot witness programs"))
+        }
+        _ => Err(anyhow::anyhow!("Unsupported payload type for Zcash address encoding")),
+    }
 }
 
 
@@ -86,6 +145,10 @@ impl FromStr for DeezelNetwork {
             "testnet" => Ok(DeezelNetwork(Network::Testnet)),
             "signet" => Ok(DeezelNetwork(Network::Signet)),
             "regtest" => Ok(DeezelNetwork(Network::Regtest)),
+            // Zcash networks reuse Bitcoin Network enum — differentiation is via ChainType
+            "zcash" | "zcash-mainnet" => Ok(DeezelNetwork(Network::Bitcoin)),
+            "zcash-testnet" => Ok(DeezelNetwork(Network::Testnet)),
+            "zcash-regtest" => Ok(DeezelNetwork(Network::Regtest)),
             _ => Err(AlkanesError::InvalidParameters(format!("Invalid network: {}", s))),
         }
     }
@@ -138,6 +201,11 @@ pub struct RpcConfig {
     /// esplora_url, and ord_url. Uses "alkanes", "esplora", and "brc20-prog" labels.
     #[arg(long)]
     pub qubitcoin_rpc_url: Option<String>,
+
+    /// Quzec RPC URL — single-process mode where quzec provides all indexers
+    /// for Zcash networks. Same pattern as qubitcoin_rpc_url but for Zcash chains.
+    #[arg(long)]
+    pub quzec_rpc_url: Option<String>,
 
     /// Subfrost API Key (optional, can also be set via SUBFROST_API_KEY environment variable)
     #[arg(long)]
@@ -218,6 +286,9 @@ impl RpcConfig {
             "mainnet" => "https://mainnet.subfrost.io/v4/jsonrpc".to_string(),
             "signet" => "https://signet.subfrost.io/v4/jsonrpc".to_string(),
             "subfrost-regtest" => "https://regtest.subfrost.io/v4/jsonrpc".to_string(),
+            "zcash" | "zcash-mainnet" => "http://localhost:8232".to_string(),
+            "zcash-testnet" => "http://localhost:18232".to_string(),
+            "zcash-regtest" => "http://localhost:18232".to_string(),
             _ => "http://localhost:18888".to_string(), // regtest
         }
     }
@@ -266,10 +337,25 @@ impl RpcConfig {
         self.qubitcoin_rpc_url.is_some()
     }
 
+    /// Returns true if operating in quzec single-process mode (Zcash).
+    pub fn is_quzec_mode(&self) -> bool {
+        self.quzec_rpc_url.is_some()
+    }
+
+    /// Returns true if this is a Zcash network provider.
+    pub fn is_zcash(&self) -> bool {
+        self.provider.starts_with("zcash")
+    }
+
+    /// Returns the unified single-process RPC URL if in qubitcoin or quzec mode.
+    fn get_unified_rpc_url(&self) -> Option<&String> {
+        self.qubitcoin_rpc_url.as_ref().or(self.quzec_rpc_url.as_ref())
+    }
+
     /// Get the RPC target for Bitcoin Core operations
     /// Priority: qubitcoin_rpc_url > bitcoin_rpc_url > jsonrpc_url (JSONRPC translation) > default
     pub fn get_bitcoin_rpc_target(&self) -> RpcTarget {
-        if let Some(ref url) = self.qubitcoin_rpc_url {
+        if let Some(url) = self.get_unified_rpc_url() {
             return RpcTarget { url: url.clone(), backend_type: RpcBackendType::JsonRpc };
         }
         if let Some(ref url) = self.bitcoin_rpc_url {
@@ -293,7 +379,7 @@ impl RpcConfig {
     /// Get the RPC target for Metashrew operations (alkanes.wasm view functions)
     /// Priority: metashrew_rpc_url > jsonrpc_url > default jsonrpc
     pub fn get_metashrew_rpc_target(&self) -> RpcTarget {
-        if let Some(ref url) = self.qubitcoin_rpc_url {
+        if let Some(url) = self.get_unified_rpc_url() {
             return RpcTarget { url: url.clone(), backend_type: RpcBackendType::JsonRpc };
         }
         if let Some(ref url) = self.metashrew_rpc_url {
@@ -317,7 +403,7 @@ impl RpcConfig {
     /// Get the RPC target for Esplora operations
     /// Priority: esplora_url (REST) > jsonrpc_url (JSONRPC translation) > default jsonrpc
     pub fn get_esplora_rpc_target(&self) -> RpcTarget {
-        if let Some(ref url) = self.qubitcoin_rpc_url {
+        if let Some(url) = self.get_unified_rpc_url() {
             return RpcTarget { url: url.clone(), backend_type: RpcBackendType::JsonRpc };
         }
         if let Some(ref url) = self.esplora_url {
@@ -341,7 +427,7 @@ impl RpcConfig {
     /// Get the RPC target for Ord operations
     /// Priority: ord_url (REST) > jsonrpc_url (JSONRPC translation) > default jsonrpc
     pub fn get_ord_rpc_target(&self) -> RpcTarget {
-        if let Some(ref url) = self.qubitcoin_rpc_url {
+        if let Some(url) = self.get_unified_rpc_url() {
             return RpcTarget { url: url.clone(), backend_type: RpcBackendType::JsonRpc };
         }
         if let Some(ref url) = self.ord_url {
@@ -449,9 +535,31 @@ impl Default for RpcConfig {
             data_api_url: None,
             espo_rpc_url: None,
             qubitcoin_rpc_url: None,
+            quzec_rpc_url: None,
             subfrost_api_key: None,
             timeout_seconds: 600,
             jsonrpc_headers: Vec::new(),
+        }
+    }
+}
+
+impl Default for NetworkParams {
+    fn default() -> Self {
+        Self {
+            network: Network::Regtest,
+            magic: [0x00; 4],
+            default_port: 0,
+            rpc_port: 0,
+            bech32_hrp: String::new(),
+            bech32_prefix: String::new(),
+            p2pkh_prefix: 0,
+            p2sh_prefix: 0,
+            bitcoin_rpc_url: None,
+            metashrew_rpc_url: None,
+            esplora_url: None,
+            chain_type: ChainType::Bitcoin,
+            p2pkh_prefix_bytes: None,
+            p2sh_prefix_bytes: None,
         }
     }
 }
@@ -470,6 +578,7 @@ impl NetworkParams {
             bitcoin_rpc_url: Some("http://localhost:18443".to_string()),
             metashrew_rpc_url: Some("http://localhost:18888".to_string()),
             esplora_url: None,
+            ..Default::default()
         }
     }
 
@@ -490,6 +599,7 @@ impl NetworkParams {
                 bitcoin_rpc_url: None,
                 metashrew_rpc_url: None,
                 esplora_url: None,
+                ..Default::default()
             }),
             "subfrost-regtest" => Ok(Self {
                 network: Network::Regtest,
@@ -503,6 +613,7 @@ impl NetworkParams {
                 bitcoin_rpc_url: Some("https://regtest.subfrost.io/v4/jsonrpc".to_string()),
                 metashrew_rpc_url: Some("https://regtest.subfrost.io/v4/jsonrpc".to_string()),
                 esplora_url: None,  // Subfrost uses JSON-RPC esplora_* methods, not REST API
+                ..Default::default()
             }),
             "mainnet" => Ok(Self {
                 network: Network::Bitcoin,
@@ -516,6 +627,7 @@ impl NetworkParams {
                 bitcoin_rpc_url: None,
                 metashrew_rpc_url: None,
                 esplora_url: None,
+                ..Default::default()
             }),
             "testnet" => Ok(Self {
                 network: Network::Testnet,
@@ -529,6 +641,7 @@ impl NetworkParams {
                 bitcoin_rpc_url: None,
                 metashrew_rpc_url: None,
                 esplora_url: None,
+                ..Default::default()
             }),
             "signet" => Ok(Self {
                 network: Network::Signet,
@@ -542,6 +655,56 @@ impl NetworkParams {
                 bitcoin_rpc_url: None,
                 metashrew_rpc_url: None,
                 esplora_url: None,
+                ..Default::default()
+            }),
+            // Zcash networks — transparent addresses use 2-byte Base58Check prefixes
+            "zcash" | "zcash-mainnet" => Ok(Self {
+                network: Network::Bitcoin,
+                magic: [0x24, 0xe9, 0x27, 0x64],
+                default_port: 8233,
+                rpc_port: 8232,
+                bech32_hrp: String::new(), // Zcash doesn't use bech32
+                bech32_prefix: String::new(),
+                p2pkh_prefix: 0x1c, // first byte only — full prefix in p2pkh_prefix_bytes
+                p2sh_prefix: 0x1c,
+                bitcoin_rpc_url: None,
+                metashrew_rpc_url: None,
+                esplora_url: None,
+                chain_type: ChainType::Zcash,
+                p2pkh_prefix_bytes: Some(vec![0x1c, 0xb8]), // t1...
+                p2sh_prefix_bytes: Some(vec![0x1c, 0xbd]),  // t3...
+            }),
+            "zcash-testnet" => Ok(Self {
+                network: Network::Testnet,
+                magic: [0xfa, 0x1a, 0xf9, 0xbf],
+                default_port: 18233,
+                rpc_port: 18232,
+                bech32_hrp: String::new(),
+                bech32_prefix: String::new(),
+                p2pkh_prefix: 0x1d,
+                p2sh_prefix: 0x1c,
+                bitcoin_rpc_url: None,
+                metashrew_rpc_url: None,
+                esplora_url: None,
+                chain_type: ChainType::Zcash,
+                p2pkh_prefix_bytes: Some(vec![0x1d, 0x25]), // tm...
+                p2sh_prefix_bytes: Some(vec![0x1c, 0xba]),  // t2...
+            }),
+            "zcash-regtest" => Ok(Self {
+                network: Network::Regtest,
+                magic: [0xaa, 0xe8, 0x3f, 0x5f],
+                default_port: 18344,
+                rpc_port: 18232,
+                bech32_hrp: String::new(),
+                bech32_prefix: String::new(),
+                p2pkh_prefix: 0x1d,
+                p2sh_prefix: 0x1c,
+                bitcoin_rpc_url: Some("http://localhost:18232".to_string()),
+                metashrew_rpc_url: Some("http://localhost:18888".to_string()),
+                esplora_url: None,
+                chain_type: ChainType::Zcash,
+                p2pkh_prefix_bytes: Some(vec![0x1d, 0x25]), // tm... (same as testnet)
+                p2sh_prefix_bytes: Some(vec![0x1c, 0xba]),  // t2...
             }),
             _ => Err(AlkanesError::InvalidParameters(format!("Unknown network: {}", network))),
         }
@@ -586,6 +749,9 @@ impl NetworkParams {
     }
 
     pub fn supported_networks() -> Vec<String> {
-        vec!["mainnet".to_string(), "testnet".to_string(), "signet".to_string(), "regtest".to_string()]
+        vec![
+            "mainnet".to_string(), "testnet".to_string(), "signet".to_string(), "regtest".to_string(),
+            "zcash".to_string(), "zcash-testnet".to_string(), "zcash-regtest".to_string(),
+        ]
     }
 }

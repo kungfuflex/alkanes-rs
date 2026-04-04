@@ -16,6 +16,19 @@ members = [
     "alkanes/alkanes-std-merkle-distributor",
     "alkanes/alkanes-std-test",
     "alkanes/alkanes-std-test-2",
+    "vendor/qubitcoin-crypto",
+    "vendor/qubitcoin-primitives",
+    "vendor/qubitcoin-serialize",
+    "vendor/qubitcoin-script",
+    "vendor/qubitcoin-consensus",
+    "vendor/qubitcoin-util",
+    "vendor/qubitcoin-storage",
+    "vendor/qubitcoin-common",
+    "vendor/qubitcoin-node",
+    "vendor/qubitcoin-support",
+    "vendor/qubitcoin-indexer-core",
+    "vendor/qubitcoin-indexer",
+    "vendor/qubitcoin-rpc",
 ]
 exclude = ["crates/alkanes-web-leptos"]
 resolver = "2"

@@ -194,6 +194,7 @@ impl WebProvider {
             espo_rpc_url: None,
             subfrost_api_key: None,
             qubitcoin_rpc_url: None,
+            quzec_rpc_url: None,
             timeout_seconds: 600,
             jsonrpc_headers: Vec::new(),
         };
@@ -6375,6 +6376,7 @@ impl WebProvider {
             espo_rpc_url: None,
             subfrost_api_key: None,
             qubitcoin_rpc_url: None,
+            quzec_rpc_url: None,
             timeout_seconds: 600,
             jsonrpc_headers: Vec::new(),
         };
@@ -6407,10 +6409,11 @@ impl WebProvider {
            espo_rpc_url: None,
            subfrost_api_key: None,
            qubitcoin_rpc_url: None,
+           quzec_rpc_url: None,
            timeout_seconds: 600,
            jsonrpc_headers: Vec::new(),
        };
-       
+
        Ok(Self {
            rpc_config,
            network: params.network,
@@ -6449,6 +6452,7 @@ impl WebProvider {
             espo_rpc_url: None,
             subfrost_api_key: None,
             qubitcoin_rpc_url: None,
+            quzec_rpc_url: None,
             timeout_seconds: 600,
             jsonrpc_headers: Vec::new(),
         };

@@ -1,0 +1,18 @@
+[package]
+name = "qubitcoin-primitives"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Primitive types for Qubitcoin: Uint256, ArithUint256, Amount, Txid, BlockHash"
+
+[dependencies]
+qubitcoin-crypto = { path = "../qubitcoin-crypto" }
+hex = "0.4"
+thiserror = "1"
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "primitives_bench"
+harness = false
