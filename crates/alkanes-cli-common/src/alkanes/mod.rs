@@ -29,8 +29,10 @@ pub mod amm_cli;
 pub mod pool_details;
 pub mod batch_pools;
 pub mod experimental_asm;
+pub mod synth_swap;
 
 pub use types::*;
+pub use synth_swap::{SynthSwapParams, build_swap_protostones, build_swap_outputs};
 pub use amm::{GetAllPoolsResult, AllPoolsDetailsResult, PoolDetailsResult, PoolDetailsWithId};
 pub use pool_details::{PoolDetails, PoolInfo};
 pub use experimental_asm::{get_all_pools, get_all_pools_with_details, get_all_pools_with_details_parallel, ParallelFetchConfig, AlkaneReflection, reflect_alkane};

@@ -47,30 +47,34 @@ pub const FRBTC_CONTRACT_TX: u64 = 0;
 ///
 /// Expected protobuf encoding: `0x2080db352a03200067`
 pub fn build_get_signer_parcel() -> MessageContextParcel {
+    build_get_signer_parcel_for(FRBTC_CONTRACT_BLOCK, FRBTC_CONTRACT_TX)
+}
+
+pub fn build_get_signer_parcel_for(block: u64, tx: u64) -> MessageContextParcel {
     let mut parcel = MessageContextParcel::default();
-    
+
     // Set context parameters
     parcel.height = 880000;
     parcel.vout = 0;
     parcel.pointer = 0;
     parcel.refund_pointer = 0;
     parcel.txindex = 0;
-    
-    // Encode target [32, 0] and GET_SIGNER opcode (103) as calldata
-    // The calldata format is: [target_block_lo_byte, target_tx_lo_byte, input_opcode]
-    parcel.calldata = vec![
-        FRBTC_CONTRACT_BLOCK as u8,  // 32
-        FRBTC_CONTRACT_TX as u8,      // 0
-        GET_SIGNER_OPCODE as u8,      // 103
-    ];
-    
+
+    // Encode target and GET_SIGNER opcode (103) as LEB128 cellpack
+    use alkanes_support::cellpack::Cellpack;
+    use alkanes_support::id::AlkaneId;
+    parcel.calldata = Cellpack {
+        target: AlkaneId { block: block as u128, tx: tx as u128 },
+        inputs: vec![GET_SIGNER_OPCODE as u128],
+    }.encipher();
+
     // Empty alkanes list (no transfers)
     parcel.alkanes = vec![];
-    
+
     // Empty block and transaction
     parcel.block = vec![];
     parcel.transaction = vec![];
-    
+
     parcel
 }
 
@@ -115,8 +119,17 @@ pub fn parse_signer_pubkey(response: &serde_json::Value) -> Result<Vec<u8>> {
     // We need to extract the 32 bytes after the field 3 tag (0x1a) and length (0x20)
     
     let pubkey_bytes = if response_bytes.len() >= 36 && response_bytes[0] == 0x0a && response_bytes[2] == 0x1a && response_bytes[3] == 0x20 {
-        // Standard format: field 1 wrapper, field 3 with 32 bytes
+        // Standard format: field 1 wrapper, field 3 with 32-byte x-only key
         response_bytes[4..36].to_vec()
+    } else if response_bytes.len() >= 38 && response_bytes[0] == 0x0a && response_bytes[2] == 0x1a && response_bytes[3] == 0x22 {
+        // Extended format: field 3 with 34-byte P2TR scriptPubKey (5120 + 32-byte key)
+        let script = &response_bytes[4..38];
+        if script[0] == 0x51 && script[1] == 0x20 {
+            // Extract the 32-byte x-only key from P2TR scriptPubKey
+            script[2..34].to_vec()
+        } else {
+            response_bytes[4..38].to_vec()
+        }
     } else {
         // Try to decode as ExtendedCallResponse (may fail if storage field is malformed)
         use crate::proto::alkanes::ExtendedCallResponse;
@@ -182,11 +195,12 @@ pub async fn get_subfrost_address<P: crate::DeezelProvider + ?Sized>(
     provider: &P,
     alkane_id: &crate::alkanes::types::AlkaneId,
 ) -> Result<String> {
-    // Build the request parcel with the target alkane encoded in calldata
-    let parcel = build_get_signer_parcel();
-    
-    // Call simulate - the alkane ID doesn't matter for GET_SIGNER since it's encoded in calldata
-    let response = provider.simulate("", &parcel, None).await?;
+    // Build the request parcel with the target alkane's block:tx
+    let parcel = build_get_signer_parcel_for(alkane_id.block, alkane_id.tx);
+
+    // Call simulate
+    let contract_id = format!("{}:{}", alkane_id.block, alkane_id.tx);
+    let response = provider.simulate(&contract_id, &parcel, None).await?;
     
     // Parse the signer pubkey from JSON response
     let pubkey_bytes = parse_signer_pubkey(&response)?;

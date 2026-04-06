@@ -104,9 +104,11 @@ impl Runestone {
         });
 
         let pointer = Tag::Pointer.take(&mut fields, |[pointer]| {
-            let pointer = u32::try_from(pointer).ok()?;
-            (u64::from(pointer) < u64::try_from(transaction.output.len()).unwrap())
-                .then_some(pointer)
+            // Allow extended pointer values beyond physical outputs.
+            // Protorune uses shadow vouts (pointer >= tx.output.len()) to route
+            // tokens to protomessage execution contexts. The ordinals spec rejects
+            // these, but we need them for alkane/protorune token routing.
+            u32::try_from(pointer).ok()
         });
 
         if etching

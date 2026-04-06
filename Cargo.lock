@@ -586,6 +586,7 @@ dependencies = [
  "qubitcoin-storage",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "tokio",
  "wasmtime",

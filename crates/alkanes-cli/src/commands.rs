@@ -1268,6 +1268,33 @@ pub enum Alkanes {
         #[arg(long, short = 'y')]
         auto_confirm: bool,
     },
+    /// Deposit stablecoins (USDT/USDC) into the subfrost vault on EVM.
+    /// Triggers frUSD minting on Bitcoin via the signal engine.
+    BridgeDeposit {
+        /// Amount to deposit (in stablecoin's native decimals, e.g., 1000000 = 1 USDC)
+        amount: u64,
+        /// Stablecoin: "usdc" or "usdt"
+        #[arg(long, default_value = "usdt")]
+        stablecoin: String,
+        /// EVM RPC URL
+        #[arg(long, default_value = "http://127.0.0.1:8545")]
+        evm_rpc: String,
+        /// EVM private key (hex, 0x-prefixed)
+        #[arg(long)]
+        evm_key: String,
+        /// Vault contract address (overrides default)
+        #[arg(long)]
+        vault_address: Option<String>,
+        /// Token contract address (overrides default)
+        #[arg(long)]
+        token_address: Option<String>,
+        /// Raw protostones hex for the mint TX (optional — for advanced swap paths)
+        #[arg(long)]
+        protostones: Option<String>,
+        /// Chain ID (default: 31337 for regtest)
+        #[arg(long)]
+        chain_id: Option<u64>,
+    },
     /// Get pending unwraps
     Unwrap {
         /// Block tag to query (e.g., "latest" or a block height)
@@ -3199,6 +3226,7 @@ impl Alkanes {
             self,
             Alkanes::Execute(_)
                 | Alkanes::WrapBtc { .. }
+                | Alkanes::BridgeDeposit { .. }
                 | Alkanes::InitPool { .. }
                 | Alkanes::Swap { .. }
         )

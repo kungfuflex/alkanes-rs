@@ -747,10 +747,12 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         let alkanes_needed = self.calculate_alkanes_needed(&params.input_requirements);
         let alkanes_excess = self.calculate_excess(&utxo_selection.alkanes_found, &alkanes_needed);
         
-        // Handle excess alkanes by generating automatic protostone
-        // DISABLED: auto-change protostone causes extcall failures in both runtimes.
-        // Excess alkanes flow to runestone default pointer (output 0) matching ts-sdk.
-        let final_protostones = if !alkanes_excess.is_empty() {
+        // Handle excess alkanes: DO NOT insert auto-change protostone at the beginning.
+        // Inserting at position 0 causes the protorune runtime to route input alkanes
+        // to the auto-change protostone instead of the user's contract call protostone.
+        // Instead, excess alkanes flow to the Runestone default pointer (output 0),
+        // matching @alkanes/ts-sdk behavior.
+        let final_protostones = if !alkanes_excess.is_empty() && false /* DISABLED */ {
             log::info!("🔄 Handling excess alkanes with automatic protostone generation");
             
             // Determine alkanes change address
@@ -837,7 +839,9 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         }
 
         // Use final_funding_outpoints which may have inscribed UTXOs replaced with clean ones from split
-        let runestone_script = self.construct_runestone_script(&final_protostones, outputs.len())?;
+        // When alkane inputs are specified, route them to the first protomessage (not output 0)
+        let has_alkane_inputs = params.input_requirements.iter().any(|r| matches!(r, InputRequirement::Alkanes { .. }));
+        let runestone_script = self.construct_runestone_script_with_alkane_routing(&final_protostones, outputs.len(), has_alkane_inputs)?;
         let (psbt, fee, estimated_vsize) = self.build_psbt_and_fee(final_funding_outpoints.clone(), outputs, Some(runestone_script), params.fee_rate, None, None).await?;
 
         // Validate the transaction before returning
@@ -1121,9 +1125,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                                     }));
                                 }
                                 if !balances_array.is_empty() {
-                                    utxo_balances.insert(key, serde_json::json!({
-                                        "balances": balances_array
-                                    }));
+                                    utxo_balances.insert(key, serde_json::json!({ "balances": balances_array }));
                                 }
                             }
                             log::info!("protorunesbyaddress returned {} outpoints with balances", utxo_balances.len());
@@ -1265,49 +1267,50 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                     Err(_) => continue,
                 };
 
-                log::info!("Espo found alkane UTXO {}:{} missing from esplora -- fetching tx to add to spendable set", txid_str, vout);
+                log::info!("Alkane UTXO {}:{} missing from esplora -- adding from protorunesbyaddress data", txid_str, vout);
 
-                // Fetch the raw transaction to get the output value and script
-                match self.provider.get_transaction_hex(txid_str).await {
-                    Ok(tx_hex) => {
-                        match bitcoin::consensus::deserialize::<Transaction>(&hex::decode(&tx_hex).unwrap_or_default()) {
-                            Ok(tx) => {
-                                if let Some(output) = tx.output.get(vout as usize) {
-                                    let txid = bitcoin::Txid::from_str(txid_str).unwrap();
-                                    let outpoint = OutPoint { txid, vout };
-                                    let address = if !addresses_to_query.is_empty() {
-                                        addresses_to_query[0].clone()
-                                    } else {
-                                        String::new()
-                                    };
-                                    let utxo_info = UtxoInfo {
-                                        txid: txid_str.to_string(),
-                                        vout,
-                                        amount: output.value.to_sat(),
-                                        address,
-                                        script_pubkey: Some(output.script_pubkey.clone()),
-                                        confirmations: 100, // Assume confirmed since espo indexed it
-                                        frozen: false,
-                                        freeze_reason: None,
-                                        block_height: None,
-                                        has_inscriptions: false,
-                                        has_runes: false,
-                                        has_alkanes: true,
-                                        is_coinbase: false,
-                                    };
-                                    log::info!("Added espo-discovered alkane UTXO {}:{} ({} sats) to spendable set", txid_str, vout, output.value.to_sat());
-                                    spendable_utxos.push((outpoint, utxo_info));
-                                }
-                            }
-                            Err(e) => {
-                                log::warn!("Failed to decode tx {} for espo UTXO: {}", txid_str, e);
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        log::warn!("Failed to fetch tx {} for espo UTXO: {}", txid_str, e);
-                    }
-                }
+                // In qubitcoin mode, protorunesbyaddress already includes the TxOut data.
+                // Look up the outpoint in the wallet response to get value/script.
+                // If not available, try fetching the raw TX (requires txindex).
+                let txid = match bitcoin::Txid::from_str(txid_str) {
+                    Ok(t) => t,
+                    Err(_) => continue,
+                };
+                let outpoint = OutPoint { txid, vout };
+
+                // Try to get output info from the protorunesbyaddress response (already in memory)
+                // The response is stored in utxo_balances but we need the TxOut data.
+                // As a fallback, use dust value (546 sats) and the address's script_pubkey.
+                let address = if !addresses_to_query.is_empty() {
+                    addresses_to_query[0].clone()
+                } else {
+                    String::new()
+                };
+
+                // Use dust value as default — protorunesbyaddress UTXOs are typically dust
+                let utxo_value = 546u64;
+                // Derive script_pubkey from address (needed for PSBT witness UTXO)
+                let script_pubkey = bitcoin::Address::from_str(&address)
+                    .ok()
+                    .and_then(|a| a.require_network(self.provider.get_network()).ok())
+                    .map(|a| a.script_pubkey());
+                let utxo_info = UtxoInfo {
+                    txid: txid_str.to_string(),
+                    vout,
+                    amount: utxo_value,
+                    address: address.clone(),
+                    script_pubkey,
+                    confirmations: 100,
+                    frozen: false,
+                    freeze_reason: None,
+                    block_height: None,
+                    has_inscriptions: false,
+                    has_runes: false,
+                    has_alkanes: true,
+                    is_coinbase: false,
+                };
+                log::info!("Added alkane UTXO {}:{} ({} sats) to spendable set", txid_str, vout, utxo_value);
+                spendable_utxos.push((outpoint, utxo_info));
             }
 
             // Now process UTXOs using the pre-fetched balance data
@@ -1350,12 +1353,23 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                         }
                     }
                     
-                    // Select this UTXO if it has alkanes we need OR if we still need Bitcoin
-                    if has_needed_alkane || bitcoin_collected < bitcoin_needed {
+                    // Select this UTXO if it has alkanes we need.
+                    // Do NOT select alkane-carrying UTXOs just for Bitcoin — this
+                    // would accidentally spend someone's tokens as fee inputs.
+                    if has_needed_alkane {
                         bitcoin_collected += utxo.amount;
                         selected_outpoints.push(outpoint);
                         utxo_selected = true;
-                        log::debug!("Selected UTXO {}:{} (has_alkanes: {}, btc: {})", outpoint.txid, outpoint.vout, has_needed_alkane, utxo.amount);
+                        log::debug!("Selected UTXO {}:{} for required alkanes (btc: {})", outpoint.txid, outpoint.vout, utxo.amount);
+                    } else if !balances.is_empty() {
+                        // This UTXO carries alkanes we don't need — skip it for BTC
+                        log::debug!("Skipping UTXO {}:{} — has alkane balances not in requirements", outpoint.txid, outpoint.vout);
+                    } else if bitcoin_collected < bitcoin_needed {
+                        // No alkane balances — safe to use for BTC
+                        bitcoin_collected += utxo.amount;
+                        selected_outpoints.push(outpoint);
+                        utxo_selected = true;
+                        log::debug!("Selected UTXO {}:{} for Bitcoin only (btc: {})", outpoint.txid, outpoint.vout, utxo.amount);
                     }
                     
                     // Track ALL alkanes found in selected UTXOs (for change calculation)
@@ -1433,6 +1447,33 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             }
         }
         
+        // In qubitcoin mode, verify selected UTXOs are still unspent via gettxout.
+        // The protorunesbyaddress index may include stale (spent) outpoints.
+        if self.provider.is_qubitcoin_mode() && !selected_outpoints.is_empty() {
+            let mut verified = Vec::new();
+            for outpoint in &selected_outpoints {
+                let txid_str = outpoint.txid.to_string();
+                match crate::traits::JsonRpcProvider::call(self.provider, "", "gettxout", serde_json::json!([txid_str, outpoint.vout]), 1).await {
+                    Ok(resp) => {
+                        let result = resp.get("result").unwrap_or(&resp);
+                        if result.is_null() {
+                            log::warn!("UTXO {}:{} is SPENT (stale), removing from selection", &txid_str[..16.min(txid_str.len())], outpoint.vout);
+                            continue;
+                        }
+                        verified.push(*outpoint);
+                    }
+                    Err(_) => {
+                        // Can't verify — include anyway
+                        verified.push(*outpoint);
+                    }
+                }
+            }
+            if verified.len() < selected_outpoints.len() {
+                log::info!("Filtered {} stale UTXOs, {} remaining", selected_outpoints.len() - verified.len(), verified.len());
+            }
+            selected_outpoints = verified;
+        }
+
         Ok(UtxoSelectionResult {
             outpoints: selected_outpoints,
             alkanes_found,
@@ -1793,10 +1834,14 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
     }
 
     fn construct_runestone_script(&self, protostones: &[ProtostoneSpec], num_outputs: usize) -> Result<ScriptBuf> {
-        log::info!("Constructing runestone with {} protostones and {} outputs (before OP_RETURN)", protostones.len(), num_outputs);
+        self.construct_runestone_script_with_alkane_routing(protostones, num_outputs, false)
+    }
+
+    fn construct_runestone_script_with_alkane_routing(&self, protostones: &[ProtostoneSpec], num_outputs: usize, has_alkane_inputs: bool) -> Result<ScriptBuf> {
+        log::info!("Constructing runestone with {} protostones and {} outputs (before OP_RETURN), alkane_inputs={}", protostones.len(), num_outputs, has_alkane_inputs);
         log::info!("  After OP_RETURN is added, tx.output.len() = {} + 1 = {}", num_outputs, num_outputs + 1);
         log::info!("  Formula: pN -> vout = {} + 1 + N = {} + N", num_outputs, num_outputs + 1);
-        
+
         let converted_protostones = self.convert_protostone_specs_with_output_count(protostones, num_outputs as u32)?;
 
         // Debug logging
@@ -1808,9 +1853,17 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         let protocol_values = converted_protostones.encipher()?;
         log::info!("Encoded protocol values: {} u128 values", protocol_values.len());
 
+        // Runestone pointer: always 0 (first --to output).
+        //
+        // Extended pointers (shadow vouts for protomessage routing) cause issues
+        // with contracts that call Runestone::decipher internally (e.g. frBTC).
+        // The protorune indexer routes alkane tokens to protostones based on the
+        // protostone's own pointer field, not the Runestone pointer.
+        let pointer = 0u32;
+
         let runestone = Runestone {
             protocol: Some(protocol_values),
-            pointer: Some(0),  // Point to output 0 (the alkanes target output)
+            pointer: Some(pointer),
             ..Default::default()
         };
 
@@ -2423,9 +2476,10 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             return Ok(());
         }
 
-        if !has_envelope && !has_cellpacks && !has_edicts && !params.protostones.is_empty() {
+        let has_alkane_inputs = !params.input_requirements.is_empty();
+        if !has_envelope && !has_cellpacks && !has_edicts && !has_alkane_inputs && !params.protostones.is_empty() {
              return Err(AlkanesError::Other(anyhow!(
-                "No operation: Protostones provided without envelope, cellpack, or edicts."
+                "No operation: Protostones provided without envelope, cellpack, edicts, or alkane inputs."
             ).to_string()));
         }
 

@@ -110,7 +110,7 @@ async fn execute_command<T: System + SystemOrd + UtxoProvider>(system: &mut T, c
     match command {
         Commands::Bitcoind(cmd) => system.execute_bitcoind_command(cmd.into()).await.map_err(|e| e.into()),
         Commands::Wallet(cmd) => execute_wallet_command(system, cmd).await,
-        Commands::Alkanes(cmd) => execute_alkanes_command(system, cmd).await,
+        Commands::Alkanes(cmd) => execute_alkanes_command(system, cmd, frbtc_address.clone()).await,
         Commands::Runestone(cmd) => execute_runestone_command(system, cmd).await,
         Commands::Protorunes(cmd) => execute_protorunes_command(system.provider(), cmd).await,
         Commands::Ord(cmd) => execute_ord_command(system.provider(), cmd.into()).await,
@@ -1222,7 +1222,7 @@ async fn execute_wallet_command<T: System + UtxoProvider>(system: &mut T, comman
     Ok(())
 }
 
-async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) -> Result<()> {
+async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes, frbtc_address: Option<String>) -> Result<()> {
     match command {
         Alkanes::Execute(mut exec_args) => {
             // Resolve any address identifiers before passing them to the executor
@@ -1798,6 +1798,40 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
                 println!("💰 Reveal Fee: {} sats", result.reveal_fee);
                 println!("🎉 frBTC minted and locked in vault!");
             }
+            Ok(())
+        }
+        Alkanes::BridgeDeposit { amount, stablecoin, evm_rpc, evm_key, vault_address, token_address, protostones, chain_id } => {
+            use alkanes_cli_common::bridge::deposit::execute_bridge_deposit;
+            use alkanes_cli_common::bridge::types::{BridgeDepositParams, Stablecoin};
+
+            let coin = match stablecoin.to_lowercase().as_str() {
+                "usdc" => Stablecoin::USDC,
+                "usdt" | _ => Stablecoin::USDT,
+            };
+
+            let network_str = match system.provider().get_network() {
+                bitcoin::Network::Bitcoin => "mainnet",
+                bitcoin::Network::Regtest => "regtest",
+                _ => "testnet",
+            };
+
+            let params = BridgeDepositParams {
+                amount,
+                stablecoin: coin,
+                evm_rpc_url: evm_rpc,
+                evm_private_key: evm_key,
+                vault_address,
+                token_address,
+                protostones_hex: protostones,
+                outputs: vec![],
+                chain_id,
+            };
+
+            let result = execute_bridge_deposit(&params, network_str).await?;
+            println!("✅ Bridge deposit submitted!");
+            println!("📝 EVM TX: {}", result.tx_hash);
+            println!("💰 Net amount: {} (after 0.1% fee)", result.net_amount);
+            println!("🔗 The signal engine will detect this and mint frUSD on Bitcoin");
             Ok(())
         }
         Alkanes::Unwrap { block_tag, raw } => {
@@ -2717,13 +2751,24 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
                 }
             }
             
-            // Parse path tokens, replacing "B" with "32:0" (frBTC)
+            // Parse frBTC ID — use --frbtc-address if provided, else default [32:0]
+            let frbtc_id = if let Some(ref addr) = frbtc_address {
+                let parts: Vec<&str> = addr.split(':').collect();
+                if parts.len() == 2 {
+                    AlkaneId { block: parts[0].parse().unwrap_or(32), tx: parts[1].parse().unwrap_or(0) }
+                } else {
+                    AlkaneId { block: 32, tx: 0 }
+                }
+            } else {
+                AlkaneId { block: 32, tx: 0 }
+            };
+
+            // Parse path tokens, replacing "B" with frBTC ID
             let path_tokens: Result<Vec<AlkaneId>, _> = path_parts
                 .iter()
                 .map(|token_str| {
                     if token_str.to_uppercase() == "B" {
-                        // B represents frBTC (32:0)
-                        return Ok(AlkaneId { block: 32, tx: 0 });
+                        return Ok(frbtc_id.clone());
                     }
                     let parts: Vec<&str> = token_str.split(':').collect();
                     if parts.len() != 2 {
@@ -3173,8 +3218,8 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
             let subfrost_address = if needs_wrap || needs_unwrap {
                 use alkanes_cli_common::subfrost::get_subfrost_address;
                 use alkanes_cli_common::alkanes::types::AlkaneId as CliAlkaneId;
-                let frbtc_id = CliAlkaneId { block: 32, tx: 0 };
-                let addr = get_subfrost_address(system.provider(), &frbtc_id).await?;
+                let frbtc_cli_id = CliAlkaneId { block: frbtc_id.block, tx: frbtc_id.tx };
+                let addr = get_subfrost_address(system.provider(), &frbtc_cli_id).await?;
                 println!("📍 Subfrost address: {}", addr);
                 Some(addr)
             } else {

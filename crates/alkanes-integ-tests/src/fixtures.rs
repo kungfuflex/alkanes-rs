@@ -57,3 +57,5 @@ pub const FRUSD_AUTH_TOKEN: &[u8] = include_bytes!("../test_data/frusd_auth_toke
 
 /// frusd_token — frUSD stablecoin token (opcode 1 = mint w/ auth, opcode 5 = burn+bridge)
 pub const FRUSD_TOKEN: &[u8] = include_bytes!("../test_data/frusd_token.wasm");
+
+pub const SYNTH_POOL: &[u8] = include_bytes!("../test_data/synth_pool.wasm");

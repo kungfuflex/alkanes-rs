@@ -58,6 +58,7 @@ pub mod traits;
 pub mod network;
 pub mod rpc;
 pub mod alkanes;
+pub mod bridge;
 pub mod brc20_prog;
 #[cfg(feature = "std")]
 pub mod brc20_prog_rpc;

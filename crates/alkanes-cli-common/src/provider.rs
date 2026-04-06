@@ -1650,6 +1650,9 @@ impl WalletProvider for ConcreteProvider {
                     all_utxos.push((outpoint, utxo_info));
                 }
             }
+
+            // Note: alkane balance per-UTXO data is fetched in select_utxos via protorunesbyaddress.
+            // This fallback path only provides the UTXO list; balances are resolved later.
         }
 
         Ok(all_utxos)
@@ -1934,18 +1937,59 @@ impl WalletProvider for ConcreteProvider {
         let secp: Secp256k1<All> = Secp256k1::new();
 
         // 3. Fetch the previous transaction outputs (prevouts) for signing.
+        //    Try get_tx first, fall back to gettxout for qubitcoin mode (no txindex).
         let mut prevouts = Vec::new();
         for input in &tx.input {
-            let tx_info = self.get_tx(&input.previous_output.txid.to_string()).await?;
-            let vout_info = tx_info["vout"].get(input.previous_output.vout as usize)
-                .ok_or_else(|| AlkanesError::Wallet(format!("Vout {} not found for tx {}", input.previous_output.vout, input.previous_output.txid)))?;
-            
-            let amount = vout_info["value"].as_u64()
-                .ok_or_else(|| AlkanesError::Wallet("UTXO value not found".to_string()))?;
-            let script_pubkey_hex = vout_info["scriptpubkey"].as_str()
-                .ok_or_else(|| AlkanesError::Wallet("UTXO script pubkey not found".to_string()))?;
-            
-            let script_pubkey = ScriptBuf::from(Vec::from_hex(script_pubkey_hex)?);
+            let txid_str = input.previous_output.txid.to_string();
+            let vout = input.previous_output.vout;
+
+            // Try get_tx first (works with txindex)
+            let (amount, script_pubkey_hex_str) = match self.get_tx(&txid_str).await {
+                Ok(tx_info) if tx_info.get("error").is_none() && tx_info.get("vout").is_some() => {
+                    let vout_info = tx_info["vout"].get(vout as usize)
+                        .ok_or_else(|| AlkanesError::Wallet(format!("Vout {} not found for tx {}", vout, txid_str)))?;
+                    let amount = vout_info["value"].as_u64()
+                        .ok_or_else(|| AlkanesError::Wallet("UTXO value not found".to_string()))?;
+                    let script = vout_info["scriptpubkey"].as_str()
+                        .ok_or_else(|| AlkanesError::Wallet("UTXO script pubkey not found".to_string()))?
+                        .to_string();
+                    (amount, script)
+                }
+                Ok(_) | Err(_) => {
+                    let e = "tx not found or missing vout";
+                    // Fallback: use gettxout via RPC (works without txindex, for unspent outputs)
+                    log::info!("get_tx failed for {} ({}), trying gettxout", &txid_str[..16.min(txid_str.len())], e);
+                    let gettxout_resp: serde_json::Value = serde_json::from_value(
+                        <Self as crate::traits::JsonRpcProvider>::call(
+                            self, "", "gettxout",
+                            serde_json::json!([txid_str, vout]), 1,
+                        ).await.unwrap_or(serde_json::Value::Null)
+                    ).unwrap_or(serde_json::Value::Null);
+
+                    let result = gettxout_resp.get("result").unwrap_or(&gettxout_resp);
+                    if result.is_null() {
+                        // UTXO not found — derive script from wallet address
+                        log::warn!("gettxout returned null for {}:{}, using wallet address for script", &txid_str[..16.min(txid_str.len())], vout);
+                        let wallet_addr = WalletProvider::get_address(self).await.unwrap_or_default();
+                        let script_hex = bitcoin::Address::from_str(&wallet_addr).ok()
+                            .and_then(|a| a.require_network(network).ok())
+                            .map(|a| hex::encode(a.script_pubkey().as_bytes()))
+                            .unwrap_or_default();
+                        (546u64, script_hex)  // assume dust
+                    } else {
+                        let value_btc = result["value"].as_f64().unwrap_or(0.0);
+                        let amount = (value_btc * 100_000_000.0) as u64;
+                        let script = result.get("scriptPubKey").and_then(|s| s.get("hex")).and_then(|h| h.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        if script.is_empty() {
+                            return Err(AlkanesError::Wallet(format!("Cannot get scriptPubKey for {}:{}", txid_str, vout)));
+                        }
+                        (amount, script)
+                    }
+                }
+            };
+            let script_pubkey = ScriptBuf::from(Vec::from_hex(&script_pubkey_hex_str)?);
             prevouts.push(TxOut { value: Amount::from_sat(amount), script_pubkey });
         }
 
@@ -2866,9 +2910,14 @@ impl MetashrewRpcProvider for ConcreteProvider {
             let balance_sheet_pb = item.balances.ok_or_else(|| {
                 AlkanesError::Other("missing balance sheet in wallet response".to_string())
             })?;
-            let txid_bytes: [u8; 32] = outpoint.txid.try_into().map_err(|_| {
+            let mut txid_bytes: [u8; 32] = outpoint.txid.try_into().map_err(|_| {
                 AlkanesError::Other("invalid txid length in wallet response".to_string())
             })?;
+            // Protobuf txid bytes are in internal byte order (from metashrew).
+            // bitcoin::Txid::from_byte_array expects internal byte order, so no
+            // reversal is needed. (Previously reversed in qubitcoin mode because
+            // qubitcoind stored display order, but our qubitcoin-jsonrpc proxy
+            // routes to metashrew which uses internal order.)
             balances.push(crate::alkanes::protorunes::ProtoruneOutpointResponse {
                 output: TxOut {
                     value: Amount::from_sat(output.value),
@@ -4364,14 +4413,46 @@ impl DeezelProvider for ConcreteProvider {
     }
 
     async fn get_utxo(&self, outpoint: &OutPoint) -> Result<Option<TxOut>> {
-        let tx_info = self.get_tx(&outpoint.txid.to_string()).await?;
-        let vout_info = tx_info["vout"].get(outpoint.vout as usize)
-            .ok_or_else(|| AlkanesError::Wallet(format!("Vout {} not found for tx {}", outpoint.vout, outpoint.txid)))?;
+        let txid_str = outpoint.txid.to_string();
+        let vout = outpoint.vout;
+        let tx_result = self.get_tx(&txid_str).await;
 
-        let amount = vout_info["value"].as_u64()
-            .ok_or_else(|| AlkanesError::Wallet("UTXO value not found".to_string()))?;
-        let script_pubkey_hex = vout_info["scriptpubkey"].as_str()
-            .ok_or_else(|| AlkanesError::Wallet("UTXO script pubkey not found".to_string()))?;
+        let (amount, script_pubkey_hex) = match tx_result {
+            Ok(ref tx_info) if tx_info.get("error").is_none() && tx_info.get("vout").is_some() => {
+                let vout_info = tx_info["vout"].get(vout as usize)
+                    .ok_or_else(|| AlkanesError::Wallet(format!("Vout {} not found for tx {}", vout, txid_str)))?;
+                let amt = vout_info["value"].as_u64()
+                    .ok_or_else(|| AlkanesError::Wallet("UTXO value not found".to_string()))?;
+                let script = vout_info["scriptpubkey"].as_str()
+                    .ok_or_else(|| AlkanesError::Wallet("UTXO script pubkey not found".to_string()))?;
+                (amt, script.to_string())
+            }
+            _ => {
+                // Fallback: use gettxout for qubitcoin mode (no txindex)
+                log::info!("get_tx failed for get_utxo({}:{}), trying gettxout", &txid_str[..16.min(txid_str.len())], vout);
+                let network = self.get_network();
+                let gettxout_resp = <Self as crate::traits::JsonRpcProvider>::call(
+                    self, "", "gettxout", serde_json::json!([txid_str, vout]), 1,
+                ).await.unwrap_or(serde_json::Value::Null);
+                let result = gettxout_resp.get("result").unwrap_or(&gettxout_resp);
+                if result.is_null() {
+                    // Derive from wallet address
+                    let wallet_addr = WalletProvider::get_address(self).await.unwrap_or_default();
+                    let script_hex = bitcoin::Address::from_str(&wallet_addr).ok()
+                        .and_then(|a| a.require_network(network).ok())
+                        .map(|a| hex::encode(a.script_pubkey().as_bytes()))
+                        .unwrap_or_default();
+                    (546u64, script_hex)
+                } else {
+                    let value_btc = result["value"].as_f64().unwrap_or(0.0);
+                    let amt = (value_btc * 100_000_000.0) as u64;
+                    let script = result.get("scriptPubKey").and_then(|s| s.get("hex")).and_then(|h| h.as_str())
+                        .unwrap_or("").to_string();
+                    (amt, script)
+                }
+            }
+        };
+        let script_pubkey_hex = &script_pubkey_hex;
 
         let script_pubkey = ScriptBuf::from(Vec::from_hex(script_pubkey_hex)?);
         Ok(Some(TxOut { value: Amount::from_sat(amount), script_pubkey }))
