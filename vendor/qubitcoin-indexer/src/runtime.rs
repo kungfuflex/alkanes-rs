@@ -40,8 +40,8 @@ fn base_config() -> Config {
     config.wasm_simd(true);
     config.cranelift_nan_canonicalization(true);
     config.relaxed_simd_deterministic(true);
-    config.static_memory_maximum_size(0x100000000); // 4GB
-    config.static_memory_guard_size(0x10000); // 64KB
+    config.memory_reservation(0x100000000); // 4GB
+    config.memory_guard_size(0x10000); // 64KB
     // CoW memory init: reuse OS-level copy-on-write pages instead of
     // zeroing memory for each new instance. Eliminates ~12% CPU from
     // page fault handling (clear_page_erms, do_anonymous_page).
@@ -84,7 +84,7 @@ fn new_state(
 /// physical pages.
 fn prepare_memory(_instance: &Instance, _store: &mut Store<WasmState>) {
     // Memory grows on demand via StoreLimits. No pre-allocation needed
-    // since static_memory_maximum_size(4GB) reserves virtual address space
+    // since memory_reservation(4GB) reserves virtual address space
     // and memory_init_cow(false) ensures deterministic initial state.
 }
 
