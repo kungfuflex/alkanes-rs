@@ -231,8 +231,8 @@ impl IndexerInstance {
         config.wasm_simd(true);
         config.cranelift_nan_canonicalization(true);
         config.relaxed_simd_deterministic(true);
-        config.static_memory_maximum_size(0x100000000);
-        config.static_memory_guard_size(0x10000);
+        config.memory_reservation(0x100000000);
+        config.memory_guard_size(0x10000);
         config.memory_init_cow(true);
         config.async_support(true);
 

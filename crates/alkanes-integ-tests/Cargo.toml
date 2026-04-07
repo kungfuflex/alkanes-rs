@@ -13,7 +13,7 @@ protorune-support = { path = "../protorune-support" }
 protorune = { path = "../protorune", features = ["test-utils"] }
 ordinals = { path = "../ordinals" }
 bitcoin = { workspace = true }
-wasmtime = "18.0.4"
+wasmtime = "43"
 tokio = { workspace = true, features = ["full"] }
 anyhow = { workspace = true }
 log = { workspace = true }
