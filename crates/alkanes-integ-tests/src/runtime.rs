@@ -237,9 +237,9 @@ impl IndexerInstance {
         config.async_support(true);
 
         let engine = Engine::new(&config)
-            .with_context(|| format!("Failed to create engine for {}", label))?;
+            .map_err(|e| anyhow::anyhow!("Failed to create engine for {}: {}", label, e))?;
         let module = Module::new(&engine, wasm)
-            .with_context(|| format!("Failed to compile WASM for {}", label))?;
+            .map_err(|e| anyhow::anyhow!("Failed to compile WASM for {}: {}", label, e))?;
 
         Ok(Self {
             engine,
@@ -276,9 +276,7 @@ impl IndexerInstance {
         let start_fn = instance.get_typed_func::<(), ()>(&mut store, "_start")?;
 
         rt.block_on(async { start_fn.call_async(&mut store, ()).await })
-            .with_context(|| {
-                format!("{}: _start failed at height {}", self.label, height)
-            })?;
+            .map_err(|e| anyhow::anyhow!("{}: _start failed at height {}: {}", self.label, height, e))?;
 
         let state = store.into_data();
         if state.had_failure {
@@ -333,7 +331,7 @@ impl IndexerInstance {
 
         let view_fn = instance
             .get_typed_func::<(), i32>(&mut store, fn_name)
-            .with_context(|| format!("view function '{}' not found", fn_name))?;
+            .map_err(|e| anyhow::anyhow!("view function '{}' not found: {}", fn_name, e))?;
 
         let result_ptr = rt.block_on(async { view_fn.call_async(&mut store, ()).await })?;
 
