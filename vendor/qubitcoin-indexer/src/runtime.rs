@@ -424,20 +424,20 @@ fn link_host_functions_sync(linker: &mut Linker<WasmState>) -> Result<(), String
 
 fn link_host_functions_async(linker: &mut Linker<WasmState>) -> Result<(), String> {
     linker
-        .func_wrap0_async(
+        .func_wrap_async(
             "env",
             "__host_len",
-            |caller: Caller<'_, WasmState>| {
+            |caller: Caller<'_, WasmState>, ()| {
                 Box::new(async move { caller.data().input_data.len() as i32 })
             },
         )
         .map_err(|e| format!("link async __host_len: {}", e))?;
 
     linker
-        .func_wrap1_async(
+        .func_wrap_async(
             "env",
             "__load_input",
-            |mut caller: Caller<'_, WasmState>, ptr: i32| {
+            |mut caller: Caller<'_, WasmState>, (ptr,): (i32,)| {
                 Box::new(async move {
                     let data = caller.data().input_data.clone();
                     let memory = caller.get_export("memory").unwrap().into_memory().unwrap();
@@ -450,10 +450,10 @@ fn link_host_functions_async(linker: &mut Linker<WasmState>) -> Result<(), Strin
         .map_err(|e| format!("link async __load_input: {}", e))?;
 
     linker
-        .func_wrap1_async(
+        .func_wrap_async(
             "env",
             "__get_len",
-            |mut caller: Caller<'_, WasmState>, key_ptr: i32| {
+            |mut caller: Caller<'_, WasmState>, (key_ptr,): (i32,)| {
                 Box::new(async move {
                     let memory = caller.get_export("memory").unwrap().into_memory().unwrap();
                     let key = match read_arraybuffer(&caller, &memory, key_ptr) {
@@ -475,10 +475,10 @@ fn link_host_functions_async(linker: &mut Linker<WasmState>) -> Result<(), Strin
         .map_err(|e| format!("link async __get_len: {}", e))?;
 
     linker
-        .func_wrap2_async(
+        .func_wrap_async(
             "env",
             "__get",
-            |mut caller: Caller<'_, WasmState>, key_ptr: i32, value_ptr: i32| {
+            |mut caller: Caller<'_, WasmState>, (key_ptr, value_ptr): (i32, i32)| {
                 Box::new(async move {
                     let memory = caller.get_export("memory").unwrap().into_memory().unwrap();
                     let key = match read_arraybuffer(&caller, &memory, key_ptr) {
@@ -505,10 +505,10 @@ fn link_host_functions_async(linker: &mut Linker<WasmState>) -> Result<(), Strin
         .map_err(|e| format!("link async __get: {}", e))?;
 
     linker
-        .func_wrap1_async(
+        .func_wrap_async(
             "env",
             "__flush",
-            |mut caller: Caller<'_, WasmState>, data_ptr: i32| {
+            |mut caller: Caller<'_, WasmState>, (data_ptr,): (i32,)| {
                 Box::new(async move {
                     flush_handler(&mut caller, data_ptr);
                 })
@@ -517,10 +517,10 @@ fn link_host_functions_async(linker: &mut Linker<WasmState>) -> Result<(), Strin
         .map_err(|e| format!("link async __flush: {}", e))?;
 
     linker
-        .func_wrap1_async(
+        .func_wrap_async(
             "env",
             "__log",
-            |mut caller: Caller<'_, WasmState>, ptr: i32| {
+            |mut caller: Caller<'_, WasmState>, (ptr,): (i32,)| {
                 Box::new(async move {
                     log_handler(&mut caller, ptr);
                 })
@@ -529,10 +529,10 @@ fn link_host_functions_async(linker: &mut Linker<WasmState>) -> Result<(), Strin
         .map_err(|e| format!("link async __log: {}", e))?;
 
     linker
-        .func_wrap4_async(
+        .func_wrap_async(
             "env",
             "abort",
-            |mut caller: Caller<'_, WasmState>, msg_ptr: i32, _file: i32, line: i32, col: i32| {
+            |mut caller: Caller<'_, WasmState>, (msg_ptr, _file, line, col): (i32, i32, i32, i32)| {
                 Box::new(async move {
                     abort_handler(&mut caller, msg_ptr, line, col);
                 })
