@@ -407,6 +407,49 @@ pub fn consume_fuel<'a>(caller: &mut Caller<'_, AlkanesState>, n: u64) -> Result
     caller.consume_fuel(n)
 }
 
+// ─── Gasless alkanes ─────────────────────────────────────────────────────────
+//
+// Certain well-audited genesis / system contracts are exempt from tx-level
+// fuel metering. The concrete case that motivated this: frBTC at [32, 0]'s
+// `wrap` opcode does `consensus_decode::<Transaction>` twice on the full BTC
+// tx bytes, plus `compute_txid` (double-SHA256 serialize), plus an
+// `observe_transaction` storage check, plus `compute_output` iterating and
+// comparing script_pubkeys. On regtest (with MINIMUM_FUEL_CHANGE1 = 3.5M
+// total tx fuel) a single wrap call consumes ~3.1M fuel — 88% of the budget
+// — leaving nothing for subsequent protostones in a chained
+// wrap → swap → burn tx. The work itself is cheap, the cost is in software
+// bitcoin parsing.
+//
+// Rather than pay to re-parse a tx that the runtime already has in hand,
+// gasless alkanes get an effectively-unlimited wasm fuel budget during
+// protostone execution, and whatever fuel they actually burn isn't charged
+// back against the tx-level FuelTank. Block-level metering is unaffected.
+//
+// This MUST be used sparingly — it's a trust boundary. Only contracts whose
+// logic is audited to terminate (no unbounded loops, no recursion) should
+// go on this list.
+
+use alkanes_support::id::AlkaneId;
+
+/// Alkane IDs whose protostone executions are not charged against the
+/// per-transaction fuel budget. Extend with extreme care.
+pub const GASLESS_ALKANES: &[AlkaneId] = &[
+    // frBTC — genesis synth at [32, 0]. `wrap` and `unwrap` both parse the
+    // full bitcoin tx; that parsing dominates the ~3M fuel cost per call.
+    AlkaneId { block: 32, tx: 0 },
+];
+
+#[inline]
+pub fn is_gasless_alkane(id: &AlkaneId) -> bool {
+    GASLESS_ALKANES.iter().any(|g| g == id)
+}
+
+/// Effective wasm start-fuel for a protostone call to a gasless alkane.
+/// Set to `u64::MAX / 2` so wasmtime doesn't trip OutOfFuel for any
+/// reasonable workload, while still bounding runaway loops at the
+/// architectural level.
+pub const GASLESS_ALKANE_FUEL: u64 = u64::MAX / 2;
+
 pub fn compute_extcall_fuel(savecount: u64, height: u32) -> Result<u64> {
     let save_fuel = overflow_error(fuel_per_store_byte(height).checked_mul(savecount))?;
     overflow_error::<u64>(FUEL_EXTCALL.checked_add(save_fuel))
