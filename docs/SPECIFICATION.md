@@ -137,7 +137,7 @@ protocol: Option<Vec<u128>>  -- protostone extension data
 
 #### 3.1.2 Etching
 
-An etching creates a new rune. Validation (`crates/protorune/src/lib.rs:142-178`):
+An etching creates a new rune. Validation (`crates/protorune/src/lib.rs:163-199`):
 
 - **Name validation**: The rune name must not be reserved (below the unlock threshold
   for the current height). Names unlock over time via `constants::RESERVED_NAME`
@@ -164,7 +164,7 @@ When a Runestone references a `mint` RuneId (`crates/protorune/src/lib.rs`, with
 #### 3.1.4 Edicts
 
 Edicts are balance transfer instructions within a transaction
-(`crates/protorune/src/lib.rs:83-139`, `handle_transfer_runes_to_vout`):
+(`crates/protorune/src/lib.rs:89-160`, `handle_transfer_runes_to_vout`):
 
 - Each edict specifies `(RuneId, amount, output)`.
 - If `output == tx.output.len()`, the amount is spread across all non-OP_RETURN outputs.
@@ -240,10 +240,15 @@ interface each sub-protocol must implement:
 
 ```rust
 trait MessageContext {
-    fn protocol_tag() -> u128;
     fn handle(parcel: &MessageContextParcel) -> Result<(Vec<RuneTransfer>, BalanceSheet)>;
+    fn protocol_tag() -> u128;
+    fn asset_protoburned_in_protocol(id: ProtoruneRuneId) -> bool;  // default impl
 }
 ```
+
+The `asset_protoburned_in_protocol` method has a default implementation that checks
+whether a rune ID has an etching entry in the protocol's `RUNE_ID_TO_ETCHING` table,
+returning `true` if the rune was bridged via protoburn.
 
 The `MessageContextParcel` (`crates/protorune/src/message.rs:26-39`) carries all
 context needed to process a message:
@@ -252,6 +257,9 @@ context needed to process a message:
 - `transaction`, `block`, `height`: Bitcoin context
 - `pointer`, `refund_pointer`: output indices for success/failure
 - `calldata`: raw bytes from the protostone `message` field
+- `sheets`: the balance sheet at this protostone's virtual output (boxed)
+- `txindex`: transaction index within the block
+- `vout`: the virtual output index of this protostone
 - `runtime_balances`: accumulated runtime balance sheet (at `u32::MAX` virtual output)
 
 #### 3.2.5 Virtual Outputs (Shadow Vouts)
@@ -315,7 +323,7 @@ For each output vout, the balance sheet is saved under:
 
 #### 3.3.3 AlkaneId
 
-`AlkaneId` (`crates/alkanes-support/src/id.rs:7-9`) is a pair `(block: u128, tx: u128)`.
+`AlkaneId` (`crates/alkanes-support/src/id.rs:7-10`) is a pair `(block: u128, tx: u128)`.
 The `block` field determines the ID's semantic meaning:
 
 | block | Meaning | tx field |
@@ -445,7 +453,8 @@ Three call types (`src/vm/extcall.rs`):
 | `Delegatecall` | true | false | caller=caller, myself=myself (unchanged) | commit on success |
 | `Staticcall` | false | false | caller=myself, myself=target | always rollback |
 
-Extcall processing (`src/vm/host_functions.rs:530-827`):
+Extcall processing (`src/vm/host_functions.rs:530-557` `handle_extcall`,
+`src/vm/host_functions.rs:723-865` `extcall`):
 
 1. **Recursion guard**: Checkpoint depth must be < 75 (`host_functions.rs:493`).
 2. **Parse inputs**: Read cellpack, incoming alkanes, and storage map from WASM memory.
@@ -463,6 +472,13 @@ Extcall processing (`src/vm/host_functions.rs:530-827`):
 
 Return value: positive = success (returndata length), negative = failure (negated
 returndata length).
+
+**Child revert isolation**: When a nested extcall reverts, the child's state changes
+are rolled back via checkpoint, all allocated child fuel is consumed, and revert data
+is stored in `returndata`. Crucially, the child's revert does **not** call `_abort()`
+on the parent frame -- the parent continues executing and can inspect the negative
+return value to handle the failure. This matches EVM semantics where a CALL that
+reverts returns 0 to the caller without aborting the caller's execution.
 
 #### 3.3.9 Precompiled Contracts
 
@@ -500,7 +516,26 @@ Fuel operates at two levels:
 - Storage writes are charged per byte: `fuel_per_store_byte` (8 pre-CHANGE1,
   40 post-CHANGE1).
 
-**Fuel cost constants** (`src/vm/fuel.rs:327-354`):
+**Version-gated fuel enforcement** (`src/vm/fuel.rs:335-345`):
+The `V217_FIX_HEIGHT` constant gates when fuel enforcement behavior is applied.
+Before this height, fuel consumption calls are permitted without strict enforcement.
+At and above this height, fuel is strictly enforced via `consume_fuel()`.
+
+| Network | V217_FIX_HEIGHT |
+|---------|----------------|
+| Mainnet | 943,500 |
+| Regtest | 0 |
+| Dogecoin | 0 |
+| Fractal | 0 |
+| Luckycoin | 0 |
+| Bellscoin | 0 |
+
+This height also gates the `handle_transfer_runes_to_vout` edict spread behavior
+(`crates/protorune/src/lib.rs:119`): pre-fix, OP_RETURN outputs could incorrectly
+consume from the spread amount; post-fix, OP_RETURN outputs are skipped before
+computing per-output amounts.
+
+**Fuel cost constants** (`src/vm/fuel.rs:347-374`):
 ```
 FUEL_PER_REQUEST_BYTE     = 1
 FUEL_PER_LOAD_BYTE        = 2
@@ -559,6 +594,49 @@ recipient is the null contract `[0, 0]`.
 ```
 Append-only list updated during `balance_pointer` when a non-zero balance is first
 detected.
+
+#### 3.3.12 Unwrap Subsystem
+
+**Source**: `src/unwrap.rs`
+
+The unwrap subsystem tracks fr-BTC (AlkaneId `[32, 0]`) unwrap payments -- requests
+to convert fr-BTC back to native Bitcoin.
+
+**Storage pointers**:
+- `/alkanes/{fr_btc}/storage/fulfilled` -- fulfilled payment records
+- `/alkanes/{fr_btc}/storage/premium` -- unwrap premium (u128 LE)
+- `/__INTERNAL/pending_unwraps` -- precomputed pending payments cache
+- `/__INTERNAL/pending_unwraps_initialized` -- cache initialization flag
+- `/__INTERNAL/pending_unwraps_height` -- last height the cache was updated through
+
+**Pending cache** (`src/unwrap.rs:38-290`):
+A precomputed cache of unfulfilled payments is maintained for fast view responses.
+The cache is rebuilt from scratch on initialization, then incrementally updated on
+each block. Cache pruning runs every 10 blocks to avoid expensive full-list rewrites.
+
+**`update_last_block(height)`** (`src/unwrap.rs:291+`):
+Called at the end of each block's indexing. Advances the `last_block` pointer past
+blocks with no pending (unfulfilled) payments, ensuring both the view slow-path and
+cache initialization start scanning from the correct block.
+
+**Pending entry format**: `[block_height (8 bytes), spendable (OutPoint), output (TxOut)]`.
+
+#### 3.3.13 Activation Guard
+
+**Source**: `src/indexer.rs:99-110`
+
+The `is_active(height)` function (`src/network.rs`) returns `true` only when the
+current block height is at or above `GENESIS_BLOCK` for the configured network. All
+alkanes-specific setup functions in the block processing pipeline are guarded behind
+this check:
+- `setup_diesel(block)`, `setup_frbtc(block)`, `setup_frsigil(block)`
+- `check_and_upgrade_precompiled(height)`
+- `FuelTank::initialize(block, height)`
+- `unwrap::update_last_block(height)`
+
+This allows the indexer to process Runes-layer data (which activates earlier, e.g.,
+block 840,000 on mainnet) without crashing on alkanes-specific operations before the
+alkanes genesis height (e.g., block 880,000 on mainnet).
 
 ---
 
@@ -731,7 +809,7 @@ See Section 2.2 for the high-level pipeline. Key invariants:
 
 ### 5.2 Runestone Processing
 
-`Protorune::index_runestone` (`crates/protorune/src/lib.rs:185`):
+`Protorune::index_runestone` (`crates/protorune/src/lib.rs:206`):
 
 1. **Load input sheets**: For each transaction input, load the existing balance sheet
    from `OUTPOINT_TO_RUNES`. Clear the input's balance sheet to prevent double-spending.
@@ -830,7 +908,7 @@ number generation. The only external interface is the defined set of host functi
 **Deterministic execution**: wasmi is a deterministic interpreter. Given the same
 binary, fuel, and context, execution always produces the same result.
 
-**Context safety wrapper**: `SafeAlkanesHostFunctionsImpl` (`src/vm/host_functions.rs:840-963`)
+**Context safety wrapper**: `SafeAlkanesHostFunctionsImpl` (`src/vm/host_functions.rs:878-1002`)
 wraps each host function with checkpoint/commit/depth-assertion to ensure the
 checkpoint stack is never corrupted by a host function call.
 
@@ -920,7 +998,9 @@ view functions (`src/view.rs:152-183`):
 | `index_pointer_ll.rs` | Linked-list index pointer tests |
 | `test_cenotaphs.rs` | Cenotaph creation and balance burning |
 | `multi_protocol.rs` | Multiple sub-protocol isolation |
+| `multi_block.rs` | Multi-block indexing scenarios |
 | `ord_runes_parity.rs` | Parity tests with the ord indexer |
+| `view_functions.rs` | View function endpoint tests |
 | `test_many_outputs_bug.rs` | Edge case: transactions with many outputs |
 
 ### 8.2 Alkanes Tests (`src/tests/`)
@@ -947,6 +1027,7 @@ view functions (`src/view.rs:152-183`):
 | `vec_input_test.rs` | Vector input handling |
 | `abi_test.rs` | ABI/meta function testing |
 | `view.rs` | View function testing |
+| `getstorageat.rs` | Storage-at view function testing |
 | `address.rs` | Address encoding/decoding |
 | `networks.rs` | Multi-network configuration |
 | `helpers.rs` | Test utility functions |
@@ -1067,7 +1148,7 @@ inconsistent index.
 ### 10.5 Commitment Validation Bypassed in Tests
 
 The `validate_rune_etch` function always returns `Ok(true)` in test builds
-(`crates/protorune/src/lib.rs:180-182`). Auditors should verify this is compile-gated
+(`crates/protorune/src/lib.rs:201-203`). Auditors should verify this is compile-gated
 and never reaches production.
 
 ### 10.6 Protostone Protocol Index Safety
@@ -1106,7 +1187,20 @@ This means even read-only balance queries during indexing can modify state. The
 append is idempotent in practice (the list is append-only and serves as a "known
 tokens" set) but violates the principle of least surprise.
 
-### 10.11 No Turbo Flag Storage
+### 10.11 Version-Gated Edict Spread Behavior
+
+The `handle_transfer_runes_to_vout` function (`crates/protorune/src/lib.rs:89-160`)
+has three code paths for the "spread to all outputs" case (edict targeting
+`output == tx.output.len()` with `amount > 0`):
+- **Pre-V217_FIX_HEIGHT**: OP_RETURN outputs consume from the spread amount but
+  are then skipped, silently losing tokens.
+- **Post-V217_FIX_HEIGHT**: OP_RETURN outputs are skipped before computing amounts,
+  preserving the full spread.
+
+Auditors should verify that the pre-fix path is only reachable on blocks below
+the activation height for each network.
+
+### 10.12 No Turbo Flag Storage
 
 The Runes `turbo` flag (from the ordinals specification) is parsed but not stored
 in any table. This means the indexer does not track whether a rune has opted into
