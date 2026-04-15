@@ -601,8 +601,8 @@ pub fn find_oldest_546_sat_utxo(utxos_json: &serde_json::Value) -> Result<Option
         let value = utxo["value"].as_u64()
             .ok_or_else(|| AlkanesError::RpcError("UTXO missing value field".to_string()))?;
         
-        // Only consider 546 sat UTXOs
-        if value == 546 {
+        // Consider dust UTXOs: 546 sats (legacy/P2PKH dust limit) or 330 sats (P2TR dust limit)
+        if value <= 546 {
             if let Some(status) = utxo["status"].as_object() {
                 if let Some(height) = status.get("block_height").and_then(|h| h.as_u64()) {
                     oldest_height = match oldest_height {
