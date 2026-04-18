@@ -1,0 +1,14 @@
+{
+  "environments": {
+    "regtest": {
+      "cli_path": "/Users/andrewhathaway/code/oyl/alkanes-rs/target/release/alkanes-cli",
+      "provider": "regtest",
+      "wallet_file": "~/.alkanes/wallet.json",
+      "passphrase": "${WALLET_PASSPHRASE}",
+      "jsonrpc_url": "https://regtest.subfrost.io/v4/cd5e637ee36b786f9e496d51b7060a01",
+      "data_api": "https://regtest.subfrost.io/v4/cd5e637ee36b786f9e496d51b7060a01"
+    }
+  },
+  "default_environment": "regtest",
+  "timeout_seconds": 600
+}
