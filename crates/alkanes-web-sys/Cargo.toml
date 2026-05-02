@@ -2,7 +2,7 @@
 name = "alkanes-web-sys"
 version.workspace = true
 edition = "2021"
-# Rebuild trigger: fix string amount parsing in batch_utxo_balances
+# Rebuild trigger: WalletProvider::get_balance computes from UTXOs (cli-common change)
 
 [package.metadata.wasm-pack.profile.release]
 wasm-opt = false
