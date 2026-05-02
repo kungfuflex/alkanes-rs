@@ -116,6 +116,9 @@ impl SystemAlkanes {
             }
         }
 
+        // Set the global network parameters so signing/address derivation works
+        alkanes_cli_common::network::set_network(network_params.clone());
+
         // Handle wallet-address mode (no keystore needed)
         let wallet_path_opt = if args.wallet_address.is_some() {
             // In address-only mode, we don't need a wallet file

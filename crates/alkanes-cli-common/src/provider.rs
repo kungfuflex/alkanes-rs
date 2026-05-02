@@ -1315,44 +1315,26 @@ impl WalletProvider for ConcreteProvider {
     
     async fn get_balance(&self, addresses: Option<Vec<String>>) -> Result<WalletBalance> {
         log::info!("[WalletProvider] Calling get_balance for addresses: {:?}", addresses);
-        let addrs_to_check = if let Some(provided_addresses) = addresses {
-            provided_addresses
-        } else {
-            // If no addresses are provided, derive the first 20 from the public key.
-            let derived_infos = self.get_addresses(20).await?;
-            derived_infos.into_iter().map(|info| info.address).collect()
-        };
 
-        if addrs_to_check.is_empty() {
-            return Ok(WalletBalance { confirmed: 0, pending: 0 });
+        // Use the same UTXO scanning approach as get_utxos to compute balance
+        let utxos = self.get_utxos(false, addresses).await?;
+
+        let mut confirmed: u64 = 0;
+        let mut pending: u64 = 0;
+
+        for (_outpoint, info) in &utxos {
+            if info.confirmations > 0 {
+                confirmed += info.amount;
+            } else {
+                pending += info.amount;
+            }
         }
 
-        let _total_confirmed_balance = 0_u64;
-        let _total_pending_balance = 0_i64;
-
-        // TODO: This is a placeholder implementation after removing the direct esplora calls.
-        // The correct balance calculation will happen in the frontend after fetching enriched UTXOs.
-        for _address in addrs_to_check {
-            // let info = self.get_address_info(&address).await?;
-            //
-            // // Confirmed balance
-            // if let Some(chain_stats) = info.get("chain_stats") {
-            //     let funded = chain_stats.get("funded_txo_sum").and_then(|v| v.as_u64()).unwrap_or(0);
-            //     let spent = chain_stats.get("spent_txo_sum").and_then(|v| v.as_u64()).unwrap_or(0);
-            //     total_confirmed_balance += funded.saturating_sub(spent);
-            // }
-            //
-            // // Pending balance (can be negative)
-            // if let Some(mempool_stats) = info.get("mempool_stats") {
-            //     let funded = mempool_stats.get("funded_txo_sum").and_then(|v| v.as_i64()).unwrap_or(0);
-            //     let spent = mempool_stats.get("spent_txo_sum").and_then(|v| v.as_i64()).unwrap_or(0);
-            //     total_pending_balance += funded - spent;
-            // }
-        }
+        log::info!("[WalletProvider] Balance from {} UTXOs: confirmed={}, pending={}", utxos.len(), confirmed, pending);
 
         Ok(WalletBalance {
-            confirmed: 0,
-            pending: 0,
+            confirmed,
+            pending: pending as i64,
         })
     }
     
