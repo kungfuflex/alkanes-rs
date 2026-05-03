@@ -1260,10 +1260,104 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             // Create a map of (txid:vout) -> balance data for quick lookup
             let mut utxo_balances: alloc::collections::BTreeMap<String, serde_json::Value> = alloc::collections::BTreeMap::new();
 
+            // Primary discovery: enrich each currently-spendable BTC UTXO with
+            // its alkane balance via per-outpoint protorunesbyoutpoint. The
+            // BTC layer's UTXO set is the source of truth for spentness, so
+            // walking spendable_utxos guarantees we never miss a just-
+            // confirmed alkane output. The address-keyed fallbacks below
+            // (espo / metashrew Lua / protorunesbyaddress) lag the BTC layer
+            // by one or more blocks on mainnet, which surfaced as
+            // "Insufficient spendable have 0" errors when a user tries to
+            // spend tokens minted by a tx confirmed in the most recent block.
+            //
+            // Mirrors the wallet UI's display path
+            // (subfrost-app/queries/account.ts::fetchAlkaneBalancesViaProtobuf,
+            // commit 9ec751fb) — same architecture, applied to the SDK's
+            // mutation-side selector.
+            //
+            // Skipped in qubitcoin mode (espo/lua aren't available there
+            // anyway, and protorunesbyaddress is the canonical path).
+            if !self.provider.is_qubitcoin_mode() {
+                let dust_utxos: Vec<&(OutPoint, UtxoInfo)> = spendable_utxos
+                    .iter()
+                    .filter(|(_, u)| u.amount <= 1000) // alkanes live on dust
+                    .collect();
+
+                if !dust_utxos.is_empty() {
+                    log::info!(
+                        "Primary discovery: per-outpoint protorunesbyoutpoint for {} dust UTXOs",
+                        dust_utxos.len()
+                    );
+
+                    for (outpoint, _utxo) in &dust_utxos {
+                        let txid_str = outpoint.txid.to_string();
+                        match self.provider
+                            .get_protorunes_by_outpoint(&txid_str, outpoint.vout, None, 1)
+                            .await
+                        {
+                            Ok(response) => {
+                                let mut balances_array = Vec::new();
+                                for (rune_id, amount) in
+                                    &response.balance_sheet.cached.balances
+                                {
+                                    // Drop zero-amount placeholder entries —
+                                    // the indexer occasionally returns them
+                                    // for outpoints that referenced an alkane
+                                    // id without actually carrying value.
+                                    if *amount == 0 {
+                                        continue;
+                                    }
+                                    balances_array.push(serde_json::json!({
+                                        "block": rune_id.block,
+                                        "tx": rune_id.tx,
+                                        "amount": amount.to_string(),
+                                    }));
+                                }
+                                if !balances_array.is_empty() {
+                                    let key = format!(
+                                        "{}:{}",
+                                        outpoint.txid, outpoint.vout
+                                    );
+                                    utxo_balances.insert(
+                                        key,
+                                        serde_json::json!({ "balances": balances_array }),
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                // Non-fatal: a single failed outpoint just
+                                // means we miss its balance for this call.
+                                // The address-keyed fallbacks below may pick
+                                // it up.
+                                log::debug!(
+                                    "protorunesbyoutpoint failed for {}:{}: {}",
+                                    outpoint.txid, outpoint.vout, e
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Address-keyed fallbacks. Run only if the primary path produced
+            // no balances (e.g., qubitcoin mode, or networks where the
+            // protorunesbyoutpoint view isn't available). When the primary
+            // path succeeds these are skipped to avoid double-fetching.
+            let primary_succeeded = !utxo_balances.is_empty();
+            if !primary_succeeded {
+                log::info!("Primary path produced no balances — falling back to address-keyed views");
+            }
+
             // Fetch alkane balances per address.
             // Strategy: try espo first, then metashrew Lua, then protorunesbyaddress.
             // In qubitcoin mode, skip espo/Lua and go straight to protorunesbyaddress.
-            for address in &addresses_to_query {
+            let empty_addresses: Vec<String> = Vec::new();
+            let addresses_for_fallback: &[String] = if primary_succeeded {
+                &empty_addresses
+            } else {
+                &addresses_to_query
+            };
+            for address in addresses_for_fallback {
                 if self.provider.is_qubitcoin_mode() {
                     // Qubitcoin mode: use protorunesbyaddress directly
                     log::info!("Qubitcoin mode: using protorunesbyaddress for alkane UTXO discovery");
