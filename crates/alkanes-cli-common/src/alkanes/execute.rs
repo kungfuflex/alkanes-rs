@@ -63,6 +63,136 @@ pub fn is_wrap_protostone(spec: &ProtostoneSpec) -> bool {
     cellpack.inputs.first().copied() == Some(WRAP_OPCODE)
 }
 
+/// Stats from `apply_mempool_adjustment` — exposed so callers can log
+/// what changed without re-walking the candidate set.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MempoolAdjustmentReport {
+    /// Number of confirmed UTXOs removed because they are already spent
+    /// in one of our pending mempool transactions.
+    pub stripped: usize,
+    /// Number of unconfirmed outputs added to the candidate set because
+    /// they pay one of our addresses from a pending mempool tx.
+    pub added: usize,
+}
+
+/// Pure UTXO-set adjustment function — mutates `spendable_utxos` in
+/// place to reflect the impact of the user's own pending mempool
+/// transactions. Extracted from `select_utxos` so it can be unit-tested
+/// without spinning up a `WebProvider` / `MockProvider` chain.
+///
+/// `mempool_payloads` is one esplora `address/{addr}/txs/mempool`
+/// response per address (each is a JSON array of tx objects with
+/// `txid`, `vin[]`, `vout[]` fields).
+///
+/// `addresses` is the set of our addresses — only outputs paying these
+/// addresses become candidate UTXOs (we don't add outputs paying others
+/// even if they appear in the same mempool tx).
+pub fn apply_mempool_adjustment(
+    spendable_utxos: &mut Vec<(OutPoint, UtxoInfo)>,
+    mempool_payloads: &[serde_json::Value],
+    addresses: &[String],
+) -> MempoolAdjustmentReport {
+    let address_set: alloc::collections::BTreeSet<&str> =
+        addresses.iter().map(|s| s.as_str()).collect();
+
+    let mut spent_outpoints: alloc::collections::BTreeSet<(String, u32)> =
+        alloc::collections::BTreeSet::new();
+    let mut new_outputs: Vec<(OutPoint, UtxoInfo)> = Vec::new();
+
+    for txs_val in mempool_payloads {
+        let txs = match txs_val.as_array() {
+            Some(t) => t,
+            None => continue,
+        };
+        for tx in txs {
+            let txid_str = tx
+                .get("txid")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            if txid_str.is_empty() {
+                continue;
+            }
+
+            // Strip the inputs this mempool tx is spending.
+            if let Some(vins) = tx.get("vin").and_then(|v| v.as_array()) {
+                for vin in vins {
+                    let prev_txid = vin
+                        .get("txid")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_string();
+                    let prev_vout = vin.get("vout").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                    if !prev_txid.is_empty() {
+                        spent_outpoints.insert((prev_txid, prev_vout));
+                    }
+                }
+            }
+
+            // Add outputs paying one of our addresses as candidate UTXOs.
+            if let Some(vouts) = tx.get("vout").and_then(|v| v.as_array()) {
+                for (idx, vout) in vouts.iter().enumerate() {
+                    let vout_addr = vout
+                        .get("scriptpubkey_address")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default();
+                    if !address_set.contains(vout_addr) {
+                        continue;
+                    }
+                    let value = vout.get("value").and_then(|v| v.as_u64()).unwrap_or(0);
+                    if value == 0 {
+                        continue; // OP_RETURN / dust below threshold.
+                    }
+                    let outpoint_str = format!("{}:{}", txid_str, idx);
+                    let outpoint = match OutPoint::from_str(&outpoint_str) {
+                        Ok(o) => o,
+                        Err(_) => continue,
+                    };
+                    new_outputs.push((
+                        outpoint,
+                        UtxoInfo {
+                            txid: txid_str.clone(),
+                            vout: idx as u32,
+                            amount: value,
+                            address: vout_addr.to_string(),
+                            script_pubkey: None,
+                            confirmations: 0,
+                            frozen: false,
+                            freeze_reason: None,
+                            block_height: None,
+                            has_inscriptions: false,
+                            has_runes: false,
+                            has_alkanes: false,
+                            is_coinbase: false,
+                        },
+                    ));
+                }
+            }
+        }
+    }
+
+    let before = spendable_utxos.len();
+    spendable_utxos.retain(|(op, _)| {
+        !spent_outpoints.contains(&(op.txid.to_string(), op.vout))
+    });
+    let stripped = before - spendable_utxos.len();
+
+    let existing: alloc::collections::BTreeSet<String> = spendable_utxos
+        .iter()
+        .map(|(op, _)| format!("{}:{}", op.txid, op.vout))
+        .collect();
+    let mut added = 0usize;
+    for (op, info) in new_outputs {
+        let key = format!("{}:{}", op.txid, op.vout);
+        if !existing.contains(&key) {
+            spendable_utxos.push((op, info));
+            added += 1;
+        }
+    }
+
+    MempoolAdjustmentReport { stripped, added }
+}
+
 /// Result from UTXO selection including alkanes balances
 #[derive(Debug, Clone)]
 struct UtxoSelectionResult {
@@ -1196,6 +1326,64 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             .collect();
         
         log::info!("Found {} spendable (non-frozen) wallet UTXOs", spendable_utxos.len());
+
+        // Mempool-aware UTXO adjustment for the user's own pending txs.
+        //
+        // The lua spendable_utxos.lua script (and its esplora fallback) only
+        // returns CONFIRMED UTXOs. That breaks two scenarios:
+        //
+        //   1. Quick double-submit: user broadcasts tx X, then immediately
+        //      tries to broadcast tx Y. Both pull the same confirmed UTXO
+        //      because the indexer hasn't yet seen X.spent its inputs.
+        //      Result: BIP125 RBF conflict (Y has same prevout as X with
+        //      lower fee → "insufficient fee, rejecting replacement").
+        //
+        //   2. CPFP chains (split-tx mode): execute_split broadcasts wrap
+        //      Tx A then immediately builds execute Tx B. Tx B should spend
+        //      Tx A's outputs (alkane carrier + BTC change), but those are
+        //      unconfirmed so the lua filter excludes them. Meanwhile the
+        //      original user UTXOs still appear "spendable" even though
+        //      Tx A consumed them. Same RBF symptom as #1.
+        //
+        // Fix: walk the user's mempool txs, strip outpoints they spend from
+        // `spendable_utxos`, and add the txs' user-paying outputs as
+        // candidates. Skipped on qubitcoin (no esplora mempool endpoint).
+        if !self.provider.is_qubitcoin_mode() {
+            let mempool_addresses: Vec<String> = if let Some(addrs) = from_addresses {
+                let mut resolved = Vec::new();
+                for addr in addrs {
+                    if let Ok(r) = self.provider.resolve_all_identifiers(addr).await {
+                        resolved.push(r);
+                    }
+                }
+                resolved
+            } else {
+                let mut a: Vec<String> = spendable_utxos.iter().map(|(_, u)| u.address.clone()).collect();
+                a.sort();
+                a.dedup();
+                a
+            };
+
+            let mut mempool_payloads: Vec<serde_json::Value> = Vec::new();
+            for address in &mempool_addresses {
+                match self.provider.get_address_txs_mempool(address).await {
+                    Ok(v) => mempool_payloads.push(v),
+                    Err(e) => log::debug!("get_address_txs_mempool({}) failed: {}", address, e),
+                }
+            }
+
+            let report = apply_mempool_adjustment(
+                &mut spendable_utxos,
+                &mempool_payloads,
+                &mempool_addresses,
+            );
+            if report.stripped > 0 || report.added > 0 {
+                log::info!(
+                    "Mempool-aware adjustment: stripped {} confirmed UTXOs already spent in our pending txs, added {} unconfirmed outputs from those txs (final: {})",
+                    report.stripped, report.added, spendable_utxos.len()
+                );
+            }
+        }
 
         let mut selected_outpoints = Vec::new();
         let mut bitcoin_needed = 0u64;
@@ -3369,5 +3557,236 @@ mod tests {
             refund: None,
         };
         assert!(!is_wrap_protostone(&spec));
+    }
+
+    // -----------------------------------------------------------------
+    // Mempool-aware UTXO adjustment tests.
+    //
+    // Reproduces the runtime bug fixed alongside split-tx mode: select_utxos
+    // was returning only confirmed UTXOs, so when execute_split broadcast
+    // Tx A (wrap) and immediately recursed to build Tx B (execute), Tx B's
+    // selector saw the SAME 4 confirmed wallet UTXOs Tx A had just spent,
+    // built a tx with the same prevouts, and got rejected by the relay as
+    // "insufficient fee, rejecting replacement" (BIP125 RBF).
+    //
+    // Mainnet repro: tx c6b8f0a3611f9072337553e493d057d0ce991916f97453666731507eb702de22
+    // landed in mempool as Tx A; Tx B (ba90bff1cccbc50331e0a00d4731e3c571ff975b316ffae76a84b5387413df07)
+    // shared inputs and was rejected. apply_mempool_adjustment fixes the
+    // root cause by stripping spent outpoints + adding the unconfirmed
+    // pay-to-us outputs as candidate inputs.
+    // -----------------------------------------------------------------
+
+    fn make_utxo(txid_hex: &str, vout: u32, value: u64, address: &str) -> (OutPoint, UtxoInfo) {
+        let outpoint = OutPoint::from_str(&format!("{}:{}", txid_hex, vout)).unwrap();
+        let info = UtxoInfo {
+            txid: txid_hex.to_string(),
+            vout,
+            amount: value,
+            address: address.to_string(),
+            script_pubkey: None,
+            confirmations: 1,
+            frozen: false,
+            freeze_reason: None,
+            block_height: Some(1),
+            has_inscriptions: false,
+            has_runes: false,
+            has_alkanes: false,
+            is_coinbase: false,
+        };
+        (outpoint, info)
+    }
+
+    const TXID_A: &str = "c6b8f0a3611f9072337553e493d057d0ce991916f97453666731507eb702de22";
+    const TXID_OLD_1: &str = "2255b42e4b984e3b7c4a2828302385422dddfe58e76de3595d7f466657b4fc80";
+    const TXID_OLD_2: &str = "e7006c4c14cc5527f2d3b231144cb280caee7b87b3a2fd514a3ecd347e5b54df";
+    const USER_ADDR: &str = "bc1p026hg4dfhchc0axnmlpamu4v9gltcqtrzk0nvyc00n4eu5nl5tpsrh7zkm";
+    const SIGNER_ADDR: &str = "bc1p5lushqjk7kxpqa87ppwn0dealu999999999999999999999999999999000";
+
+    /// Reproduces the split-tx Tx-B failure scenario before the fix.
+    ///
+    /// Pre-fix: Tx B's selector saw the same 4 confirmed UTXOs Tx A spent.
+    /// After apply_mempool_adjustment: those 4 are stripped, and Tx A's
+    /// 2 user-paying outputs (alkane carrier + BTC change) become Tx B's
+    /// only candidate inputs — exactly the CPFP intent of execute_split.
+    #[test]
+    fn test_mempool_adjustment_strips_inputs_and_adds_outputs_for_split_tx() {
+        let mut spendable: Vec<(OutPoint, UtxoInfo)> = vec![
+            make_utxo(TXID_OLD_1, 1, 546, USER_ADDR),
+            make_utxo(TXID_OLD_2, 1, 546, USER_ADDR),
+            make_utxo(TXID_OLD_2, 2, 846, USER_ADDR),
+            make_utxo(
+                "601a0f80119a49351bdf8088423813d9d1f68b1326d81e2b2daba5f57764b1c0",
+                0, 546, USER_ADDR,
+            ),
+        ];
+
+        // Mempool tx: matches the real-world Tx A shape (4 vins → 4 vouts:
+        // signer / user alkane carrier / user BTC change / OP_RETURN).
+        let mempool = serde_json::json!([
+            {
+                "txid": TXID_A,
+                "vin": [
+                    { "txid": TXID_OLD_1, "vout": 1 },
+                    { "txid": TXID_OLD_2, "vout": 1 },
+                    { "txid": TXID_OLD_2, "vout": 2 },
+                    { "txid": "601a0f80119a49351bdf8088423813d9d1f68b1326d81e2b2daba5f57764b1c0", "vout": 0 },
+                ],
+                "vout": [
+                    { "scriptpubkey_address": SIGNER_ADDR, "value": 50000 },
+                    { "scriptpubkey_address": USER_ADDR, "value": 546 },
+                    { "scriptpubkey_address": USER_ADDR, "value": 78462 },
+                    { "scriptpubkey_address": null, "value": 0 }
+                ],
+            }
+        ]);
+
+        let report = apply_mempool_adjustment(
+            &mut spendable,
+            &[mempool],
+            &[USER_ADDR.to_string()],
+        );
+
+        assert_eq!(report.stripped, 4, "all 4 confirmed UTXOs spent in Tx A should be stripped");
+        assert_eq!(report.added, 2, "Tx A's two user-paying outputs should be added");
+        assert_eq!(spendable.len(), 2);
+
+        let outpoints: Vec<String> = spendable
+            .iter()
+            .map(|(op, _)| format!("{}:{}", op.txid, op.vout))
+            .collect();
+        assert!(outpoints.iter().any(|s| s == &format!("{}:1", TXID_A)),
+                "alkane carrier (Tx A:1) must be a candidate input for Tx B");
+        assert!(outpoints.iter().any(|s| s == &format!("{}:2", TXID_A)),
+                "BTC change (Tx A:2) must be a candidate input for Tx B");
+
+        // The signer output should NOT have been added — it doesn't pay us.
+        assert!(!outpoints.iter().any(|s| s == &format!("{}:0", TXID_A)),
+                "signer output should not be a candidate input for the user");
+
+        // Confirm the new outputs carry the right amounts.
+        let alkane_carrier = spendable.iter().find(|(op, _)| op.txid.to_string() == TXID_A && op.vout == 1).unwrap();
+        let btc_change = spendable.iter().find(|(op, _)| op.txid.to_string() == TXID_A && op.vout == 2).unwrap();
+        assert_eq!(alkane_carrier.1.amount, 546);
+        assert_eq!(btc_change.1.amount, 78462);
+        assert_eq!(alkane_carrier.1.confirmations, 0, "Tx A's outputs are still unconfirmed");
+    }
+
+    /// No-op case: no mempool txs → no adjustment, no changes.
+    #[test]
+    fn test_mempool_adjustment_noop_when_mempool_empty() {
+        let mut spendable: Vec<(OutPoint, UtxoInfo)> = vec![
+            make_utxo(TXID_OLD_1, 1, 546, USER_ADDR),
+        ];
+        let report = apply_mempool_adjustment(&mut spendable, &[], &[USER_ADDR.to_string()]);
+        assert_eq!(report.stripped, 0);
+        assert_eq!(report.added, 0);
+        assert_eq!(spendable.len(), 1);
+    }
+
+    /// OP_RETURN outputs (value=0, no address) must not be added as candidates.
+    /// Otherwise the selector would try to spend them and the tx would be
+    /// rejected at construction time.
+    #[test]
+    fn test_mempool_adjustment_skips_op_return_and_value_zero() {
+        let mut spendable: Vec<(OutPoint, UtxoInfo)> = Vec::new();
+        let mempool = serde_json::json!([
+            {
+                "txid": TXID_A,
+                "vin": [],
+                "vout": [
+                    { "scriptpubkey_address": USER_ADDR, "value": 0 },        // dust placeholder
+                    { "scriptpubkey_address": null, "value": 0 },             // OP_RETURN
+                    { "scriptpubkey_address": USER_ADDR, "value": 1000 }      // legit
+                ],
+            }
+        ]);
+        let report = apply_mempool_adjustment(&mut spendable, &[mempool], &[USER_ADDR.to_string()]);
+        assert_eq!(report.added, 1, "only the value=1000 output should be added");
+        assert_eq!(spendable.len(), 1);
+        assert_eq!(spendable[0].1.amount, 1000);
+    }
+
+    /// Outputs paying addresses we don't own must not be added as candidates.
+    /// (Same mempool tx may have outputs paying multiple parties; we only
+    /// claim the ones paying our addresses.)
+    #[test]
+    fn test_mempool_adjustment_ignores_outputs_to_other_addresses() {
+        let mut spendable: Vec<(OutPoint, UtxoInfo)> = Vec::new();
+        let mempool = serde_json::json!([
+            {
+                "txid": TXID_A,
+                "vin": [],
+                "vout": [
+                    { "scriptpubkey_address": "bc1qsomeoneelse9999999999999999999999999", "value": 10000 },
+                    { "scriptpubkey_address": USER_ADDR, "value": 546 }
+                ],
+            }
+        ]);
+        let report = apply_mempool_adjustment(&mut spendable, &[mempool], &[USER_ADDR.to_string()]);
+        assert_eq!(report.added, 1);
+        assert_eq!(spendable[0].1.address, USER_ADDR);
+    }
+
+    /// When a spent input we don't currently track appears in mempool (e.g.,
+    /// the indexer had it indexed under a different address), strip is a
+    /// no-op for that outpoint but the rest of the adjustment still works.
+    #[test]
+    fn test_mempool_adjustment_strip_is_partial_when_outpoint_not_in_set() {
+        let mut spendable: Vec<(OutPoint, UtxoInfo)> = vec![
+            make_utxo(TXID_OLD_1, 1, 546, USER_ADDR), // present
+            // TXID_OLD_2:1 NOT in our set
+        ];
+        let mempool = serde_json::json!([
+            {
+                "txid": TXID_A,
+                "vin": [
+                    { "txid": TXID_OLD_1, "vout": 1 },  // we have this
+                    { "txid": TXID_OLD_2, "vout": 1 }   // we don't
+                ],
+                "vout": [],
+            }
+        ]);
+        let report = apply_mempool_adjustment(&mut spendable, &[mempool], &[USER_ADDR.to_string()]);
+        assert_eq!(report.stripped, 1, "only the matching outpoint gets stripped");
+        assert!(spendable.is_empty());
+    }
+
+    /// Multi-address case: per-address mempool fetches each contribute their
+    /// own spent set and outputs. Mirrors how `select_utxos` calls
+    /// `get_address_txs_mempool` once per resolved address.
+    #[test]
+    fn test_mempool_adjustment_multi_address_aggregates() {
+        let addr_a = USER_ADDR.to_string();
+        let addr_b = "bc1qcoldwalletsegwit9999999999999999999999".to_string();
+
+        let mut spendable: Vec<(OutPoint, UtxoInfo)> = vec![
+            make_utxo(TXID_OLD_1, 0, 1000, &addr_a),
+            make_utxo(TXID_OLD_2, 0, 2000, &addr_b),
+        ];
+
+        let mempool_a = serde_json::json!([{
+            "txid": TXID_A,
+            "vin": [{ "txid": TXID_OLD_1, "vout": 0 }],
+            "vout": [{ "scriptpubkey_address": addr_a, "value": 800 }],
+        }]);
+        let mempool_b = serde_json::json!([{
+            "txid": "deadbeef00000000000000000000000000000000000000000000000000000000",
+            "vin": [{ "txid": TXID_OLD_2, "vout": 0 }],
+            "vout": [{ "scriptpubkey_address": addr_b, "value": 1500 }],
+        }]);
+
+        let report = apply_mempool_adjustment(
+            &mut spendable,
+            &[mempool_a, mempool_b],
+            &[addr_a.clone(), addr_b.clone()],
+        );
+
+        assert_eq!(report.stripped, 2);
+        assert_eq!(report.added, 2);
+        assert_eq!(spendable.len(), 2);
+
+        // Both addresses should have a fresh unconfirmed UTXO.
+        assert!(spendable.iter().any(|(_, u)| u.address == addr_a && u.amount == 800));
+        assert!(spendable.iter().any(|(_, u)| u.address == addr_b && u.amount == 1500));
     }
 }
