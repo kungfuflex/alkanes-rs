@@ -1214,6 +1214,19 @@ pub trait DeezelProvider:
     /// Check if operating in qubitcoin single-process mode
     fn is_qubitcoin_mode(&self) -> bool { false }
 
+    /// Session-scoped store of broadcast-but-unconfirmed transactions.
+    ///
+    /// Read by `select_utxos` on every call to keep the candidate
+    /// set in sync with our own pending mempool state — see the
+    /// `pending_tx_store` module for the architectural rationale.
+    ///
+    /// Default returns `None`, in which case `select_utxos` falls
+    /// back to esplora's mempool view + the explicit
+    /// `known_pending_tx_hexes` param. Concrete providers
+    /// (`WebProvider`, the CLI provider) override this with a real
+    /// store so chained / atomic flows benefit automatically.
+    fn pending_tx_store(&self) -> Option<&dyn crate::pending_tx_store::PendingTxStore> { None }
+
     /// Create a boxed, clonable version of the provider
     fn clone_box(&self) -> Box<dyn DeezelProvider>;
     

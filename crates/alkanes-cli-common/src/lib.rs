@@ -55,6 +55,7 @@ pub mod address;
 #[cfg(feature = "std")]
 pub mod commands;
 pub mod traits;
+pub mod pending_tx_store;
 pub mod network;
 pub mod rpc;
 pub mod alkanes;

@@ -59,6 +59,12 @@ pub struct MockProvider {
     pub internal_key: XOnlyPublicKey,
     /// Mock alkane balances per outpoint: (txid_hex, vout) → Vec<(block, tx, amount)>
     pub alkane_balances: Arc<Mutex<HashMap<String, Vec<(u64, u64, u64)>>>>,
+    /// Session-scoped pending-tx store. Provided so integration tests
+    /// can wire chained-broadcast scenarios without spinning up an
+    /// `Arc<dyn PendingTxStore>` of their own. `Some` by default so
+    /// the trait's `pending_tx_store()` accessor surfaces a real
+    /// store; tests can `take()` it out for direct inspection.
+    pub pending_tx_store: crate::pending_tx_store::MemoryPendingTxStore,
 }
 
 impl Default for MockProvider {
@@ -81,6 +87,7 @@ impl MockProvider {
             secret_key,
             internal_key,
             alkane_balances: Arc::new(Mutex::new(HashMap::new())),
+            pending_tx_store: crate::pending_tx_store::MemoryPendingTxStore::new(),
         }
     }
     
@@ -1083,6 +1090,10 @@ impl DeezelProvider for MockProvider {
 
     fn clone_box(&self) -> Box<dyn DeezelProvider> {
         Box::new(self.clone())
+    }
+
+    fn pending_tx_store(&self) -> Option<&dyn crate::pending_tx_store::PendingTxStore> {
+        Some(&self.pending_tx_store)
     }
 
     fn get_bitcoin_rpc_url(&self) -> Option<String> {
