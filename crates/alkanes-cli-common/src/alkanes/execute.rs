@@ -495,6 +495,19 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         wrap_proto.refund = Some(OutputTarget::Output(1));
         tx_a_params.protostones = vec![wrap_proto];
 
+        // Strip alkane input requirements — Tx A is wrap-only and consumes
+        // only BTC. The original `params.input_requirements` carried
+        // alkane requirements meant for the execute protostone (Tx B),
+        // and forwarding them here causes Tx A's selector to grab the
+        // user's alkane UTXOs as "inputs" — destroying them in the wrap
+        // (observed 2026-05-03 mainnet wrap+addLiquidity attempt: Tx A
+        // unintentionally consumed the user's 5e4a4112:0 DIESEL alkane
+        // carrier as a generic dust input, leaving Tx B with
+        // "Insufficient alkanes: need 30000000 of 2:0, have 0").
+        tx_a_params.input_requirements.retain(|req| {
+            !matches!(req, InputRequirement::Alkanes { .. })
+        });
+
         log::info!("[split-tx] Step 1/2: building wrap-only Tx A");
         let tx_a_result = Box::pin(self.execute_full(tx_a_params)).await?;
         let wrap_txid = tx_a_result.reveal_txid.clone();
@@ -1954,8 +1967,63 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             
             log::info!("Selected {} UTXOs with sufficient alkanes", selected_outpoints.len());
         } else {
-            // No alkanes needed, just select UTXOs for Bitcoin
+            // No alkanes needed — but the candidate set may still contain
+            // alkane carriers (the wallet's UTXO list is BTC-layer, alkanes
+            // ride on dust outputs). Quick-check each candidate via
+            // protorunesbyoutpoint and skip those that carry alkane
+            // balances; otherwise the selector would happily grab a
+            // user's frBTC / DIESEL carrier as a generic dust fee input
+            // and destroy the alkane in-flight.
+            //
+            // Triggers in the wrap-only Tx A of `execute_split` (the
+            // wrap protostone has no alkane requirements). Observed
+            // 2026-05-03 mainnet: Tx A 8bee7472... unintentionally
+            // consumed 5e4a4112:0 (a 546-sat UTXO carrying 0.52 DIESEL),
+            // leaving Tx B with "Insufficient alkanes: need 30000000
+            // of 2:0, have 0" because the user's only DIESEL carrier
+            // had been silently spent for fees.
+            //
+            // Skipped on qubitcoin (no protorunesbyoutpoint there).
+            let mut alkane_carriers: alloc::collections::BTreeSet<String> =
+                alloc::collections::BTreeSet::new();
+            if !self.provider.is_qubitcoin_mode() {
+                let dust_candidates: Vec<&(OutPoint, UtxoInfo)> = spendable_utxos
+                    .iter()
+                    .filter(|(_, u)| u.amount <= 1000)
+                    .collect();
+                for (outpoint, _) in &dust_candidates {
+                    let txid_str = outpoint.txid.to_string();
+                    if let Ok(response) = self
+                        .provider
+                        .get_protorunes_by_outpoint(&txid_str, outpoint.vout, None, 1)
+                        .await
+                    {
+                        let has_alkane = response
+                            .balance_sheet
+                            .cached
+                            .balances
+                            .values()
+                            .any(|amt| *amt > 0);
+                        if has_alkane {
+                            alkane_carriers
+                                .insert(format!("{}:{}", outpoint.txid, outpoint.vout));
+                        }
+                    }
+                }
+                if !alkane_carriers.is_empty() {
+                    log::info!(
+                        "Excluding {} alkane-carrying UTXO(s) from BTC-only selection",
+                        alkane_carriers.len()
+                    );
+                }
+            }
+
             for (outpoint, utxo) in spendable_utxos {
+                let key = format!("{}:{}", outpoint.txid, outpoint.vout);
+                if alkane_carriers.contains(&key) {
+                    log::debug!("Skipping alkane carrier {}:{} (no alkanes needed)", outpoint.txid, outpoint.vout);
+                    continue;
+                }
                 if bitcoin_collected < bitcoin_needed {
                     bitcoin_collected += utxo.amount;
                     selected_outpoints.push(outpoint);
