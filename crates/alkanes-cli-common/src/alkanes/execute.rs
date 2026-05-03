@@ -63,6 +63,74 @@ pub fn is_wrap_protostone(spec: &ProtostoneSpec) -> bool {
     cellpack.inputs.first().copied() == Some(WRAP_OPCODE)
 }
 
+/// Decode a raw transaction hex into the JSON shape that
+/// `apply_mempool_adjustment` consumes (a single mempool-tx object with
+/// `txid`, `vin[]`, `vout[]`).
+///
+/// We can't get the full pay-from `prevout.scriptpubkey_address` without
+/// looking up the source UTXOs (esplora gives us that; raw bitcoin tx
+/// only carries the prev_txid:vout reference). For the spent-input
+/// strip pass we only need txid+vout, which the raw hex carries
+/// directly. For the pay-to-us output pass we need
+/// `scriptpubkey_address` per output, which we derive from each
+/// output's scriptPubKey.
+pub fn decode_tx_hex_to_mempool_json(tx_hex: &str) -> anyhow::Result<serde_json::Value> {
+    use bitcoin::consensus::Decodable;
+    let bytes = hex::decode(tx_hex.strip_prefix("0x").unwrap_or(tx_hex))?;
+    let tx: bitcoin::Transaction = bitcoin::Transaction::consensus_decode(&mut &bytes[..])?;
+    let txid = tx.compute_txid().to_string();
+
+    let vin: Vec<serde_json::Value> = tx
+        .input
+        .iter()
+        .map(|i| {
+            serde_json::json!({
+                "txid": i.previous_output.txid.to_string(),
+                "vout": i.previous_output.vout,
+            })
+        })
+        .collect();
+
+    let vout: Vec<serde_json::Value> = tx
+        .output
+        .iter()
+        .map(|o| {
+            // Try mainnet then testnet/regtest networks for address derivation.
+            // We don't know the network here, so try in order.
+            let address_str = bitcoin::Address::from_script(
+                o.script_pubkey.as_script(),
+                bitcoin::Network::Bitcoin,
+            )
+            .ok()
+            .or_else(|| {
+                bitcoin::Address::from_script(
+                    o.script_pubkey.as_script(),
+                    bitcoin::Network::Testnet,
+                )
+                .ok()
+            })
+            .or_else(|| {
+                bitcoin::Address::from_script(
+                    o.script_pubkey.as_script(),
+                    bitcoin::Network::Regtest,
+                )
+                .ok()
+            })
+            .map(|a| a.to_string());
+            serde_json::json!({
+                "scriptpubkey_address": address_str,
+                "value": o.value.to_sat(),
+            })
+        })
+        .collect();
+
+    Ok(serde_json::json!({
+        "txid": txid,
+        "vin": vin,
+        "vout": vout,
+    }))
+}
+
 /// Stats from `apply_mempool_adjustment` — exposed so callers can log
 /// what changed without re-walking the candidate set.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -434,14 +502,22 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         log::info!("[split-tx] Tx A broadcast: {} (fee {} sats)", wrap_txid, wrap_fee);
 
         // ---- Tx B: execute (spends Tx A's v1 + v2) ------------------------
-        // The SDK's UTXO selector will see Tx A's outputs in the mempool
-        // (via get_address_txs_mempool / equivalent) and pick them up
-        // automatically when we drop the explicit BTC requirement —
-        // the wrap consumed the original BTC input, and Tx A:2 (change at
-        // user's address) is the only remaining "loose" BTC for Tx B fees.
+        // Hand Tx A's signed hex into Tx B's `select_utxos` via
+        // `known_pending_tx_hexes`. This bypasses the indexer-propagation
+        // timing window (observed ~325ms lag on mainnet 2026-05-03) where
+        // `address/{addr}/txs/mempool` returned empty between Tx A's
+        // broadcast and Tx B's coin selection — letting Tx B re-pick
+        // Tx A's already-spent prevouts and triggering BIP125 RBF
+        // rejection. With the synthetic injection, the strip pass
+        // doesn't depend on indexer lag.
         let mut tx_b_params = params.clone();
         tx_b_params.split_transactions = false;
         tx_b_params.protostones = params.protostones[1..].to_vec();
+        if let Some(tx_a_hex) = tx_a_result.reveal_tx_hex.clone() {
+            tx_b_params.known_pending_tx_hexes.push(tx_a_hex);
+        } else {
+            log::warn!("[split-tx] Tx A result missing reveal_tx_hex — falling back to indexer-only mempool view (may race indexer propagation)");
+        }
 
         // Drop BTC input requirements — Tx A's BTC change at v2 covers Tx B
         // fees via natural UTXO selection.
@@ -483,6 +559,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             },
             wrap_txid: Some(wrap_txid),
             wrap_fee: Some(wrap_fee),
+            reveal_tx_hex: tx_b_result.reveal_tx_hex,
         })
     }
 
@@ -527,6 +604,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         // Sign main transaction
         let tx = self.sign_and_finalize_psbt(state.psbt).await?;
         let tx_hex = bitcoin::consensus::encode::serialize_hex(&tx);
+        let tx_hex_for_result = tx_hex.clone(); // Returned in EnhancedExecuteResult so callers (notably execute_split) can hand it to the next tx's selector.
         let main_txid = tx.compute_txid().to_string();
 
         // Broadcast atomically using send_raw_transactions if we have a split
@@ -580,6 +658,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             traces,
             wrap_txid: None,
             wrap_fee: None,
+            reveal_tx_hex: Some(tx_hex_for_result),
         })
     }
 
@@ -700,6 +779,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             traces,
             wrap_txid: None,
             wrap_fee: None,
+            reveal_tx_hex: None,
         })
     }
 
@@ -757,7 +837,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         required_reveal_amount += params.to_addresses.len() as u64 * 546;
 
         let utxo_selection = self
-            .select_utxos(&[InputRequirement::Bitcoin { amount: required_reveal_amount }], &params.from_addresses)
+            .select_utxos(&[InputRequirement::Bitcoin { amount: required_reveal_amount }], &params.from_addresses, &params.known_pending_tx_hexes)
             .await?;
         let funding_utxos = utxo_selection.outpoints.clone();
 
@@ -920,7 +1000,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                    total_bitcoin_needed, fee_with_buffer, bitcoin_requirement);
         
         final_requirements.push(InputRequirement::Bitcoin { amount: bitcoin_requirement });
-        let mut utxo_selection = self.select_utxos(&final_requirements, &params.from_addresses).await?;
+        let mut utxo_selection = self.select_utxos(&final_requirements, &params.from_addresses, &params.known_pending_tx_hexes).await?;
 
         // Check selected UTXOs for ordinal inscriptions based on strategy
         // We need to get TxOut data for each selected UTXO to check for inscriptions
@@ -1278,7 +1358,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         Ok(())
     }
 
-    async fn select_utxos(&mut self, requirements: &[InputRequirement], from_addresses: &Option<Vec<String>>) -> Result<UtxoSelectionResult> {
+    async fn select_utxos(&mut self, requirements: &[InputRequirement], from_addresses: &Option<Vec<String>>, known_pending_tx_hexes: &[String]) -> Result<UtxoSelectionResult> {
         use crate::traits::AddressResolver;
         
         log::info!("Selecting UTXOs for {} requirements", requirements.len());
@@ -1369,6 +1449,24 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                 match self.provider.get_address_txs_mempool(address).await {
                     Ok(v) => mempool_payloads.push(v),
                     Err(e) => log::debug!("get_address_txs_mempool({}) failed: {}", address, e),
+                }
+            }
+
+            // Inject caller-provided pending txs (e.g. Tx A's hex passed by
+            // execute_split). The indexer's mempool view lags the just-
+            // broadcast tx by ~hundreds of ms — by the time Tx B's
+            // select_utxos calls /address/_/txs/mempool, Tx A often hasn't
+            // propagated through the indexer pipeline yet, so the filter
+            // can't see what to strip. Decoding the caller-supplied tx hex
+            // into the same JSON shape closes that window deterministically.
+            for hex_str in known_pending_tx_hexes {
+                match decode_tx_hex_to_mempool_json(hex_str) {
+                    Ok(synthetic_tx) => {
+                        mempool_payloads.push(serde_json::json!([synthetic_tx]));
+                    }
+                    Err(e) => {
+                        log::warn!("Failed to decode known_pending_tx_hex: {}", e);
+                    }
                 }
             }
 
@@ -2758,7 +2856,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         if commit_output_value < total_bitcoin_needed {
             let additional_needed = total_bitcoin_needed - commit_output_value;
             let additional_reqs = vec![InputRequirement::Bitcoin { amount: additional_needed }];
-            let utxo_selection = self.select_utxos(&additional_reqs, &params.from_addresses).await?;
+            let utxo_selection = self.select_utxos(&additional_reqs, &params.from_addresses, &params.known_pending_tx_hexes).await?;
             selected_utxos.extend(utxo_selection.outpoints);
         }
 
@@ -3078,7 +3176,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
 
         // Select UTXOs for commit
         let utxo_selection = self
-            .select_utxos(&[InputRequirement::Bitcoin { amount: required_reveal_amount }], &params.from_addresses)
+            .select_utxos(&[InputRequirement::Bitcoin { amount: required_reveal_amount }], &params.from_addresses, &params.known_pending_tx_hexes)
             .await?;
         let funding_utxos = utxo_selection.outpoints.clone();
 
@@ -3180,6 +3278,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             traces,
             wrap_txid: None,
             wrap_fee: None,
+            reveal_tx_hex: None,
         })
     }
 
@@ -3749,6 +3848,51 @@ mod tests {
         let report = apply_mempool_adjustment(&mut spendable, &[mempool], &[USER_ADDR.to_string()]);
         assert_eq!(report.stripped, 1, "only the matching outpoint gets stripped");
         assert!(spendable.is_empty());
+    }
+
+    /// Synthetic-mempool path: `execute_split` hands Tx A's signed hex to
+    /// Tx B's `select_utxos` via `known_pending_tx_hexes`, bypassing the
+    /// indexer-propagation timing window. Verify `decode_tx_hex_to_mempool_json`
+    /// produces a payload that `apply_mempool_adjustment` can act on.
+    #[test]
+    fn test_decode_tx_hex_to_mempool_json_then_adjust() {
+        // Real Tx A from the 2026-05-03 mainnet split-tx run:
+        // c5520bb64d1a742a6bd62999267f683e1f0756481220ff2155d2be841a3d7b92.
+        // Inputs: 601a0f80...:1 (574 sats), c6b8f0a3...:2 (78462 sats).
+        // Outputs: signer 30000, user 546, user 48204, OP_RETURN.
+        // Hex pulled live from
+        // https://mempool.space/api/tx/c5520bb64d1a.../hex.
+        let tx_hex = "02000000000102c0b16477f5a5ab2d2b1ed826138bf6d1d91338428880df1b35499a11800f1a600100000000fdffffff22de02b77e503167665374f9161999ced057d093e453753372901f61a3f0b8c60200000000fdffffff043075000000000000225120a7f90b8256f58c1074fe085d37b73dff3040774babc216dae106e281e020638b22020000000000002251207ab57455a9be2f87f4d3dfc3ddf2ac2a3ebc0163159f36130f7ceb9e527fa2c34cbc0000000000002251207ab57455a9be2f87f4d3dfc3ddf2ac2a3ebc0163159f36130f7ceb9e527fa2c30000000000000000136a5d101600ff7f818cec8ad0abc0a8a081d2150140300f852484bcd16e2d5c2850f8c3bc1bd861a033971994f621fb589deb3edf8225dfbbdb969abb738b4ba2e1c119c7c3f860d77095b150b058a89170b2d532ad01408e1f00dd1c42ee3c073f256395d5b74d7c8366a52d29b72832a1ebec3bda4048f3a86f41625ec8736cf97051796b20961e05e11291aa65737cbf0ddb243f450f00000000";
+
+        let synthetic = decode_tx_hex_to_mempool_json(tx_hex).expect("decode tx hex");
+
+        assert_eq!(synthetic.get("vin").unwrap().as_array().unwrap().len(), 2);
+        assert_eq!(synthetic.get("vout").unwrap().as_array().unwrap().len(), 4);
+
+        // Round-trip: feed the synthetic JSON into the adjustment fn alongside
+        // a candidate set that contains Tx A's prevouts. They should be stripped
+        // and Tx A's pay-to-us outputs should be added.
+        let mut spendable: Vec<(OutPoint, UtxoInfo)> = vec![
+            make_utxo(
+                "601a0f80119a49351bdf8088423813d9d1f68b1326d81e2b2daba5f57764b1c0",
+                1, 574, USER_ADDR,
+            ),
+            make_utxo(
+                "c6b8f0a3611f9072337553e493d057d0ce991916f97453666731507eb702de22",
+                2, 78462, USER_ADDR,
+            ),
+        ];
+        let report = apply_mempool_adjustment(
+            &mut spendable,
+            &[serde_json::json!([synthetic])],
+            &[USER_ADDR.to_string()],
+        );
+        assert_eq!(report.stripped, 2, "Tx A's two prevouts should be stripped");
+        assert_eq!(report.added, 2, "Tx A's two pay-to-user outputs should be added");
+        let amounts: alloc::collections::BTreeSet<u64> =
+            spendable.iter().map(|(_, u)| u.amount).collect();
+        assert!(amounts.contains(&546));
+        assert!(amounts.contains(&48204));
     }
 
     /// Multi-address case: per-address mempool fetches each contribute their

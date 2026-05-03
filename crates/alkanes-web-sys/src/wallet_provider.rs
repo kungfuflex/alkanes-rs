@@ -2005,6 +2005,7 @@ impl DeezelProvider for BrowserWalletProvider {
             mempool_indexer: false,
 
             split_transactions: false,
+                known_pending_tx_hexes: Vec::new(),
         };
 
         match executor.execute(params).await? {
@@ -2047,6 +2048,7 @@ impl DeezelProvider for BrowserWalletProvider {
             mempool_indexer: false,
 
             split_transactions: false,
+                known_pending_tx_hexes: Vec::new(),
         };
 
         match executor.execute(params).await? {

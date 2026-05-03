@@ -746,6 +746,7 @@ impl WebProvider {
                 ordinals_strategy: Default::default(),
                 mempool_indexer: false,
                 split_transactions,
+                known_pending_tx_hexes: Vec::new(),
             };
 
             provider.execute(params).await
@@ -860,6 +861,7 @@ impl WebProvider {
                 ordinals_strategy,
                 mempool_indexer,
                 split_transactions,
+                known_pending_tx_hexes: Vec::new(),
             };
 
             // Use execute_full to handle the complete flow internally
@@ -9204,6 +9206,7 @@ impl DeezelProvider for WebProvider {
             mempool_indexer: false,
 
             split_transactions: false,
+                known_pending_tx_hexes: Vec::new(),
         };
 
         match executor.execute(params).await? {
@@ -9244,6 +9247,7 @@ impl DeezelProvider for WebProvider {
             mempool_indexer: false,
 
             split_transactions: false,
+                known_pending_tx_hexes: Vec::new(),
         };
 
         match executor.execute(params).await? {
