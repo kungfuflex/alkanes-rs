@@ -7716,6 +7716,26 @@ impl WalletProvider for WebProvider {
         self.logger.info("[DEBUG] broadcast_transaction: calling send_raw_transaction");
         let result = <Self as BitcoinRpcProvider>::send_raw_transaction(self, &tx_hex).await;
         self.logger.info(&format!("[DEBUG] broadcast_transaction: send_raw_transaction returned {:?}", result.is_ok()));
+
+        // Auto-push successful broadcasts into the session-scoped
+        // pending-tx store so any subsequent `select_utxos` call
+        // (and any external observer — wallet UI overlay,
+        // chained-tx flows) sees the new mempool state immediately.
+        // Doing it here, in the WalletProvider trait impl, means
+        // every JS-side caller benefits without per-mutation
+        // ad-hoc plumbing. Errors are non-fatal: the tx is already
+        // in mempool and the next call falls back to esplora's
+        // mempool view (just slower).
+        if result.is_ok() {
+            use alkanes_cli_common::pending_tx_store::PendingTxStore as _;
+            if let Err(e) = self.pending_tx_store.add(&tx_hex).await {
+                self.logger.warn(&format!(
+                    "[broadcast_transaction] pending_tx_store.add failed: {}",
+                    e
+                ));
+            }
+        }
+
         result
     }
     
@@ -8118,21 +8138,46 @@ impl BitcoinRpcProvider for WebProvider {
         let result = self.call(&target.url, "sendrawtransactions", params, 1).await?;
 
         // Parse response: should be array of txids
+        let mut return_txids: Option<Vec<String>> = None;
         if let Some(arr) = result.as_array() {
             let txids: Vec<String> = arr.iter()
                 .filter_map(|v| v.as_str().map(|s| s.to_string()))
                 .collect();
             if txids.len() == tx_hexes.len() {
-                return Ok(txids);
+                return_txids = Some(txids);
             }
         }
 
-        // Fallback: sequential broadcast if batch RPC not available
-        let mut txids = Vec::new();
+        let txids = if let Some(t) = return_txids {
+            t
+        } else {
+            // Fallback: sequential broadcast if batch RPC not available.
+            // Note: send_raw_transaction is the lower-level RPC that does
+            // NOT push to the pending-tx store on its own; the caller-
+            // visible push happens via this method's tail pass below.
+            let mut txids = Vec::new();
+            for tx_hex in tx_hexes {
+                let txid = self.send_raw_transaction(tx_hex).await?;
+                txids.push(txid);
+            }
+            txids
+        };
+
+        // Mirror the auto-push from `broadcast_transaction` so batched
+        // broadcasts (atomic split-tx, commit+reveal+activation chains)
+        // also feed the pending-tx store. Each tx in the chain becomes
+        // visible to subsequent `select_utxos` calls without waiting on
+        // indexer propagation.
+        use alkanes_cli_common::pending_tx_store::PendingTxStore as _;
         for tx_hex in tx_hexes {
-            let txid = self.send_raw_transaction(tx_hex).await?;
-            txids.push(txid);
+            if let Err(e) = self.pending_tx_store.add(tx_hex).await {
+                self.logger.warn(&format!(
+                    "[send_raw_transactions] pending_tx_store.add failed: {}",
+                    e
+                ));
+            }
         }
+
         Ok(txids)
     }
 

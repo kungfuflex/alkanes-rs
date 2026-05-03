@@ -263,13 +263,13 @@ pub fn apply_mempool_adjustment(
 
 /// Result from UTXO selection including alkanes balances
 #[derive(Debug, Clone)]
-struct UtxoSelectionResult {
+pub(crate) struct UtxoSelectionResult {
     /// Selected outpoints
-    outpoints: Vec<OutPoint>,
+    pub(crate) outpoints: Vec<OutPoint>,
     /// Actual alkanes balances found in the selected UTXOs (aggregate)
-    alkanes_found: alloc::collections::BTreeMap<AlkaneId, u64>,
+    pub(crate) alkanes_found: alloc::collections::BTreeMap<AlkaneId, u64>,
     /// Per-UTXO alkane balances (for alkane-aware ordinals splitting)
-    per_utxo_alkanes: alloc::collections::BTreeMap<OutPoint, Vec<(AlkaneId, u64)>>,
+    pub(crate) per_utxo_alkanes: alloc::collections::BTreeMap<OutPoint, Vec<(AlkaneId, u64)>>,
 }
 
 
@@ -648,16 +648,13 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             log::info!("🔗 TXID: {txid}");
         }
 
-        // Push the broadcast tx into the session-scoped pending store
-        // so any subsequent `select_utxos` call sees it immediately —
-        // no waiting on indexer propagation. Errors are non-fatal:
-        // the tx is already in mempool and the next call can fall
-        // back to the esplora mempool view (just slower).
-        if let Some(store) = self.provider.pending_tx_store() {
-            if let Err(e) = store.add(&tx_hex_for_result).await {
-                log::warn!("pending_tx_store.add({}) failed: {}", txid, e);
-            }
-        }
+        // Note: pending_tx_store push happens inside the provider's
+        // `broadcast_transaction` / `send_raw_transactions` impls
+        // themselves (alkanes-web-sys/src/provider.rs). Doing it
+        // there means every JS-side caller — including paths that
+        // bypass execute_full (browser-wallet manual PSBT signing,
+        // direct broadcast calls from mutation hooks) — gets
+        // auto-pushed without per-call ad-hoc plumbing.
 
         if params.mine_enabled {
             self.mine_blocks_if_regtest(params).await?;
@@ -1382,7 +1379,12 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         Ok(())
     }
 
-    async fn select_utxos(&mut self, requirements: &[InputRequirement], from_addresses: &Option<Vec<String>>, known_pending_tx_hexes: &[String]) -> Result<UtxoSelectionResult> {
+    /// Visible to crate-internal tests so the alkane-needed branch's
+    /// BTC-fill protection (line ~1944) can be exercised end-to-end
+    /// without going through `execute_full`. The test in
+    /// `pending_tx_store::tests` uses MockProvider's `alkane_balances`
+    /// + utxo set to assert the skip-non-needed-alkane-carrier path.
+    pub(crate) async fn select_utxos(&mut self, requirements: &[InputRequirement], from_addresses: &Option<Vec<String>>, known_pending_tx_hexes: &[String]) -> Result<UtxoSelectionResult> {
         use crate::traits::AddressResolver;
         
         log::info!("Selecting UTXOs for {} requirements", requirements.len());
@@ -4032,5 +4034,137 @@ mod tests {
         // Both addresses should have a fresh unconfirmed UTXO.
         assert!(spendable.iter().any(|(_, u)| u.address == addr_a && u.amount == 800));
         assert!(spendable.iter().any(|(_, u)| u.address == addr_b && u.amount == 1500));
+    }
+
+    // -----------------------------------------------------------------
+    // Alkane-needed branch BTC-fill protection.
+    //
+    // The protection at execute.rs::select_utxos line ~1944 — when
+    // `alkanes_needed` is non-empty AND the BTC-fill loop encounters
+    // an alkane-bearing UTXO whose alkane is NOT in the requirements,
+    // the loop must skip it (not consume it as fee dust).
+    //
+    // Empirical validation came from a 2026-05-03 mainnet run (Tx A
+    // e3a99b2f... left the user's DIESEL carrier alone). This test
+    // pins it directly: set up MockProvider with one DIESEL carrier
+    // (needed) + one frBTC carrier (not needed) + one plain BTC
+    // UTXO, run select_utxos asking for `alkanes_needed = {DIESEL}`
+    // and a BTC budget that fits in the plain BTC UTXO. Expected:
+    //   - DIESEL carrier selected (for alkane requirement)
+    //   - plain BTC selected (for fee budget)
+    //   - frBTC carrier NOT selected (alkane-bearing, not needed)
+    // -----------------------------------------------------------------
+    #[tokio::test]
+    async fn test_alkane_needed_branch_skips_non_needed_alkane_carriers() {
+        use crate::alkanes::types::InputRequirement;
+        use crate::mock_provider::MockProvider;
+        use bitcoin::address::Address;
+        use bitcoin::key::Secp256k1;
+        use std::str::FromStr;
+
+        // Build a regtest mock with three UTXOs:
+        //   tx_diesel: 546 sats, carries DIESEL [2:0] amount=1000  (needed)
+        //   tx_frbtc:  546 sats, carries frBTC  [32:0] amount=5000 (NOT needed)
+        //   tx_btc:    50000 sats, no alkanes                       (BTC for fees)
+        let mut mock = MockProvider::new(bitcoin::Network::Regtest);
+
+        let secp = Secp256k1::new();
+        let (sk, pk) = secp.generate_keypair(&mut rand::thread_rng());
+        let (xonly, _) = pk.x_only_public_key();
+        let addr = Address::p2tr(&secp, xonly, None, bitcoin::Network::Regtest);
+        mock.set_keypair(sk, bitcoin::PublicKey::new(pk));
+        let script = addr.script_pubkey();
+
+        // Three UTXOs at the same address.
+        let txid_diesel = bitcoin::Txid::from_str(
+            "1111111111111111111111111111111111111111111111111111111111111111",
+        )
+        .unwrap();
+        let txid_frbtc = bitcoin::Txid::from_str(
+            "2222222222222222222222222222222222222222222222222222222222222222",
+        )
+        .unwrap();
+        let txid_btc = bitcoin::Txid::from_str(
+            "3333333333333333333333333333333333333333333333333333333333333333",
+        )
+        .unwrap();
+        {
+            let mut utxos = mock.utxos.lock().unwrap();
+            utxos.push((
+                bitcoin::OutPoint::new(txid_diesel, 0),
+                bitcoin::TxOut {
+                    value: bitcoin::Amount::from_sat(546),
+                    script_pubkey: script.clone(),
+                },
+            ));
+            utxos.push((
+                bitcoin::OutPoint::new(txid_frbtc, 0),
+                bitcoin::TxOut {
+                    value: bitcoin::Amount::from_sat(546),
+                    script_pubkey: script.clone(),
+                },
+            ));
+            utxos.push((
+                bitcoin::OutPoint::new(txid_btc, 0),
+                bitcoin::TxOut {
+                    value: bitcoin::Amount::from_sat(50000),
+                    script_pubkey: script.clone(),
+                },
+            ));
+        }
+        {
+            let mut ab = mock.alkane_balances.lock().unwrap();
+            ab.insert(format!("{}:0", txid_diesel), vec![(2, 0, 1000)]); // DIESEL
+            ab.insert(format!("{}:0", txid_frbtc), vec![(32, 0, 5000)]); // frBTC
+            // tx_btc → no entry → empty balances
+        }
+
+        // The legacy lua-batch path also queries balances; the mock
+        // returns no_response when called via lua_batch_balances. The
+        // primary protorunesbyoutpoint path runs first (per
+        // select_utxos's discovery order) and feeds utxo_balances
+        // from `get_protorunes_by_outpoint`, which now reads from
+        // `alkane_balances`.
+
+        // Now exercise select_utxos. Need 800 sats DIESEL + 5000 sats BTC.
+        let mut executor = EnhancedAlkanesExecutor::new(&mut mock);
+        let requirements = vec![
+            InputRequirement::Alkanes {
+                block: 2,
+                tx: 0,
+                amount: 800,
+            },
+            InputRequirement::Bitcoin { amount: 5000 },
+        ];
+        let result = executor
+            .select_utxos(
+                &requirements,
+                &Some(vec![addr.to_string()]),
+                &[],
+            )
+            .await
+            .unwrap();
+
+        // Inspect: DIESEL carrier and BTC UTXO must be selected;
+        // frBTC carrier must NOT be selected.
+        let selected: alloc::collections::BTreeSet<String> = result
+            .outpoints
+            .iter()
+            .map(|o| format!("{}:{}", o.txid, o.vout))
+            .collect();
+
+        assert!(
+            selected.contains(&format!("{}:0", txid_diesel)),
+            "DIESEL carrier must be selected for the alkane requirement"
+        );
+        assert!(
+            selected.contains(&format!("{}:0", txid_btc)),
+            "plain BTC UTXO must be selected for the fee budget"
+        );
+        assert!(
+            !selected.contains(&format!("{}:0", txid_frbtc)),
+            "frBTC carrier must NOT be selected — it carries an alkane we don't need, the protection at execute.rs:1944 must skip it"
+        );
+        assert_eq!(result.outpoints.len(), 2, "exactly 2 selected: DIESEL + BTC");
     }
 }

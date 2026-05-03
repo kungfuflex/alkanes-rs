@@ -423,6 +423,59 @@ mod tests {
         assert_eq!(spendable.len(), prev_count);
     }
 
+    /// `MockProvider::broadcast_transaction` wrapper auto-pushes to
+    /// the pending-tx store. Mirrors the same behavior the
+    /// WebProvider exhibits at runtime — proves the wrapped path is
+    /// in place without per-mutation ad-hoc plumbing.
+    #[tokio::test]
+    async fn provider_broadcast_auto_pushes_to_store() {
+        use crate::mock_provider::MockProvider;
+        use crate::traits::WalletProvider;
+
+        let mut provider = MockProvider::default();
+        // Override the provider's pending_tx_store with a clean one
+        // we can inspect after the broadcast.
+        provider.pending_tx_store = MemoryPendingTxStore::new();
+
+        // Pre-condition: store is empty.
+        assert_eq!(provider.pending_tx_store.len().await.unwrap(), 0);
+
+        // Broadcast Tx A through the provider's standard interface.
+        let txid = WalletProvider::broadcast_transaction(&mut provider, TX_A_HEX.to_string())
+            .await
+            .unwrap();
+        assert_eq!(txid, TX_A_TXID);
+
+        // Post-condition: the store now has Tx A. The wrapper fired
+        // automatically — no manual `pending_tx_store.add()` call
+        // from the caller.
+        assert_eq!(provider.pending_tx_store.len().await.unwrap(), 1);
+        let listed = provider.pending_tx_store.list().await.unwrap();
+        assert_eq!(listed[0], TX_A_HEX);
+    }
+
+    /// Failed broadcasts must NOT be pushed (no point feeding the
+    /// store something that's not in mempool). Today's MockProvider
+    /// always succeeds; this test pins the contract for the
+    /// WebProvider's `result.is_ok()` gate.
+    #[tokio::test]
+    async fn provider_broadcast_does_not_push_on_failure() {
+        use crate::mock_provider::MockProvider;
+        use crate::traits::WalletProvider;
+
+        let mut provider = MockProvider::default();
+        provider.pending_tx_store = MemoryPendingTxStore::new();
+
+        // Invalid hex → broadcast errors → no push.
+        let result = WalletProvider::broadcast_transaction(
+            &mut provider,
+            "definitely-not-hex".to_string(),
+        )
+        .await;
+        assert!(result.is_err());
+        assert_eq!(provider.pending_tx_store.len().await.unwrap(), 0);
+    }
+
     /// Two pending txs that form a chain (A spent in B's input set,
     /// B's outputs paying us). Verifies the store handles
     /// independently-broadcast chains — not just the
