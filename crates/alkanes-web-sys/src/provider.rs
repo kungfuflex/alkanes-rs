@@ -322,6 +322,53 @@ impl WebProvider {
         })
     }
 
+    /// List all pending (broadcast-but-unconfirmed) transactions in
+    /// the SDK's session-scoped store. Each entry is the raw signed
+    /// hex (same format as `sendrawtransaction` accepts).
+    ///
+    /// JS-side wallet UIs use this to overlay optimistic mempool
+    /// state on top of the confirmed UTXO set — e.g. the SendModal
+    /// pre-flight check that allows back-to-back sends without
+    /// waiting for the indexer.
+    ///
+    /// The store is auto-populated by `broadcast_transaction` /
+    /// `send_raw_transactions` on success — see those impls for
+    /// architectural rationale. Callers should evict txids that
+    /// have confirmed via `pendingTxStoreEvict`.
+    #[wasm_bindgen(js_name = pendingTxStoreList)]
+    pub fn pending_tx_store_list_js(&self) -> js_sys::Promise {
+        use alkanes_cli_common::pending_tx_store::PendingTxStore as _;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            let hexes = provider
+                .pending_tx_store
+                .list()
+                .await
+                .map_err(|e| JsValue::from_str(&format!("pending_tx_store list: {}", e)))?;
+            serde_wasm_bindgen::to_value(&hexes)
+                .map_err(|e| JsValue::from_str(&format!("serialize: {}", e)))
+        })
+    }
+
+    /// Evict the given txids from the pending-tx store. Wallet UIs
+    /// call this on every block-tip change with the set of txids
+    /// the indexer has now seen confirmed.
+    #[wasm_bindgen(js_name = pendingTxStoreEvict)]
+    pub fn pending_tx_store_evict_js(&self, txids: Vec<String>) -> js_sys::Promise {
+        use alkanes_cli_common::pending_tx_store::PendingTxStore as _;
+        use wasm_bindgen_futures::future_to_promise;
+        let provider = self.clone();
+        future_to_promise(async move {
+            provider
+                .pending_tx_store
+                .evict(&txids)
+                .await
+                .map_err(|e| JsValue::from_str(&format!("pending_tx_store evict: {}", e)))?;
+            Ok(JsValue::null())
+        })
+    }
+
     /// Get all transactions for an address from Esplora
     #[wasm_bindgen(js_name = getAddressTxs)]
     pub fn get_address_txs_js(&self, address: String) -> js_sys::Promise {
