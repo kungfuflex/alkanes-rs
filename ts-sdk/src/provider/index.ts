@@ -3140,6 +3140,25 @@ export class AlkanesProvider {
     rawOutput?: boolean;
     ordinalsStrategy?: string;
     mempoolIndexer?: boolean;
+    /**
+     * When true and `protostones[0]` is a wrap call (target=(32,N) opcode=77),
+     * the SDK splits the request across two CPFP-chained txs:
+     *
+     *   Tx A (parent): wrap-only protostone. Mints frBTC/frZEC/frETH to the
+     *     user's alkane carrier output (v1).
+     *   Tx B (child): remaining protostones. Spends Tx A:1 (carries the
+     *     freshly-minted alkane) + Tx A:2 (BTC change for fees).
+     *
+     * Each tx then has its own per-tx fuel budget (3.5M MINIMUM_FUEL floor +
+     * its block-fuel share) instead of sharing one budget across both
+     * protostones. Use this when the combined wrap + execute fuel cost would
+     * exceed the per-tx budget at submit time — typical for atomic wrap+swap
+     * (~5M total: ~2.75M wrap + ~2M+ execute) on busy mainnet blocks.
+     *
+     * The result's `wrap_txid` field is set to Tx A's txid; `reveal_txid` is
+     * Tx B's. For non-split flows, both fields behave as before.
+     */
+    splitTransactions?: boolean;
   }): Promise<any> {
     const provider = await this.getProvider();
 
@@ -3163,6 +3182,7 @@ export class AlkanesProvider {
     if (params.rawOutput !== undefined) options.raw_output = params.rawOutput;
     if (params.ordinalsStrategy !== undefined) options.ordinals_strategy = params.ordinalsStrategy;
     if (params.mempoolIndexer !== undefined) options.mempool_indexer = params.mempoolIndexer;
+    if (params.splitTransactions !== undefined) options.split_transactions = params.splitTransactions;
 
     const optionsJson = Object.keys(options).length > 0 ? JSON.stringify(options) : null;
 

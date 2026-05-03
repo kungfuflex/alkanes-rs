@@ -328,6 +328,16 @@ pub struct EnhancedExecuteParams {
     /// through parent transactions to determine inscription state from settled UTXOs
     #[serde(default)]
     pub mempool_indexer: bool,
+    /// When true and `protostones[0]` is a wrap (target=(32,N) opcode=77), the
+    /// builder splits the request into a parent wrap-only tx (Tx A) and a
+    /// child execute tx (Tx B) that spends Tx A's outputs (alkane carrier at
+    /// v1 + BTC change at v2 — CPFP chain). Each tx then sees its own per-tx
+    /// fuel budget instead of sharing the atomic single-tx budget. Use this
+    /// when the combined wrap + execute exceeds `MINIMUM_FUEL_CHANGE1`
+    /// (3,500,000 fuel) and risks OOG when the per-tx fuel allocation falls
+    /// to the floor (e.g., late-in-block landings on busy mainnet).
+    #[serde(default)]
+    pub split_transactions: bool,
 }
 
 /// Enhanced execute result for commit/reveal pattern
@@ -346,6 +356,15 @@ pub struct EnhancedExecuteResult {
     pub inputs_used: Vec<String>,
     pub outputs_created: Vec<String>,
     pub traces: Option<Vec<JsonValue>>,
+    /// Wrap-only tx id (Tx A) when split_transactions=true. Tx A wraps BTC →
+    /// frBTC; the alkane carrier at A:1 is then spent by `reveal_txid` (Tx B)
+    /// which executes the remaining protostones. Set when the split path was
+    /// taken; None for normal atomic flows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wrap_txid: Option<String>,
+    /// Wrap tx fee (Tx A) when split_transactions=true.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wrap_fee: Option<u64>,
 }
 
 /// Represents the state of a pausable transaction execution.

@@ -692,7 +692,7 @@ impl WebProvider {
             };
 
             // Parse options (from_addresses, change_address, etc.)
-            let (trace_enabled, mine_enabled, auto_confirm, raw_output, from_addresses, change_address, alkanes_change_address) = if let Some(opts_json) = &options_json {
+            let (trace_enabled, mine_enabled, auto_confirm, raw_output, from_addresses, change_address, alkanes_change_address, split_transactions) = if let Some(opts_json) = &options_json {
                 let opts: serde_json::Value = serde_json::from_str(opts_json)
                     .map_err(|e| JsValue::from_str(&format!("Invalid options JSON: {}", e)))?;
 
@@ -711,6 +711,11 @@ impl WebProvider {
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string());
 
+                let split_tx = opts.get("split_transactions")
+                    .or_else(|| opts.get("splitTransactions"))
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+
                 (
                     opts.get("trace_enabled").and_then(|v| v.as_bool()).unwrap_or(false),
                     opts.get("mine_enabled").and_then(|v| v.as_bool()).unwrap_or(false),
@@ -719,9 +724,10 @@ impl WebProvider {
                     from_addrs,
                     change_addr,
                     alkanes_change_addr,
+                    split_tx,
                 )
             } else {
-                (false, false, true, false, None, None, None)
+                (false, false, true, false, None, None, None, false)
             };
 
             let params = EnhancedExecuteParams {
@@ -739,6 +745,7 @@ impl WebProvider {
                 auto_confirm,
                 ordinals_strategy: Default::default(),
                 mempool_indexer: false,
+                split_transactions,
             };
 
             provider.execute(params).await
@@ -792,7 +799,7 @@ impl WebProvider {
             };
 
             // Parse options
-            let (trace_enabled, mine_enabled, auto_confirm, raw_output, from_addresses, change_address, alkanes_change_address, ordinals_strategy, mempool_indexer) = if let Some(opts_json) = &options_json {
+            let (trace_enabled, mine_enabled, auto_confirm, raw_output, from_addresses, change_address, alkanes_change_address, ordinals_strategy, mempool_indexer, split_transactions) = if let Some(opts_json) = &options_json {
                 let opts: serde_json::Value = serde_json::from_str(opts_json)
                     .map_err(|e| JsValue::from_str(&format!("Invalid options JSON: {}", e)))?;
 
@@ -813,6 +820,13 @@ impl WebProvider {
                     .unwrap_or_default();
 
                 let mempool_idx = opts.get("mempool_indexer").and_then(|v| v.as_bool()).unwrap_or(false);
+                // Accept both snake_case (Rust convention) and camelCase
+                // (TS convention) so callers from either side don't have to
+                // rename the field at the JSON boundary.
+                let split_tx = opts.get("split_transactions")
+                    .or_else(|| opts.get("splitTransactions"))
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
 
                 (
                     opts.get("trace_enabled").and_then(|v| v.as_bool()).unwrap_or(false),
@@ -824,9 +838,10 @@ impl WebProvider {
                     alkanes_change_addr,
                     ord_strategy,
                     mempool_idx,
+                    split_tx,
                 )
             } else {
-                (false, false, true, false, None, None, None, Default::default(), false)
+                (false, false, true, false, None, None, None, Default::default(), false, false)
             };
 
             let params = EnhancedExecuteParams {
@@ -844,6 +859,7 @@ impl WebProvider {
                 auto_confirm,
                 ordinals_strategy,
                 mempool_indexer,
+                split_transactions,
             };
 
             // Use execute_full to handle the complete flow internally
@@ -9186,6 +9202,8 @@ impl DeezelProvider for WebProvider {
             auto_confirm: false,
             ordinals_strategy: Default::default(),
             mempool_indexer: false,
+
+            split_transactions: false,
         };
 
         match executor.execute(params).await? {
@@ -9224,6 +9242,8 @@ impl DeezelProvider for WebProvider {
             auto_confirm: false,
             ordinals_strategy: Default::default(),
             mempool_indexer: false,
+
+            split_transactions: false,
         };
 
         match executor.execute(params).await? {

@@ -214,6 +214,9 @@ mod tests {
         async fn inspect(&self, _target: &str, _config: AlkanesInspectConfig) -> Result<AlkanesInspectResult, AlkanesError> {
             unimplemented!()
         }
+        async fn meta(&self, _alkane_id: &str, _block_tag: Option<String>) -> Result<Vec<u8>, AlkanesError> {
+            unimplemented!()
+        }
         async fn get_balance(&self, _address: Option<&str>) -> Result<Vec<AlkaneBalance>, AlkanesError> {
             unimplemented!()
         }
