@@ -648,6 +648,17 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             log::info!("🔗 TXID: {txid}");
         }
 
+        // Push the broadcast tx into the session-scoped pending store
+        // so any subsequent `select_utxos` call sees it immediately —
+        // no waiting on indexer propagation. Errors are non-fatal:
+        // the tx is already in mempool and the next call can fall
+        // back to the esplora mempool view (just slower).
+        if let Some(store) = self.provider.pending_tx_store() {
+            if let Err(e) = store.add(&tx_hex_for_result).await {
+                log::warn!("pending_tx_store.add({}) failed: {}", txid, e);
+            }
+        }
+
         if params.mine_enabled {
             self.mine_blocks_if_regtest(params).await?;
             self.provider.sync().await?;
@@ -1472,13 +1483,34 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             // propagated through the indexer pipeline yet, so the filter
             // can't see what to strip. Decoding the caller-supplied tx hex
             // into the same JSON shape closes that window deterministically.
-            for hex_str in known_pending_tx_hexes {
+            //
+            // Two sources are merged:
+            //   1. `known_pending_tx_hexes` — explicit per-call override,
+            //      used by callers without provider access (vendored CLI
+            //      tools, integration tests).
+            //   2. `provider.pending_tx_store()` — session-scoped store
+            //      that all `execute_full` paths push to on broadcast,
+            //      so chained / cross-call flows benefit automatically
+            //      without each caller having to thread Tx-A's hex
+            //      through.
+            //
+            // Duplicates are tolerated — `apply_mempool_adjustment` keys
+            // its spent-outpoint set by (txid, vout), so the same tx
+            // appearing twice is a no-op.
+            let mut all_pending: Vec<String> = known_pending_tx_hexes.to_vec();
+            if let Some(store) = self.provider.pending_tx_store() {
+                match store.list().await {
+                    Ok(hexes) => all_pending.extend(hexes),
+                    Err(e) => log::warn!("pending_tx_store.list() failed: {}", e),
+                }
+            }
+            for hex_str in &all_pending {
                 match decode_tx_hex_to_mempool_json(hex_str) {
                     Ok(synthetic_tx) => {
                         mempool_payloads.push(serde_json::json!([synthetic_tx]));
                     }
                     Err(e) => {
-                        log::warn!("Failed to decode known_pending_tx_hex: {}", e);
+                        log::warn!("Failed to decode pending tx hex: {}", e);
                     }
                 }
             }

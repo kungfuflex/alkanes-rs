@@ -157,6 +157,11 @@ pub struct WebProvider {
     logger: WebLogger,
     keystore: Option<alkanes_cli_common::keystore::Keystore>,
     passphrase: Option<String>,
+    /// Session-scoped pending-tx store. `MemoryPendingTxStore` for now
+    /// — IndexedDB-backed impl is the next step (Phase 1.5) so the
+    /// store survives page reloads and the user's own pending state
+    /// stays visible across UI navigations.
+    pending_tx_store: alkanes_cli_common::pending_tx_store::MemoryPendingTxStore,
 }
 
 #[wasm_bindgen]
@@ -260,6 +265,7 @@ impl WebProvider {
             logger: WebLogger::new(),
             keystore: None,
             passphrase: None,
+            pending_tx_store: alkanes_cli_common::pending_tx_store::MemoryPendingTxStore::new(),
         })
     }
 
@@ -6409,6 +6415,7 @@ impl WebProvider {
             logger: WebLogger::new(),
             keystore: None,
             passphrase: None,
+            pending_tx_store: alkanes_cli_common::pending_tx_store::MemoryPendingTxStore::new(),
         })
     }
 
@@ -6442,6 +6449,7 @@ impl WebProvider {
            logger: WebLogger::new(),
            keystore: None,
            passphrase: None,
+           pending_tx_store: alkanes_cli_common::pending_tx_store::MemoryPendingTxStore::new(),
        })
    }
 
@@ -6485,6 +6493,7 @@ impl WebProvider {
             logger: WebLogger::new(),
             keystore: None,
             passphrase: None,
+            pending_tx_store: alkanes_cli_common::pending_tx_store::MemoryPendingTxStore::new(),
         })
     }
 
@@ -9098,7 +9107,11 @@ impl DeezelProvider for WebProvider {
     fn clone_box(&self) -> Box<dyn DeezelProvider> {
         Box::new(self.clone())
     }
-    
+
+    fn pending_tx_store(&self) -> Option<&dyn alkanes_cli_common::pending_tx_store::PendingTxStore> {
+        Some(&self.pending_tx_store)
+    }
+
     async fn initialize(&self) -> Result<()> {
         self.logger.info("Alkanes WebProvider Initialized");
         Ok(())
