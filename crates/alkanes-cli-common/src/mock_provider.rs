@@ -319,14 +319,21 @@ impl WalletProvider for MockProvider {
         let tx_bytes = hex::decode(&tx_hex).map_err(|e| AlkanesError::Hex(e.to_string()))?;
         let tx: Transaction = bitcoin::consensus::deserialize(&tx_bytes).map_err(|e| AlkanesError::Serialization(e.to_string()))?;
         let txid = tx.compute_txid();
-        
+
         // Add the new outputs of this transaction to the UTXO set
         let mut utxos = self.utxos.lock().unwrap();
         for (i, tx_out) in tx.output.iter().enumerate() {
             utxos.push((OutPoint::new(txid, i as u32), tx_out.clone()));
         }
 
-        self.broadcasted_txs.lock().unwrap().insert(txid.to_string(), tx_hex);
+        self.broadcasted_txs.lock().unwrap().insert(txid.to_string(), tx_hex.clone());
+
+        // Mirror the WebProvider auto-push so cargo integration tests
+        // can verify the wrapped behavior. See WebProvider::broadcast_transaction
+        // for the architectural rationale.
+        use crate::pending_tx_store::PendingTxStore as _;
+        let _ = self.pending_tx_store.add(&tx_hex).await;
+
         Ok(txid.to_string())
     }
     
@@ -658,8 +665,47 @@ impl MetashrewRpcProvider for MockProvider {
         Ok(ProtoruneWalletResponse { balances: outpoints })
     }
     
-    async fn get_protorunes_by_outpoint(&self, _txid: &str, _vout: u32, _block_tag: Option<String>, _protocol_tag: u128) -> Result<ProtoruneOutpointResponse> {
-        Ok(ProtoruneOutpointResponse::default())
+    async fn get_protorunes_by_outpoint(&self, txid: &str, vout: u32, _block_tag: Option<String>, _protocol_tag: u128) -> Result<ProtoruneOutpointResponse> {
+        // Look up alkane balances from the mock's `alkane_balances`
+        // map keyed by `txid:vout`. Each entry is a `Vec<(block, tx,
+        // amount)>` matching the on-chain protorune balance layout.
+        // Returns an empty balance sheet if the outpoint isn't
+        // registered. This is what cargo tests rely on to set up
+        // deterministic alkane-aware UTXO selection scenarios.
+        use crate::alkanes::balance_sheet::{
+            BalanceSheet, CachedBalanceSheet, ProtoruneRuneId,
+        };
+        use std::collections::BTreeMap;
+        let key = format!("{}:{}", txid, vout);
+        let ab = self.alkane_balances.lock().unwrap();
+        let entries = ab.get(&key).cloned().unwrap_or_default();
+        drop(ab);
+
+        let mut balances: BTreeMap<ProtoruneRuneId, u128> = BTreeMap::new();
+        for (block, tx, amount) in entries {
+            balances.insert(
+                ProtoruneRuneId {
+                    block: block as u128,
+                    tx: tx as u128,
+                },
+                amount as u128,
+            );
+        }
+        Ok(ProtoruneOutpointResponse {
+            balance_sheet: BalanceSheet {
+                cached: CachedBalanceSheet { balances },
+                load_ptrs: Vec::new(),
+            },
+            outpoint: bitcoin::OutPoint {
+                txid: bitcoin::Txid::from_str(txid)
+                    .map_err(|e| AlkanesError::Other(format!("bad txid: {}", e)))?,
+                vout,
+            },
+            output: bitcoin::TxOut {
+                value: bitcoin::Amount::from_sat(0),
+                script_pubkey: bitcoin::ScriptBuf::default(),
+            },
+        })
     }
 }
 
