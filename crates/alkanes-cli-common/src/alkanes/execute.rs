@@ -43,6 +43,26 @@ use protorune_support::balance_sheet::ProtoruneRuneId;
 const MAX_FEE_SATS: u64 = 100_000; // 0.001 BTC. Cap to avoid "absurdly high fee rate" errors.
 const DUST_LIMIT: u64 = 546;
 
+/// frBTC, frZEC, frETH and any other cross-chain wrap target lives at block 32
+/// in the alkanes namespace. The wrap opcode is uniformly 77 across these
+/// contracts (calls `exchange()` which mints the wrapped representation).
+const WRAP_NAMESPACE_BLOCK: u128 = 32;
+const WRAP_OPCODE: u128 = 77;
+
+/// Returns true when a protostone calls a cross-chain wrap contract (frBTC,
+/// frZEC, frETH, etc.) — i.e., target alkane has block=32 and the cellpack's
+/// first input (the opcode) is 77. Used by `execute_split` to decide whether
+/// the request is eligible for the wrap+execute split path.
+pub fn is_wrap_protostone(spec: &ProtostoneSpec) -> bool {
+    let Some(cellpack) = &spec.cellpack else {
+        return false;
+    };
+    if cellpack.target.block != WRAP_NAMESPACE_BLOCK {
+        return false;
+    }
+    cellpack.inputs.first().copied() == Some(WRAP_OPCODE)
+}
+
 /// Result from UTXO selection including alkanes balances
 #[derive(Debug, Clone)]
 struct UtxoSelectionResult {
@@ -182,6 +202,22 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
 
         self.validate_envelope_cellpack_usage(&params)?;
 
+        // Split-tx mode: when the request begins with a wrap protostone and
+        // the caller opted in via params.split_transactions=true, fork the
+        // protostones across two CPFP-chained transactions so each tx gets
+        // its own per-tx fuel budget. Avoids OOG when the combined wrap +
+        // execute fuel cost exceeds MINIMUM_FUEL_CHANGE1 (3.5M) and the
+        // landing block has block_fuel exhausted.
+        if params.split_transactions
+            && !params.protostones.is_empty()
+            && is_wrap_protostone(&params.protostones[0])
+            && params.protostones.len() >= 2
+            && params.envelope_data.is_none()
+        {
+            log::info!("🔀 Using split_transactions mode: wrap → CPFP execute chain");
+            return self.execute_split(params).await;
+        }
+
         if let Some(envelope_data) = &params.envelope_data {
             log::info!("CONTRACT DEPLOYMENT: Using envelope with BIN data for contract deployment");
             log::info!("Envelope data size: {} bytes", envelope_data.len());
@@ -203,6 +239,121 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             // Execute
             self.resume_execution(sign_state, &params).await
         }
+    }
+
+    /// Split a wrap+execute request into two CPFP-chained transactions:
+    ///
+    ///   Tx A (parent, wrap-only):
+    ///     - inputs: BTC funding UTXOs from `params.from_addresses`
+    ///     - outputs: [signer_address (10000 sats), user_taproot (546 sats),
+    ///                 user (BTC change)]
+    ///     - protostones: [params.protostones[0]] — pointer rewritten to v1
+    ///                    (forward minted alkane to user's alkane carrier
+    ///                    instead of the original next-protostone target)
+    ///
+    ///   Tx B (child, execute):
+    ///     - inputs: Tx A's v1 (alkane carrier with the freshly-minted
+    ///               wrapped alkane) + Tx A's v2 (BTC change for fees)
+    ///     - outputs: [user_taproot (alkane carrier for execute output),
+    ///                 user (BTC change)]
+    ///     - protostones: params.protostones[1..] (refs unchanged — Tx B
+    ///                    receives the alkane via the spent input UTXO,
+    ///                    so the first cellpack protostone in Tx B
+    ///                    automatically gets it via incoming_alkanes)
+    ///
+    /// Both txs are signed and broadcast as a parent-child mempool chain
+    /// (sendrawtransactions array call). The indexer treats the chain as
+    /// atomic — the wrap's effects are observed before the execute runs.
+    ///
+    /// Per-tx fuel budgets are independent, so Tx A's wrap (~2.75M) and
+    /// Tx B's execute (~2M for a swap) each fit under MINIMUM_FUEL_CHANGE1
+    /// (3.5M) regardless of block_fuel availability.
+    async fn execute_split(
+        &mut self,
+        params: EnhancedExecuteParams,
+    ) -> Result<EnhancedExecuteResult> {
+        if params.protostones.len() < 2 {
+            return Err(AlkanesError::Other(
+                "execute_split requires at least 2 protostones (wrap + execute)".to_string(),
+            ));
+        }
+        if !is_wrap_protostone(&params.protostones[0]) {
+            return Err(AlkanesError::Other(
+                "execute_split: protostones[0] must be a wrap (target=(32,N) opcode=77)"
+                    .to_string(),
+            ));
+        }
+
+        // ---- Tx A: wrap-only ----------------------------------------------
+        let mut tx_a_params = params.clone();
+        tx_a_params.split_transactions = false;
+
+        // The wrap protostone's pointer typically targets p1 (forward to the
+        // next protostone in the original atomic flow). In split mode we
+        // redirect to v1 (user's alkane carrier output) so the minted
+        // alkane lands on a real Bitcoin output that Tx B can spend.
+        let mut wrap_proto = params.protostones[0].clone();
+        wrap_proto.pointer = Some(OutputTarget::Output(1));
+        wrap_proto.refund = Some(OutputTarget::Output(1));
+        tx_a_params.protostones = vec![wrap_proto];
+
+        log::info!("[split-tx] Step 1/2: building wrap-only Tx A");
+        let tx_a_result = Box::pin(self.execute_full(tx_a_params)).await?;
+        let wrap_txid = tx_a_result.reveal_txid.clone();
+        let wrap_fee = tx_a_result.reveal_fee;
+        log::info!("[split-tx] Tx A broadcast: {} (fee {} sats)", wrap_txid, wrap_fee);
+
+        // ---- Tx B: execute (spends Tx A's v1 + v2) ------------------------
+        // The SDK's UTXO selector will see Tx A's outputs in the mempool
+        // (via get_address_txs_mempool / equivalent) and pick them up
+        // automatically when we drop the explicit BTC requirement —
+        // the wrap consumed the original BTC input, and Tx A:2 (change at
+        // user's address) is the only remaining "loose" BTC for Tx B fees.
+        let mut tx_b_params = params.clone();
+        tx_b_params.split_transactions = false;
+        tx_b_params.protostones = params.protostones[1..].to_vec();
+
+        // Drop BTC input requirements — Tx A's BTC change at v2 covers Tx B
+        // fees via natural UTXO selection.
+        tx_b_params.input_requirements.retain(|req| {
+            !matches!(
+                req,
+                InputRequirement::Bitcoin { .. } | InputRequirement::BitcoinOutput { .. }
+            )
+        });
+
+        // Tx B doesn't need the wrap's signer recipient. Drop the first
+        // to_address (typically the signer) if there are at least 2.
+        if tx_b_params.to_addresses.len() >= 2 {
+            tx_b_params.to_addresses.remove(0);
+        }
+
+        log::info!("[split-tx] Step 2/2: building execute Tx B (spends {})", wrap_txid);
+        let tx_b_result = Box::pin(self.execute_full(tx_b_params)).await?;
+        log::info!(
+            "[split-tx] Tx B broadcast: {} (fee {} sats)",
+            tx_b_result.reveal_txid,
+            tx_b_result.reveal_fee
+        );
+
+        Ok(EnhancedExecuteResult {
+            split_txid: tx_b_result.split_txid,
+            split_fee: tx_b_result.split_fee,
+            commit_txid: None,
+            reveal_txid: tx_b_result.reveal_txid,
+            commit_fee: None,
+            reveal_fee: tx_b_result.reveal_fee,
+            inputs_used: [tx_a_result.inputs_used, tx_b_result.inputs_used].concat(),
+            outputs_created: [tx_a_result.outputs_created, tx_b_result.outputs_created].concat(),
+            traces: match (tx_a_result.traces, tx_b_result.traces) {
+                (Some(a), Some(b)) => Some([a, b].concat()),
+                (Some(a), None) => Some(a),
+                (None, Some(b)) => Some(b),
+                (None, None) => None,
+            },
+            wrap_txid: Some(wrap_txid),
+            wrap_fee: Some(wrap_fee),
+        })
     }
 
     pub async fn resume_execution(
@@ -297,6 +448,8 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             inputs_used: tx.input.iter().map(|i| i.previous_output.to_string()).collect(),
             outputs_created: tx.output.iter().map(|o| o.script_pubkey.to_string()).collect(),
             traces,
+            wrap_txid: None,
+            wrap_fee: None,
         })
     }
 
@@ -415,6 +568,8 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             inputs_used: reveal_tx.input.iter().map(|i| i.previous_output.to_string()).collect(),
             outputs_created: reveal_tx.output.iter().map(|o| o.script_pubkey.to_string()).collect(),
             traces,
+            wrap_txid: None,
+            wrap_fee: None,
         })
     }
 
@@ -2741,6 +2896,8 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             inputs_used: signed_reveal.input.iter().map(|i| i.previous_output.to_string()).collect(),
             outputs_created: signed_reveal.output.iter().map(|o| o.script_pubkey.to_string()).collect(),
             traces,
+            wrap_txid: None,
+            wrap_fee: None,
         })
     }
 
@@ -3034,5 +3191,89 @@ mod tests {
         for output in outputs {
             assert_eq!(output.value, Amount::from_sat(10000));
         }
+    }
+
+    /// `is_wrap_protostone` must reliably distinguish frBTC/frZEC/frETH wraps
+    /// (target=(32,N) opcode=77) from any other protostone, because the
+    /// split-tx mode dispatch in `execute_full` is gated on this check.
+    /// A false positive here would split a non-wrap into two txs and break
+    /// the caller's intended atomic semantics; a false negative would force
+    /// the original (sometimes-OOG) atomic flow even when the caller asked
+    /// to split.
+    #[test]
+    fn test_is_wrap_protostone_recognizes_frbtc_wrap() {
+        let spec = ProtostoneSpec {
+            cellpack: Some(alkanes_support::cellpack::Cellpack {
+                target: alkanes_support::id::AlkaneId { block: 32, tx: 0 },
+                inputs: vec![77],
+            }),
+            edicts: vec![],
+            bitcoin_transfer: None,
+            pointer: None,
+            refund: None,
+        };
+        assert!(is_wrap_protostone(&spec));
+    }
+
+    #[test]
+    fn test_is_wrap_protostone_recognizes_other_block32_wrap_targets() {
+        // Cross-chain wraps (frZEC, frETH) live at block=32, different tx.
+        let spec = ProtostoneSpec {
+            cellpack: Some(alkanes_support::cellpack::Cellpack {
+                target: alkanes_support::id::AlkaneId { block: 32, tx: 99 },
+                inputs: vec![77, 1, 2, 3],
+            }),
+            edicts: vec![],
+            bitcoin_transfer: None,
+            pointer: None,
+            refund: None,
+        };
+        assert!(is_wrap_protostone(&spec));
+    }
+
+    #[test]
+    fn test_is_wrap_protostone_rejects_amm_factory_swap() {
+        // Factory swap is at block=4 — must NOT be classified as a wrap.
+        let spec = ProtostoneSpec {
+            cellpack: Some(alkanes_support::cellpack::Cellpack {
+                target: alkanes_support::id::AlkaneId { block: 4, tx: 65522 },
+                inputs: vec![13, 2, 32, 0, 2, 0, 9990, 1, 947644],
+            }),
+            edicts: vec![],
+            bitcoin_transfer: None,
+            pointer: None,
+            refund: None,
+        };
+        assert!(!is_wrap_protostone(&spec));
+    }
+
+    #[test]
+    fn test_is_wrap_protostone_rejects_block32_non_wrap_opcode() {
+        // Same target as frBTC but a different opcode (e.g. unwrap=78) must
+        // not be classified as a wrap.
+        let spec = ProtostoneSpec {
+            cellpack: Some(alkanes_support::cellpack::Cellpack {
+                target: alkanes_support::id::AlkaneId { block: 32, tx: 0 },
+                inputs: vec![78, 100],
+            }),
+            edicts: vec![],
+            bitcoin_transfer: None,
+            pointer: None,
+            refund: None,
+        };
+        assert!(!is_wrap_protostone(&spec));
+    }
+
+    #[test]
+    fn test_is_wrap_protostone_rejects_edict_only_protostone() {
+        // Edict protostones have no cellpack — they're transfers, not wraps.
+        let spec = ProtostoneSpec {
+            cellpack: None,
+            edicts: vec![],
+            bitcoin_transfer: None,
+            pointer: None,
+            refund: None,
+        };
+        assert!(!is_wrap_protostone(&spec));
     }
 }

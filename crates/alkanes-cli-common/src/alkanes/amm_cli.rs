@@ -119,6 +119,7 @@ pub async fn init_pool(
         auto_confirm: params.auto_confirm,
         ordinals_strategy: params.ordinals_strategy,
         mempool_indexer: false,
+        split_transactions: false,
     };
     
     // Execute
@@ -218,6 +219,7 @@ pub async fn execute_swap(
         auto_confirm: params.auto_confirm,
         ordinals_strategy: params.ordinals_strategy,
         mempool_indexer: false,
+        split_transactions: false,
     };
     
     // Execute

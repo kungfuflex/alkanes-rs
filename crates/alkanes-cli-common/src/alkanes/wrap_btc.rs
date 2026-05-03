@@ -98,6 +98,7 @@ impl<'a> WrapBtcExecutor<'a> {
             auto_confirm: params.auto_confirm,
             ordinals_strategy: crate::alkanes::types::OrdinalsStrategy::default(),
             mempool_indexer: false,
+            split_transactions: false,
         };
 
         // Execute using the enhanced alkanes executor

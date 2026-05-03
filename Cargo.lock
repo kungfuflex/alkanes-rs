@@ -7325,7 +7325,7 @@ dependencies = [
  "tokio",
  "toml 0.8.23",
  "tracing",
- "wasmtime 18.0.4",
+ "wasmtime 43.0.0",
  "wat",
 ]
 
