@@ -338,6 +338,21 @@ pub struct EnhancedExecuteParams {
     /// to the floor (e.g., late-in-block landings on busy mainnet).
     #[serde(default)]
     pub split_transactions: bool,
+    /// Synthetic mempool transactions to feed into UTXO selection alongside
+    /// whatever the indexer's mempool view returns. Used by `execute_split`
+    /// to hand the freshly-broadcast Tx A's hex to Tx B's `select_utxos`,
+    /// closing the indexer-propagation timing window where Tx A's outputs
+    /// aren't yet visible via `address/{addr}/txs/mempool` (observed ~325ms
+    /// indexer lag on mainnet, longer than the gap between Tx A's broadcast
+    /// and Tx B's coin selection).
+    ///
+    /// Each entry is the raw transaction hex (same format as the
+    /// `sendrawtransaction` argument). The selector parses each one and
+    /// uses it the same way it would use a real mempool entry: strip its
+    /// prevouts from the candidate set, add its pay-to-us outputs as
+    /// candidates.
+    #[serde(default)]
+    pub known_pending_tx_hexes: Vec<String>,
 }
 
 /// Enhanced execute result for commit/reveal pattern
@@ -365,6 +380,15 @@ pub struct EnhancedExecuteResult {
     /// Wrap tx fee (Tx A) when split_transactions=true.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wrap_fee: Option<u64>,
+    /// Raw signed transaction hex for the broadcast tx (`reveal_txid`).
+    /// Populated for the simple-execute path; used by `execute_split` to
+    /// hand Tx A's hex into Tx B's `select_utxos` so the indexer-
+    /// propagation timing window can't drop the strip pass on Tx A's
+    /// just-broadcast prevouts. None for paths that don't construct a
+    /// reveal tx directly (e.g. commit/reveal envelope deploys at the
+    /// commit phase).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reveal_tx_hex: Option<String>,
 }
 
 /// Represents the state of a pausable transaction execution.

@@ -120,6 +120,7 @@ pub async fn init_pool(
         ordinals_strategy: params.ordinals_strategy,
         mempool_indexer: false,
         split_transactions: false,
+        known_pending_tx_hexes: Vec::new(),
     };
     
     // Execute
@@ -220,6 +221,7 @@ pub async fn execute_swap(
         ordinals_strategy: params.ordinals_strategy,
         mempool_indexer: false,
         split_transactions: false,
+        known_pending_tx_hexes: Vec::new(),
     };
     
     // Execute
