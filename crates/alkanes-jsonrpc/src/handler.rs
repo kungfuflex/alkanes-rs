@@ -1084,6 +1084,25 @@ async fn handle_metashrew_method(
     request: &JsonRpcRequest,
     proxy: &ProxyClient,
 ) -> Result<JsonRpcResponse> {
+    // metashrew_preview is a known foot-gun: the RocksDB adapter's
+    // create_isolated_copy() used to be a no-op (just an Arc::clone of
+    // the same physical DB), so every preview call leaked its hypothetical
+    // writes into production state and tripped alkane contracts'
+    // /seen/<txid> dedup guard ("transaction already processed"). The fix
+    // landed in metashrew v9.0.4-rc.1 (commit 535679c), but until the
+    // serving index has rolled to that build we block public callers from
+    // invoking it through this gateway. Returns METHOD_NOT_FOUND so clients
+    // can fall back gracefully.
+    if request.method == "metashrew_preview" {
+        return Ok(JsonRpcResponse::error(
+            METHOD_NOT_FOUND,
+            "metashrew_preview is temporarily disabled at this gateway \
+             pending index migration to v9.0.4-rc.1; \
+             use metashrew_view + metashrew_height for read-only queries"
+                .to_string(),
+            request.id.clone(),
+        ));
+    }
     // Route metashrew_view "unwrap" calls to the dedicated unwrap endpoint
     // if configured, to avoid contention with the main metashrew node
     if request.method == "metashrew_view" {
