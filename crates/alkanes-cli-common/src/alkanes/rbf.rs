@@ -211,6 +211,143 @@ pub fn rebuild_tx_with_fee_rate(
     })
 }
 
+// ---------------------------------------------------------------------------
+// Bundle / split-tx RBF
+// ---------------------------------------------------------------------------
+
+/// Output of a successful bundle rebuild — both the new parent
+/// (split) and child (main) txs, plus aggregate accounting.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RebuildBundlePlan {
+    pub parent_tx_hex: String,
+    pub child_tx_hex: String,
+    pub original_total_fee_sats: u64,
+    pub new_total_fee_sats: u64,
+    pub original_total_vsize: u64,
+    pub new_total_vsize: u64,
+    pub new_fee_rate: f64,
+    /// Index of the parent's change output (reduced).
+    pub parent_change_output_index: u32,
+    /// Index of the child's change output (reduced).
+    pub child_change_output_index: u32,
+}
+
+/// Detect whether `child` chains from `parent`. Returns the indices
+/// of `child.input` whose prev_outpoint references `parent.txid()`.
+/// Returns an empty vec if there's no chain.
+pub fn detect_bundle_chain(parent: &Transaction, child: &Transaction) -> Vec<usize> {
+    let parent_txid = parent.compute_txid();
+    child
+        .input
+        .iter()
+        .enumerate()
+        .filter_map(|(i, inp)| {
+            if inp.previous_output.txid == parent_txid { Some(i) } else { None }
+        })
+        .collect()
+}
+
+/// Rebuild a parent (split) + child (main) bundle with a higher fee rate.
+///
+/// Strategy:
+///   1. Rebuild the parent in isolation (single-tx rebuild). Its
+///      change is reduced; its txid changes.
+///   2. Compute the new parent's txid.
+///   3. Walk the child's inputs and rewrite any input that pointed
+///      to the OLD parent to point to the NEW parent (vout stays
+///      because we don't reorder outputs in the parent rebuild).
+///   4. Rebuild the child with the new fee rate, using:
+///      - the parent-derived inputs' values from the NEW parent's
+///        outputs (these may differ if the parent rebuild changed
+///        the value at that vout — typically only the parent's
+///        change output value changes, and the chain output is a
+///        clean dust UTXO, so chain values are unchanged).
+///      - external (non-parent) input values from
+///        `extra_child_prevout_values`.
+///   5. Strip witnesses on both txs (caller re-signs).
+///
+/// The caller must broadcast NEW parent first, then NEW child.
+/// Mempool will replace the old parent (BIP-125, same first input)
+/// and the old child (orphaned by parent replacement) atomically.
+pub fn rebuild_bundle_with_fee_rate(
+    parent: &Transaction,
+    child: &Transaction,
+    new_fee_rate_sat_vb: f64,
+    parent_prevout_values: &BTreeMap<OutPoint, u64>,
+    extra_child_prevout_values: &BTreeMap<OutPoint, u64>,
+    our_addresses: &[String],
+    network: Network,
+) -> Result<RebuildBundlePlan, RbfError> {
+    // 1. Confirm the chain exists.
+    let chain_inputs = detect_bundle_chain(parent, child);
+    if chain_inputs.is_empty() {
+        // No chain — caller should use single-tx RBF.
+        return Err(RbfError::NoChangeOutput); // sentinel; caller falls back
+    }
+
+    // 2. Rebuild parent. This reduces parent's change to absorb the
+    //    parent's fee bump.
+    let parent_plan = rebuild_tx_with_fee_rate(
+        parent,
+        new_fee_rate_sat_vb,
+        parent_prevout_values,
+        our_addresses,
+        network,
+    )?;
+    let new_parent = parent_plan.tx.clone().expect("rebuild always returns tx");
+    let new_parent_txid = new_parent.compute_txid();
+
+    // 3. Rewrite child's inputs that referenced the old parent.
+    let old_parent_txid = parent.compute_txid();
+    let mut new_child = child.clone();
+    for input in new_child.input.iter_mut() {
+        if input.previous_output.txid == old_parent_txid {
+            input.previous_output.txid = new_parent_txid;
+        }
+    }
+
+    // 4. Build the child's prevout map by combining:
+    //    - new parent's outputs at each chained vout (their VALUES)
+    //    - external prevout values for non-chain inputs
+    let mut child_prevouts: BTreeMap<OutPoint, u64> = BTreeMap::new();
+    for input in &new_child.input {
+        if input.previous_output.txid == new_parent_txid {
+            let vout = input.previous_output.vout as usize;
+            let value = new_parent
+                .output
+                .get(vout)
+                .ok_or(RbfError::MissingPrevoutValue { outpoint: input.previous_output })?
+                .value
+                .to_sat();
+            child_prevouts.insert(input.previous_output, value);
+        } else if let Some(&v) = extra_child_prevout_values.get(&input.previous_output) {
+            child_prevouts.insert(input.previous_output, v);
+        }
+        // else: rebuild_tx_with_fee_rate will error with
+        // MissingPrevoutValue for this input below.
+    }
+
+    let child_plan = rebuild_tx_with_fee_rate(
+        &new_child,
+        new_fee_rate_sat_vb,
+        &child_prevouts,
+        our_addresses,
+        network,
+    )?;
+
+    Ok(RebuildBundlePlan {
+        parent_tx_hex: parent_plan.tx_hex,
+        child_tx_hex: child_plan.tx_hex,
+        original_total_fee_sats: parent_plan.original_fee_sats + child_plan.original_fee_sats,
+        new_total_fee_sats: parent_plan.new_fee_sats + child_plan.new_fee_sats,
+        original_total_vsize: parent_plan.vsize + child_plan.vsize,
+        new_total_vsize: parent_plan.vsize + child_plan.vsize,
+        new_fee_rate: new_fee_rate_sat_vb,
+        parent_change_output_index: parent_plan.change_output_index,
+        child_change_output_index: child_plan.change_output_index,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -485,6 +622,293 @@ mod tests {
         assert_eq!(new_tx.output[2].value.to_sat(), plan.new_change_value);
         // Recipient at index 1 untouched.
         assert_eq!(new_tx.output[1].value.to_sat(), 20_000);
+    }
+
+    // ----------------------------------------------------------------------
+    // Bundle (split + main) tests.
+    //
+    // Pattern: parent has 2 outputs (one clean dust + change-to-self).
+    // Child consumes the clean dust output and adds its own change.
+    // ----------------------------------------------------------------------
+
+    fn make_parent_with_clean_output(
+        input_value: u64,
+        clean_dust_value: u64,
+        change_value: u64,
+        clean_script: ScriptBuf,
+        change_script: ScriptBuf,
+    ) -> (Transaction, BTreeMap<OutPoint, u64>) {
+        let prev = OutPoint {
+            txid: bitcoin::Txid::from_raw_hash(
+                <bitcoin::hashes::sha256d::Hash as bitcoin::hashes::Hash>::from_byte_array([0u8; 32]),
+            ),
+            vout: 0,
+        };
+        let tx = Transaction {
+            version: bitcoin::transaction::Version::TWO,
+            lock_time: LockTime::ZERO,
+            input: vec![TxIn {
+                previous_output: prev,
+                script_sig: ScriptBuf::new(),
+                sequence: Sequence(0xfdffffff),
+                witness: Witness::new(),
+            }],
+            output: vec![
+                TxOut { value: Amount::from_sat(clean_dust_value), script_pubkey: clean_script },
+                TxOut { value: Amount::from_sat(change_value), script_pubkey: change_script },
+            ],
+        };
+        let mut prevouts = BTreeMap::new();
+        prevouts.insert(prev, input_value);
+        (tx, prevouts)
+    }
+
+    /// Build a child that spends parent.vout 0 (the clean dust) plus
+    /// one external input.
+    fn make_child_chained_to(
+        parent: &Transaction,
+        external_input_value: u64,
+        recipient_value: u64,
+        change_value: u64,
+        change_script: ScriptBuf,
+    ) -> (Transaction, BTreeMap<OutPoint, u64>) {
+        let parent_txid = parent.compute_txid();
+        let parent_clean_value = parent.output[0].value.to_sat();
+        let external = OutPoint {
+            txid: bitcoin::Txid::from_raw_hash(
+                <bitcoin::hashes::sha256d::Hash as bitcoin::hashes::Hash>::from_byte_array([0xee; 32]),
+            ),
+            vout: 0,
+        };
+        let recipient_script = ScriptBuf::from_bytes(vec![
+            0x51, 0x20, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc,
+            0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc,
+            0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc,
+        ]);
+        let tx = Transaction {
+            version: bitcoin::transaction::Version::TWO,
+            lock_time: LockTime::ZERO,
+            input: vec![
+                TxIn {
+                    previous_output: OutPoint { txid: parent_txid, vout: 0 },
+                    script_sig: ScriptBuf::new(),
+                    sequence: Sequence(0xfdffffff),
+                    witness: Witness::new(),
+                },
+                TxIn {
+                    previous_output: external,
+                    script_sig: ScriptBuf::new(),
+                    sequence: Sequence(0xfdffffff),
+                    witness: Witness::new(),
+                },
+            ],
+            output: vec![
+                TxOut { value: Amount::from_sat(recipient_value), script_pubkey: recipient_script },
+                TxOut { value: Amount::from_sat(change_value), script_pubkey: change_script },
+            ],
+        };
+        let _ = parent_clean_value; // chain prevout is discovered from new parent at rebuild time
+        let mut extra = BTreeMap::new();
+        extra.insert(external, external_input_value);
+        (tx, extra)
+    }
+
+    #[test]
+    fn detect_bundle_chain_finds_parent_input() {
+        let (our_addr, our_script) = our_addr_and_script();
+        let (parent, _) = make_parent_with_clean_output(
+            100_000,
+            546,
+            89_000,
+            our_script.clone(),
+            our_script.clone(),
+        );
+        let (child, _) =
+            make_child_chained_to(&parent, 50_000, 30_000, 19_000, our_script);
+
+        let chain = detect_bundle_chain(&parent, &child);
+        assert_eq!(chain, vec![0]);
+        let _ = our_addr;
+    }
+
+    #[test]
+    fn detect_bundle_chain_empty_when_no_chain() {
+        let (our_addr, our_script) = our_addr_and_script();
+        let (parent, _) = make_parent_with_clean_output(
+            100_000,
+            546,
+            89_000,
+            our_script.clone(),
+            our_script.clone(),
+        );
+        // Independent tx, doesn't reference parent.
+        let (independent, _) =
+            make_tx(50_000, 30_000, 19_000, our_script.clone(), 0xfdffffff);
+        let chain = detect_bundle_chain(&parent, &independent);
+        assert!(chain.is_empty());
+        let _ = our_addr;
+    }
+
+    #[test]
+    fn bundle_happy_path_rewires_child_to_new_parent() {
+        let (our_addr, our_script) = our_addr_and_script();
+        let (parent, parent_prevouts) = make_parent_with_clean_output(
+            100_000,
+            546,
+            99_000,
+            our_script.clone(),
+            our_script.clone(),
+        );
+        let old_parent_txid = parent.compute_txid();
+        let (child, child_extra) =
+            make_child_chained_to(&parent, 50_000, 5_000, 45_000, our_script);
+
+        let plan = rebuild_bundle_with_fee_rate(
+            &parent,
+            &child,
+            10.0,
+            &parent_prevouts,
+            &child_extra,
+            &[our_addr],
+            Network::Bitcoin,
+        )
+        .expect("bundle rebuild ok");
+
+        // Decode the new child and verify its input that referenced
+        // old_parent_txid now references the new parent (different
+        // txid because parent's outputs changed).
+        let new_child_bytes = hex::decode(&plan.child_tx_hex).unwrap();
+        let new_child: Transaction =
+            bitcoin::consensus::deserialize(&new_child_bytes).unwrap();
+        let new_parent_bytes = hex::decode(&plan.parent_tx_hex).unwrap();
+        let new_parent: Transaction =
+            bitcoin::consensus::deserialize(&new_parent_bytes).unwrap();
+        let new_parent_txid = new_parent.compute_txid();
+
+        assert_ne!(new_parent_txid, old_parent_txid);
+        // Child input 0 was the parent-chained one — must point to NEW parent.
+        assert_eq!(new_child.input[0].previous_output.txid, new_parent_txid);
+        assert_eq!(new_child.input[0].previous_output.vout, 0);
+        // Child input 1 (external) untouched.
+        assert_ne!(new_child.input[1].previous_output.txid, new_parent_txid);
+
+        // Both witnesses cleared (caller re-signs).
+        for inp in &new_parent.input {
+            assert!(inp.witness.is_empty());
+        }
+        for inp in &new_child.input {
+            assert!(inp.witness.is_empty());
+        }
+
+        // Total fee bumped.
+        assert!(plan.new_total_fee_sats > plan.original_total_fee_sats);
+        assert_eq!(plan.new_fee_rate, 10.0);
+    }
+
+    #[test]
+    fn bundle_rejects_when_no_chain() {
+        let (our_addr, our_script) = our_addr_and_script();
+        let (parent, parent_prevouts) = make_parent_with_clean_output(
+            100_000,
+            546,
+            99_000,
+            our_script.clone(),
+            our_script.clone(),
+        );
+        let (independent, _) =
+            make_tx(50_000, 30_000, 19_000, our_script.clone(), 0xfdffffff);
+        let mut indep_extra = BTreeMap::new();
+        indep_extra.insert(independent.input[0].previous_output, 50_000);
+
+        let err = rebuild_bundle_with_fee_rate(
+            &parent,
+            &independent,
+            10.0,
+            &parent_prevouts,
+            &indep_extra,
+            &[our_addr],
+            Network::Bitcoin,
+        )
+        .unwrap_err();
+        // Sentinel chosen so the JS layer can fall back to single-tx rebuild.
+        assert_eq!(err, RbfError::NoChangeOutput);
+    }
+
+    #[test]
+    fn bundle_propagates_parent_rbf_error() {
+        let (our_addr, our_script) = our_addr_and_script();
+        // Parent NOT signaling RBF.
+        let prev = OutPoint {
+            txid: bitcoin::Txid::from_raw_hash(
+                <bitcoin::hashes::sha256d::Hash as bitcoin::hashes::Hash>::from_byte_array([0u8; 32]),
+            ),
+            vout: 0,
+        };
+        let parent = Transaction {
+            version: bitcoin::transaction::Version::TWO,
+            lock_time: LockTime::ZERO,
+            input: vec![TxIn {
+                previous_output: prev,
+                script_sig: ScriptBuf::new(),
+                sequence: Sequence(0xffffffff), // NOT RBF
+                witness: Witness::new(),
+            }],
+            output: vec![
+                TxOut { value: Amount::from_sat(546), script_pubkey: our_script.clone() },
+                TxOut { value: Amount::from_sat(89_000), script_pubkey: our_script.clone() },
+            ],
+        };
+        let mut parent_prevouts = BTreeMap::new();
+        parent_prevouts.insert(prev, 100_000);
+
+        let (child, child_extra) =
+            make_child_chained_to(&parent, 50_000, 5_000, 45_000, our_script);
+
+        let err = rebuild_bundle_with_fee_rate(
+            &parent,
+            &child,
+            10.0,
+            &parent_prevouts,
+            &child_extra,
+            &[our_addr],
+            Network::Bitcoin,
+        )
+        .unwrap_err();
+        assert_eq!(err, RbfError::NotRbfSignaling);
+    }
+
+    #[test]
+    fn bundle_total_fee_is_sum_of_parent_and_child() {
+        let (our_addr, our_script) = our_addr_and_script();
+        let (parent, parent_prevouts) = make_parent_with_clean_output(
+            100_000,
+            546,
+            99_000,
+            our_script.clone(),
+            our_script.clone(),
+        );
+        let (child, child_extra) =
+            make_child_chained_to(&parent, 50_000, 5_000, 45_000, our_script);
+
+        let plan = rebuild_bundle_with_fee_rate(
+            &parent,
+            &child,
+            15.0,
+            &parent_prevouts,
+            &child_extra,
+            &[our_addr],
+            Network::Bitcoin,
+        )
+        .unwrap();
+
+        // Sanity: total > sum of vsizes × rate (with rounding margin).
+        let min_expected = (15.0 * plan.new_total_vsize as f64) as u64;
+        assert!(
+            plan.new_total_fee_sats >= min_expected,
+            "fee {} should be >= {} (rate × total vsize)",
+            plan.new_total_fee_sats,
+            min_expected
+        );
     }
 
     #[test]

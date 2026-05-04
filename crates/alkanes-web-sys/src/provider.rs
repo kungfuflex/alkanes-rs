@@ -582,6 +582,114 @@ impl WebProvider {
             .map_err(|e| JsValue::from_str(&format!("serialize: {}", e)))
     }
 
+    /// Rebuild a parent (split) + child (main) tx bundle with a higher
+    /// fee rate. Walks the chain (child inputs that reference parent's
+    /// txid), rebuilds parent first (reducing its change), recomputes
+    /// parent's new txid, rewrites the child's parent-derived input
+    /// outpoints to point to the new parent, then rebuilds the child
+    /// with the new fee rate.
+    ///
+    /// Caller broadcasts NEW parent first, then NEW child. Returns
+    /// both unsigned tx hexes for re-signing.
+    ///
+    /// Args:
+    ///   parent_tx_hex / child_tx_hex: original signed hexes
+    ///   new_fee_rate_sat_vb: target rate applied to BOTH txs
+    ///   parent_prevout_values_json: prevout values for parent's inputs
+    ///   extra_child_prevout_values_json: prevout values for child's
+    ///     non-chain inputs (the parent-chain inputs are auto-discovered
+    ///     from the rebuilt parent's outputs)
+    ///   our_addresses_json / network: same as the single-tx variant
+    ///
+    /// Returns: {parent_tx_hex, child_tx_hex,
+    ///   original_total_fee_sats, new_total_fee_sats,
+    ///   original_total_vsize, new_total_vsize, new_fee_rate,
+    ///   parent_change_output_index, child_change_output_index}
+    #[wasm_bindgen(js_name = rebuildBundleWithFeeRate)]
+    pub fn rebuild_bundle_with_fee_rate_js(
+        &self,
+        parent_tx_hex: String,
+        child_tx_hex: String,
+        new_fee_rate_sat_vb: f64,
+        parent_prevout_values_json: String,
+        extra_child_prevout_values_json: String,
+        our_addresses_json: String,
+        network: String,
+    ) -> std::result::Result<JsValue, JsValue> {
+        use alkanes_cli_common::alkanes::rbf::rebuild_bundle_with_fee_rate;
+        use bitcoin::consensus::Decodable;
+        use std::collections::BTreeMap;
+
+        let decode = |hex: &str, label: &str| -> std::result::Result<bitcoin::Transaction, JsValue> {
+            let bytes = hex::decode(hex.trim_start_matches("0x"))
+                .map_err(|e| JsValue::from_str(&format!("{} hex: {}", label, e)))?;
+            bitcoin::Transaction::consensus_decode(&mut &bytes[..])
+                .map_err(|e| JsValue::from_str(&format!("{} decode: {}", label, e)))
+        };
+        let parent = decode(&parent_tx_hex, "parent")?;
+        let child = decode(&child_tx_hex, "child")?;
+
+        #[derive(serde::Deserialize)]
+        struct PrevoutValue {
+            txid: String,
+            vout: u32,
+            value_sats: u64,
+        }
+        let parse_prevouts = |json: &str, label: &str| -> std::result::Result<BTreeMap<bitcoin::OutPoint, u64>, JsValue> {
+            let list: Vec<PrevoutValue> = serde_json::from_str(json)
+                .map_err(|e| JsValue::from_str(&format!("{} parse: {}", label, e)))?;
+            let mut map = BTreeMap::new();
+            for p in list {
+                let txid = std::str::FromStr::from_str(&p.txid).map_err(
+                    |e: bitcoin::hex::HexToArrayError| {
+                        JsValue::from_str(&format!("{} bad txid: {}", label, e))
+                    },
+                )?;
+                map.insert(bitcoin::OutPoint { txid, vout: p.vout }, p.value_sats);
+            }
+            Ok(map)
+        };
+        let parent_prevouts = parse_prevouts(&parent_prevout_values_json, "parent_prevouts")?;
+        let extra_child_prevouts =
+            parse_prevouts(&extra_child_prevout_values_json, "extra_child_prevouts")?;
+
+        let our_addresses: Vec<String> = serde_json::from_str(&our_addresses_json)
+            .map_err(|e| JsValue::from_str(&format!("our_addresses parse: {}", e)))?;
+
+        let network = match network.as_str() {
+            "mainnet" | "bitcoin" => bitcoin::Network::Bitcoin,
+            "testnet" => bitcoin::Network::Testnet,
+            "signet" => bitcoin::Network::Signet,
+            "regtest" | "subfrost-regtest" | "qubitcoin-regtest" => bitcoin::Network::Regtest,
+            other => return Err(JsValue::from_str(&format!("unknown network: {}", other))),
+        };
+
+        let plan = rebuild_bundle_with_fee_rate(
+            &parent,
+            &child,
+            new_fee_rate_sat_vb,
+            &parent_prevouts,
+            &extra_child_prevouts,
+            &our_addresses,
+            network,
+        )
+        .map_err(|e| JsValue::from_str(&format!("rbf bundle: {}", e)))?;
+
+        let payload = serde_json::json!({
+            "parent_tx_hex": plan.parent_tx_hex,
+            "child_tx_hex": plan.child_tx_hex,
+            "original_total_fee_sats": plan.original_total_fee_sats,
+            "new_total_fee_sats": plan.new_total_fee_sats,
+            "original_total_vsize": plan.original_total_vsize,
+            "new_total_vsize": plan.new_total_vsize,
+            "new_fee_rate": plan.new_fee_rate,
+            "parent_change_output_index": plan.parent_change_output_index,
+            "child_change_output_index": plan.child_change_output_index,
+        });
+        serde_wasm_bindgen::to_value(&payload)
+            .map_err(|e| JsValue::from_str(&format!("serialize: {}", e)))
+    }
+
     /// Evict the given txids from the pending-tx store. Wallet UIs
     /// call this on every block-tip change with the set of txids
     /// the indexer has now seen confirmed.
