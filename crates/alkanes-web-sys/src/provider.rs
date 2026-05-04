@@ -4191,6 +4191,23 @@ impl WebProvider {
         })
     }
 
+    /// Sign a PSBT (base64-encoded) using the loaded keystore mnemonic
+    /// and return the signed/finalized tx hex. Pairs with the JS-side
+    /// PSBT construction in `useSpeedUpMutation` (RBF rebuild → PSBT
+    /// → sign → broadcast). The keystore must be unlocked (via
+    /// `walletLoadMnemonic`) before calling.
+    #[wasm_bindgen(js_name = walletSignPsbtBase64)]
+    pub fn wallet_sign_psbt_base64_js(&self, psbt_base64: String) -> js_sys::Promise {
+        use alkanes_cli_common::traits::WalletProvider;
+        use wasm_bindgen_futures::future_to_promise;
+        let mut provider = self.clone();
+        future_to_promise(async move {
+            let signed_hex = provider.sign_transaction(psbt_base64).await
+                .map_err(|e| JsValue::from_str(&format!("walletSignPsbtBase64: {}", e)))?;
+            Ok(JsValue::from_str(&signed_hex))
+        })
+    }
+
     #[wasm_bindgen(js_name = walletCreatePsbt)]
     pub fn wallet_create_psbt_js(&self, params_json: String) -> js_sys::Promise {
         use alkanes_cli_common::traits::WalletProvider;
