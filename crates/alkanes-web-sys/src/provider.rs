@@ -351,6 +351,149 @@ impl WebProvider {
         })
     }
 
+    /// Predict the user's balance delta from a candidate tx hex.
+    ///
+    /// Phase 3-lite — handles edict-driven flows (alkane-send) deterministically.
+    /// Cellpack-bearing protostones (swaps, addLiquidity) flag
+    /// `contract_outputs_uncertain` and only return the input-side
+    /// loss; the gain side requires alkane-VM execution which is
+    /// deferred to Phase 3-full.
+    ///
+    /// Args (all JS-friendly):
+    ///   tx_hex: raw signed tx hex
+    ///   prevout_lookups: array of {txid, vout, address, value_sats,
+    ///     alkane_balances:[{block, tx, amount}]}. Caller pulls these
+    ///     from confirmed UTXOs + protorunesbyoutpoint.
+    ///   output_addresses: array of network-decoded addresses per
+    ///     output index (null for OP_RETURN). Caller pre-decodes
+    ///     since this depends on the wallet's network.
+    ///   our_addresses: addresses the user owns.
+    ///
+    /// Returns a JS object: {btc:{delta_sats}, alkanes:[{alkane_id,
+    /// delta}], contract_outputs_uncertain}.
+    #[wasm_bindgen(js_name = predictBalanceDelta)]
+    pub fn predict_balance_delta_js(
+        &self,
+        tx_hex: String,
+        prevout_lookups_json: String,
+        output_addresses_json: String,
+        our_addresses_json: String,
+    ) -> std::result::Result<JsValue, JsValue> {
+        use alkanes_cli_common::alkanes::predict::{
+            predict_balance_delta, PrevoutContext,
+        };
+        use alkanes_cli_common::alkanes::balance_sheet::ProtoruneRuneId;
+        use alkanes_cli_common::alkanes::parsing::parse_protostones;
+        use bitcoin::consensus::Decodable;
+        use std::collections::BTreeMap;
+
+        // Parse inputs.
+        let bytes = hex::decode(tx_hex.trim_start_matches("0x"))
+            .map_err(|e| JsValue::from_str(&format!("invalid tx hex: {}", e)))?;
+        let tx = bitcoin::Transaction::consensus_decode(&mut &bytes[..])
+            .map_err(|e| JsValue::from_str(&format!("decode tx: {}", e)))?;
+
+        #[derive(serde::Deserialize)]
+        struct PrevoutInput {
+            txid: String,
+            vout: u32,
+            address: String,
+            value_sats: u64,
+            #[serde(default)]
+            alkane_balances: Vec<AlkBal>,
+        }
+        #[derive(serde::Deserialize)]
+        struct AlkBal {
+            block: u128,
+            tx: u128,
+            amount: String, // BigInt-safe
+        }
+        let prevouts: Vec<PrevoutInput> = serde_json::from_str(&prevout_lookups_json)
+            .map_err(|e| JsValue::from_str(&format!("prevout_lookups parse: {}", e)))?;
+        let mut prevout_map: BTreeMap<bitcoin::OutPoint, PrevoutContext> = BTreeMap::new();
+        for p in prevouts {
+            let txid = bitcoin::Txid::from_str(&p.txid)
+                .map_err(|e| JsValue::from_str(&format!("bad prevout txid: {}", e)))?;
+            let mut alkane_balances = BTreeMap::new();
+            for b in &p.alkane_balances {
+                let amount: u128 = b.amount.parse().unwrap_or(0);
+                alkane_balances.insert(
+                    ProtoruneRuneId { block: b.block, tx: b.tx },
+                    amount,
+                );
+            }
+            prevout_map.insert(
+                bitcoin::OutPoint { txid, vout: p.vout },
+                PrevoutContext {
+                    address: p.address,
+                    value_sats: p.value_sats,
+                    alkane_balances,
+                },
+            );
+        }
+
+        let output_addresses: Vec<Option<String>> = serde_json::from_str(&output_addresses_json)
+            .map_err(|e| JsValue::from_str(&format!("output_addresses parse: {}", e)))?;
+        let our_addresses: Vec<String> = serde_json::from_str(&our_addresses_json)
+            .map_err(|e| JsValue::from_str(&format!("our_addresses parse: {}", e)))?;
+
+        // Reconstruct protostones from the tx's OP_RETURN. Use the
+        // existing `format_runestone(tx)` helper. If no runestone
+        // (e.g. plain BTC send), the helper errors → fall back to
+        // empty vec; predict still returns BTC delta from
+        // input/output values alone.
+        let protostones: Vec<alkanes_cli_common::alkanes::types::ProtostoneSpec> =
+            match alkanes_cli_common::runestone_enhanced::format_runestone(&tx) {
+                Ok(stones) => {
+                    use alkanes_cli_common::alkanes::types as t;
+                    stones
+                        .into_iter()
+                        .map(|s| t::ProtostoneSpec {
+                            // Phase 3-lite: any non-empty message
+                            // marks the protostone as cellpack-
+                            // bearing → predict flags
+                            // `contract_outputs_uncertain`. The
+                            // actual cellpack decode is unused.
+                            cellpack: if s.message.is_empty() {
+                                None
+                            } else {
+                                Some(alkanes_support::cellpack::Cellpack {
+                                    target: alkanes_support::id::AlkaneId { block: 0, tx: 0 },
+                                    inputs: Vec::new(),
+                                })
+                            },
+                            edicts: s.edicts.iter().map(|e| t::ProtostoneEdict {
+                                alkane_id: t::AlkaneId {
+                                    block: e.id.block as u64,
+                                    tx: e.id.tx as u64,
+                                },
+                                amount: e.amount as u64,
+                                target: t::OutputTarget::Output(e.output as u32),
+                            }).collect(),
+                            bitcoin_transfer: None,
+                            pointer: s.pointer.map(t::OutputTarget::Output),
+                            refund: s.refund.map(t::OutputTarget::Output),
+                        })
+                        .collect()
+                }
+                Err(_) => Vec::new(),
+            };
+
+        let lookup = |op: bitcoin::OutPoint| -> Option<PrevoutContext> {
+            prevout_map.get(&op).cloned()
+        };
+        let result = predict_balance_delta(
+            &tx,
+            &lookup,
+            &output_addresses,
+            &protostones,
+            &our_addresses,
+        );
+
+        serde_wasm_bindgen::to_value(&result)
+            .map_err(|e| JsValue::from_str(&format!("serialize: {}", e)))
+    }
+
     /// Evict the given txids from the pending-tx store. Wallet UIs
     /// call this on every block-tip change with the set of txids
     /// the indexer has now seen confirmed.
