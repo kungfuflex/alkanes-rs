@@ -494,6 +494,94 @@ impl WebProvider {
             .map_err(|e| JsValue::from_str(&format!("serialize: {}", e)))
     }
 
+    /// Rebuild a still-pending tx with a higher fee rate by reducing
+    /// the change-to-self output. Returns the new UNSIGNED tx hex
+    /// plus accounting fields for the UI ("bumping from X to Y
+    /// sat/vB, paying Z extra sats"). The caller re-signs and
+    /// re-broadcasts.
+    ///
+    /// Args:
+    ///   tx_hex: original signed tx hex (still in mempool)
+    ///   new_fee_rate_sat_vb: target fee rate
+    ///   prevout_values_json: JSON [{txid, vout, value_sats}] for each input
+    ///   our_addresses_json: JSON ["bc1p..."] — change-output search set
+    ///   network: "mainnet" | "testnet" | "signet" | "regtest"
+    ///
+    /// Returns: {tx_hex, original_fee_sats, new_fee_sats,
+    ///   original_fee_rate, new_fee_rate, vsize,
+    ///   change_output_index, new_change_value} on success.
+    /// Throws a JS string error on any RBF rejection.
+    #[wasm_bindgen(js_name = rebuildTxWithFeeRate)]
+    pub fn rebuild_tx_with_fee_rate_js(
+        &self,
+        tx_hex: String,
+        new_fee_rate_sat_vb: f64,
+        prevout_values_json: String,
+        our_addresses_json: String,
+        network: String,
+    ) -> std::result::Result<JsValue, JsValue> {
+        use alkanes_cli_common::alkanes::rbf::rebuild_tx_with_fee_rate;
+        use bitcoin::consensus::Decodable;
+        use std::collections::BTreeMap;
+
+        let bytes = hex::decode(tx_hex.trim_start_matches("0x"))
+            .map_err(|e| JsValue::from_str(&format!("invalid tx hex: {}", e)))?;
+        let tx = bitcoin::Transaction::consensus_decode(&mut &bytes[..])
+            .map_err(|e| JsValue::from_str(&format!("decode tx: {}", e)))?;
+
+        #[derive(serde::Deserialize)]
+        struct PrevoutValue {
+            txid: String,
+            vout: u32,
+            value_sats: u64,
+        }
+        let prevouts: Vec<PrevoutValue> = serde_json::from_str(&prevout_values_json)
+            .map_err(|e| JsValue::from_str(&format!("prevout_values parse: {}", e)))?;
+        let mut prevout_map = BTreeMap::new();
+        for p in prevouts {
+            let txid = std::str::FromStr::from_str(&p.txid)
+                .map_err(|e: bitcoin::hex::HexToArrayError| {
+                    JsValue::from_str(&format!("bad prevout txid: {}", e))
+                })?;
+            prevout_map.insert(bitcoin::OutPoint { txid, vout: p.vout }, p.value_sats);
+        }
+
+        let our_addresses: Vec<String> = serde_json::from_str(&our_addresses_json)
+            .map_err(|e| JsValue::from_str(&format!("our_addresses parse: {}", e)))?;
+
+        let network = match network.as_str() {
+            "mainnet" | "bitcoin" => bitcoin::Network::Bitcoin,
+            "testnet" => bitcoin::Network::Testnet,
+            "signet" => bitcoin::Network::Signet,
+            "regtest" | "subfrost-regtest" | "qubitcoin-regtest" => bitcoin::Network::Regtest,
+            other => return Err(JsValue::from_str(&format!("unknown network: {}", other))),
+        };
+
+        let plan = rebuild_tx_with_fee_rate(
+            &tx,
+            new_fee_rate_sat_vb,
+            &prevout_map,
+            &our_addresses,
+            network,
+        )
+        .map_err(|e| JsValue::from_str(&format!("rbf: {}", e)))?;
+
+        // Drop `tx` (Transaction isn't Serialize-friendly via wasm-bindgen)
+        // and just return the JSON-friendly fields.
+        let payload = serde_json::json!({
+            "tx_hex": plan.tx_hex,
+            "original_fee_sats": plan.original_fee_sats,
+            "new_fee_sats": plan.new_fee_sats,
+            "original_fee_rate": plan.original_fee_rate,
+            "new_fee_rate": plan.new_fee_rate,
+            "vsize": plan.vsize,
+            "change_output_index": plan.change_output_index,
+            "new_change_value": plan.new_change_value,
+        });
+        serde_wasm_bindgen::to_value(&payload)
+            .map_err(|e| JsValue::from_str(&format!("serialize: {}", e)))
+    }
+
     /// Evict the given txids from the pending-tx store. Wallet UIs
     /// call this on every block-tip change with the set of txids
     /// the indexer has now seen confirmed.

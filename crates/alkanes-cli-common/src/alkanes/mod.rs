@@ -20,6 +20,7 @@ pub mod simulation;
 pub mod protostone;
 pub mod balance_sheet;
 pub mod predict;
+pub mod rbf;
 pub mod byte_utils;
 
 pub mod rune_transfer;
