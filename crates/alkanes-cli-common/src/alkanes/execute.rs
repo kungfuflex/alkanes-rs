@@ -1072,18 +1072,65 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                             }
                         }
 
-                        // Build split transaction PSBT (alkane-aware)
-                        let (split_psbt_result, split_fee_result, clean_outpoints, alkane_outpoints) =
-                            self.build_split_psbt(&plans, &funding_utxos_with_txout, fee_rate_sat_vb, params, &split_utxo_alkanes).await?;
-
-                        // Replace inscribed UTXOs with clean UTXOs from split
-                        let mut new_outpoints = Vec::new();
+                        // Compute clean extras the split-tx may consume. A
+                        // UTXO is a valid extra if it's already in the
+                        // selected set (so we know its TxOut data), is NOT
+                        // inscribed (not in `plans`), and carries NO alkanes
+                        // (not in `per_utxo_alkanes` — spending it as a fee
+                        // input would burn user tokens).
+                        //
+                        // The split-tx pulls from this set as needed when
+                        // small inscribed UTXOs can't self-fund the split.
                         let inscribed_outpoints: std::collections::HashSet<OutPoint> =
                             plans.iter().map(|p| p.outpoint).collect();
+                        let alkane_outpoints_in_selection: std::collections::HashSet<OutPoint> =
+                            utxo_selection.per_utxo_alkanes.keys().copied().collect();
+                        let extra_funding_utxos: Vec<(OutPoint, TxOut)> = funding_utxos_with_txout
+                            .iter()
+                            .filter(|(op, _)| {
+                                !inscribed_outpoints.contains(op)
+                                    && !alkane_outpoints_in_selection.contains(op)
+                            })
+                            .cloned()
+                            .collect();
 
-                        // Keep non-inscribed UTXOs
+                        log::info!(
+                            "Split-tx extras candidates: {} clean UTXOs available (selected: {}, inscribed: {}, alkane-bearing: {})",
+                            extra_funding_utxos.len(),
+                            utxo_selection.outpoints.len(),
+                            inscribed_outpoints.len(),
+                            alkane_outpoints_in_selection.len(),
+                        );
+
+                        // Build split transaction PSBT (alkane-aware, extras-aware)
+                        let (
+                            split_psbt_result,
+                            split_fee_result,
+                            clean_outpoints,
+                            alkane_outpoints,
+                            consumed_extra_outpoints,
+                        ) = self.build_split_psbt(
+                            &plans,
+                            &funding_utxos_with_txout,
+                            &extra_funding_utxos,
+                            fee_rate_sat_vb,
+                            params,
+                            &split_utxo_alkanes,
+                        ).await?;
+
+                        // Replace inscribed UTXOs with clean UTXOs from split.
+                        // Also remove any extras consumed by the split — those
+                        // outpoints are now spent in the split tx and can't
+                        // appear in the main tx's input list.
+                        let consumed_extras_set: std::collections::HashSet<OutPoint> =
+                            consumed_extra_outpoints.iter().copied().collect();
+                        let mut new_outpoints = Vec::new();
+
+                        // Keep non-inscribed, non-consumed UTXOs
                         for outpoint in &utxo_selection.outpoints {
-                            if !inscribed_outpoints.contains(outpoint) {
+                            if !inscribed_outpoints.contains(outpoint)
+                                && !consumed_extras_set.contains(outpoint)
+                            {
                                 new_outpoints.push(*outpoint);
                             }
                         }
@@ -1114,8 +1161,13 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                             utxo_selection.per_utxo_alkanes.insert(*outpoint, alkanes.clone());
                         }
 
-                        log::info!("🔀 Split transaction built: {} clean BTC UTXOs + {} clean alkane UTXOs replace {} inscribed UTXOs",
-                            plans.len(), alkane_outpoints.len(), inscribed_outpoints.len());
+                        log::info!(
+                            "🔀 Split transaction built: {} clean BTC UTXOs + {} clean alkane UTXOs replace {} inscribed UTXOs ({} extras consumed)",
+                            plans.len(),
+                            alkane_outpoints.len(),
+                            inscribed_outpoints.len(),
+                            consumed_extras_set.len(),
+                        );
 
                         (Some(split_psbt_result), Some(split_fee_result), new_outpoints)
                     }
@@ -2645,23 +2697,44 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         Ok(tx)
     }
 
-    /// Build a split PSBT to protect inscribed UTXOs
+    /// Build a split PSBT to protect inscribed UTXOs.
     ///
-    /// Returns (split_psbt, split_fee, clean_outpoints)
-    /// The clean_outpoints are the UTXOs that can be used for funding after the split
-    /// Build a split PSBT that separates inscribed sats from clean sats.
-    /// When UTXOs being split carry alkanes, adds a protostone OP_RETURN to route
-    /// alkanes to dedicated clean alkane outputs (preventing alkane loss during split).
+    /// Inputs:
+    ///   - `plans`: per-inscribed-UTXO breakdown (safe + clean amounts).
+    ///   - `funding_utxos`: TxOut data for the inscribed inputs (used to look
+    ///     up scripts/values on the inputs being split).
+    ///   - `extra_funding_utxos`: clean (no inscriptions, no alkanes) UTXOs
+    ///     from elsewhere in the wallet that the builder may consume to cover
+    ///     fees or top up clean outputs that fall below dust. Pre-filtered by
+    ///     the caller — anything in here is safe to add as an additional input.
+    ///   - `split_utxo_alkanes`: alkane balances on inscribed UTXOs (for
+    ///     alkane-aware splits with OP_RETURN routing).
     ///
-    /// Returns: (psbt, fee, clean_btc_outpoints, clean_alkane_outpoints_with_balances)
+    /// Returns:
+    ///   - The split PSBT.
+    ///   - Estimated fee (sats).
+    ///   - Clean BTC outpoints from the split tx (one per plan + an optional
+    ///     consolidated extras-funded change output).
+    ///   - Clean alkane outpoints with their balances.
+    ///   - List of `extra_funding_utxos` outpoints that were consumed as
+    ///     additional inputs. The caller MUST remove these from the main tx's
+    ///     input list, since they're now spent in the split tx.
+    ///
+    /// Why extra_funding_utxos exists: most ordinal mints land on small
+    /// (~546-1500 sat) inscribed UTXOs because that minimizes inscriber cost.
+    /// Those UTXOs can't self-fund the split (safe output + clean output +
+    /// fee > utxo_value), so without external top-up, `Preserve` strategy
+    /// fails for the very inscribed UTXOs users actually hold. With external
+    /// top-up, small inscribed UTXOs split fine.
     async fn build_split_psbt(
         &mut self,
         plans: &[SplitPlan],
         funding_utxos: &[(OutPoint, TxOut)],
+        extra_funding_utxos: &[(OutPoint, TxOut)],
         fee_rate: f32,
         params: &EnhancedExecuteParams,
         split_utxo_alkanes: &alloc::collections::BTreeMap<OutPoint, Vec<(AlkaneId, u64)>>,
-    ) -> Result<(Psbt, u64, Vec<OutPoint>, Vec<(OutPoint, Vec<(AlkaneId, u64)>)>)> {
+    ) -> Result<(Psbt, u64, Vec<OutPoint>, Vec<(OutPoint, Vec<(AlkaneId, u64)>)>, Vec<OutPoint>)> {
         use bitcoin::transaction::Version;
 
         // Get safe address for split outputs
@@ -2686,6 +2759,10 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         let mut input_txouts = Vec::new();
         let mut clean_outpoints = Vec::new();
         let mut total_input_value = 0u64;
+        // Tracks how much each plan's clean output was inflated above its
+        // natural `clean_amount` (because the natural amount was below dust).
+        // The total inflation is owed to extras and pulled later.
+        let mut clean_topup_owed: u64 = 0;
 
         for (idx, plan) in plans.iter().enumerate() {
             // Find the TxOut for this input
@@ -2710,9 +2787,20 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                 script_pubkey: safe_address.script_pubkey(),
             });
 
-            // Clean output (funding sats go here)
+            // Clean output (funding sats from the inscribed UTXO go here).
+            // If the inscribed UTXO's clean remainder is below dust, top up
+            // to DUST_LIMIT — the missing sats come from extras. If the
+            // remainder is zero (utxo_value == safe_amount + 1 etc.), we
+            // still emit a dust output so the caller has a usable funding
+            // UTXO at the canonical odd-index position; same top-up logic.
+            let clean_value = if plan.clean_amount < DUST_LIMIT {
+                clean_topup_owed += DUST_LIMIT - plan.clean_amount;
+                DUST_LIMIT
+            } else {
+                plan.clean_amount
+            };
             outputs.push(TxOut {
-                value: bitcoin::Amount::from_sat(plan.clean_amount),
+                value: bitcoin::Amount::from_sat(clean_value),
                 script_pubkey: safe_address.script_pubkey(),
             });
 
@@ -2801,23 +2889,95 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                 aggregated_alkanes.len(), alkane_output_index);
         }
 
-        // Estimate fee (account for extra outputs if alkane-aware)
-        let estimated_vsize = 10 + (inputs.len() * 68) + (outputs.len() * 43);
-        let estimated_fee = (fee_rate * estimated_vsize as f32).ceil() as u64;
+        // Compute total output value already committed (alkane DUST_LIMIT
+        // outputs are the only non-OP_RETURN extras beyond the per-plan
+        // safe+clean pairs).
+        let total_output_value: u64 = outputs.iter()
+            .map(|o| o.value.to_sat())
+            .sum();
 
-        // Adjust the last clean BTC output to account for fee
-        // The last clean BTC output is at index (plans.len() * 2 - 1), before any alkane/OP_RETURN outputs
-        let last_clean_btc_idx = plans.len() * 2 - 1;
-        if let Some(last_clean_output) = outputs.get_mut(last_clean_btc_idx) {
-            if last_clean_output.value.to_sat() > estimated_fee + DUST_LIMIT {
-                last_clean_output.value = bitcoin::Amount::from_sat(
-                    last_clean_output.value.to_sat() - estimated_fee
-                );
-            } else {
-                return Err(AlkanesError::Wallet(
-                    "Not enough funds in split to cover fee".to_string()
-                ));
+        // Pull additional clean inputs (a) to cover any clean-output top-ups
+        // forced by below-dust inscribed UTXOs, (b) to cover the split-tx
+        // fee, and (c) to add a residual change output if the extras over-fund.
+        //
+        // We over-pull conservatively: each extra input adds ~68 vbytes which
+        // grows the fee, so the simplest correct approach is "add inputs
+        // until total_input_value >= total_output_value + fee_with_one_more_input,
+        // then iterate fee until stable." Two passes through extras at most.
+        let mut consumed_extras: Vec<OutPoint> = Vec::new();
+        let mut extras_iter = extra_funding_utxos.iter();
+
+        // Helper: recompute estimated fee based on current input/output counts.
+        // P2TR input: ~68 vbytes; P2TR output: ~43 vbytes; tx overhead: ~10 vbytes.
+        let recompute_fee = |inputs_len: usize, outputs_len: usize| -> u64 {
+            let vsize = 10 + inputs_len * 68 + outputs_len * 43;
+            (fee_rate * vsize as f32).ceil() as u64
+        };
+
+        // Initial fee estimate (no residual change output yet).
+        let mut estimated_fee = recompute_fee(inputs.len(), outputs.len());
+
+        // Required: total_input_value >= total_output_value + estimated_fee.
+        // Difference is what we must pull from extras (or from inscribed-UTXO
+        // headroom that isn't already accounted for in clean outputs).
+        //
+        // Inscribed UTXOs have already contributed `total_input_value` worth.
+        // Clean outputs were sized at (plan.clean_amount or DUST_LIMIT topup).
+        // If `clean_topup_owed > 0`, that headroom must come from extras too.
+        //
+        // Pull extras one at a time until satisfied.
+        loop {
+            let needed = total_output_value
+                .saturating_add(estimated_fee)
+                .saturating_sub(total_input_value);
+            if needed == 0 {
+                break;
             }
+
+            // Need more — try to pull next extra.
+            let Some((extra_op, extra_txout)) = extras_iter.next() else {
+                return Err(AlkanesError::Wallet(format!(
+                    "Not enough clean funds to split inscribed UTXOs: need {} more sats \
+                     (output total {} + fee {} - inscribed inputs {}). \
+                     Wallet has no additional clean UTXOs available — either fund the \
+                     wallet with more BTC or use --ordinals-strategy burn (destroys \
+                     inscriptions).",
+                    needed, total_output_value, estimated_fee, total_input_value
+                )));
+            };
+
+            inputs.push(bitcoin::TxIn {
+                previous_output: *extra_op,
+                script_sig: ScriptBuf::new(),
+                sequence: bitcoin::Sequence::ENABLE_RBF_NO_LOCKTIME,
+                witness: bitcoin::Witness::new(),
+            });
+            input_txouts.push(extra_txout.clone());
+            total_input_value += extra_txout.value.to_sat();
+            consumed_extras.push(*extra_op);
+
+            // Recompute fee with the extra input.
+            estimated_fee = recompute_fee(inputs.len(), outputs.len());
+        }
+
+        // If extras over-funded, emit a residual change output so the
+        // surplus isn't burned as fee. Only emit once we know we have
+        // sufficient surplus to clear DUST_LIMIT after the marginal output's
+        // own fee cost (one extra output = ~43 vbytes).
+        let surplus = total_input_value - total_output_value - estimated_fee;
+        if surplus >= DUST_LIMIT + (fee_rate * 43.0).ceil() as u64 {
+            let residual_fee_delta = (fee_rate * 43.0).ceil() as u64;
+            let residual_value = surplus - residual_fee_delta;
+            outputs.push(TxOut {
+                value: bitcoin::Amount::from_sat(residual_value),
+                script_pubkey: safe_address.script_pubkey(),
+            });
+            estimated_fee += residual_fee_delta;
+            // Track this residual as a clean outpoint usable by the main tx.
+            clean_outpoints.push(OutPoint {
+                txid: bitcoin::Txid::from_byte_array([0u8; 32]), // placeholder, set below
+                vout: (outputs.len() - 1) as u32,
+            });
         }
 
         // Build the unsigned transaction
@@ -2853,13 +3013,18 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             outpoint.txid = txid;
         }
 
-        log::info!("Built split PSBT: {} inputs → {} outputs ({}+alkane:{}, fee: {} sats)",
-            plans.len(), psbt.unsigned_tx.output.len(),
-            plans.len() * 2, // safe+clean pairs
+        log::info!(
+            "Built split PSBT: {} inputs ({} inscribed + {} extras) → {} outputs (alkane:{}, top-up owed: {} sats, fee: {})",
+            psbt.unsigned_tx.input.len(),
+            plans.len(),
+            consumed_extras.len(),
+            psbt.unsigned_tx.output.len(),
             if has_alkanes { "1+OP_RETURN" } else { "0" },
-            estimated_fee);
+            clean_topup_owed,
+            estimated_fee,
+        );
 
-        Ok((psbt, estimated_fee, clean_outpoints, alkane_outpoints_with_balances))
+        Ok((psbt, estimated_fee, clean_outpoints, alkane_outpoints_with_balances, consumed_extras))
     }
 
     async fn build_commit_psbt(
