@@ -3328,6 +3328,8 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes, fr
                 auto_confirm,
                 ordinals_strategy: alkanes_cli_common::alkanes::types::OrdinalsStrategy::default(),
                 mempool_indexer: false,
+                split_transactions: false,
+                known_pending_tx_hexes: Vec::new(),
             };
 
             println!("\n📤 Executing swap...");
@@ -4052,6 +4054,8 @@ fn to_enhanced_execute_params(args: AlkanesExecute) -> Result<alkanes::types::En
         auto_confirm: args.auto_confirm,
         ordinals_strategy: alkanes::types::OrdinalsStrategy::default(),
         mempool_indexer: false,
+        split_transactions: false,
+        known_pending_tx_hexes: Vec::new(),
     })
 }
 

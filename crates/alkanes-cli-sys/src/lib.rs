@@ -2839,6 +2839,8 @@ impl alkanes_cli_common::SystemAlkanes for SystemAlkanes {
                     auto_confirm: yes, // Use the new field name
                     ordinals_strategy: alkanes_cli_common::alkanes::types::OrdinalsStrategy::default(),
                     mempool_indexer: false,
+                    split_transactions: false,
+                    known_pending_tx_hexes: Vec::new(),
                 };
 
                 let mut current_state = provider.execute(execute_params.clone()).await?;

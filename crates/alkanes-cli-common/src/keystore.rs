@@ -161,19 +161,12 @@ impl Keystore {
         passphrase: &str,
         _hd_path: Option<&str>,
     ) -> Result<Self> {
-        // 1. Encrypt the mnemonic phrase
+        // 1. Encrypt the mnemonic phrase using the canonical web/ts-sdk
+        //    parameters (32-byte salt, 12-byte nonce, 131072 PBKDF2 iterations,
+        //    AES-256-GCM). This produces keystores that round-trip with the
+        //    ts-sdk-created keystores already in the wild.
         let (encrypted_mnemonic_bytes, salt, nonce) =
-            crate::crypto::encrypt_sync(mnemonic.to_string().as_bytes(), passphrase)?;
-
-        // 2. Armor the encrypted mnemonic
-        let mut armored_mnemonic = Vec::new();
-        alkanes_asc::armor::writer::write(
-            &encrypted_mnemonic_bytes,
-            alkanes_asc::armor::reader::BlockType::EncryptedMnemonic,
-            &mut armored_mnemonic,
-            None,
-            true,
-        )?;
+            crate::crypto::encrypt_for_keystore(mnemonic.to_string().as_bytes(), passphrase)?;
 
         // 3. Derive account xpubs for each address type and BOTH coin types (mainnet=0, testnet=1)
         let seed = mnemonic.to_seed("");
@@ -247,15 +240,18 @@ impl Keystore {
         hd_paths.insert("p2pkh-zec".to_string(), "m/44'/ZEC_COIN'/0'/0/0".to_string());
 
         Ok(Self {
-            encrypted_mnemonic: String::from_utf8(armored_mnemonic)?,
+            // Canonical web/ts-sdk format stores the ciphertext as raw hex,
+            // not PGP-style armored text — see ts-sdk/src/keystore/index.ts.
+            encrypted_mnemonic: hex::encode(&encrypted_mnemonic_bytes),
             master_fingerprint: root.fingerprint(&secp).to_string(),
             // `created_at` should be set by the caller, as `std::time` is not always available.
             created_at: 0,
-            version: env!("CARGO_PKG_VERSION").to_string(),
+            // Match the ts-sdk format version so old/new keystores look identical.
+            version: "1.0".to_string(),
             pbkdf2_params: PbkdfParams {
                 salt: hex::encode(salt),
                 nonce: Some(hex::encode(nonce)),
-                iterations: 600_000,
+                iterations: crate::crypto::KEYSTORE_PBKDF_ITERATIONS,
                 algorithm: Some("aes-256-gcm".to_string()),
             },
             account_xpub: default_account_xpub,
@@ -284,9 +280,17 @@ impl Keystore {
     /// Note: This does not perform any decryption.
     /// Decrypts the mnemonic from the keystore using the provided passphrase.
     pub fn decrypt_mnemonic(&self, passphrase: &str) -> Result<String> {
-        // 1. Dearmor the encrypted mnemonic
-        let (_, _, encrypted_bytes) = alkanes_asc::armor::reader::decode(self.encrypted_mnemonic.as_bytes())
-            .map_err(|e| AlkanesError::Crypto(format!("Failed to dearmor mnemonic: {e}")))?;
+        // 1. Decode the encrypted mnemonic. The Rust `new()` path stores it as
+        //    PGP-style armored text; the ts-sdk path stores it as raw hex
+        //    (`bufferToHex(encryptedBuffer)`). Try armor first, fall back to hex.
+        let encrypted_bytes = match alkanes_asc::armor::reader::decode(self.encrypted_mnemonic.as_bytes()) {
+            Ok((_, _, bytes)) => bytes,
+            Err(_) => hex::decode(self.encrypted_mnemonic.trim()).map_err(|e| {
+                AlkanesError::Crypto(format!(
+                    "Failed to decode encrypted_mnemonic as armored or hex: {e}"
+                ))
+            })?,
+        };
 
         // 2. Decode salt and nonce from hex
         let salt = hex::decode(&self.pbkdf2_params.salt)?;
@@ -295,8 +299,15 @@ impl Keystore {
             None => vec![], // Backwards compatibility for old keystores
         };
 
-        // 3. Decrypt using the crypto module
-        let decrypted_bytes = crate::crypto::decrypt_sync(&encrypted_bytes, passphrase, &salt, &nonce)?;
+        // 3. Decrypt using the crypto module, honouring the iteration count
+        //    recorded in the keystore (ts-sdk uses 131072, Rust uses 600).
+        let decrypted_bytes = crate::crypto::decrypt_sync_with_iters(
+            &encrypted_bytes,
+            passphrase,
+            &salt,
+            &nonce,
+            self.pbkdf2_params.iterations,
+        )?;
 
         let mnemonic_str = String::from_utf8(decrypted_bytes)
             .map_err(|e| AlkanesError::Wallet(format!("Failed to convert decrypted data to string: {e}")))?;

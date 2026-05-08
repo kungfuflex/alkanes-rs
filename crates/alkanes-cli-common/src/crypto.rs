@@ -25,13 +25,29 @@ const SALT_SIZE: usize = 16; // 128 bits for salt
 const NONCE_SIZE: usize = 12; // 96 bits for AES-GCM nonce
 const PBKDF_ITERATIONS: u32 = 600; // A modern standard for PBKDF2 iterations
 
+/// Salt size for the canonical web/ts-sdk keystore format.
+/// Matches `DEFAULT_SALT_SIZE` in `ts-sdk/src/keystore/index.ts` (32 bytes).
+pub const KEYSTORE_SALT_SIZE: usize = 32;
+/// Nonce size for the canonical web/ts-sdk keystore format (12 bytes for AES-GCM).
+pub const KEYSTORE_NONCE_SIZE: usize = 12;
+/// PBKDF2 iteration count for the canonical web/ts-sdk keystore format.
+/// Matches `DEFAULT_PBKDF2_ITERATIONS` in `ts-sdk/src/keystore/index.ts` (ethers.js default).
+pub const KEYSTORE_PBKDF_ITERATIONS: u32 = 131072;
+
 /// Derives a key from a passphrase and salt using PBKDF2-HMAC-SHA256.
 pub fn derive_key(passphrase: &str, salt: &[u8]) -> Result<Vec<u8>> {
+    derive_key_with_iters(passphrase, salt, PBKDF_ITERATIONS)
+}
+
+/// Derives a key from a passphrase, salt, and explicit iteration count.
+/// Use this when reading a keystore that records its own PBKDF2 iteration count
+/// (e.g., ts-sdk-created keystores use 131072).
+pub fn derive_key_with_iters(passphrase: &str, salt: &[u8], iterations: u32) -> Result<Vec<u8>> {
     let mut key = vec![0u8; 32];
     pbkdf2_hmac::<Sha256>(
         passphrase.as_bytes(),
         salt,
-        PBKDF_ITERATIONS,
+        iterations,
         &mut key,
     );
     Ok(key)
@@ -50,9 +66,37 @@ pub fn encrypt_sync(data: &[u8], passphrase: &str) -> Result<(Vec<u8>, Vec<u8>, 
     Ok((encrypted_data, salt, nonce_bytes))
 }
 
+/// Encrypt a mnemonic for the canonical web/ts-sdk keystore format:
+/// 32-byte salt, 12-byte nonce, 131072 PBKDF2 iterations, AES-256-GCM.
+/// Returns (ciphertext_with_tag, salt, nonce).
+pub fn encrypt_for_keystore(data: &[u8], passphrase: &str) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>)> {
+    let mut salt = vec![0u8; KEYSTORE_SALT_SIZE];
+    OsRng.fill_bytes(&mut salt);
+    let mut nonce_bytes = vec![0u8; KEYSTORE_NONCE_SIZE];
+    OsRng.fill_bytes(&mut nonce_bytes);
+    let key = derive_key_with_iters(passphrase, &salt, KEYSTORE_PBKDF_ITERATIONS)?;
+    let cipher = Aes256Gcm::new_from_slice(&key).map_err(|e| AlkanesError::Crypto(e.to_string()))?;
+    let nonce = Nonce::from_slice(&nonce_bytes);
+    let encrypted_data = cipher
+        .encrypt(nonce, data)
+        .map_err(|e| AlkanesError::Crypto(e.to_string()))?;
+    Ok((encrypted_data, salt, nonce_bytes))
+}
+
 /// Synchronously decrypts data. This should be called from within the worker.
 pub fn decrypt_sync(encrypted_data: &[u8], passphrase: &str, salt: &[u8], nonce_bytes: &[u8]) -> Result<Vec<u8>> {
-    let key = derive_key(passphrase, salt)?;
+    decrypt_sync_with_iters(encrypted_data, passphrase, salt, nonce_bytes, PBKDF_ITERATIONS)
+}
+
+/// Synchronously decrypts data using an explicit PBKDF2 iteration count.
+pub fn decrypt_sync_with_iters(
+    encrypted_data: &[u8],
+    passphrase: &str,
+    salt: &[u8],
+    nonce_bytes: &[u8],
+    iterations: u32,
+) -> Result<Vec<u8>> {
+    let key = derive_key_with_iters(passphrase, salt, iterations)?;
     let cipher = Aes256Gcm::new_from_slice(&key).map_err(|e| AlkanesError::Crypto(e.to_string()))?;
     let nonce = Nonce::from_slice(nonce_bytes);
     cipher.decrypt(nonce, encrypted_data).map_err(|e| AlkanesError::Crypto(e.to_string()))
