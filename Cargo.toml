@@ -28,6 +28,7 @@ members = [
     "vendor/qubitcoin-support",
     "vendor/qubitcoin-indexer-core",
     "vendor/qubitcoin-indexer",
+    "vendor/qubitcoin-indexer-fork",
     "vendor/qubitcoin-rpc",
 ]
 exclude = ["crates/alkanes-web-leptos"]

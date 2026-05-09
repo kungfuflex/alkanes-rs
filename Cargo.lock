@@ -7339,6 +7339,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "qubitcoin-indexer-fork"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "hex",
+ "parking_lot",
+ "prost",
+ "qubitcoin-indexer-core",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "tracing",
+ "wasmtime 43.0.0",
+ "wat",
+]
+
+[[package]]
 name = "qubitcoin-node"
 version = "0.1.0"
 dependencies = [
