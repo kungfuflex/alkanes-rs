@@ -37,7 +37,19 @@ use {
 };
 
 pub fn fr_btc_bytes() -> Vec<u8> {
-    fr_btc_build::get_bytes()
+    // On chains where V220 is active from genesis (regtest + alt-coin
+    // networks where V220_FORK_HEIGHT=0), `setup_frbtc` must deploy and
+    // initialize the slim binary directly. If we deploy bulky here and
+    // later swap to slim via `check_and_upgrade_precompiled`, the swap
+    // overwrites bytes but preserves bulky's init storage — slim then
+    // executes against an unfamiliar storage layout and fuel-exhausts.
+    // For mainnet (V220_FORK_HEIGHT=950_000 > 0), this returns bulky to
+    // replicate the historical setup at block 880_000.
+    if genesis::V220_FORK_HEIGHT == 0 {
+        fr_btc_build_v1_2_0::get_bytes()
+    } else {
+        fr_btc_build::get_bytes()
+    }
 }
 
 pub fn fr_sigil_bytes() -> Vec<u8> {
@@ -354,9 +366,15 @@ pub fn check_and_upgrade_precompiled(height: u32) -> Result<()> {
             IndexPointer::from_keyword("/alkanes/")
                 .select(&(AlkaneId { block: 2, tx: 0 }).into())
                 .set(Arc::new(compress(genesis_alkane_upgrade_bytes_eoa())?));
-            IndexPointer::from_keyword("/alkanes/")
-                .select(&(AlkaneId { block: 32, tx: 0 }).into())
-                .set(Arc::new(compress(fr_btc_build_v1_1_0::get_bytes())?));
+            // Only swap fr_btc to bulky v1.1.0 when V220 has not yet
+            // activated. On chains where V220 is genesis-coincident
+            // (V220_FORK_HEIGHT=0), `setup_frbtc` already deployed slim and
+            // overwriting it here would leak bulky storage semantics back in.
+            if genesis::V220_FORK_HEIGHT > genesis::GENESIS_UPGRADE_EOA_BLOCK_HEIGHT {
+                IndexPointer::from_keyword("/alkanes/")
+                    .select(&(AlkaneId { block: 32, tx: 0 }).into())
+                    .set(Arc::new(compress(fr_btc_build_v1_1_0::get_bytes())?));
+            }
         }
     }
     // v2.2.0 fork: replace the fr_btc precompile bytes (alkane id 32:0) with
@@ -370,9 +388,17 @@ pub fn check_and_upgrade_precompiled(height: u32) -> Result<()> {
         let mut v220_upgrade_ptr = IndexPointer::from_keyword("/genesis-upgraded-v220");
         if v220_upgrade_ptr.get().len() == 0 {
             v220_upgrade_ptr.set_value::<u8>(0x01);
-            IndexPointer::from_keyword("/alkanes/")
-                .select(&(AlkaneId { block: 32, tx: 0 }).into())
-                .set(Arc::new(compress(fr_btc_build_v1_2_0::get_bytes())?));
+            // When V220 is genesis-coincident, `setup_frbtc` already deployed
+            // slim with the correct init storage; skip the byte-swap and just
+            // record the upgrade in the pointer. For real fork heights
+            // (V220_FORK_HEIGHT>0), perform the swap as normal — it replaces
+            // the bulky v1.1.0 bytes with slim, leaving the historical
+            // bulky-derived storage in place (slim is interface-compatible).
+            if genesis::V220_FORK_HEIGHT > 0 {
+                IndexPointer::from_keyword("/alkanes/")
+                    .select(&(AlkaneId { block: 32, tx: 0 }).into())
+                    .set(Arc::new(compress(fr_btc_build_v1_2_0::get_bytes())?));
+            }
         }
     }
     Ok(())
