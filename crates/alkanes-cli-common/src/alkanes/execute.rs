@@ -31,8 +31,8 @@ use std::{vec, vec::Vec, string::{String, ToString}, format, io::{self, Write}};
 use tokio::time::{sleep, Duration};
 pub use super::types::{
     AlkaneId, AlkanesBalance, EnhancedExecuteParams, EnhancedExecuteResult, ExecutionState,
-    InputRequirement, OutputTarget, ProtostoneEdict, ProtostoneSpec, ReadyToSignCommitTx,
-    ReadyToSignRevealTx, ReadyToSignTx,
+    InputRequirement, OutputTarget, PrefetchedAlkane, PrefetchedUtxo, ProtostoneEdict,
+    ProtostoneSpec, ReadyToSignCommitTx, ReadyToSignRevealTx, ReadyToSignTx,
 };
 use super::envelope::AlkanesEnvelope;
 use anyhow::anyhow;
@@ -351,6 +351,55 @@ fn build_prefetched_txouts_map(
             value: bitcoin::Amount::from_sat(entry.value),
             script_pubkey: ScriptBuf::from_bytes(script_bytes),
         });
+    }
+    Ok(Some(map))
+}
+
+/// Build a per-outpoint alkane-balance lookup from a `prefetched_utxos`
+/// slice (typically `&params.prefetched_utxos`, but threaded as a slice so
+/// `select_utxos` — which doesn't take the full params struct — can consume it).
+///
+/// Only entries with `alkanes: Some(_)` participate; `None` means the caller
+/// has no assertion for that outpoint, and the SDK falls back to RPC. Empty
+/// `Some(vec![])` is authoritative "asserted clean — do not query."
+///
+/// Returns `None` when no entry has `Some(_)` so the consumer can take a
+/// single-branch fast path (mirrors `build_prefetched_txouts_map`).
+///
+/// Trust contract identical to `build_prefetched_txouts_map`'s hex decode: a
+/// malformed `amount` decimal surfaces as a structured error rather than
+/// silently dropping the entry. Stale-cache callers should fail loud at
+/// execute-time, not later at swap-revert time.
+fn build_prefetched_alkanes_map(
+    prefetched_utxos: &[PrefetchedUtxo],
+) -> Result<Option<alloc::collections::BTreeMap<OutPoint, Vec<(ProtoruneRuneId, u128)>>>> {
+    if prefetched_utxos.is_empty() {
+        return Ok(None);
+    }
+    let mut map = alloc::collections::BTreeMap::new();
+    let mut any_asserted = false;
+    for entry in prefetched_utxos {
+        let Some(alkanes) = &entry.alkanes else {
+            continue;
+        };
+        any_asserted = true;
+        let outpoint = OutPoint::from_str(&entry.outpoint)
+            .map_err(|e| AlkanesError::Validation(format!(
+                "prefetched_utxos: invalid outpoint '{}': {}", entry.outpoint, e
+            )))?;
+        let mut balances: Vec<(ProtoruneRuneId, u128)> = Vec::with_capacity(alkanes.len());
+        for a in alkanes {
+            let amount = u128::from_str(&a.amount)
+                .map_err(|e| AlkanesError::Validation(format!(
+                    "prefetched_utxos: invalid alkane amount '{}' for {}:{}: {}",
+                    a.amount, a.block, a.tx, e
+                )))?;
+            balances.push((ProtoruneRuneId { block: a.block, tx: a.tx }, amount));
+        }
+        map.insert(outpoint, balances);
+    }
+    if !any_asserted {
+        return Ok(None);
     }
     Ok(Some(map))
 }
@@ -940,7 +989,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         required_reveal_amount += params.to_addresses.len() as u64 * 546;
 
         let utxo_selection = self
-            .select_utxos(&[InputRequirement::Bitcoin { amount: required_reveal_amount }], &params.from_addresses, &params.known_pending_tx_hexes, params.max_indexed_height)
+            .select_utxos(&[InputRequirement::Bitcoin { amount: required_reveal_amount }], &params.from_addresses, &params.known_pending_tx_hexes, params.max_indexed_height, &params.prefetched_utxos)
             .await?;
         let funding_utxos = utxo_selection.outpoints.clone();
 
@@ -1103,7 +1152,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                    total_bitcoin_needed, fee_with_buffer, bitcoin_requirement);
         
         final_requirements.push(InputRequirement::Bitcoin { amount: bitcoin_requirement });
-        let mut utxo_selection = self.select_utxos(&final_requirements, &params.from_addresses, &params.known_pending_tx_hexes, params.max_indexed_height).await?;
+        let mut utxo_selection = self.select_utxos(&final_requirements, &params.from_addresses, &params.known_pending_tx_hexes, params.max_indexed_height, &params.prefetched_utxos).await?;
 
         // Check selected UTXOs for ordinal inscriptions based on strategy
         // We need to get TxOut data for each selected UTXO to check for inscriptions
@@ -1526,7 +1575,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
     /// without going through `execute_full`. The test in
     /// `pending_tx_store::tests` uses MockProvider's `alkane_balances`
     /// + utxo set to assert the skip-non-needed-alkane-carrier path.
-    pub(crate) async fn select_utxos(&mut self, requirements: &[InputRequirement], from_addresses: &Option<Vec<String>>, known_pending_tx_hexes: &[String], max_indexed_height: Option<u64>) -> Result<UtxoSelectionResult> {
+    pub(crate) async fn select_utxos(&mut self, requirements: &[InputRequirement], from_addresses: &Option<Vec<String>>, known_pending_tx_hexes: &[String], max_indexed_height: Option<u64>, prefetched_utxos: &[PrefetchedUtxo]) -> Result<UtxoSelectionResult> {
         use crate::traits::AddressResolver;
 
         log::info!("Selecting UTXOs for {} requirements", requirements.len());
@@ -1582,6 +1631,15 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             .collect();
 
         log::info!("Found {} spendable wallet UTXOs after eligibility filter", spendable_utxos.len());
+
+        // Caller-supplied per-outpoint alkane assertions, used to short-circuit
+        // the two `protorunesbyoutpoint` fanouts below (~40s on a 30+ dust
+        // wallet, observed mainnet 2026-05-09). `None` here means either no
+        // caller supplied assertions at all, or all entries omitted `alkanes`
+        // — both cases keep the existing slow path verbatim. Built once and
+        // shared between the alkane-aware primary-discovery branch (line
+        // ~1716) and the BTC-only exclusion branch (line ~2119).
+        let prefetched_alkanes = build_prefetched_alkanes_map(prefetched_utxos)?;
 
         // Mempool-aware UTXO adjustment for the user's own pending txs.
         //
@@ -1772,7 +1830,51 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                         dust_utxos.len()
                     );
 
+                    // Counters for the prefetched-vs-RPC observability log
+                    // emitted at the bottom of this loop. Cheap to maintain
+                    // even when the optimization isn't engaged.
+                    let mut prefetched_count: usize = 0;
+                    let mut rpc_count: usize = 0;
+
                     for (outpoint, _utxo) in &dust_utxos {
+                        // Short-circuit: if the caller has asserted balances
+                        // for this outpoint via `prefetched_utxos[i].alkanes`,
+                        // use them and skip the RPC. Empty Vec is authoritative
+                        // "no alkanes here" — leaves utxo_balances unchanged
+                        // for that key, mirroring the slow path's behavior
+                        // when balances_array is empty. Same trust contract
+                        // as `value` / `script_pubkey_hex`: caller is
+                        // responsible for invalidating on block-tip change.
+                        if let Some(balances) = prefetched_alkanes
+                            .as_ref()
+                            .and_then(|m| m.get(outpoint))
+                        {
+                            prefetched_count += 1;
+                            let mut balances_array = Vec::new();
+                            for (rune_id, amount) in balances {
+                                if *amount == 0 {
+                                    continue;
+                                }
+                                balances_array.push(serde_json::json!({
+                                    "block": rune_id.block,
+                                    "tx": rune_id.tx,
+                                    "amount": amount.to_string(),
+                                }));
+                            }
+                            if !balances_array.is_empty() {
+                                let key = format!(
+                                    "{}:{}",
+                                    outpoint.txid, outpoint.vout
+                                );
+                                utxo_balances.insert(
+                                    key,
+                                    serde_json::json!({ "balances": balances_array }),
+                                );
+                            }
+                            continue;
+                        }
+
+                        rpc_count += 1;
                         let txid_str = outpoint.txid.to_string();
                         match self.provider
                             .get_protorunes_by_outpoint(&txid_str, outpoint.vout, None, 1)
@@ -1819,6 +1921,11 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                             }
                         }
                     }
+
+                    log::info!(
+                        "Primary discovery: {} prefetched, {} via RPC",
+                        prefetched_count, rpc_count
+                    );
                 }
             }
 
@@ -2175,7 +2282,26 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                     .iter()
                     .filter(|(_, u)| u.amount <= 1000)
                     .collect();
+                let mut prefetched_count: usize = 0;
+                let mut rpc_count: usize = 0;
                 for (outpoint, _) in &dust_candidates {
+                    // Same short-circuit shape as the primary-discovery
+                    // branch: caller-asserted balances skip the RPC. An
+                    // empty Vec means "asserted clean — not a carrier."
+                    if let Some(balances) = prefetched_alkanes
+                        .as_ref()
+                        .and_then(|m| m.get(outpoint))
+                    {
+                        prefetched_count += 1;
+                        let has_alkane = balances.iter().any(|(_, amt)| *amt > 0);
+                        if has_alkane {
+                            alkane_carriers
+                                .insert(format!("{}:{}", outpoint.txid, outpoint.vout));
+                        }
+                        continue;
+                    }
+
+                    rpc_count += 1;
                     let txid_str = outpoint.txid.to_string();
                     if let Ok(response) = self
                         .provider
@@ -2200,6 +2326,10 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                         alkane_carriers.len()
                     );
                 }
+                log::info!(
+                    "BTC-only exclusion: {} prefetched, {} via RPC",
+                    prefetched_count, rpc_count
+                );
             }
 
             for (outpoint, utxo) in spendable_utxos {
@@ -3229,7 +3359,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         if commit_output_value < total_bitcoin_needed {
             let additional_needed = total_bitcoin_needed - commit_output_value;
             let additional_reqs = vec![InputRequirement::Bitcoin { amount: additional_needed }];
-            let utxo_selection = self.select_utxos(&additional_reqs, &params.from_addresses, &params.known_pending_tx_hexes, params.max_indexed_height).await?;
+            let utxo_selection = self.select_utxos(&additional_reqs, &params.from_addresses, &params.known_pending_tx_hexes, params.max_indexed_height, &params.prefetched_utxos).await?;
             selected_utxos.extend(utxo_selection.outpoints);
         }
 
@@ -3550,7 +3680,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
 
         // Select UTXOs for commit
         let utxo_selection = self
-            .select_utxos(&[InputRequirement::Bitcoin { amount: required_reveal_amount }], &params.from_addresses, &params.known_pending_tx_hexes, params.max_indexed_height)
+            .select_utxos(&[InputRequirement::Bitcoin { amount: required_reveal_amount }], &params.from_addresses, &params.known_pending_tx_hexes, params.max_indexed_height, &params.prefetched_utxos)
             .await?;
         let funding_utxos = utxo_selection.outpoints.clone();
 
@@ -4414,6 +4544,7 @@ mod tests {
                 &Some(vec![addr.to_string()]),
                 &[],
                 None,
+                &[],
             )
             .await
             .unwrap();
@@ -4644,6 +4775,7 @@ mod tests {
                 &Some(vec![addr.to_string()]),
                 &[],
                 Some(100),
+                &[],
             )
             .await
             .unwrap();
@@ -4656,6 +4788,7 @@ mod tests {
                 &Some(vec![addr.to_string()]),
                 &[],
                 Some(200),
+                &[],
             )
             .await
             .unwrap();
@@ -4668,6 +4801,7 @@ mod tests {
                 &Some(vec![addr.to_string()]),
                 &[],
                 None,
+                &[],
             )
             .await
             .unwrap();
@@ -4716,6 +4850,7 @@ mod tests {
                 &Some(vec![addr.to_string()]),
                 &[],
                 Some(99),
+                &[],
             )
             .await;
         assert!(
@@ -4738,6 +4873,7 @@ mod tests {
                 &Some(vec![addr.to_string()]),
                 &[],
                 None,
+                &[],
             )
             .await
             .unwrap();
