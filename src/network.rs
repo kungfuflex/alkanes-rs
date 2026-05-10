@@ -1,5 +1,6 @@
 use crate::message::AlkaneMessageContext;
 use crate::precompiled::fr_btc_build_v1_1_0;
+use crate::precompiled::fr_btc_build_v1_2_0;
 #[allow(unused_imports)]
 use crate::precompiled::{
     alkanes_std_genesis_alkane_dogecoin_build, alkanes_std_genesis_alkane_fractal_build,
@@ -129,6 +130,11 @@ pub mod genesis {
     pub const GENESIS_OUTPOINT_BLOCK_HEIGHT: u64 = 0;
     pub const GENESIS_UPGRADE_BLOCK_HEIGHT: u32 = 0;
     pub const GENESIS_UPGRADE_EOA_BLOCK_HEIGHT: u32 = 0;
+    /// v2.2.0 fork: activates the slim fr_btc.wasm precompile + the
+    /// extcall-child-revert containment fix (ports of kungfuflex/v2.1.8 +
+    /// kungfuflex/v2.1.8-slim-frbtc). On regtest the fork is genesis-coincident
+    /// so all tests run against the post-fork behaviour by default.
+    pub const V220_FORK_HEIGHT: u32 = 0;
 }
 
 #[cfg(feature = "mainnet")]
@@ -140,6 +146,8 @@ pub mod genesis {
     pub const GENESIS_UPGRADE_BLOCK_HEIGHT: u32 = 908_888;
 
     pub const GENESIS_UPGRADE_EOA_BLOCK_HEIGHT: u32 = 917_888;
+    /// v2.2.0 mainnet fork: slim fr_btc.wasm + extcall revert containment.
+    pub const V220_FORK_HEIGHT: u32 = 950_000;
 }
 
 #[cfg(feature = "fractal")]
@@ -150,6 +158,7 @@ pub mod genesis {
     pub const GENESIS_OUTPOINT_BLOCK_HEIGHT: u64 = 228_194;
     pub const GENESIS_UPGRADE_BLOCK_HEIGHT: u32 = 228_194;
     pub const GENESIS_UPGRADE_EOA_BLOCK_HEIGHT: u32 = 228_194;
+    pub const V220_FORK_HEIGHT: u32 = 0;
 }
 
 #[cfg(feature = "dogecoin")]
@@ -160,6 +169,7 @@ pub mod genesis {
     pub const GENESIS_OUTPOINT_BLOCK_HEIGHT: u64 = 872_101;
     pub const GENESIS_UPGRADE_BLOCK_HEIGHT: u32 = 872_101;
     pub const GENESIS_UPGRADE_EOA_BLOCK_HEIGHT: u32 = 872_101;
+    pub const V220_FORK_HEIGHT: u32 = 0;
 }
 
 #[cfg(feature = "luckycoin")]
@@ -170,6 +180,7 @@ pub mod genesis {
     pub const GENESIS_OUTPOINT_BLOCK_HEIGHT: u64 = 872_101;
     pub const GENESIS_UPGRADE_BLOCK_HEIGHT: u32 = 872_101;
     pub const GENESIS_UPGRADE_EOA_BLOCK_HEIGHT: u32 = 872_101;
+    pub const V220_FORK_HEIGHT: u32 = 0;
 }
 
 #[cfg(feature = "bellscoin")]
@@ -180,6 +191,7 @@ pub mod genesis {
     pub const GENESIS_OUTPOINT_BLOCK_HEIGHT: u64 = 288_906;
     pub const GENESIS_UPGRADE_BLOCK_HEIGHT: u32 = 288_906;
     pub const GENESIS_UPGRADE_EOA_BLOCK_HEIGHT: u32 = 288_906;
+    pub const V220_FORK_HEIGHT: u32 = 0;
 }
 
 pub fn is_active(height: u64) -> bool {
@@ -345,6 +357,22 @@ pub fn check_and_upgrade_precompiled(height: u32) -> Result<()> {
             IndexPointer::from_keyword("/alkanes/")
                 .select(&(AlkaneId { block: 32, tx: 0 }).into())
                 .set(Arc::new(compress(fr_btc_build_v1_1_0::get_bytes())?));
+        }
+    }
+    // v2.2.0 fork: replace the fr_btc precompile bytes (alkane id 32:0) with
+    // the slim 281 KB build. The v1.1.0 (1.5 MB) bytes deployed at
+    // GENESIS_UPGRADE_EOA_BLOCK_HEIGHT remain canonical pre-fork; nodes
+    // re-syncing from before that height still walk through the same
+    // historical wasm blobs in order. Behaviour is interface-compatible —
+    // tap_tweak was restored in fr_btc_v1.2.0 so the slim build is a drop-in
+    // at the precompile boundary.
+    if height >= genesis::V220_FORK_HEIGHT {
+        let mut v220_upgrade_ptr = IndexPointer::from_keyword("/genesis-upgraded-v220");
+        if v220_upgrade_ptr.get().len() == 0 {
+            v220_upgrade_ptr.set_value::<u8>(0x01);
+            IndexPointer::from_keyword("/alkanes/")
+                .select(&(AlkaneId { block: 32, tx: 0 }).into())
+                .set(Arc::new(compress(fr_btc_build_v1_2_0::get_bytes())?));
         }
     }
     Ok(())

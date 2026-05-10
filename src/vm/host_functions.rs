@@ -828,6 +828,12 @@ impl AlkanesHostFunctionsImpl {
                 Ok(serialized.len() as i32)
             }
             Err(e) => {
+                // v2.2.0 fork gate: pre-fork blocks must preserve the original
+                // v2.1.7-beta.4 behaviour where a child revert propagates via `?`
+                // and unwinds the parent frame. Post-fork, we contain the revert.
+                if height < crate::network::genesis::V220_FORK_HEIGHT {
+                    return Err(e);
+                }
                 // Child call reverted — handle like EVM: rollback child state,
                 // deduct gas, store revert data, return negative value to caller
                 // WITHOUT aborting the parent frame.
