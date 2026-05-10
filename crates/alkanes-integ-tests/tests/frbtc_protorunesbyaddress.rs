@@ -151,6 +151,10 @@ fn frbtc_cli_wrap_then_protorunesbyaddress() -> Result<()> {
         auto_confirm: true,
         ordinals_strategy: OrdinalsStrategy::default(),
         mempool_indexer: false,
+    split_transactions: false,
+    known_pending_tx_hexes: Vec::new(),
+    prefetched_utxos: Vec::new(),
+    max_indexed_height: None,
     };
 
     println!("Executing CLI wrap pipeline...");

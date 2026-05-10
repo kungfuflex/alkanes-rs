@@ -1084,7 +1084,7 @@ impl WebProvider {
             };
 
             // Parse options (from_addresses, change_address, etc.)
-            let (trace_enabled, mine_enabled, auto_confirm, raw_output, from_addresses, change_address, alkanes_change_address, ordinals_strategy, mempool_indexer, split_transactions, prefetched_utxos) = if let Some(opts_json) = &options_json {
+            let (trace_enabled, mine_enabled, auto_confirm, raw_output, from_addresses, change_address, alkanes_change_address, ordinals_strategy, mempool_indexer, split_transactions, prefetched_utxos, max_indexed_height) = if let Some(opts_json) = &options_json {
                 let opts: serde_json::Value = serde_json::from_str(opts_json)
                     .map_err(|e| JsValue::from_str(&format!("Invalid options JSON: {}", e)))?;
 
@@ -1127,6 +1127,14 @@ impl WebProvider {
                         .and_then(|v| serde_json::from_value(v.clone()).ok())
                         .unwrap_or_default();
 
+                // Indexer-aware UTXO filter. Confirmed UTXOs at heights above
+                // `max_indexed_height` are skipped because metashrew can't yet
+                // read their alkane balance sheets. See EnhancedExecuteParams
+                // doc for full rationale.
+                let max_idx: Option<u64> = opts.get("max_indexed_height")
+                    .or_else(|| opts.get("maxIndexedHeight"))
+                    .and_then(|v| v.as_u64());
+
                 (
                     opts.get("trace_enabled").and_then(|v| v.as_bool()).unwrap_or(false),
                     opts.get("mine_enabled").and_then(|v| v.as_bool()).unwrap_or(false),
@@ -1139,9 +1147,10 @@ impl WebProvider {
                     mempool_idx,
                     split_tx,
                     prefetched,
+                    max_idx,
                 )
             } else {
-                (false, false, true, false, None, None, None, Default::default(), false, false, Vec::new())
+                (false, false, true, false, None, None, None, Default::default(), false, false, Vec::new(), None)
             };
 
             let params = EnhancedExecuteParams {
@@ -1162,6 +1171,7 @@ impl WebProvider {
                 split_transactions,
                 known_pending_tx_hexes: Vec::new(),
                 prefetched_utxos,
+                max_indexed_height,
             };
 
             provider.execute(params).await
@@ -1215,7 +1225,7 @@ impl WebProvider {
             };
 
             // Parse options
-            let (trace_enabled, mine_enabled, auto_confirm, raw_output, from_addresses, change_address, alkanes_change_address, ordinals_strategy, mempool_indexer, split_transactions, prefetched_utxos) = if let Some(opts_json) = &options_json {
+            let (trace_enabled, mine_enabled, auto_confirm, raw_output, from_addresses, change_address, alkanes_change_address, ordinals_strategy, mempool_indexer, split_transactions, prefetched_utxos, max_indexed_height) = if let Some(opts_json) = &options_json {
                 let opts: serde_json::Value = serde_json::from_str(opts_json)
                     .map_err(|e| JsValue::from_str(&format!("Invalid options JSON: {}", e)))?;
 
@@ -1252,6 +1262,11 @@ impl WebProvider {
                         .and_then(|v| serde_json::from_value(v.clone()).ok())
                         .unwrap_or_default();
 
+                // Indexer-aware UTXO height filter. See EnhancedExecuteParams::max_indexed_height.
+                let max_idx: Option<u64> = opts.get("max_indexed_height")
+                    .or_else(|| opts.get("maxIndexedHeight"))
+                    .and_then(|v| v.as_u64());
+
                 (
                     opts.get("trace_enabled").and_then(|v| v.as_bool()).unwrap_or(false),
                     opts.get("mine_enabled").and_then(|v| v.as_bool()).unwrap_or(false),
@@ -1264,9 +1279,10 @@ impl WebProvider {
                     mempool_idx,
                     split_tx,
                     prefetched,
+                    max_idx,
                 )
             } else {
-                (false, false, true, false, None, None, None, Default::default(), false, false, Vec::new())
+                (false, false, true, false, None, None, None, Default::default(), false, false, Vec::new(), None)
             };
 
             let params = EnhancedExecuteParams {
@@ -1287,6 +1303,7 @@ impl WebProvider {
                 split_transactions,
                 known_pending_tx_hexes: Vec::new(),
                 prefetched_utxos,
+                max_indexed_height,
             };
 
             // Use execute_full to handle the complete flow internally
@@ -9702,6 +9719,7 @@ impl DeezelProvider for WebProvider {
             split_transactions: false,
                 known_pending_tx_hexes: Vec::new(),
                 prefetched_utxos: Vec::new(),
+                max_indexed_height: None,
         };
 
         match executor.execute(params).await? {
@@ -9744,6 +9762,7 @@ impl DeezelProvider for WebProvider {
             split_transactions: false,
                 known_pending_tx_hexes: Vec::new(),
                 prefetched_utxos: Vec::new(),
+                max_indexed_height: None,
         };
 
         match executor.execute(params).await? {

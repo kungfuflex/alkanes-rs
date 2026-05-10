@@ -215,6 +215,10 @@ fn test_cli_factory_init_auth_token_routing() -> Result<()> {
         auto_confirm: true,
         ordinals_strategy: OrdinalsStrategy::default(),
         mempool_indexer: false,
+    split_transactions: false,
+    known_pending_tx_hexes: Vec::new(),
+    prefetched_utxos: Vec::new(),
+    max_indexed_height: None,
     };
 
     let cli_result = bridge.execute_and_extract_tx(params);

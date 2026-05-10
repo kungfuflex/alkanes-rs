@@ -373,6 +373,29 @@ pub struct EnhancedExecuteParams {
     /// on every block-tip change.
     #[serde(default)]
     pub prefetched_utxos: Vec<PrefetchedUtxo>,
+    /// Maximum block height the alkanes indexer (metashrew) has finished
+    /// indexing. When set, `select_utxos` skips any confirmed UTXO mined
+    /// into a block whose height is greater than `max_indexed_height` —
+    /// metashrew can't yet read the alkane balance sheet on those outpoints,
+    /// so spending them risks underspending alkanes (the indexer hasn't
+    /// caught up to know the protorune contents).
+    ///
+    /// Why this matters: esplora indexes new blocks faster than metashrew
+    /// (esplora is just BIP125/UTXO bookkeeping; metashrew runs the alkanes
+    /// WASM runtime over every indexed block). The steady-state on mainnet
+    /// has esplora 1+ blocks ahead. Without this filter the SDK would pull
+    /// fresh UTXOs from esplora that metashrew can't yet introspect; safer
+    /// to wait until they're indexed.
+    ///
+    /// Alkane balance sheets are *immutable* per-outpoint once written, so
+    /// any UTXO whose creating block is `<= max_indexed_height` is safe to
+    /// query and spend.
+    ///
+    /// Caller is responsible for fetching `metashrew_height` and passing it.
+    /// `None` (default) disables the filter — back-compat for environments
+    /// without a synced indexer notion (devnet/regtest).
+    #[serde(default)]
+    pub max_indexed_height: Option<u64>,
 }
 
 /// Caller-supplied per-outpoint TxOut data for `EnhancedExecuteParams::prefetched_utxos`.

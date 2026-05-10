@@ -136,6 +136,10 @@ fn test_cli_auth_token_transfer_to_target_address() -> Result<()> {
         auto_confirm: true,
         ordinals_strategy: OrdinalsStrategy::default(),
         mempool_indexer: false,
+    split_transactions: false,
+    known_pending_tx_hexes: Vec::new(),
+    prefetched_utxos: Vec::new(),
+    max_indexed_height: None,
     };
 
     println!("\n=== Building auth token transfer TX via CLI ===");
@@ -257,6 +261,10 @@ fn test_cli_frusd_mint_with_auth_input() -> Result<()> {
         auto_confirm: true,
         ordinals_strategy: OrdinalsStrategy::default(),
         mempool_indexer: false,
+    split_transactions: false,
+    known_pending_tx_hexes: Vec::new(),
+    prefetched_utxos: Vec::new(),
+    max_indexed_height: None,
     };
 
     println!("\n=== Building frUSD mint TX via CLI ===");
