@@ -121,6 +121,7 @@ pub async fn init_pool(
         mempool_indexer: false,
         split_transactions: false,
         known_pending_tx_hexes: Vec::new(),
+        prefetched_utxos: Vec::new(),
     };
     
     // Execute
@@ -222,6 +223,7 @@ pub async fn execute_swap(
         mempool_indexer: false,
         split_transactions: false,
         known_pending_tx_hexes: Vec::new(),
+        prefetched_utxos: Vec::new(),
     };
     
     // Execute

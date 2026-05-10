@@ -273,6 +273,37 @@ pub(crate) struct UtxoSelectionResult {
 }
 
 
+/// Build a per-outpoint TxOut lookup map from `params.prefetched_utxos`.
+///
+/// Returns `None` when the caller didn't supply any (so per-input loops can
+/// elide the per-iteration map lookup branch entirely with a single `Option`
+/// check). On invalid hex / malformed outpoint, surfaces a structured error
+/// rather than silently dropping entries — a stale cache that produces
+/// garbage should fail loud at execute-time, not later at sighash-mismatch.
+fn build_prefetched_txouts_map(
+    params: &EnhancedExecuteParams,
+) -> Result<Option<alloc::collections::BTreeMap<OutPoint, TxOut>>> {
+    if params.prefetched_utxos.is_empty() {
+        return Ok(None);
+    }
+    let mut map = alloc::collections::BTreeMap::new();
+    for entry in &params.prefetched_utxos {
+        let outpoint = OutPoint::from_str(&entry.outpoint)
+            .map_err(|e| AlkanesError::Validation(format!(
+                "prefetched_utxos: invalid outpoint '{}': {}", entry.outpoint, e
+            )))?;
+        let script_bytes = hex::decode(&entry.script_pubkey_hex)
+            .map_err(|e| AlkanesError::Validation(format!(
+                "prefetched_utxos: invalid script_pubkey_hex for {}: {}", entry.outpoint, e
+            )))?;
+        map.insert(outpoint, TxOut {
+            value: bitcoin::Amount::from_sat(entry.value),
+            script_pubkey: ScriptBuf::from_bytes(script_bytes),
+        });
+    }
+    Ok(Some(map))
+}
+
 /// Enhanced alkanes executor
 pub struct EnhancedAlkanesExecutor<'a> {
     pub provider: &'a mut dyn DeezelProvider,
@@ -1280,7 +1311,8 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         // When alkane inputs are specified, route them to the first protomessage (not output 0)
         let has_alkane_inputs = params.input_requirements.iter().any(|r| matches!(r, InputRequirement::Alkanes { .. }));
         let runestone_script = self.construct_runestone_script_with_alkane_routing(&final_protostones, outputs.len(), has_alkane_inputs)?;
-        let (psbt, fee, estimated_vsize) = self.build_psbt_and_fee(final_funding_outpoints.clone(), outputs, Some(runestone_script), params.fee_rate, None, None).await?;
+        let prefetched_for_build = build_prefetched_txouts_map(params)?;
+        let (psbt, fee, estimated_vsize) = self.build_psbt_and_fee(final_funding_outpoints.clone(), outputs, Some(runestone_script), params.fee_rate, None, None, prefetched_for_build.as_ref()).await?;
 
         // Validate the transaction before returning
         self.validate_transaction(&psbt, &final_funding_outpoints, fee, params).await?;
@@ -1309,12 +1341,19 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         params: &EnhancedExecuteParams,
     ) -> Result<()> {
         let tx = &psbt.unsigned_tx;
-        
+
+        // Build a one-shot prefetched-TxOut map from caller-supplied data.
+        // Outpoints in the map skip the per-UTXO get_utxo() RPC.
+        let prefetched = build_prefetched_txouts_map(params)?;
+
         // 1. Calculate total input value
         let mut total_input_value = 0u64;
         for outpoint in selected_utxos {
-            let utxo = self.provider.get_utxo(outpoint).await?
-                .ok_or_else(|| AlkanesError::Wallet(format!("UTXO not found during validation: {outpoint}")))?;
+            let utxo = match prefetched.as_ref().and_then(|m| m.get(outpoint)) {
+                Some(txout) => txout.clone(),
+                None => self.provider.get_utxo(outpoint).await?
+                    .ok_or_else(|| AlkanesError::Wallet(format!("UTXO not found during validation: {outpoint}")))?,
+            };
             total_input_value += utxo.value.to_sat();
         }
         
@@ -2567,9 +2606,14 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         fee_rate: Option<f32>,
         envelope: Option<&AlkanesEnvelope>,
         first_input_txout: Option<TxOut>,
+        // Optional caller-supplied per-outpoint TxOut cache. Built once at
+        // the top of execute() from `params.prefetched_utxos` and threaded
+        // here so the per-input loop below can skip the slow getrawtransaction
+        // path for every outpoint the JS wallet has already cached.
+        prefetched_txouts: Option<&alloc::collections::BTreeMap<OutPoint, TxOut>>,
     ) -> Result<(Psbt, u64, usize)> {
         use bitcoin::transaction::Version;
-    
+
         if let Some(script) = runestone_script {
             if !script.is_empty() {
                  outputs.push(TxOut {
@@ -2578,13 +2622,16 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                 });
             }
         }
-    
+
         let mut total_input_value = 0;
         let mut input_txouts = Vec::new();
         for (i, outpoint) in utxos.iter().enumerate() {
             let utxo = if i == 0 && first_input_txout.is_some() {
                 // Use the pre-known first input (commit output) if provided
                 first_input_txout.clone().unwrap()
+            } else if let Some(txout) = prefetched_txouts.and_then(|m| m.get(outpoint)) {
+                // Cached by caller — skip the getrawtransaction roundtrip.
+                txout.clone()
             } else {
                 // Fetch from provider for other inputs
                 self.provider.get_utxo(outpoint).await?
@@ -3141,7 +3188,8 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             script_pubkey: commit_address.script_pubkey(),
         };
         
-        let (mut psbt, fee, estimated_vsize) = self.build_psbt_and_fee(selected_utxos, outputs, Some(runestone_script), params.fee_rate, Some(envelope), Some(commit_txout)).await?;
+        let prefetched_for_reveal = build_prefetched_txouts_map(params)?;
+        let (mut psbt, fee, estimated_vsize) = self.build_psbt_and_fee(selected_utxos, outputs, Some(runestone_script), params.fee_rate, Some(envelope), Some(commit_txout), prefetched_for_reveal.as_ref()).await?;
 
         let reveal_script = envelope.build_reveal_script();
         let (spend_info, _) = self.create_taproot_spend_info_for_envelope(envelope, commit_internal_key).await?;

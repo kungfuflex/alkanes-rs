@@ -1084,7 +1084,7 @@ impl WebProvider {
             };
 
             // Parse options (from_addresses, change_address, etc.)
-            let (trace_enabled, mine_enabled, auto_confirm, raw_output, from_addresses, change_address, alkanes_change_address, ordinals_strategy, mempool_indexer, split_transactions) = if let Some(opts_json) = &options_json {
+            let (trace_enabled, mine_enabled, auto_confirm, raw_output, from_addresses, change_address, alkanes_change_address, ordinals_strategy, mempool_indexer, split_transactions, prefetched_utxos) = if let Some(opts_json) = &options_json {
                 let opts: serde_json::Value = serde_json::from_str(opts_json)
                     .map_err(|e| JsValue::from_str(&format!("Invalid options JSON: {}", e)))?;
 
@@ -1118,6 +1118,15 @@ impl WebProvider {
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
 
+                // Caller-supplied per-outpoint TxOut cache. Mirrors what
+                // `provider.get_utxo()` would otherwise fetch via per-UTXO
+                // `getrawtransaction`. See PrefetchedUtxo doc for trust model.
+                let prefetched: Vec<alkanes_cli_common::alkanes::types::PrefetchedUtxo> =
+                    opts.get("prefetched_utxos")
+                        .or_else(|| opts.get("prefetchedUtxos"))
+                        .and_then(|v| serde_json::from_value(v.clone()).ok())
+                        .unwrap_or_default();
+
                 (
                     opts.get("trace_enabled").and_then(|v| v.as_bool()).unwrap_or(false),
                     opts.get("mine_enabled").and_then(|v| v.as_bool()).unwrap_or(false),
@@ -1129,9 +1138,10 @@ impl WebProvider {
                     ord_strategy,
                     mempool_idx,
                     split_tx,
+                    prefetched,
                 )
             } else {
-                (false, false, true, false, None, None, None, Default::default(), false, false)
+                (false, false, true, false, None, None, None, Default::default(), false, false, Vec::new())
             };
 
             let params = EnhancedExecuteParams {
@@ -1151,6 +1161,7 @@ impl WebProvider {
                 mempool_indexer,
                 split_transactions,
                 known_pending_tx_hexes: Vec::new(),
+                prefetched_utxos,
             };
 
             provider.execute(params).await
@@ -1204,7 +1215,7 @@ impl WebProvider {
             };
 
             // Parse options
-            let (trace_enabled, mine_enabled, auto_confirm, raw_output, from_addresses, change_address, alkanes_change_address, ordinals_strategy, mempool_indexer, split_transactions) = if let Some(opts_json) = &options_json {
+            let (trace_enabled, mine_enabled, auto_confirm, raw_output, from_addresses, change_address, alkanes_change_address, ordinals_strategy, mempool_indexer, split_transactions, prefetched_utxos) = if let Some(opts_json) = &options_json {
                 let opts: serde_json::Value = serde_json::from_str(opts_json)
                     .map_err(|e| JsValue::from_str(&format!("Invalid options JSON: {}", e)))?;
 
@@ -1233,6 +1244,14 @@ impl WebProvider {
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
 
+                // Caller-supplied per-outpoint TxOut cache. See PrefetchedUtxo
+                // doc for trust model. Mirrors alkanesExecuteWithStrings.
+                let prefetched: Vec<alkanes_cli_common::alkanes::types::PrefetchedUtxo> =
+                    opts.get("prefetched_utxos")
+                        .or_else(|| opts.get("prefetchedUtxos"))
+                        .and_then(|v| serde_json::from_value(v.clone()).ok())
+                        .unwrap_or_default();
+
                 (
                     opts.get("trace_enabled").and_then(|v| v.as_bool()).unwrap_or(false),
                     opts.get("mine_enabled").and_then(|v| v.as_bool()).unwrap_or(false),
@@ -1244,9 +1263,10 @@ impl WebProvider {
                     ord_strategy,
                     mempool_idx,
                     split_tx,
+                    prefetched,
                 )
             } else {
-                (false, false, true, false, None, None, None, Default::default(), false, false)
+                (false, false, true, false, None, None, None, Default::default(), false, false, Vec::new())
             };
 
             let params = EnhancedExecuteParams {
@@ -1266,6 +1286,7 @@ impl WebProvider {
                 mempool_indexer,
                 split_transactions,
                 known_pending_tx_hexes: Vec::new(),
+                prefetched_utxos,
             };
 
             // Use execute_full to handle the complete flow internally
@@ -9680,6 +9701,7 @@ impl DeezelProvider for WebProvider {
 
             split_transactions: false,
                 known_pending_tx_hexes: Vec::new(),
+                prefetched_utxos: Vec::new(),
         };
 
         match executor.execute(params).await? {
@@ -9721,6 +9743,7 @@ impl DeezelProvider for WebProvider {
 
             split_transactions: false,
                 known_pending_tx_hexes: Vec::new(),
+                prefetched_utxos: Vec::new(),
         };
 
         match executor.execute(params).await? {

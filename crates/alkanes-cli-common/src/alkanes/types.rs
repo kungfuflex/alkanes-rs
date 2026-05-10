@@ -353,6 +353,38 @@ pub struct EnhancedExecuteParams {
     /// candidates.
     #[serde(default)]
     pub known_pending_tx_hexes: Vec<String>,
+    /// Caller-provided per-outpoint TxOut metadata used to short-circuit
+    /// `provider.get_utxo()` calls inside `validate_transaction` and
+    /// `build_psbt_and_fee`. Each call to `get_utxo` otherwise fetches the
+    /// full prev-tx hex via `getrawtransaction` and slices to one vout —
+    /// for a 32-UTXO selected set that's ~64 sequential RPCs in the swap
+    /// critical path between click and signing modal.
+    ///
+    /// When a wallet UI already maintains a UTXO cache (e.g. subfrost-app's
+    /// HeightPoller-invalidated `useWalletUtxoCache`), it can pass the same
+    /// data here and the SDK skips the redundant fetch. Outpoints not present
+    /// in this list fall back to the slow path, so partial coverage is safe.
+    ///
+    /// Trust contract (mirrors `OrdinalsStrategy::Burn`): the SDK trusts
+    /// the caller-provided `value` and `script_pubkey_hex` and does not
+    /// re-verify against chain state. A stale or malformed entry will cause
+    /// PSBT signing to fail downstream with a sighash mismatch — loud, but
+    /// after the wallet popup appears. Callers should invalidate this cache
+    /// on every block-tip change.
+    #[serde(default)]
+    pub prefetched_utxos: Vec<PrefetchedUtxo>,
+}
+
+/// Caller-supplied per-outpoint TxOut data for `EnhancedExecuteParams::prefetched_utxos`.
+/// Mirrors the shape `provider.get_utxo()` would otherwise fetch via RPC.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrefetchedUtxo {
+    /// Outpoint as `txid:vout` (e.g. `"abc...:0"`). Parsed via `OutPoint::from_str`.
+    pub outpoint: String,
+    /// Output value in sats.
+    pub value: u64,
+    /// `scriptPubKey` as lowercase hex (no `0x` prefix). Decoded into `bitcoin::ScriptBuf`.
+    pub script_pubkey_hex: String,
 }
 
 /// Enhanced execute result for commit/reveal pattern
