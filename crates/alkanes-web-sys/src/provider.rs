@@ -1084,7 +1084,7 @@ impl WebProvider {
             };
 
             // Parse options (from_addresses, change_address, etc.)
-            let (trace_enabled, mine_enabled, auto_confirm, raw_output, from_addresses, change_address, alkanes_change_address, split_transactions) = if let Some(opts_json) = &options_json {
+            let (trace_enabled, mine_enabled, auto_confirm, raw_output, from_addresses, change_address, alkanes_change_address, ordinals_strategy, mempool_indexer, split_transactions) = if let Some(opts_json) = &options_json {
                 let opts: serde_json::Value = serde_json::from_str(opts_json)
                     .map_err(|e| JsValue::from_str(&format!("Invalid options JSON: {}", e)))?;
 
@@ -1103,6 +1103,16 @@ impl WebProvider {
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string());
 
+                // Parse ordinals_strategy (mirrors alkanesExecuteFull). Without this,
+                // the field was hardcoded to Default::default() (= Exclude) and any
+                // browser caller passing "preserve" silently saw inscribed UTXOs
+                // reject the whole flow even when clean UTXOs were available.
+                let ord_strategy: alkanes_cli_common::alkanes::types::OrdinalsStrategy = opts.get("ordinals_strategy")
+                    .and_then(|v| serde_json::from_value(v.clone()).ok())
+                    .unwrap_or_default();
+
+                let mempool_idx = opts.get("mempool_indexer").and_then(|v| v.as_bool()).unwrap_or(false);
+
                 let split_tx = opts.get("split_transactions")
                     .or_else(|| opts.get("splitTransactions"))
                     .and_then(|v| v.as_bool())
@@ -1116,10 +1126,12 @@ impl WebProvider {
                     from_addrs,
                     change_addr,
                     alkanes_change_addr,
+                    ord_strategy,
+                    mempool_idx,
                     split_tx,
                 )
             } else {
-                (false, false, true, false, None, None, None, false)
+                (false, false, true, false, None, None, None, Default::default(), false, false)
             };
 
             let params = EnhancedExecuteParams {
@@ -1135,8 +1147,8 @@ impl WebProvider {
                 trace_enabled,
                 mine_enabled,
                 auto_confirm,
-                ordinals_strategy: Default::default(),
-                mempool_indexer: false,
+                ordinals_strategy,
+                mempool_indexer,
                 split_transactions,
                 known_pending_tx_hexes: Vec::new(),
             };

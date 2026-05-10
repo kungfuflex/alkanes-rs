@@ -316,26 +316,19 @@ impl<'a, P: OrdProvider + EsploraProvider> OrdinalsHandler<'a, P> {
         outpoint: OutPoint,
         utxo_value: u64,
         inscriptions: &[InscriptionInfo],
-        fee_rate: f32,
+        _fee_rate: f32,
     ) -> Option<SplitPlan> {
         if inscriptions.is_empty() {
             return None;
         }
 
-        // Find the highest offset among all inscriptions
-        // We need to send all sats up to and including this sat to the safe output
         let max_offset = inscriptions.iter().map(|i| i.sat_offset).max().unwrap_or(0);
+        let safe_amount = (max_offset + 1).max(DUST_LIMIT);
 
-        // Safe amount = offset + 1 (because offset is 0-indexed)
-        // This ensures the inscribed sat goes to the first output (safe)
-        let safe_amount = max_offset + 1;
-
-        // Ensure safe amount is at least dust limit
-        let safe_amount = safe_amount.max(DUST_LIMIT);
-
-        // Calculate clean amount (remaining sats)
+        // Hard requirement: at least one sat past the inscription offset.
+        // Fee + dust top-up are handled by the split-tx builder via extra
+        // clean inputs from elsewhere in the wallet.
         if utxo_value <= safe_amount {
-            // Not enough sats after protecting inscriptions
             log::warn!(
                 "UTXO has {} sats but inscription at offset {} requires {} sats for safe output - cannot split",
                 utxo_value, max_offset, safe_amount
@@ -343,23 +336,11 @@ impl<'a, P: OrdProvider + EsploraProvider> OrdinalsHandler<'a, P> {
             return None;
         }
 
-        // Estimate split tx fee (1 input, 2 outputs, ~140 vB for p2tr)
-        let estimated_split_fee = (fee_rate * 140.0).ceil() as u64;
-
-        let clean_amount = utxo_value.saturating_sub(safe_amount).saturating_sub(estimated_split_fee);
-
-        // Ensure clean amount is at least dust limit + some buffer for actual funding
-        if clean_amount < DUST_LIMIT * 2 {
-            log::warn!(
-                "After protecting inscriptions and fees, only {} sats remain - not enough for funding",
-                clean_amount
-            );
-            return None;
-        }
+        let clean_amount = utxo_value - safe_amount;
 
         log::info!(
-            "Split plan: {} sats → safe({}) + clean({}) + fee(~{})",
-            utxo_value, safe_amount, clean_amount, estimated_split_fee
+            "Split plan: {} sats → safe({}) + clean({}) (extra inputs may be pulled to cover fee/dust)",
+            utxo_value, safe_amount, clean_amount
         );
 
         Some(SplitPlan {
@@ -763,12 +744,27 @@ pub async fn trace_pending_utxo_inscriptions_with_provider(
     Ok(traced_inscriptions)
 }
 
-/// Calculate how to split a UTXO to protect inscriptions (standalone function)
+/// Calculate how to split a UTXO to protect inscriptions (standalone function).
+///
+/// Returns the inscribed-UTXO breakdown only: safe (inscription) and clean
+/// (remainder). The split-tx builder is responsible for pulling additional
+/// clean inputs from elsewhere in the wallet to cover fees and dust thresholds —
+/// this function does NOT require the inscribed UTXO to self-fund the split.
+/// That requirement was overly strict: most ordinal mints land on small UTXOs
+/// (~546-1500 sats) precisely because that minimizes inscriber cost, leaving
+/// no headroom for both a safe output AND a usable clean output AND the
+/// split-tx fee. With external funding, those small inscribed UTXOs split
+/// fine.
+///
+/// The only hard requirement is `utxo_value > safe_amount` — there must be
+/// at least one sat past the inscription offset for the clean output to
+/// exist. If `clean_amount` ends up below dust, the builder will top it up
+/// from extra funding (and pay the fee from extras as well).
 pub fn calculate_split(
     outpoint: OutPoint,
     utxo_value: u64,
     inscriptions: &[InscriptionInfo],
-    fee_rate: f32,
+    _fee_rate: f32,
 ) -> Option<SplitPlan> {
     if inscriptions.is_empty() {
         return None;
@@ -785,20 +781,11 @@ pub fn calculate_split(
         return None;
     }
 
-    let estimated_split_fee = (fee_rate * 140.0).ceil() as u64;
-    let clean_amount = utxo_value.saturating_sub(safe_amount).saturating_sub(estimated_split_fee);
-
-    if clean_amount < DUST_LIMIT * 2 {
-        log::warn!(
-            "After protecting inscriptions and fees, only {} sats remain - not enough for funding",
-            clean_amount
-        );
-        return None;
-    }
+    let clean_amount = utxo_value - safe_amount;
 
     log::info!(
-        "Split plan: {} sats → safe({}) + clean({}) + fee(~{})",
-        utxo_value, safe_amount, clean_amount, estimated_split_fee
+        "Split plan: {} sats → safe({}) + clean({}) (extra inputs may be pulled to cover fee/dust)",
+        utxo_value, safe_amount, clean_amount
     );
 
     Some(SplitPlan {
