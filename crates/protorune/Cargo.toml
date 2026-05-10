@@ -14,6 +14,15 @@ crate-type = ["cdylib", "rlib"]
 test-utils = []
 mainnet = []
 cache = []
+# Opt-in rune-balance tracking. The canonical alkanes indexer does NOT enable
+# this — alkanes ignores runes/protoburns at the application layer, so its
+# wasm build skips the rune-tracking surface (and the canonical-ord parity
+# tests in `tests/ord_runes_parity.rs`). The feature exists for downstream
+# protorune consumers that actually surface rune balances; the
+# `fix(protorune): canonical ord runes indexing parity` patch (commit
+# 47bd86b3, ported from kungfuflex/v2.1.8) lives here so those consumers can
+# pick it up by enabling `--features runes`.
+runes = []
 
 [dependencies]
 anyhow = { workspace = true }

@@ -1,3 +1,21 @@
+//! # protorune
+//!
+//! Indexer primitives for rune-balance tracking and protorune (alkane-style)
+//! state transitions.
+//!
+//! ## `runes` feature flag
+//!
+//! Tracking actual rune balances (canonical-ord semantics) is gated behind
+//! the **`runes`** Cargo feature. The canonical alkanes indexer wasm builds
+//! without `runes` — alkanes ignores runes and protoburns at the application
+//! layer, so emitting rune balances would be dead weight in that surface.
+//! The feature exists for downstream protorune consumers that actually need
+//! rune-balance views (cf. the `tests/ord_runes_parity.rs` parity suite,
+//! which is similarly gated).
+//!
+//! Enable with `--features runes` to compile the canonical-ord parity tests
+//! ported from kungfuflex/v2.1.8 (commit 47bd86b3) into your build.
+
 use crate::balance_sheet::{load_sheet, PersistentRecord};
 use crate::message::MessageContext;
 use crate::protorune_init::index_unique_protorunes;
