@@ -99,6 +99,10 @@ fn test_cli_mint_and_query() -> Result<()> {
         auto_confirm: true,
         ordinals_strategy: OrdinalsStrategy::default(),
         mempool_indexer: false,
+    split_transactions: false,
+    known_pending_tx_hexes: Vec::new(),
+    prefetched_utxos: Vec::new(),
+    max_indexed_height: None,
     };
 
     let result = bridge.execute_and_index(params, &runtime, 5);

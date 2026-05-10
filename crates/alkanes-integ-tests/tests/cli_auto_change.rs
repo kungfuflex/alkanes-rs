@@ -117,6 +117,10 @@ fn test_cli_auto_change_protostone_through_indexer() -> Result<()> {
         auto_confirm: true,
         ordinals_strategy: OrdinalsStrategy::default(),
         mempool_indexer: false,
+    split_transactions: false,
+    known_pending_tx_hexes: Vec::new(),
+    prefetched_utxos: Vec::new(),
+    max_indexed_height: None,
     };
 
     // Execute through the real CLI pipeline
