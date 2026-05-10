@@ -5,3 +5,10 @@ target
 src/tests/std/**/*.rs
 memory-bank/activeContext.md
 memory-bank/progress.md
+
+# Reproducible build outputs from scripts/build.sh. The canonical sha256
+# is tracked via dist/SHA256SUMS; the wasm bytes themselves are shipped
+# to subkube's prebuilts/ rather than committed here.
+dist/alkanes.wasm
+.verify-a/
+.verify-b/

@@ -131,3 +131,14 @@ protorune = { path = "crates/protorune", features = ["test-utils"] }
 anyhow = { workspace = true }
 flate2 = "1.0.34"
 hex = { workspace = true }
+
+# Reproducible-build profile for the mainnet alkanes.wasm shipped to
+# subkube. codegen-units=1 + lto="fat" eliminate the parallelism-driven
+# nondeterminism in the default release profile; strip="debuginfo"
+# removes path-dependent debug records. Compile time goes up substantially
+# but the wasm bytes are byte-identical across machines given the same
+# rustc + Cargo.lock + source tree (see scripts/build.sh --verify).
+[profile.release]
+codegen-units = 1
+lto = "fat"
+strip = "debuginfo"

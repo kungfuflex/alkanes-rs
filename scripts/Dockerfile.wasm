@@ -1,0 +1,56 @@
+# syntax=docker/dockerfile:1.6
+#
+# Reproducible mainnet alkanes.wasm builder.
+#
+# Output is exposed via the `wasm` target as /alkanes.wasm. Drive this
+# through scripts/build.sh so the buildx --output flag, sha256 capture
+# and reproducibility verification stay consistent.
+#
+# Pinning summary:
+# - rustc:        1.86.0 (matches rust-toolchain.toml; image tag is
+#                 explicit)
+# - wasm target:  wasm32-unknown-unknown
+# - dependency
+#   graph:        Cargo.lock (--locked refuses to touch it)
+# - profile:      [profile.release] in Cargo.toml — codegen-units=1
+#                 lto="fat" strip="debuginfo" → deterministic + perf
+# - paths:        SOURCE_DATE_EPOCH=0 +
+#                 --remap-path-prefix=/src=.,/usr/local/cargo/registry=registry
+#                 strip the only sources of host-path leakage we have.
+#
+# Anything that affects the wasm bytes (rust toolchain, deps, build
+# flags, source) lives in this Dockerfile or the source tree. Nothing
+# else.
+
+FROM rust:1.86.0-slim-bookworm AS builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        pkg-config \
+        libssl-dev \
+        ca-certificates \
+        clang \
+        libclang-dev \
+        protobuf-compiler \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN rustup target add wasm32-unknown-unknown
+
+ENV SOURCE_DATE_EPOCH=0 \
+    RUSTFLAGS="--remap-path-prefix=/src=. --remap-path-prefix=/usr/local/cargo/registry=registry"
+
+WORKDIR /src
+COPY . .
+
+RUN cargo build \
+        --release \
+        --target wasm32-unknown-unknown \
+        --features mainnet \
+        -p alkanes \
+        --locked
+
+# Use busybox (not scratch) so `docker create` can produce a container —
+# scratch has no default command and refuses with "no command specified".
+# The image is just a wasm-carrier, never run as a workload.
+FROM busybox:1.36 AS wasm
+COPY --from=builder /src/target/wasm32-unknown-unknown/release/alkanes.wasm /alkanes.wasm
