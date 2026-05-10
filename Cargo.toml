@@ -34,9 +34,9 @@ alkanes-runtime = { path = "./crates/alkanes-runtime" }
 alkanes-macros = { path = "./crates/alkanes-macros" }
 alkanes-std-factory-support = { path = "./crates/alkanes-std-factory-support" }
 ruint = "1.12.3"
-wasm-bindgen = "0.2.100"
+wasm-bindgen = "0.2.121"
 byteorder = "1.5"
-wasm-bindgen-test = "0.3.49"
+wasm-bindgen-test = "0.3.71"
 wasmi = "0.37.2"
 serde = "1.0.210"
 serde_json = "1.0.128"
@@ -45,7 +45,7 @@ prost = "0.12.6"
 prost-types = "0.12.6"
 prost-build = "0.12.6"
 bytes = "1.6.1"
-wasm-bindgen-futures = "0.4.45"
+wasm-bindgen-futures = "0.4.71"
 web-sys = { version = "0.3.72", features = ["Response", "Window"] }
 js-sys = "0.3.72"
 hex_lit = "0.1.1"
