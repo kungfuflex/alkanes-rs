@@ -400,6 +400,13 @@ pub struct EnhancedExecuteParams {
 
 /// Caller-supplied per-outpoint TxOut data for `EnhancedExecuteParams::prefetched_utxos`.
 /// Mirrors the shape `provider.get_utxo()` would otherwise fetch via RPC.
+///
+/// The `alkanes` field is the second-pass extension (added after the initial
+/// `getrawtransaction` short-circuit shipped). When present, it short-circuits
+/// the per-outpoint `protorunesbyoutpoint` fanout in alkane-aware coin
+/// selection (~40s on a 30+ dust-UTXO wallet, observed mainnet 2026-05-09).
+/// Same trust contract as `value` / `script_pubkey_hex`: the SDK does not
+/// re-verify chain state.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PrefetchedUtxo {
     /// Outpoint as `txid:vout` (e.g. `"abc...:0"`). Parsed via `OutPoint::from_str`.
@@ -408,6 +415,35 @@ pub struct PrefetchedUtxo {
     pub value: u64,
     /// `scriptPubKey` as lowercase hex (no `0x` prefix). Decoded into `bitcoin::ScriptBuf`.
     pub script_pubkey_hex: String,
+    /// Caller-asserted alkane balances on this outpoint.
+    ///
+    /// `Some(vec)` = authoritative; an empty Vec means "no alkanes here, do not
+    /// query." `None` (the default) = caller has no assertion and the SDK should
+    /// fall back to `get_protorunes_by_outpoint` for this outpoint.
+    ///
+    /// The Option discriminates "not provided" from "empty / clean," which is
+    /// load-bearing: if a stale cache hasn't yet seen a freshly-confirmed alkane
+    /// UTXO, returning `Some(vec![])` would mislead the selector into burning
+    /// it as a fee input. Callers should pass `None` whenever the cache hasn't
+    /// covered an outpoint (e.g., the cache index is keyed and this outpoint
+    /// is missing from the index).
+    #[serde(default)]
+    pub alkanes: Option<Vec<PrefetchedAlkane>>,
+}
+
+/// One alkane-balance entry on a `PrefetchedUtxo`. Wire shape mirrors the
+/// JSON the existing `protorunesbyoutpoint` consumer at
+/// `execute.rs::cached.balances` produces — `(block, tx, amount)` triples,
+/// `amount` as a decimal string to round-trip u128 cleanly through JSON.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrefetchedAlkane {
+    /// AlkaneId block component.
+    pub block: u128,
+    /// AlkaneId tx component.
+    pub tx: u128,
+    /// Amount in sub-units, as a decimal string (u128 doesn't round-trip
+    /// safely through JSON numbers above 2^53).
+    pub amount: String,
 }
 
 /// Enhanced execute result for commit/reveal pattern
