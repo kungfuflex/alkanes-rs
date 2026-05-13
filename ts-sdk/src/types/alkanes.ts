@@ -16,9 +16,9 @@ export interface AlkaneId {
 /**
  * Strategy for handling UTXOs that contain ordinal inscriptions
  *
- * - 'exclude': (default) Fail if any selected UTXO contains inscriptions
+ * - 'exclude': Fail if any selected UTXO contains inscriptions
  * - 'preserve': Split inscribed UTXOs to protect inscriptions, broadcast atomically
- * - 'burn': Allow spending inscribed UTXOs without protection (destroys inscriptions)
+ * - 'burn': (default for execute-style SDK calls) Allow spending inscribed UTXOs without protection (destroys inscriptions)
  */
 export type OrdinalsStrategy = 'exclude' | 'preserve' | 'burn';
 
@@ -46,7 +46,8 @@ export interface AlkanesExecuteBaseParams {
   auto_confirm?: boolean;
   /**
    * Strategy for handling UTXOs that contain ordinal inscriptions (optional)
-   * - 'exclude': (default) Fail if inscribed UTXOs must be spent
+   * Execute-style SDK calls default this to 'burn' when omitted.
+   * - 'exclude': Fail if inscribed UTXOs must be spent
    * - 'preserve': Split inscribed UTXOs to protect inscriptions
    * - 'burn': Allow spending inscribed UTXOs (destroys inscriptions)
    */

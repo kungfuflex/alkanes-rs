@@ -46376,11 +46376,12 @@ function getLogLevelFromEnv() {
 function createProvider(config) {
   return new AlkanesProvider(config);
 }
-var bitcoin3, NETWORK_PRESETS, BitcoinRpcClient, EsploraClient, AlkanesRpcClient, MetashrewClient, OrdClient, Brc20ProgClient, LuaClient, DataApiClient, OylApiClient, EspoClient, Logger, logger, AlkanesProvider;
+var bitcoin3, DEFAULT_ORDINALS_STRATEGY, NETWORK_PRESETS, BitcoinRpcClient, EsploraClient, AlkanesRpcClient, MetashrewClient, OrdClient, Brc20ProgClient, LuaClient, DataApiClient, OylApiClient, EspoClient, Logger, logger, AlkanesProvider;
 var init_provider = __esm({
   "src/provider/index.ts"() {
     "use strict";
     bitcoin3 = __toESM(require_src3());
+    DEFAULT_ORDINALS_STRATEGY = "burn";
     NETWORK_PRESETS = {
       "mainnet": {
         rpcUrl: "https://mainnet.subfrost.io/v4/subfrost",
@@ -46683,7 +46684,9 @@ var init_provider = __esm({
        * ```
        */
       async execute(params) {
-        const paramsJson = typeof params === "string" ? params : JSON.stringify(params);
+        const executeParams = typeof params === "string" ? JSON.parse(params) : { ...params };
+        executeParams.ordinals_strategy = executeParams.ordinals_strategy ?? DEFAULT_ORDINALS_STRATEGY;
+        const paramsJson = JSON.stringify(executeParams);
         const result = await this.provider.alkanesExecute(paramsJson);
         return mapToObject(result);
       }
@@ -47897,6 +47900,7 @@ var init_provider = __esm({
         this.rpcUrl = config.rpcUrl || preset.rpcUrl;
         this.bitcoinRpcUrl = config.bitcoinRpcUrl;
         this.metashrewRpcUrl = config.metashrewRpcUrl;
+        this.espoRpcUrl = config.espoRpcUrl;
         this.dataApiUrl = config.dataApiUrl || config.rpcUrl || preset.dataApiUrl;
         this.logLevel = config.logLevel || getLogLevelFromEnv() || "off";
         logger.setLevel(this.logLevel);
@@ -47954,7 +47958,8 @@ var init_provider = __esm({
         const configOverride = {
           jsonrpc_url: this.rpcUrl,
           ...this.bitcoinRpcUrl && { bitcoin_rpc_url: this.bitcoinRpcUrl },
-          ...this.metashrewRpcUrl && { metashrew_rpc_url: this.metashrewRpcUrl }
+          ...this.metashrewRpcUrl && { metashrew_rpc_url: this.metashrewRpcUrl },
+          ...this.espoRpcUrl && { espo_rpc_url: this.espoRpcUrl }
         };
         this._provider = new WebProviderClass(
           providerName,
@@ -48274,7 +48279,8 @@ var init_provider = __esm({
           target: params.contractId,
           calldata: params.calldata,
           fee_rate: params.feeRate,
-          inputs: params.inputs
+          inputs: params.inputs,
+          ordinals_strategy: params.ordinalsStrategy ?? DEFAULT_ORDINALS_STRATEGY
         });
         return provider.alkanesExecute(paramsJson);
       }
@@ -48436,8 +48442,10 @@ var init_provider = __esm({
         if (params.mineEnabled !== void 0) options.mine_enabled = params.mineEnabled;
         if (params.autoConfirm !== void 0) options.auto_confirm = params.autoConfirm;
         if (params.rawOutput !== void 0) options.raw_output = params.rawOutput;
-        if (params.ordinalsStrategy !== void 0) options.ordinals_strategy = params.ordinalsStrategy;
+        options.ordinals_strategy = params.ordinalsStrategy ?? DEFAULT_ORDINALS_STRATEGY;
         if (params.mempoolIndexer !== void 0) options.mempool_indexer = params.mempoolIndexer;
+        if (params.utxoSource !== void 0) options.utxo_source = params.utxoSource;
+        if (params.splitTransactions !== void 0) options.split_transactions = params.splitTransactions;
         const optionsJson = Object.keys(options).length > 0 ? JSON.stringify(options) : null;
         const result = await provider.alkanesExecuteFull(
           JSON.stringify(toAddresses),
@@ -48924,6 +48932,7 @@ var init_adapter = __esm({
           let patched = 0;
           for (const input of psbt.data.inputs) {
             if (!input.witnessUtxo) continue;
+            if (input.tapLeafScript?.length) continue;
             const script2 = Buffer.from(input.witnessUtxo.script);
             if (script2.length === 34 && script2[0] === 81 && script2[1] === 32) {
               input.witnessUtxo = { ...input.witnessUtxo, script: taprootScript };
@@ -49016,6 +49025,9 @@ var init_adapter = __esm({
           if (xOnlyBuf.length !== 32) return psbtHex;
           let patched = 0;
           for (let i = 0; i < psbt.data.inputs.length; i++) {
+            if (psbt.data.inputs[i].tapLeafScript?.length) {
+              continue;
+            }
             if (psbt.data.inputs[i].tapInternalKey) {
               psbt.data.inputs[i].tapInternalKey = xOnlyBuf;
               patched++;
@@ -49079,13 +49091,20 @@ var init_adapter = __esm({
         patchedHex = this.injectRedeemScripts(patchedHex);
         const psbt = bitcoin5.Psbt.fromHex(patchedHex);
         const unisatAddress = this.wallet.address;
+        const unisatPublicKey = this.wallet.publicKey;
         const toSignInputs = options?.to_sign_inputs ? options.to_sign_inputs.map((input) => ({
           index: input.index,
           address: input.address || unisatAddress,
-          sighashTypes: input.sighash_types
+          publicKey: unisatPublicKey,
+          sighashTypes: input.sighash_types,
+          disableTweakSigner: input.disable_tweak_signer || input.disable_tweaked_public_key || Boolean(psbt.data.inputs[input.index]?.tapLeafScript?.length),
+          useTweakedSigner: psbt.data.inputs[input.index]?.tapLeafScript?.length ? false : void 0
         })) : psbt.data.inputs.map((_, index) => ({
           index,
-          address: unisatAddress
+          address: unisatAddress,
+          publicKey: unisatPublicKey,
+          disableTweakSigner: Boolean(psbt.data.inputs[index]?.tapLeafScript?.length),
+          useTweakedSigner: psbt.data.inputs[index]?.tapLeafScript?.length ? false : void 0
         }));
         const timeoutPromise = new Promise(
           (_, reject) => setTimeout(() => reject(new Error("UniSat signing timed out after 60s")), 6e4)
@@ -49123,10 +49142,13 @@ var init_adapter = __esm({
           return patched;
         });
         const unisatAddress = this.wallet.address;
+        const unisatPublicKey = this.wallet.publicKey;
         const toSignInputs = options?.to_sign_inputs ? options.to_sign_inputs.map((input) => ({
           index: input.index,
           address: input.address || unisatAddress,
-          sighashTypes: input.sighash_types
+          publicKey: unisatPublicKey,
+          sighashTypes: input.sighash_types,
+          disableTweakSigner: input.disable_tweak_signer || input.disable_tweaked_public_key
         })) : void 0;
         return this.unisat.signPsbts(patchedHexs, {
           autoFinalized: options?.auto_finalized ?? true,
@@ -51805,6 +51827,7 @@ async function getWalletOptions() {
 
 // src/client/client.ts
 init_provider();
+var DEFAULT_ORDINALS_STRATEGY2 = "burn";
 var AlkanesClient = class _AlkanesClient {
   constructor(provider, signer) {
     this.provider = provider;
@@ -52371,7 +52394,7 @@ var AlkanesClient = class _AlkanesClient {
     if (params.rebar_tier !== void 0) execParams.rebar_tier = params.rebar_tier;
     if (params.resume_from_commit) execParams.resume_from_commit = params.resume_from_commit;
     if (params.auto_confirm !== void 0) execParams.auto_confirm = params.auto_confirm;
-    if (params.ordinals_strategy !== void 0) execParams.ordinals_strategy = params.ordinals_strategy;
+    execParams.ordinals_strategy = params.ordinals_strategy ?? DEFAULT_ORDINALS_STRATEGY2;
     if (params.mempool_indexer !== void 0) execParams.mempool_indexer = params.mempool_indexer;
     if (this.requiresExternalSigning()) {
       execParams.return_unsigned = true;
@@ -52416,7 +52439,7 @@ var AlkanesClient = class _AlkanesClient {
     if (params.rebar_tier !== void 0) execParams.rebar_tier = params.rebar_tier;
     if (params.resume_from_commit) execParams.resume_from_commit = params.resume_from_commit;
     if (params.auto_confirm !== void 0) execParams.auto_confirm = params.auto_confirm;
-    if (params.ordinals_strategy !== void 0) execParams.ordinals_strategy = params.ordinals_strategy;
+    execParams.ordinals_strategy = params.ordinals_strategy ?? DEFAULT_ORDINALS_STRATEGY2;
     if (params.mempool_indexer !== void 0) execParams.mempool_indexer = params.mempool_indexer;
     if (this.requiresExternalSigning()) {
       execParams.return_unsigned = true;
@@ -52450,7 +52473,7 @@ var AlkanesClient = class _AlkanesClient {
     if (params.rebar_tier !== void 0) execParams.rebar_tier = params.rebar_tier;
     if (params.resume_from_commit) execParams.resume_from_commit = params.resume_from_commit;
     if (params.auto_confirm !== void 0) execParams.auto_confirm = params.auto_confirm;
-    if (params.ordinals_strategy !== void 0) execParams.ordinals_strategy = params.ordinals_strategy;
+    execParams.ordinals_strategy = params.ordinals_strategy ?? DEFAULT_ORDINALS_STRATEGY2;
     if (params.mempool_indexer !== void 0) execParams.mempool_indexer = params.mempool_indexer;
     if (this.requiresExternalSigning()) {
       execParams.return_unsigned = true;
@@ -52486,7 +52509,7 @@ var AlkanesClient = class _AlkanesClient {
     if (params.rebar_tier !== void 0) execParams.rebar_tier = params.rebar_tier;
     if (params.resume_from_commit) execParams.resume_from_commit = params.resume_from_commit;
     if (params.auto_confirm !== void 0) execParams.auto_confirm = params.auto_confirm;
-    if (params.ordinals_strategy !== void 0) execParams.ordinals_strategy = params.ordinals_strategy;
+    execParams.ordinals_strategy = params.ordinals_strategy ?? DEFAULT_ORDINALS_STRATEGY2;
     if (params.mempool_indexer !== void 0) execParams.mempool_indexer = params.mempool_indexer;
     if (this.requiresExternalSigning()) {
       execParams.return_unsigned = true;
@@ -52553,7 +52576,7 @@ var AlkanesClient = class _AlkanesClient {
       trace: false,
       auto_confirm: params.auto_confirm ?? true
     };
-    if (params.ordinals_strategy !== void 0) swapParams.ordinals_strategy = params.ordinals_strategy;
+    swapParams.ordinals_strategy = params.ordinals_strategy ?? DEFAULT_ORDINALS_STRATEGY2;
     if (params.mempool_indexer !== void 0) swapParams.mempool_indexer = params.mempool_indexer;
     return rawProvider.alkanesSwap(JSON.stringify(swapParams));
   }
@@ -52579,7 +52602,7 @@ var AlkanesClient = class _AlkanesClient {
       trace: false,
       auto_confirm: params.auto_confirm ?? true
     };
-    if (params.ordinals_strategy !== void 0) poolParams.ordinals_strategy = params.ordinals_strategy;
+    poolParams.ordinals_strategy = params.ordinals_strategy ?? DEFAULT_ORDINALS_STRATEGY2;
     if (params.mempool_indexer !== void 0) poolParams.mempool_indexer = params.mempool_indexer;
     return rawProvider.alkanesInitPool(JSON.stringify(poolParams));
   }
@@ -52653,6 +52676,7 @@ var AlkanesClient = class _AlkanesClient {
     if (params.mine_enabled !== void 0) options.mine_enabled = params.mine_enabled;
     if (params.auto_confirm !== void 0) options.auto_confirm = params.auto_confirm;
     if (params.raw_output !== void 0) options.raw_output = params.raw_output;
+    options.ordinals_strategy = params.ordinals_strategy ?? DEFAULT_ORDINALS_STRATEGY2;
     const resultJson = await rawProvider.alkanesExecuteWithStrings(
       JSON.stringify(params.to_addresses),
       params.input_requirements,

@@ -101,7 +101,8 @@ impl<'a> WrapBtcExecutor<'a> {
             split_transactions: false,
             known_pending_tx_hexes: Vec::new(),
             prefetched_utxos: Vec::new(),
-        max_indexed_height: None,
+            max_indexed_height: None,
+            utxo_source: Default::default(),
         };
 
         // Execute using the enhanced alkanes executor

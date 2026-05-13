@@ -122,7 +122,8 @@ pub async fn init_pool(
         split_transactions: false,
         known_pending_tx_hexes: Vec::new(),
         prefetched_utxos: Vec::new(),
-    max_indexed_height: None,
+        max_indexed_height: None,
+        utxo_source: Default::default(),
     };
     
     // Execute
@@ -225,7 +226,8 @@ pub async fn execute_swap(
         split_transactions: false,
         known_pending_tx_hexes: Vec::new(),
         prefetched_utxos: Vec::new(),
-    max_indexed_height: None,
+        max_indexed_height: None,
+        utxo_source: Default::default(),
     };
     
     // Execute

@@ -1238,6 +1238,10 @@ impl EspoProvider for MockProvider {
         Ok(serde_json::json!({"ok": true, "outpoints": []}))
     }
 
+    async fn get_address_spendable_outpoints(&self, _address: &str) -> Result<JsonValue> {
+        Ok(serde_json::json!({"ok": true, "outpoints": []}))
+    }
+
     async fn get_outpoint_balances(&self, _outpoint: &str) -> Result<JsonValue> {
         Ok(serde_json::json!({"ok": true, "items": []}))
     }
