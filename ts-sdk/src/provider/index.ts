@@ -72,6 +72,7 @@ import {
 
 // WASM provider type - loaded dynamically at runtime
 type WasmWebProvider = any;
+const DEFAULT_ORDINALS_STRATEGY = 'burn';
 
 // Network configuration presets
 export const NETWORK_PRESETS: Record<string, { rpcUrl: string; dataApiUrl: string; networkType: NetworkType }> = {
@@ -531,6 +532,8 @@ export interface RpcExecuteParams {
   fee_rate?: number;
   /** Input UTXOs to use (optional) */
   inputs?: any[];
+  /** Strategy for handling UTXOs that contain ordinal inscriptions */
+  ordinals_strategy?: import('../types').OrdinalsStrategy;
 }
 
 // Execute result
@@ -889,7 +892,9 @@ export class AlkanesRpcClient {
    */
   async execute(params: RpcExecuteParams | string): Promise<ExecuteResult> {
     // Accept both object and JSON string for backward compatibility
-    const paramsJson = typeof params === 'string' ? params : JSON.stringify(params);
+    const executeParams = typeof params === 'string' ? JSON.parse(params) : { ...params };
+    executeParams.ordinals_strategy = executeParams.ordinals_strategy ?? DEFAULT_ORDINALS_STRATEGY;
+    const paramsJson = JSON.stringify(executeParams);
     const result = await this.provider.alkanesExecute(paramsJson);
     return mapToObject(result);
   }
@@ -2954,6 +2959,7 @@ export class AlkanesProvider {
     calldata: number[];
     feeRate?: number;
     inputs?: any[];
+    ordinalsStrategy?: import('../types').OrdinalsStrategy;
   }): Promise<ExecuteResult> {
     const provider = await this.getProvider();
     const paramsJson = JSON.stringify({
@@ -2961,6 +2967,7 @@ export class AlkanesProvider {
       calldata: params.calldata,
       fee_rate: params.feeRate,
       inputs: params.inputs,
+      ordinals_strategy: params.ordinalsStrategy ?? DEFAULT_ORDINALS_STRATEGY,
     });
     return provider.alkanesExecute(paramsJson);
   }
@@ -3186,7 +3193,7 @@ export class AlkanesProvider {
     if (params.mineEnabled !== undefined) options.mine_enabled = params.mineEnabled;
     if (params.autoConfirm !== undefined) options.auto_confirm = params.autoConfirm;
     if (params.rawOutput !== undefined) options.raw_output = params.rawOutput;
-    if (params.ordinalsStrategy !== undefined) options.ordinals_strategy = params.ordinalsStrategy;
+    options.ordinals_strategy = params.ordinalsStrategy ?? DEFAULT_ORDINALS_STRATEGY;
     if (params.mempoolIndexer !== undefined) options.mempool_indexer = params.mempoolIndexer;
     if (params.utxoSource !== undefined) options.utxo_source = params.utxoSource;
     if (params.splitTransactions !== undefined) options.split_transactions = params.splitTransactions;

@@ -483,11 +483,12 @@ function getLogLevelFromEnv() {
 function createProvider(config) {
   return new AlkanesProvider(config);
 }
-var bitcoin, NETWORK_PRESETS, BitcoinRpcClient, EsploraClient, AlkanesRpcClient, MetashrewClient, OrdClient, Brc20ProgClient, LuaClient, DataApiClient, OylApiClient, EspoClient, Logger, logger, AlkanesProvider;
+var bitcoin, DEFAULT_ORDINALS_STRATEGY, NETWORK_PRESETS, BitcoinRpcClient, EsploraClient, AlkanesRpcClient, MetashrewClient, OrdClient, Brc20ProgClient, LuaClient, DataApiClient, OylApiClient, EspoClient, Logger, logger, AlkanesProvider;
 var init_provider = __esm({
   "src/provider/index.ts"() {
     "use strict";
     bitcoin = __toESM(require("bitcoinjs-lib"));
+    DEFAULT_ORDINALS_STRATEGY = "burn";
     NETWORK_PRESETS = {
       "mainnet": {
         rpcUrl: "https://mainnet.subfrost.io/v4/subfrost",
@@ -790,7 +791,9 @@ var init_provider = __esm({
        * ```
        */
       async execute(params) {
-        const paramsJson = typeof params === "string" ? params : JSON.stringify(params);
+        const executeParams = typeof params === "string" ? JSON.parse(params) : { ...params };
+        executeParams.ordinals_strategy = executeParams.ordinals_strategy ?? DEFAULT_ORDINALS_STRATEGY;
+        const paramsJson = JSON.stringify(executeParams);
         const result = await this.provider.alkanesExecute(paramsJson);
         return mapToObject(result);
       }
@@ -2383,7 +2386,8 @@ var init_provider = __esm({
           target: params.contractId,
           calldata: params.calldata,
           fee_rate: params.feeRate,
-          inputs: params.inputs
+          inputs: params.inputs,
+          ordinals_strategy: params.ordinalsStrategy ?? DEFAULT_ORDINALS_STRATEGY
         });
         return provider.alkanesExecute(paramsJson);
       }
@@ -2545,7 +2549,7 @@ var init_provider = __esm({
         if (params.mineEnabled !== void 0) options.mine_enabled = params.mineEnabled;
         if (params.autoConfirm !== void 0) options.auto_confirm = params.autoConfirm;
         if (params.rawOutput !== void 0) options.raw_output = params.rawOutput;
-        if (params.ordinalsStrategy !== void 0) options.ordinals_strategy = params.ordinalsStrategy;
+        options.ordinals_strategy = params.ordinalsStrategy ?? DEFAULT_ORDINALS_STRATEGY;
         if (params.mempoolIndexer !== void 0) options.mempool_indexer = params.mempoolIndexer;
         if (params.utxoSource !== void 0) options.utxo_source = params.utxoSource;
         if (params.splitTransactions !== void 0) options.split_transactions = params.splitTransactions;

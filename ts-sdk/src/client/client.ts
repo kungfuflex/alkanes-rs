@@ -35,6 +35,8 @@ import { NetworkType, AlkaneId, AlkaneBalance, UTXO, Keystore, Brc20ProgExecuteR
 import { AddressType } from '../wallet';
 import * as bitcoin from 'bitcoinjs-lib';
 
+const DEFAULT_ORDINALS_STRATEGY = 'burn';
+
 /**
  * Transaction result after broadcast
  */
@@ -794,7 +796,7 @@ export class AlkanesClient {
     if (params.rebar_tier !== undefined) execParams.rebar_tier = params.rebar_tier;
     if (params.resume_from_commit) execParams.resume_from_commit = params.resume_from_commit;
     if (params.auto_confirm !== undefined) execParams.auto_confirm = params.auto_confirm;
-    if (params.ordinals_strategy !== undefined) execParams.ordinals_strategy = params.ordinals_strategy;
+    execParams.ordinals_strategy = params.ordinals_strategy ?? DEFAULT_ORDINALS_STRATEGY;
     if (params.mempool_indexer !== undefined) execParams.mempool_indexer = params.mempool_indexer;
 
     // When using browser wallet, request unsigned PSBTs for external signing
@@ -851,7 +853,7 @@ export class AlkanesClient {
     if (params.rebar_tier !== undefined) execParams.rebar_tier = params.rebar_tier;
     if (params.resume_from_commit) execParams.resume_from_commit = params.resume_from_commit;
     if (params.auto_confirm !== undefined) execParams.auto_confirm = params.auto_confirm;
-    if (params.ordinals_strategy !== undefined) execParams.ordinals_strategy = params.ordinals_strategy;
+    execParams.ordinals_strategy = params.ordinals_strategy ?? DEFAULT_ORDINALS_STRATEGY;
     if (params.mempool_indexer !== undefined) execParams.mempool_indexer = params.mempool_indexer;
 
     // When using browser wallet, request unsigned PSBTs for external signing
@@ -896,7 +898,7 @@ export class AlkanesClient {
     if (params.rebar_tier !== undefined) execParams.rebar_tier = params.rebar_tier;
     if (params.resume_from_commit) execParams.resume_from_commit = params.resume_from_commit;
     if (params.auto_confirm !== undefined) execParams.auto_confirm = params.auto_confirm;
-    if (params.ordinals_strategy !== undefined) execParams.ordinals_strategy = params.ordinals_strategy;
+    execParams.ordinals_strategy = params.ordinals_strategy ?? DEFAULT_ORDINALS_STRATEGY;
     if (params.mempool_indexer !== undefined) execParams.mempool_indexer = params.mempool_indexer;
 
     // When using browser wallet, request unsigned PSBTs for external signing
@@ -946,7 +948,7 @@ export class AlkanesClient {
     if (params.rebar_tier !== undefined) execParams.rebar_tier = params.rebar_tier;
     if (params.resume_from_commit) execParams.resume_from_commit = params.resume_from_commit;
     if (params.auto_confirm !== undefined) execParams.auto_confirm = params.auto_confirm;
-    if (params.ordinals_strategy !== undefined) execParams.ordinals_strategy = params.ordinals_strategy;
+    execParams.ordinals_strategy = params.ordinals_strategy ?? DEFAULT_ORDINALS_STRATEGY;
     if (params.mempool_indexer !== undefined) execParams.mempool_indexer = params.mempool_indexer;
 
     // When using browser wallet, request unsigned PSBTs for external signing
@@ -1027,7 +1029,7 @@ export class AlkanesClient {
       trace: false,
       auto_confirm: params.auto_confirm ?? true,
     };
-    if (params.ordinals_strategy !== undefined) swapParams.ordinals_strategy = params.ordinals_strategy;
+    swapParams.ordinals_strategy = params.ordinals_strategy ?? DEFAULT_ORDINALS_STRATEGY;
     if (params.mempool_indexer !== undefined) swapParams.mempool_indexer = params.mempool_indexer;
 
     return rawProvider.alkanesSwap(JSON.stringify(swapParams));
@@ -1058,7 +1060,7 @@ export class AlkanesClient {
       trace: false,
       auto_confirm: params.auto_confirm ?? true,
     };
-    if (params.ordinals_strategy !== undefined) poolParams.ordinals_strategy = params.ordinals_strategy;
+    poolParams.ordinals_strategy = params.ordinals_strategy ?? DEFAULT_ORDINALS_STRATEGY;
     if (params.mempool_indexer !== undefined) poolParams.mempool_indexer = params.mempool_indexer;
 
     return rawProvider.alkanesInitPool(JSON.stringify(poolParams));
@@ -1142,6 +1144,7 @@ export class AlkanesClient {
     if (params.mine_enabled !== undefined) options.mine_enabled = params.mine_enabled;
     if (params.auto_confirm !== undefined) options.auto_confirm = params.auto_confirm;
     if (params.raw_output !== undefined) options.raw_output = params.raw_output;
+    options.ordinals_strategy = params.ordinals_strategy ?? DEFAULT_ORDINALS_STRATEGY;
 
     const resultJson = await rawProvider.alkanesExecuteWithStrings(
       JSON.stringify(params.to_addresses),
