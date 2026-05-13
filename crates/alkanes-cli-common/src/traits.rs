@@ -712,6 +712,11 @@ pub trait EspoProvider {
     /// Returns: {"ok": true, "address": "...", "outpoints": [{"outpoint": "...", "entries": [...]}]}
     async fn get_address_outpoints(&self, address: &str) -> Result<JsonValue>;
 
+    /// Get all currently spendable BTC outpoints for an address, annotated with
+    /// alkanes/runes/scriptPubKey/coinbase metadata.
+    /// JSON-RPC: essentials.get_address_spendable_outpoints
+    async fn get_address_spendable_outpoints(&self, address: &str) -> Result<JsonValue>;
+
     /// Get alkanes balances at a specific outpoint
     /// Params: {"outpoint": "txid:vout"}
     /// Returns: {"ok": true, "outpoint": "...", "items": [{"outpoint": "...", "entries": [...]}]}
@@ -1696,6 +1701,9 @@ impl<T: DeezelProvider + ?Sized> EspoProvider for Box<T> {
     }
     async fn get_address_outpoints(&self, address: &str) -> Result<serde_json::Value> {
         (**self).get_address_outpoints(address).await
+    }
+    async fn get_address_spendable_outpoints(&self, address: &str) -> Result<serde_json::Value> {
+        (**self).get_address_spendable_outpoints(address).await
     }
     async fn get_outpoint_balances(&self, outpoint: &str) -> Result<serde_json::Value> {
         (**self).get_outpoint_balances(outpoint).await

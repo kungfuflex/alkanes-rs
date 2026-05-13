@@ -227,6 +227,9 @@ impl WebProvider {
                     if let Some(metashrew_rpc_url) = obj.get("metashrew_rpc_url").and_then(|v| v.as_str()) {
                         rpc_config.metashrew_rpc_url = Some(metashrew_rpc_url.to_string());
                     }
+                    if let Some(espo_rpc_url) = obj.get("espo_rpc_url").and_then(|v| v.as_str()) {
+                        rpc_config.espo_rpc_url = Some(espo_rpc_url.to_string());
+                    }
                     if let Some(brc20_prog_rpc_url) = obj.get("brc20_prog_rpc_url").and_then(|v| v.as_str()) {
                         rpc_config.brc20_prog_rpc_url = Some(brc20_prog_rpc_url.to_string());
                     }
@@ -1084,7 +1087,7 @@ impl WebProvider {
             };
 
             // Parse options (from_addresses, change_address, etc.)
-            let (trace_enabled, mine_enabled, auto_confirm, raw_output, from_addresses, change_address, alkanes_change_address, ordinals_strategy, mempool_indexer, split_transactions, prefetched_utxos, max_indexed_height) = if let Some(opts_json) = &options_json {
+            let (trace_enabled, mine_enabled, auto_confirm, raw_output, from_addresses, change_address, alkanes_change_address, ordinals_strategy, mempool_indexer, split_transactions, known_pending_tx_hexes, prefetched_utxos, max_indexed_height, utxo_source) = if let Some(opts_json) = &options_json {
                 let opts: serde_json::Value = serde_json::from_str(opts_json)
                     .map_err(|e| JsValue::from_str(&format!("Invalid options JSON: {}", e)))?;
 
@@ -1118,6 +1121,11 @@ impl WebProvider {
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
 
+                let known_pending: Vec<String> = opts.get("known_pending_tx_hexes")
+                    .or_else(|| opts.get("knownPendingTxHexes"))
+                    .and_then(|v| serde_json::from_value(v.clone()).ok())
+                    .unwrap_or_default();
+
                 // Caller-supplied per-outpoint TxOut cache. Mirrors what
                 // `provider.get_utxo()` would otherwise fetch via per-UTXO
                 // `getrawtransaction`. See PrefetchedUtxo doc for trust model.
@@ -1135,6 +1143,11 @@ impl WebProvider {
                     .or_else(|| opts.get("maxIndexedHeight"))
                     .and_then(|v| v.as_u64());
 
+                let utxo_src: alkanes_cli_common::alkanes::types::UtxoDataSource = opts.get("utxo_source")
+                    .or_else(|| opts.get("utxoSource"))
+                    .and_then(|v| serde_json::from_value(v.clone()).ok())
+                    .unwrap_or_default();
+
                 (
                     opts.get("trace_enabled").and_then(|v| v.as_bool()).unwrap_or(false),
                     opts.get("mine_enabled").and_then(|v| v.as_bool()).unwrap_or(false),
@@ -1146,11 +1159,13 @@ impl WebProvider {
                     ord_strategy,
                     mempool_idx,
                     split_tx,
+                    known_pending,
                     prefetched,
                     max_idx,
+                    utxo_src,
                 )
             } else {
-                (false, false, true, false, None, None, None, Default::default(), false, false, Vec::new(), None)
+                (false, false, true, false, None, None, None, Default::default(), false, false, Vec::new(), Vec::new(), None, Default::default())
             };
 
             let params = EnhancedExecuteParams {
@@ -1169,9 +1184,10 @@ impl WebProvider {
                 ordinals_strategy,
                 mempool_indexer,
                 split_transactions,
-                known_pending_tx_hexes: Vec::new(),
+                known_pending_tx_hexes,
                 prefetched_utxos,
                 max_indexed_height,
+                utxo_source,
             };
 
             provider.execute(params).await
@@ -1225,7 +1241,7 @@ impl WebProvider {
             };
 
             // Parse options
-            let (trace_enabled, mine_enabled, auto_confirm, raw_output, from_addresses, change_address, alkanes_change_address, ordinals_strategy, mempool_indexer, split_transactions, prefetched_utxos, max_indexed_height) = if let Some(opts_json) = &options_json {
+            let (trace_enabled, mine_enabled, auto_confirm, raw_output, from_addresses, change_address, alkanes_change_address, ordinals_strategy, mempool_indexer, split_transactions, known_pending_tx_hexes, prefetched_utxos, max_indexed_height, utxo_source) = if let Some(opts_json) = &options_json {
                 let opts: serde_json::Value = serde_json::from_str(opts_json)
                     .map_err(|e| JsValue::from_str(&format!("Invalid options JSON: {}", e)))?;
 
@@ -1254,6 +1270,11 @@ impl WebProvider {
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
 
+                let known_pending: Vec<String> = opts.get("known_pending_tx_hexes")
+                    .or_else(|| opts.get("knownPendingTxHexes"))
+                    .and_then(|v| serde_json::from_value(v.clone()).ok())
+                    .unwrap_or_default();
+
                 // Caller-supplied per-outpoint TxOut cache. See PrefetchedUtxo
                 // doc for trust model. Mirrors alkanesExecuteWithStrings.
                 let prefetched: Vec<alkanes_cli_common::alkanes::types::PrefetchedUtxo> =
@@ -1267,6 +1288,11 @@ impl WebProvider {
                     .or_else(|| opts.get("maxIndexedHeight"))
                     .and_then(|v| v.as_u64());
 
+                let utxo_src: alkanes_cli_common::alkanes::types::UtxoDataSource = opts.get("utxo_source")
+                    .or_else(|| opts.get("utxoSource"))
+                    .and_then(|v| serde_json::from_value(v.clone()).ok())
+                    .unwrap_or_default();
+
                 (
                     opts.get("trace_enabled").and_then(|v| v.as_bool()).unwrap_or(false),
                     opts.get("mine_enabled").and_then(|v| v.as_bool()).unwrap_or(false),
@@ -1278,11 +1304,13 @@ impl WebProvider {
                     ord_strategy,
                     mempool_idx,
                     split_tx,
+                    known_pending,
                     prefetched,
                     max_idx,
+                    utxo_src,
                 )
             } else {
-                (false, false, true, false, None, None, None, Default::default(), false, false, Vec::new(), None)
+                (false, false, true, false, None, None, None, Default::default(), false, false, Vec::new(), Vec::new(), None, Default::default())
             };
 
             let params = EnhancedExecuteParams {
@@ -1301,9 +1329,10 @@ impl WebProvider {
                 ordinals_strategy,
                 mempool_indexer,
                 split_transactions,
-                known_pending_tx_hexes: Vec::new(),
+                known_pending_tx_hexes,
                 prefetched_utxos,
                 max_indexed_height,
+                utxo_source,
             };
 
             // Use execute_full to handle the complete flow internally
@@ -9720,6 +9749,7 @@ impl DeezelProvider for WebProvider {
                 known_pending_tx_hexes: Vec::new(),
                 prefetched_utxos: Vec::new(),
                 max_indexed_height: None,
+                utxo_source: Default::default(),
         };
 
         match executor.execute(params).await? {
@@ -9763,6 +9793,7 @@ impl DeezelProvider for WebProvider {
                 known_pending_tx_hexes: Vec::new(),
                 prefetched_utxos: Vec::new(),
                 max_indexed_height: None,
+                utxo_source: Default::default(),
         };
 
         match executor.execute(params).await? {
@@ -9802,6 +9833,14 @@ impl alkanes_cli_common::traits::EspoProvider for WebProvider {
         let target = self.rpc_config.get_espo_rpc_target();
         self.call(&target.url, "essentials.get_address_outpoints", serde_json::json!({
             "address": address
+        }), 1).await
+    }
+
+    async fn get_address_spendable_outpoints(&self, address: &str) -> Result<serde_json::Value> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        self.call(&target.url, "essentials.get_address_spendable_outpoints", serde_json::json!({
+            "address": address,
+            "omit_raw_tx": true
         }), 1).await
     }
 

@@ -50,6 +50,9 @@ declare module '@alkanes/ts-sdk' {
     networkType?: string;
     url?: string;
     rpcUrl?: string;
+    bitcoinRpcUrl?: string;
+    metashrewRpcUrl?: string;
+    espoRpcUrl?: string;
     dataApiUrl?: string;
     projectId?: string;
     version?: string;

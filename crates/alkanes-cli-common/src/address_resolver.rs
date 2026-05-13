@@ -1012,6 +1012,9 @@ impl EspoProvider for StandaloneAddressResolver {
     async fn get_address_outpoints(&self, _address: &str) -> Result<serde_json::Value> {
         Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Espo API".to_string()))
     }
+    async fn get_address_spendable_outpoints(&self, _address: &str) -> Result<serde_json::Value> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Espo API".to_string()))
+    }
     async fn get_outpoint_balances(&self, _outpoint: &str) -> Result<serde_json::Value> {
         Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Espo API".to_string()))
     }

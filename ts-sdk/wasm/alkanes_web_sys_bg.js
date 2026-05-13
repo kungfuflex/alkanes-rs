@@ -3596,6 +3596,81 @@ export class WebProvider {
         return ret;
     }
     /**
+     * Evict the given txids from the pending-tx store. Wallet UIs
+     * call this on every block-tip change with the set of txids
+     * the indexer has now seen confirmed.
+     * @param {string[]} txids
+     * @returns {Promise<any>}
+     */
+    pendingTxStoreEvict(txids) {
+        const ptr0 = passArrayJsValueToWasm0(txids, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_pendingTxStoreEvict(this.__wbg_ptr, ptr0, len0);
+        return ret;
+    }
+    /**
+     * List all pending (broadcast-but-unconfirmed) transactions in
+     * the SDK's session-scoped store. Each entry is the raw signed
+     * hex (same format as `sendrawtransaction` accepts).
+     *
+     * JS-side wallet UIs use this to overlay optimistic mempool
+     * state on top of the confirmed UTXO set — e.g. the SendModal
+     * pre-flight check that allows back-to-back sends without
+     * waiting for the indexer.
+     *
+     * The store is auto-populated by `broadcast_transaction` /
+     * `send_raw_transactions` on success — see those impls for
+     * architectural rationale. Callers should evict txids that
+     * have confirmed via `pendingTxStoreEvict`.
+     * @returns {Promise<any>}
+     */
+    pendingTxStoreList() {
+        const ret = wasm.webprovider_pendingTxStoreList(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * Predict the user's balance delta from a candidate tx hex.
+     *
+     * Phase 3-lite — handles edict-driven flows (alkane-send) deterministically.
+     * Cellpack-bearing protostones (swaps, addLiquidity) flag
+     * `contract_outputs_uncertain` and only return the input-side
+     * loss; the gain side requires alkane-VM execution which is
+     * deferred to Phase 3-full.
+     *
+     * Args (all JS-friendly):
+     *   tx_hex: raw signed tx hex
+     *   prevout_lookups: array of {txid, vout, address, value_sats,
+     *     alkane_balances:[{block, tx, amount}]}. Caller pulls these
+     *     from confirmed UTXOs + protorunesbyoutpoint.
+     *   output_addresses: array of network-decoded addresses per
+     *     output index (null for OP_RETURN). Caller pre-decodes
+     *     since this depends on the wallet's network.
+     *   our_addresses: addresses the user owns.
+     *
+     * Returns a JS object: {btc:{delta_sats}, alkanes:[{alkane_id,
+     * delta}], contract_outputs_uncertain}.
+     * @param {string} tx_hex
+     * @param {string} prevout_lookups_json
+     * @param {string} output_addresses_json
+     * @param {string} our_addresses_json
+     * @returns {any}
+     */
+    predictBalanceDelta(tx_hex, prevout_lookups_json, output_addresses_json, our_addresses_json) {
+        const ptr0 = passStringToWasm0(tx_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(prevout_lookups_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(output_addresses_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ptr3 = passStringToWasm0(our_addresses_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len3 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_predictBalanceDelta(this.__wbg_ptr, ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
+    /**
      * @param {string} txid
      * @returns {Promise<any>}
      */
@@ -3614,6 +3689,98 @@ export class WebProvider {
         const len0 = WASM_VECTOR_LEN;
         const ret = wasm.webprovider_protorunesDecodeTx(this.__wbg_ptr, ptr0, len0);
         return ret;
+    }
+    /**
+     * Rebuild a parent (split) + child (main) tx bundle with a higher
+     * fee rate. Walks the chain (child inputs that reference parent's
+     * txid), rebuilds parent first (reducing its change), recomputes
+     * parent's new txid, rewrites the child's parent-derived input
+     * outpoints to point to the new parent, then rebuilds the child
+     * with the new fee rate.
+     *
+     * Caller broadcasts NEW parent first, then NEW child. Returns
+     * both unsigned tx hexes for re-signing.
+     *
+     * Args:
+     *   parent_tx_hex / child_tx_hex: original signed hexes
+     *   new_fee_rate_sat_vb: target rate applied to BOTH txs
+     *   parent_prevout_values_json: prevout values for parent's inputs
+     *   extra_child_prevout_values_json: prevout values for child's
+     *     non-chain inputs (the parent-chain inputs are auto-discovered
+     *     from the rebuilt parent's outputs)
+     *   our_addresses_json / network: same as the single-tx variant
+     *
+     * Returns: {parent_tx_hex, child_tx_hex,
+     *   original_total_fee_sats, new_total_fee_sats,
+     *   original_total_vsize, new_total_vsize, new_fee_rate,
+     *   parent_change_output_index, child_change_output_index}
+     * @param {string} parent_tx_hex
+     * @param {string} child_tx_hex
+     * @param {number} new_fee_rate_sat_vb
+     * @param {string} parent_prevout_values_json
+     * @param {string} extra_child_prevout_values_json
+     * @param {string} our_addresses_json
+     * @param {string} network
+     * @returns {any}
+     */
+    rebuildBundleWithFeeRate(parent_tx_hex, child_tx_hex, new_fee_rate_sat_vb, parent_prevout_values_json, extra_child_prevout_values_json, our_addresses_json, network) {
+        const ptr0 = passStringToWasm0(parent_tx_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(child_tx_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(parent_prevout_values_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ptr3 = passStringToWasm0(extra_child_prevout_values_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len3 = WASM_VECTOR_LEN;
+        const ptr4 = passStringToWasm0(our_addresses_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len4 = WASM_VECTOR_LEN;
+        const ptr5 = passStringToWasm0(network, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len5 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_rebuildBundleWithFeeRate(this.__wbg_ptr, ptr0, len0, ptr1, len1, new_fee_rate_sat_vb, ptr2, len2, ptr3, len3, ptr4, len4, ptr5, len5);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
+    /**
+     * Rebuild a still-pending tx with a higher fee rate by reducing
+     * the change-to-self output. Returns the new UNSIGNED tx hex
+     * plus accounting fields for the UI ("bumping from X to Y
+     * sat/vB, paying Z extra sats"). The caller re-signs and
+     * re-broadcasts.
+     *
+     * Args:
+     *   tx_hex: original signed tx hex (still in mempool)
+     *   new_fee_rate_sat_vb: target fee rate
+     *   prevout_values_json: JSON [{txid, vout, value_sats}] for each input
+     *   our_addresses_json: JSON ["bc1p..."] — change-output search set
+     *   network: "mainnet" | "testnet" | "signet" | "regtest"
+     *
+     * Returns: {tx_hex, original_fee_sats, new_fee_sats,
+     *   original_fee_rate, new_fee_rate, vsize,
+     *   change_output_index, new_change_value} on success.
+     * Throws a JS string error on any RBF rejection.
+     * @param {string} tx_hex
+     * @param {number} new_fee_rate_sat_vb
+     * @param {string} prevout_values_json
+     * @param {string} our_addresses_json
+     * @param {string} network
+     * @returns {any}
+     */
+    rebuildTxWithFeeRate(tx_hex, new_fee_rate_sat_vb, prevout_values_json, our_addresses_json, network) {
+        const ptr0 = passStringToWasm0(tx_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(prevout_values_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(our_addresses_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ptr3 = passStringToWasm0(network, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len3 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_rebuildTxWithFeeRate(this.__wbg_ptr, ptr0, len0, new_fee_rate_sat_vb, ptr1, len1, ptr2, len2, ptr3, len3);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
      * @param {string} txid
@@ -3859,6 +4026,21 @@ export class WebProvider {
         const ptr0 = passStringToWasm0(params_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
         const ret = wasm.webprovider_walletSend(this.__wbg_ptr, ptr0, len0);
+        return ret;
+    }
+    /**
+     * Sign a PSBT (base64-encoded) using the loaded keystore mnemonic
+     * and return the signed/finalized tx hex. Pairs with the JS-side
+     * PSBT construction in `useSpeedUpMutation` (RBF rebuild → PSBT
+     * → sign → broadcast). The keystore must be unlocked (via
+     * `walletLoadMnemonic`) before calling.
+     * @param {string} psbt_base64
+     * @returns {Promise<any>}
+     */
+    walletSignPsbtBase64(psbt_base64) {
+        const ptr0 = passStringToWasm0(psbt_base64, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.webprovider_walletSignPsbtBase64(this.__wbg_ptr, ptr0, len0);
         return ret;
     }
 }
@@ -4811,7 +4993,7 @@ export function __wbg_new_d098e265629cd10f(arg0, arg1) {
             const a = state0.a;
             state0.a = 0;
             try {
-                return wasm_bindgen__convert__closures_____invoke__h8504f2f9dcdf50c7(a, state0.b, arg0, arg1);
+                return wasm_bindgen__convert__closures_____invoke__h360f51eb13485529(a, state0.b, arg0, arg1);
             } finally {
                 state0.a = a;
             }
@@ -4833,7 +5015,7 @@ export function __wbg_new_typed_aaaeaf29cf802876(arg0, arg1) {
             const a = state0.a;
             state0.a = 0;
             try {
-                return wasm_bindgen__convert__closures_____invoke__h8504f2f9dcdf50c7(a, state0.b, arg0, arg1);
+                return wasm_bindgen__convert__closures_____invoke__h360f51eb13485529(a, state0.b, arg0, arg1);
             } finally {
                 state0.a = a;
             }
@@ -5063,18 +5245,18 @@ export function __wbg_wasmbrowserwalletprovider_new(arg0) {
     return ret;
 }
 export function __wbindgen_cast_0000000000000001(arg0, arg1) {
-    // Cast intrinsic for `Closure(Closure { dtor_idx: 3201, function: Function { arguments: [], shim_idx: 3202, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-    const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h2734ba064662ab68, wasm_bindgen__convert__closures_____invoke__h455513963c9e1b53);
+    // Cast intrinsic for `Closure(Closure { dtor_idx: 3291, function: Function { arguments: [], shim_idx: 3292, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+    const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h99c320ef7d764d78, wasm_bindgen__convert__closures_____invoke__h48d13b840665ccfc);
     return ret;
 }
 export function __wbindgen_cast_0000000000000002(arg0, arg1) {
-    // Cast intrinsic for `Closure(Closure { dtor_idx: 3886, function: Function { arguments: [], shim_idx: 3887, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-    const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h1d0669ed74bc8e06, wasm_bindgen__convert__closures_____invoke__h59e39e4e43f2f72d);
+    // Cast intrinsic for `Closure(Closure { dtor_idx: 3976, function: Function { arguments: [], shim_idx: 3977, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+    const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h427c169db933d8ff, wasm_bindgen__convert__closures_____invoke__h3c24f6875dff36bb);
     return ret;
 }
 export function __wbindgen_cast_0000000000000003(arg0, arg1) {
-    // Cast intrinsic for `Closure(Closure { dtor_idx: 4628, function: Function { arguments: [Externref], shim_idx: 4629, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
-    const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h07405935f6e373f9, wasm_bindgen__convert__closures_____invoke__h2270663853d2b7ca);
+    // Cast intrinsic for `Closure(Closure { dtor_idx: 4718, function: Function { arguments: [Externref], shim_idx: 4719, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
+    const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h0b581e8220b29082, wasm_bindgen__convert__closures_____invoke__hab408607edf0d292);
     return ret;
 }
 export function __wbindgen_cast_0000000000000004(arg0) {
@@ -5082,27 +5264,32 @@ export function __wbindgen_cast_0000000000000004(arg0) {
     const ret = arg0;
     return ret;
 }
-export function __wbindgen_cast_0000000000000005(arg0) {
+export function __wbindgen_cast_0000000000000005(arg0, arg1) {
+    // Cast intrinsic for `I128 -> Externref`.
+    const ret = (BigInt.asUintN(64, arg0) | (arg1 << BigInt(64)));
+    return ret;
+}
+export function __wbindgen_cast_0000000000000006(arg0) {
     // Cast intrinsic for `I64 -> Externref`.
     const ret = arg0;
     return ret;
 }
-export function __wbindgen_cast_0000000000000006(arg0, arg1) {
+export function __wbindgen_cast_0000000000000007(arg0, arg1) {
     // Cast intrinsic for `Ref(Slice(U8)) -> NamedExternref("Uint8Array")`.
     const ret = getArrayU8FromWasm0(arg0, arg1);
     return ret;
 }
-export function __wbindgen_cast_0000000000000007(arg0, arg1) {
+export function __wbindgen_cast_0000000000000008(arg0, arg1) {
     // Cast intrinsic for `Ref(String) -> Externref`.
     const ret = getStringFromWasm0(arg0, arg1);
     return ret;
 }
-export function __wbindgen_cast_0000000000000008(arg0, arg1) {
+export function __wbindgen_cast_0000000000000009(arg0, arg1) {
     // Cast intrinsic for `U128 -> Externref`.
     const ret = (BigInt.asUintN(64, arg0) | (BigInt.asUintN(64, arg1) << BigInt(64)));
     return ret;
 }
-export function __wbindgen_cast_0000000000000009(arg0) {
+export function __wbindgen_cast_000000000000000a(arg0) {
     // Cast intrinsic for `U64 -> Externref`.
     const ret = BigInt.asUintN(64, arg0);
     return ret;
@@ -5116,23 +5303,23 @@ export function __wbindgen_init_externref_table() {
     table.set(offset + 2, true);
     table.set(offset + 3, false);
 }
-function wasm_bindgen__convert__closures_____invoke__h455513963c9e1b53(arg0, arg1) {
-    wasm.wasm_bindgen__convert__closures_____invoke__h455513963c9e1b53(arg0, arg1);
+function wasm_bindgen__convert__closures_____invoke__h48d13b840665ccfc(arg0, arg1) {
+    wasm.wasm_bindgen__convert__closures_____invoke__h48d13b840665ccfc(arg0, arg1);
 }
 
-function wasm_bindgen__convert__closures_____invoke__h59e39e4e43f2f72d(arg0, arg1) {
-    wasm.wasm_bindgen__convert__closures_____invoke__h59e39e4e43f2f72d(arg0, arg1);
+function wasm_bindgen__convert__closures_____invoke__h3c24f6875dff36bb(arg0, arg1) {
+    wasm.wasm_bindgen__convert__closures_____invoke__h3c24f6875dff36bb(arg0, arg1);
 }
 
-function wasm_bindgen__convert__closures_____invoke__h2270663853d2b7ca(arg0, arg1, arg2) {
-    const ret = wasm.wasm_bindgen__convert__closures_____invoke__h2270663853d2b7ca(arg0, arg1, arg2);
+function wasm_bindgen__convert__closures_____invoke__hab408607edf0d292(arg0, arg1, arg2) {
+    const ret = wasm.wasm_bindgen__convert__closures_____invoke__hab408607edf0d292(arg0, arg1, arg2);
     if (ret[1]) {
         throw takeFromExternrefTable0(ret[0]);
     }
 }
 
-function wasm_bindgen__convert__closures_____invoke__h8504f2f9dcdf50c7(arg0, arg1, arg2, arg3) {
-    wasm.wasm_bindgen__convert__closures_____invoke__h8504f2f9dcdf50c7(arg0, arg1, arg2, arg3);
+function wasm_bindgen__convert__closures_____invoke__h360f51eb13485529(arg0, arg1, arg2, arg3) {
+    wasm.wasm_bindgen__convert__closures_____invoke__h360f51eb13485529(arg0, arg1, arg2, arg3);
 }
 
 

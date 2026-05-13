@@ -5659,6 +5659,20 @@ impl EspoProvider for ConcreteProvider {
         }), 1).await
     }
 
+    async fn get_address_spendable_outpoints(&self, address: &str) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!(
+            "[EspoProvider] Calling essentials.get_address_spendable_outpoints for {} at {}",
+            address,
+            target.url
+        );
+
+        self.call(&target.url, "essentials.get_address_spendable_outpoints", json!({
+            "address": address,
+            "omit_raw_tx": true
+        }), 1).await
+    }
+
     async fn get_outpoint_balances(&self, outpoint: &str) -> Result<JsonValue> {
         let target = self.rpc_config.get_espo_rpc_target();
         log::info!("[EspoProvider] Calling essentials.get_outpoint_balances for {} at {}", outpoint, target.url);

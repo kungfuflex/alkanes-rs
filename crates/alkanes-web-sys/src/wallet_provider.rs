@@ -1758,6 +1758,10 @@ impl EspoProvider for BrowserWalletProvider {
         self.web_provider.get_address_outpoints(address).await
     }
 
+    async fn get_address_spendable_outpoints(&self, address: &str) -> Result<serde_json::Value> {
+        self.web_provider.get_address_spendable_outpoints(address).await
+    }
+
     async fn get_outpoint_balances(&self, outpoint: &str) -> Result<serde_json::Value> {
         self.web_provider.get_outpoint_balances(outpoint).await
     }
@@ -2008,6 +2012,7 @@ impl DeezelProvider for BrowserWalletProvider {
                 known_pending_tx_hexes: Vec::new(),
                 prefetched_utxos: Vec::new(),
         max_indexed_height: None,
+        utxo_source: Default::default(),
         };
 
         match executor.execute(params).await? {
@@ -2053,6 +2058,7 @@ impl DeezelProvider for BrowserWalletProvider {
                 known_pending_tx_hexes: Vec::new(),
                 prefetched_utxos: Vec::new(),
         max_indexed_height: None,
+        utxo_source: Default::default(),
         };
 
         match executor.execute(params).await? {

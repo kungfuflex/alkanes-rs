@@ -47895,6 +47895,7 @@ var init_provider = __esm({
         this.rpcUrl = config.rpcUrl || preset.rpcUrl;
         this.bitcoinRpcUrl = config.bitcoinRpcUrl;
         this.metashrewRpcUrl = config.metashrewRpcUrl;
+        this.espoRpcUrl = config.espoRpcUrl;
         this.dataApiUrl = config.dataApiUrl || config.rpcUrl || preset.dataApiUrl;
         this.logLevel = config.logLevel || getLogLevelFromEnv() || "off";
         logger.setLevel(this.logLevel);
@@ -47952,7 +47953,8 @@ var init_provider = __esm({
         const configOverride = {
           jsonrpc_url: this.rpcUrl,
           ...this.bitcoinRpcUrl && { bitcoin_rpc_url: this.bitcoinRpcUrl },
-          ...this.metashrewRpcUrl && { metashrew_rpc_url: this.metashrewRpcUrl }
+          ...this.metashrewRpcUrl && { metashrew_rpc_url: this.metashrewRpcUrl },
+          ...this.espoRpcUrl && { espo_rpc_url: this.espoRpcUrl }
         };
         this._provider = new WebProviderClass(
           providerName,
@@ -48436,6 +48438,8 @@ var init_provider = __esm({
         if (params.rawOutput !== void 0) options.raw_output = params.rawOutput;
         if (params.ordinalsStrategy !== void 0) options.ordinals_strategy = params.ordinalsStrategy;
         if (params.mempoolIndexer !== void 0) options.mempool_indexer = params.mempoolIndexer;
+        if (params.utxoSource !== void 0) options.utxo_source = params.utxoSource;
+        if (params.splitTransactions !== void 0) options.split_transactions = params.splitTransactions;
         const optionsJson = Object.keys(options).length > 0 ? JSON.stringify(options) : null;
         const result = await provider.alkanesExecuteFull(
           JSON.stringify(toAddresses),
@@ -48922,6 +48926,7 @@ var init_adapter = __esm({
           let patched = 0;
           for (const input of psbt.data.inputs) {
             if (!input.witnessUtxo) continue;
+            if (input.tapLeafScript?.length) continue;
             const script2 = Buffer.from(input.witnessUtxo.script);
             if (script2.length === 34 && script2[0] === 81 && script2[1] === 32) {
               input.witnessUtxo = { ...input.witnessUtxo, script: taprootScript };
@@ -49014,6 +49019,9 @@ var init_adapter = __esm({
           if (xOnlyBuf.length !== 32) return psbtHex;
           let patched = 0;
           for (let i = 0; i < psbt.data.inputs.length; i++) {
+            if (psbt.data.inputs[i].tapLeafScript?.length) {
+              continue;
+            }
             if (psbt.data.inputs[i].tapInternalKey) {
               psbt.data.inputs[i].tapInternalKey = xOnlyBuf;
               patched++;
@@ -49077,13 +49085,20 @@ var init_adapter = __esm({
         patchedHex = this.injectRedeemScripts(patchedHex);
         const psbt = bitcoin5.Psbt.fromHex(patchedHex);
         const unisatAddress = this.wallet.address;
+        const unisatPublicKey = this.wallet.publicKey;
         const toSignInputs = options?.to_sign_inputs ? options.to_sign_inputs.map((input) => ({
           index: input.index,
           address: input.address || unisatAddress,
-          sighashTypes: input.sighash_types
+          publicKey: unisatPublicKey,
+          sighashTypes: input.sighash_types,
+          disableTweakSigner: input.disable_tweak_signer || input.disable_tweaked_public_key || Boolean(psbt.data.inputs[input.index]?.tapLeafScript?.length),
+          useTweakedSigner: psbt.data.inputs[input.index]?.tapLeafScript?.length ? false : void 0
         })) : psbt.data.inputs.map((_, index) => ({
           index,
-          address: unisatAddress
+          address: unisatAddress,
+          publicKey: unisatPublicKey,
+          disableTweakSigner: Boolean(psbt.data.inputs[index]?.tapLeafScript?.length),
+          useTweakedSigner: psbt.data.inputs[index]?.tapLeafScript?.length ? false : void 0
         }));
         const timeoutPromise = new Promise(
           (_, reject) => setTimeout(() => reject(new Error("UniSat signing timed out after 60s")), 6e4)
@@ -49121,10 +49136,13 @@ var init_adapter = __esm({
           return patched;
         });
         const unisatAddress = this.wallet.address;
+        const unisatPublicKey = this.wallet.publicKey;
         const toSignInputs = options?.to_sign_inputs ? options.to_sign_inputs.map((input) => ({
           index: input.index,
           address: input.address || unisatAddress,
-          sighashTypes: input.sighash_types
+          publicKey: unisatPublicKey,
+          sighashTypes: input.sighash_types,
+          disableTweakSigner: input.disable_tweak_signer || input.disable_tweaked_public_key
         })) : void 0;
         return this.unisat.signPsbts(patchedHexs, {
           autoFinalized: options?.auto_finalized ?? true,

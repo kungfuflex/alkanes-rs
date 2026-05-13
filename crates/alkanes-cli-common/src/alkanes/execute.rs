@@ -33,6 +33,7 @@ pub use super::types::{
     AlkaneId, AlkanesBalance, EnhancedExecuteParams, EnhancedExecuteResult, ExecutionState,
     InputRequirement, OutputTarget, PrefetchedAlkane, PrefetchedUtxo, ProtostoneEdict,
     ProtostoneSpec, ReadyToSignCommitTx, ReadyToSignRevealTx, ReadyToSignTx,
+    UtxoDataSource,
 };
 use super::envelope::AlkanesEnvelope;
 use anyhow::anyhow;
@@ -317,6 +318,9 @@ pub fn apply_mempool_adjustment(
 pub(crate) struct UtxoSelectionResult {
     /// Selected outpoints
     pub(crate) outpoints: Vec<OutPoint>,
+    /// TxOuts fetched during selection. Espo-backed selection fills this so
+    /// PSBT construction can avoid getrawtransaction fallback fetches.
+    pub(crate) txouts: alloc::collections::BTreeMap<OutPoint, TxOut>,
     /// Actual alkanes balances found in the selected UTXOs (aggregate)
     pub(crate) alkanes_found: alloc::collections::BTreeMap<AlkaneId, u64>,
     /// Per-UTXO alkane balances (for alkane-aware ordinals splitting)
@@ -353,6 +357,21 @@ fn build_prefetched_txouts_map(
         });
     }
     Ok(Some(map))
+}
+
+fn build_effective_txouts_map(
+    params: &EnhancedExecuteParams,
+    selected_txouts: &alloc::collections::BTreeMap<OutPoint, TxOut>,
+) -> Result<Option<alloc::collections::BTreeMap<OutPoint, TxOut>>> {
+    let mut map = build_prefetched_txouts_map(params)?.unwrap_or_default();
+    for (outpoint, txout) in selected_txouts {
+        map.entry(*outpoint).or_insert_with(|| txout.clone());
+    }
+    if map.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(map))
+    }
 }
 
 /// Build a per-outpoint alkane-balance lookup from a `prefetched_utxos`
@@ -402,6 +421,52 @@ fn build_prefetched_alkanes_map(
         return Ok(None);
     }
     Ok(Some(map))
+}
+
+fn json_u64(value: &serde_json::Value) -> Option<u64> {
+    value.as_u64().or_else(|| value.as_str().and_then(|s| s.parse::<u64>().ok()))
+}
+
+fn json_u128(value: &serde_json::Value) -> Option<u128> {
+    value.as_u64().map(|v| v as u128).or_else(|| {
+        value
+            .as_str()
+            .and_then(|s| s.parse::<u128>().ok())
+    })
+}
+
+fn parse_alkane_id_value(value: &serde_json::Value) -> Option<ProtoruneRuneId> {
+    if let Some(s) = value.as_str() {
+        let (block, tx) = s.split_once(':')?;
+        return Some(ProtoruneRuneId {
+            block: block.parse::<u128>().ok()?,
+            tx: tx.parse::<u128>().ok()?,
+        });
+    }
+
+    let block = value.get("block").and_then(json_u128)?;
+    let tx = value.get("tx").and_then(json_u128)?;
+    Some(ProtoruneRuneId { block, tx })
+}
+
+fn parse_espo_alkanes(outpoint_value: &serde_json::Value) -> Vec<(ProtoruneRuneId, u128)> {
+    outpoint_value
+        .get("alkanes")
+        .and_then(|v| v.as_array())
+        .map(|alkanes| {
+            alkanes
+                .iter()
+                .filter_map(|entry| {
+                    let rune_id = entry
+                        .get("alkane")
+                        .and_then(parse_alkane_id_value)
+                        .or_else(|| parse_alkane_id_value(entry))?;
+                    let amount = entry.get("amount").and_then(json_u128)?;
+                    Some((rune_id, amount))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Enhanced alkanes executor
@@ -506,6 +571,23 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         log::info!("Starting enhanced alkanes execution");
 
         self.validate_envelope_cellpack_usage(&params)?;
+
+        // Browser-wallet flow calls execute() through alkanesExecuteWithStrings
+        // so it can return unsigned PSBTs for external wallet signing. The
+        // split-tx gate originally lived only in execute_full(), which meant
+        // split_transactions=true was ignored for UniSat/OKX/Xverse paths and
+        // BTC->token still built as one atomic wrap+swap tx. Return Tx B as
+        // the main PSBT and attach Tx A as split_psbt so JS can sign both and
+        // broadcast them as one CPFP package.
+        if params.split_transactions
+            && !params.protostones.is_empty()
+            && is_wrap_protostone(&params.protostones[0])
+            && params.protostones.len() >= 2
+            && params.envelope_data.is_none()
+        {
+            log::info!("🔀 Using split_transactions PSBT mode: wrap → CPFP execute chain");
+            return self.build_split_transaction_psbts(params).await;
+        }
 
         if let Some(envelope_data) = &params.envelope_data {
             log::info!("CONTRACT DEPLOYMENT: Using envelope with BIN data for contract deployment");
@@ -705,6 +787,81 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             wrap_fee: Some(wrap_fee),
             reveal_tx_hex: tx_b_result.reveal_tx_hex,
         })
+    }
+
+    /// Build unsigned PSBTs for split wrap+execute mode.
+    ///
+    /// This mirrors execute_split(), but stops before signing/broadcasting so
+    /// browser wallets can sign both transactions in JS. The returned
+    /// ReadyToSignTx uses:
+    ///   - split_psbt: Tx A parent, wrap-only
+    ///   - psbt: Tx B child, execute-only
+    async fn build_split_transaction_psbts(
+        &mut self,
+        params: EnhancedExecuteParams,
+    ) -> Result<ExecutionState> {
+        if params.protostones.len() < 2 {
+            return Err(AlkanesError::Other(
+                "build_split_transaction_psbts requires at least 2 protostones (wrap + execute)".to_string(),
+            ));
+        }
+        if !is_wrap_protostone(&params.protostones[0]) {
+            return Err(AlkanesError::Other(
+                "build_split_transaction_psbts: protostones[0] must be a wrap (target=(32,N) opcode=77)"
+                    .to_string(),
+            ));
+        }
+
+        let mut tx_a_params = params.clone();
+        tx_a_params.split_transactions = false;
+
+        let mut wrap_proto = params.protostones[0].clone();
+        wrap_proto.pointer = Some(OutputTarget::Output(1));
+        wrap_proto.refund = Some(OutputTarget::Output(1));
+        tx_a_params.protostones = vec![wrap_proto];
+        tx_a_params.input_requirements.retain(|req| {
+            !matches!(req, InputRequirement::Alkanes { .. })
+        });
+
+        log::info!("[split-tx:psbt] Step 1/2: building unsigned wrap-only Tx A");
+        let tx_a_state = match self.build_single_transaction(&tx_a_params).await? {
+            ExecutionState::ReadyToSign(state) => state,
+            other => return Err(AlkanesError::Other(format!(
+                "Unexpected Tx A state after split build: {:?}",
+                other,
+            ))),
+        };
+
+        let tx_a_hex = bitcoin::consensus::encode::serialize_hex(&tx_a_state.psbt.unsigned_tx);
+        let wrap_txid = tx_a_state.psbt.unsigned_tx.compute_txid().to_string();
+
+        let mut tx_b_params = params.clone();
+        tx_b_params.split_transactions = false;
+        tx_b_params.protostones = params.protostones[1..].to_vec();
+        tx_b_params.known_pending_tx_hexes.push(tx_a_hex);
+        tx_b_params.input_requirements.retain(|req| {
+            !matches!(
+                req,
+                InputRequirement::Bitcoin { .. } | InputRequirement::BitcoinOutput { .. }
+            )
+        });
+        if tx_b_params.to_addresses.len() >= 2 {
+            tx_b_params.to_addresses.remove(0);
+        }
+
+        log::info!("[split-tx:psbt] Step 2/2: building unsigned execute Tx B (spends {})", wrap_txid);
+        let mut tx_b_state = match self.build_single_transaction(&tx_b_params).await? {
+            ExecutionState::ReadyToSign(state) => state,
+            other => return Err(AlkanesError::Other(format!(
+                "Unexpected Tx B state after split build: {:?}",
+                other,
+            ))),
+        };
+
+        tx_b_state.split_psbt = Some(tx_a_state.psbt);
+        tx_b_state.split_fee = Some(tx_a_state.fee);
+
+        Ok(ExecutionState::ReadyToSign(tx_b_state))
     }
 
     pub async fn resume_execution(
@@ -989,7 +1146,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         required_reveal_amount += params.to_addresses.len() as u64 * 546;
 
         let utxo_selection = self
-            .select_utxos(&[InputRequirement::Bitcoin { amount: required_reveal_amount }], &params.from_addresses, &params.known_pending_tx_hexes, params.max_indexed_height, &params.prefetched_utxos)
+            .select_utxos(&[InputRequirement::Bitcoin { amount: required_reveal_amount }], &params.from_addresses, &params.known_pending_tx_hexes, params.max_indexed_height, &params.prefetched_utxos, params.utxo_source)
             .await?;
         let funding_utxos = utxo_selection.outpoints.clone();
 
@@ -997,7 +1154,9 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         let final_funding_utxos = if params.ordinals_strategy != OrdinalsStrategy::Burn {
             let mut funding_utxos_with_txout: Vec<(OutPoint, TxOut)> = Vec::new();
             for outpoint in &funding_utxos {
-                if let Some(txout) = self.provider.get_utxo(outpoint).await? {
+                if let Some(txout) = utxo_selection.txouts.get(outpoint).cloned() {
+                    funding_utxos_with_txout.push((*outpoint, txout));
+                } else if let Some(txout) = self.provider.get_utxo(outpoint).await? {
                     funding_utxos_with_txout.push((*outpoint, txout));
                 }
             }
@@ -1152,13 +1311,15 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                    total_bitcoin_needed, fee_with_buffer, bitcoin_requirement);
         
         final_requirements.push(InputRequirement::Bitcoin { amount: bitcoin_requirement });
-        let mut utxo_selection = self.select_utxos(&final_requirements, &params.from_addresses, &params.known_pending_tx_hexes, params.max_indexed_height, &params.prefetched_utxos).await?;
+        let mut utxo_selection = self.select_utxos(&final_requirements, &params.from_addresses, &params.known_pending_tx_hexes, params.max_indexed_height, &params.prefetched_utxos, params.utxo_source).await?;
 
         // Check selected UTXOs for ordinal inscriptions based on strategy
         // We need to get TxOut data for each selected UTXO to check for inscriptions
         let mut funding_utxos_with_txout: Vec<(OutPoint, TxOut)> = Vec::new();
         for outpoint in &utxo_selection.outpoints {
-            if let Some(txout) = self.provider.get_utxo(outpoint).await? {
+            if let Some(txout) = utxo_selection.txouts.get(outpoint).cloned() {
+                funding_utxos_with_txout.push((*outpoint, txout));
+            } else if let Some(txout) = self.provider.get_utxo(outpoint).await? {
                 funding_utxos_with_txout.push((*outpoint, txout));
             }
         }
@@ -1411,11 +1572,11 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         // When alkane inputs are specified, route them to the first protomessage (not output 0)
         let has_alkane_inputs = params.input_requirements.iter().any(|r| matches!(r, InputRequirement::Alkanes { .. }));
         let runestone_script = self.construct_runestone_script_with_alkane_routing(&final_protostones, outputs.len(), has_alkane_inputs)?;
-        let prefetched_for_build = build_prefetched_txouts_map(params)?;
+        let prefetched_for_build = build_effective_txouts_map(params, &utxo_selection.txouts)?;
         let (psbt, fee, estimated_vsize) = self.build_psbt_and_fee(final_funding_outpoints.clone(), outputs, Some(runestone_script), params.fee_rate, None, None, prefetched_for_build.as_ref()).await?;
 
         // Validate the transaction before returning
-        self.validate_transaction(&psbt, &final_funding_outpoints, fee, params).await?;
+        self.validate_transaction(&psbt, &final_funding_outpoints, fee, params, prefetched_for_build.as_ref()).await?;
 
         let unsigned_tx = &psbt.unsigned_tx;
         let analysis = crate::transaction::analysis::analyze_transaction(unsigned_tx);
@@ -1439,17 +1600,21 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         selected_utxos: &[OutPoint],
         fee: u64,
         params: &EnhancedExecuteParams,
+        effective_prefetched: Option<&alloc::collections::BTreeMap<OutPoint, TxOut>>,
     ) -> Result<()> {
         let tx = &psbt.unsigned_tx;
 
-        // Build a one-shot prefetched-TxOut map from caller-supplied data.
-        // Outpoints in the map skip the per-UTXO get_utxo() RPC.
-        let prefetched = build_prefetched_txouts_map(params)?;
+        let built_prefetched = if effective_prefetched.is_none() {
+            build_prefetched_txouts_map(params)?
+        } else {
+            None
+        };
+        let prefetched = effective_prefetched.or(built_prefetched.as_ref());
 
         // 1. Calculate total input value
         let mut total_input_value = 0u64;
         for outpoint in selected_utxos {
-            let utxo = match prefetched.as_ref().and_then(|m| m.get(outpoint)) {
+            let utxo = match prefetched.and_then(|m| m.get(outpoint)) {
                 Some(txout) => txout.clone(),
                 None => self.provider.get_utxo(outpoint).await?
                     .ok_or_else(|| AlkanesError::Wallet(format!("UTXO not found during validation: {outpoint}")))?,
@@ -1575,10 +1740,11 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
     /// without going through `execute_full`. The test in
     /// `pending_tx_store::tests` uses MockProvider's `alkane_balances`
     /// + utxo set to assert the skip-non-needed-alkane-carrier path.
-    pub(crate) async fn select_utxos(&mut self, requirements: &[InputRequirement], from_addresses: &Option<Vec<String>>, known_pending_tx_hexes: &[String], max_indexed_height: Option<u64>, prefetched_utxos: &[PrefetchedUtxo]) -> Result<UtxoSelectionResult> {
+    pub(crate) async fn select_utxos(&mut self, requirements: &[InputRequirement], from_addresses: &Option<Vec<String>>, known_pending_tx_hexes: &[String], max_indexed_height: Option<u64>, prefetched_utxos: &[PrefetchedUtxo], utxo_source: UtxoDataSource) -> Result<UtxoSelectionResult> {
         use crate::traits::AddressResolver;
 
         log::info!("Selecting UTXOs for {} requirements", requirements.len());
+        log::info!("UTXO data source: {:?}", utxo_source);
         if let Some(addrs) = from_addresses {
             log::info!("Sourcing UTXOs from: {addrs:?}");
         }
@@ -1598,7 +1764,138 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             None
         };
 
-        let utxos = self.provider.get_utxos(true, resolved_from_addresses).await?;
+        let mut selected_txout_candidates: alloc::collections::BTreeMap<OutPoint, TxOut> =
+            alloc::collections::BTreeMap::new();
+        let mut espo_alkanes_by_outpoint: alloc::collections::BTreeMap<OutPoint, Vec<(ProtoruneRuneId, u128)>> =
+            alloc::collections::BTreeMap::new();
+
+        let use_espo_source = matches!(utxo_source, UtxoDataSource::Espo);
+        let mut using_espo_source = false;
+        let utxos = if use_espo_source {
+            if let Some(addresses) = &resolved_from_addresses {
+                let mut fetched_utxos: Vec<(OutPoint, UtxoInfo)> = Vec::new();
+                let mut espo_failed = false;
+
+                for address in addresses {
+                    match self.provider.get_address_spendable_outpoints(address).await {
+                        Ok(response) => {
+                            if response.get("ok").and_then(|v| v.as_bool()) == Some(false) {
+                                log::warn!(
+                                    "Espo spendable outpoints returned ok=false for {}; falling back to metashrew path",
+                                    address
+                                );
+                                espo_failed = true;
+                                break;
+                            }
+
+                            let outpoints = response
+                                .get("outpoints")
+                                .and_then(|v| v.as_array())
+                                .cloned()
+                                .unwrap_or_default();
+
+                            log::info!(
+                                "Espo spendable outpoints returned {} UTXOs for {}",
+                                outpoints.len(),
+                                address
+                            );
+
+                            for entry in outpoints {
+                                let Some(outpoint_str) = entry.get("outpoint").and_then(|v| v.as_str()) else {
+                                    continue;
+                                };
+                                let Ok(outpoint) = OutPoint::from_str(outpoint_str) else {
+                                    log::debug!("Skipping malformed Espo outpoint: {}", outpoint_str);
+                                    continue;
+                                };
+                                let Some(value) = entry.get("value").and_then(json_u64) else {
+                                    log::debug!("Skipping Espo outpoint without value: {}", outpoint_str);
+                                    continue;
+                                };
+                                let Some(script_hex) = entry.get("script_pubkey_hex").and_then(|v| v.as_str()) else {
+                                    log::debug!("Skipping Espo outpoint without script_pubkey_hex: {}", outpoint_str);
+                                    continue;
+                                };
+                                let script_bytes = match hex::decode(script_hex) {
+                                    Ok(bytes) => bytes,
+                                    Err(e) => {
+                                        log::debug!("Skipping Espo outpoint with invalid script_pubkey_hex {}: {}", outpoint_str, e);
+                                        continue;
+                                    }
+                                };
+                                let script_pubkey = ScriptBuf::from_bytes(script_bytes);
+                                let alkanes = parse_espo_alkanes(&entry);
+                                let has_alkanes = alkanes.iter().any(|(_, amount)| *amount > 0);
+                                let has_runes = entry
+                                    .get("runes")
+                                    .and_then(|v| v.as_array())
+                                    .map(|runes| !runes.is_empty())
+                                    .unwrap_or(false);
+
+                                selected_txout_candidates.insert(
+                                    outpoint,
+                                    TxOut {
+                                        value: bitcoin::Amount::from_sat(value),
+                                        script_pubkey: script_pubkey.clone(),
+                                    },
+                                );
+                                espo_alkanes_by_outpoint.insert(outpoint, alkanes);
+                                fetched_utxos.push((
+                                    outpoint,
+                                    UtxoInfo {
+                                        txid: outpoint.txid.to_string(),
+                                        vout: outpoint.vout,
+                                        amount: value,
+                                        address: address.clone(),
+                                        script_pubkey: Some(script_pubkey),
+                                        confirmations: entry
+                                            .get("confirmations")
+                                            .and_then(json_u64)
+                                            .unwrap_or(0)
+                                            .min(u32::MAX as u64) as u32,
+                                        frozen: false,
+                                        freeze_reason: None,
+                                        block_height: entry.get("block_height").and_then(json_u64),
+                                        has_inscriptions: false,
+                                        has_runes,
+                                        has_alkanes,
+                                        is_coinbase: entry
+                                            .get("coinbase")
+                                            .and_then(|v| v.as_bool())
+                                            .unwrap_or(false),
+                                    },
+                                ));
+                            }
+                        }
+                        Err(e) => {
+                            log::warn!(
+                                "Espo spendable outpoints failed for {}; falling back to metashrew path: {}",
+                                address,
+                                e
+                            );
+                            espo_failed = true;
+                            break;
+                        }
+                    }
+                }
+
+                if espo_failed {
+                    selected_txout_candidates.clear();
+                    espo_alkanes_by_outpoint.clear();
+                    self.provider.get_utxos(true, Some(addresses.clone())).await?
+                } else {
+                    using_espo_source = true;
+                    fetched_utxos
+                }
+            } else {
+                log::warn!(
+                    "Espo UTXO source requires explicit from_addresses; falling back to metashrew path"
+                );
+                self.provider.get_utxos(true, None).await?
+            }
+        } else {
+            self.provider.get_utxos(true, resolved_from_addresses).await?
+        };
         log::debug!("Found {} total wallet UTXOs from specified sources", utxos.len());
 
         // Filter UTXOs through the centralised eligibility check
@@ -1639,7 +1936,14 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         // — both cases keep the existing slow path verbatim. Built once and
         // shared between the alkane-aware primary-discovery branch (line
         // ~1716) and the BTC-only exclusion branch (line ~2119).
-        let prefetched_alkanes = build_prefetched_alkanes_map(prefetched_utxos)?;
+        let mut prefetched_alkanes_merged =
+            build_prefetched_alkanes_map(prefetched_utxos)?.unwrap_or_default();
+        prefetched_alkanes_merged.extend(espo_alkanes_by_outpoint);
+        let prefetched_alkanes = if prefetched_alkanes_merged.is_empty() {
+            None
+        } else {
+            Some(prefetched_alkanes_merged)
+        };
 
         // Mempool-aware UTXO adjustment for the user's own pending txs.
         //
@@ -1761,8 +2065,12 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         log::info!("Need {} sats Bitcoin and {} different alkanes tokens", bitcoin_needed, alkanes_needed.len());
 
         if !alkanes_needed.is_empty() {
-            log::info!("Alkane inputs required -- syncing indexer before balance query");
-            self.provider.sync().await?;
+            if using_espo_source {
+                log::info!("Alkane inputs required -- using Espo spendable outpoint balances");
+            } else {
+                log::info!("Alkane inputs required -- syncing indexer before balance query");
+                self.provider.sync().await?;
+            }
         }
 
         let mut bitcoin_collected = 0u64;
@@ -1800,6 +2108,32 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
 
             // Create a map of (txid:vout) -> balance data for quick lookup
             let mut utxo_balances: alloc::collections::BTreeMap<String, serde_json::Value> = alloc::collections::BTreeMap::new();
+
+            if using_espo_source {
+                if let Some(prefetched) = prefetched_alkanes.as_ref() {
+                    for (outpoint, balances) in prefetched {
+                        let balances_array: Vec<serde_json::Value> = balances
+                            .iter()
+                            .filter(|(_, amount)| *amount > 0)
+                            .map(|(rune_id, amount)| serde_json::json!({
+                                "block": rune_id.block,
+                                "tx": rune_id.tx,
+                                "amount": amount.to_string(),
+                            }))
+                            .collect();
+                        if !balances_array.is_empty() {
+                            utxo_balances.insert(
+                                format!("{}:{}", outpoint.txid, outpoint.vout),
+                                serde_json::json!({ "balances": balances_array }),
+                            );
+                        }
+                    }
+                    log::info!(
+                        "Espo spendable outpoints supplied alkane balances for {} UTXOs",
+                        utxo_balances.len()
+                    );
+                }
+            }
 
             // Primary discovery: enrich each currently-spendable BTC UTXO with
             // its alkane balance via per-outpoint protorunesbyoutpoint. The
@@ -2391,8 +2725,19 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             selected_outpoints = verified;
         }
 
+        let selected_txouts = selected_outpoints
+            .iter()
+            .filter_map(|outpoint| {
+                selected_txout_candidates
+                    .get(outpoint)
+                    .cloned()
+                    .map(|txout| (*outpoint, txout))
+            })
+            .collect();
+
         Ok(UtxoSelectionResult {
             outpoints: selected_outpoints,
+            txouts: selected_txouts,
             alkanes_found,
             per_utxo_alkanes,
         })
@@ -3348,6 +3693,8 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         commit_internal_key_path: &bitcoin::bip32::DerivationPath,
     ) -> Result<(bitcoin::psbt::Psbt, u64, usize)> {
         let mut selected_utxos = vec![commit_outpoint];
+        let mut selected_txouts: alloc::collections::BTreeMap<OutPoint, TxOut> =
+            alloc::collections::BTreeMap::new();
         let mut total_bitcoin_needed = params.to_addresses.len() as u64 * DUST_LIMIT;
         for req in &params.input_requirements {
             if let InputRequirement::Bitcoin { amount } = req {
@@ -3359,7 +3706,8 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         if commit_output_value < total_bitcoin_needed {
             let additional_needed = total_bitcoin_needed - commit_output_value;
             let additional_reqs = vec![InputRequirement::Bitcoin { amount: additional_needed }];
-            let utxo_selection = self.select_utxos(&additional_reqs, &params.from_addresses, &params.known_pending_tx_hexes, params.max_indexed_height, &params.prefetched_utxos).await?;
+            let utxo_selection = self.select_utxos(&additional_reqs, &params.from_addresses, &params.known_pending_tx_hexes, params.max_indexed_height, &params.prefetched_utxos, params.utxo_source).await?;
+            selected_txouts.extend(utxo_selection.txouts);
             selected_utxos.extend(utxo_selection.outpoints);
         }
 
@@ -3377,7 +3725,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             script_pubkey: commit_address.script_pubkey(),
         };
         
-        let prefetched_for_reveal = build_prefetched_txouts_map(params)?;
+        let prefetched_for_reveal = build_effective_txouts_map(params, &selected_txouts)?;
         let (mut psbt, fee, estimated_vsize) = self.build_psbt_and_fee(selected_utxos, outputs, Some(runestone_script), params.fee_rate, Some(envelope), Some(commit_txout), prefetched_for_reveal.as_ref()).await?;
 
         let reveal_script = envelope.build_reveal_script();
@@ -3680,7 +4028,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
 
         // Select UTXOs for commit
         let utxo_selection = self
-            .select_utxos(&[InputRequirement::Bitcoin { amount: required_reveal_amount }], &params.from_addresses, &params.known_pending_tx_hexes, params.max_indexed_height, &params.prefetched_utxos)
+            .select_utxos(&[InputRequirement::Bitcoin { amount: required_reveal_amount }], &params.from_addresses, &params.known_pending_tx_hexes, params.max_indexed_height, &params.prefetched_utxos, params.utxo_source)
             .await?;
         let funding_utxos = utxo_selection.outpoints.clone();
 
@@ -4545,6 +4893,7 @@ mod tests {
                 &[],
                 None,
                 &[],
+                UtxoDataSource::Metashrew,
             )
             .await
             .unwrap();
@@ -4776,6 +5125,7 @@ mod tests {
                 &[],
                 Some(100),
                 &[],
+                UtxoDataSource::Metashrew,
             )
             .await
             .unwrap();
@@ -4789,6 +5139,7 @@ mod tests {
                 &[],
                 Some(200),
                 &[],
+                UtxoDataSource::Metashrew,
             )
             .await
             .unwrap();
@@ -4802,6 +5153,7 @@ mod tests {
                 &[],
                 None,
                 &[],
+                UtxoDataSource::Metashrew,
             )
             .await
             .unwrap();
@@ -4851,6 +5203,7 @@ mod tests {
                 &[],
                 Some(99),
                 &[],
+                UtxoDataSource::Metashrew,
             )
             .await;
         assert!(
@@ -4874,6 +5227,7 @@ mod tests {
                 &[],
                 None,
                 &[],
+                UtxoDataSource::Metashrew,
             )
             .await
             .unwrap();

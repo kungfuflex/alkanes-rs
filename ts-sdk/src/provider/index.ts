@@ -128,6 +128,8 @@ export interface AlkanesProviderConfig {
   bitcoinRpcUrl?: string;
   /** Custom Metashrew RPC URL (overrides rpcUrl for Metashrew calls) */
   metashrewRpcUrl?: string;
+  /** Custom Espo RPC URL (overrides rpcUrl + /espo for Espo calls) */
+  espoRpcUrl?: string;
   /** Custom Data API URL (overrides preset, defaults to rpcUrl) */
   dataApiUrl?: string;
   /** bitcoinjs-lib network (auto-detected if not provided) */
@@ -2495,6 +2497,7 @@ export class AlkanesProvider {
   public readonly rpcUrl: string;
   public readonly bitcoinRpcUrl?: string;
   public readonly metashrewRpcUrl?: string;
+  public readonly espoRpcUrl?: string;
   public readonly dataApiUrl: string;
   public readonly logLevel: LogLevel;
   private readonly networkPreset: string;
@@ -2507,6 +2510,7 @@ export class AlkanesProvider {
     this.rpcUrl = config.rpcUrl || preset.rpcUrl;
     this.bitcoinRpcUrl = config.bitcoinRpcUrl;
     this.metashrewRpcUrl = config.metashrewRpcUrl;
+    this.espoRpcUrl = config.espoRpcUrl;
     this.dataApiUrl = config.dataApiUrl || config.rpcUrl || preset.dataApiUrl;
 
     // Resolve log level: config > env > off
@@ -2581,6 +2585,7 @@ export class AlkanesProvider {
       jsonrpc_url: this.rpcUrl,
       ...(this.bitcoinRpcUrl && { bitcoin_rpc_url: this.bitcoinRpcUrl }),
       ...(this.metashrewRpcUrl && { metashrew_rpc_url: this.metashrewRpcUrl }),
+      ...(this.espoRpcUrl && { espo_rpc_url: this.espoRpcUrl }),
     };
 
     this._provider = new WebProviderClass(
@@ -3140,6 +3145,7 @@ export class AlkanesProvider {
     rawOutput?: boolean;
     ordinalsStrategy?: string;
     mempoolIndexer?: boolean;
+    utxoSource?: 'metashrew' | 'espo';
     /**
      * When true and `protostones[0]` is a wrap call (target=(32,N) opcode=77),
      * the SDK splits the request across two CPFP-chained txs:
@@ -3182,6 +3188,7 @@ export class AlkanesProvider {
     if (params.rawOutput !== undefined) options.raw_output = params.rawOutput;
     if (params.ordinalsStrategy !== undefined) options.ordinals_strategy = params.ordinalsStrategy;
     if (params.mempoolIndexer !== undefined) options.mempool_indexer = params.mempoolIndexer;
+    if (params.utxoSource !== undefined) options.utxo_source = params.utxoSource;
     if (params.splitTransactions !== undefined) options.split_transactions = params.splitTransactions;
 
     const optionsJson = Object.keys(options).length > 0 ? JSON.stringify(options) : null;

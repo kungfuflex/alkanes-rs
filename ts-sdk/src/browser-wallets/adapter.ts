@@ -112,6 +112,7 @@ export interface PsbtSigningOptionsForWasm {
     index: number;
     address?: string;
     sighash_types?: number[];
+    disable_tweak_signer?: boolean;
     disable_tweaked_public_key?: boolean;
   }>;
 }
@@ -299,6 +300,12 @@ export class BaseWalletAdapter implements JsWalletAdapter {
       let patched = 0;
       for (const input of psbt.data.inputs) {
         if (!input.witnessUtxo) continue;
+        // Script-path taproot recovery spends must keep the real prevout
+        // scriptPubKey. Rewriting it to the connected wallet's P2TR address
+        // changes the BIP341 sighash preimage and produces an invalid Schnorr
+        // signature for the actual on-chain ephemeral output.
+        if (input.tapLeafScript?.length) continue;
+
         const script = Buffer.from(input.witnessUtxo.script);
 
         // P2TR (0x51, 0x20, 32-byte key)
@@ -418,6 +425,12 @@ export class BaseWalletAdapter implements JsWalletAdapter {
 
       let patched = 0;
       for (let i = 0; i < psbt.data.inputs.length; i++) {
+        // Script-path taproot spends commit to their own internal key in the
+        // control block. Patching it to the wallet key invalidates recovery
+        // spends such as Subfrost ephemeral 1-of-2 outputs.
+        if (psbt.data.inputs[i].tapLeafScript?.length) {
+          continue;
+        }
         if (psbt.data.inputs[i].tapInternalKey) {
           psbt.data.inputs[i].tapInternalKey = xOnlyBuf;
           patched++;
@@ -499,15 +512,22 @@ export class UnisatAdapter extends BaseWalletAdapter {
     // Build toSignInputs with address (required by UniSat)
     const psbt = bitcoin.Psbt.fromHex(patchedHex);
     const unisatAddress = this.wallet.address;
+    const unisatPublicKey = this.wallet.publicKey;
     const toSignInputs = options?.to_sign_inputs
       ? options.to_sign_inputs.map((input) => ({
           index: input.index,
           address: input.address || unisatAddress,
+          publicKey: unisatPublicKey,
           sighashTypes: input.sighash_types,
+          disableTweakSigner: input.disable_tweak_signer || input.disable_tweaked_public_key || Boolean(psbt.data.inputs[input.index]?.tapLeafScript?.length),
+          useTweakedSigner: psbt.data.inputs[input.index]?.tapLeafScript?.length ? false : undefined,
         }))
       : psbt.data.inputs.map((_, index) => ({
           index,
           address: unisatAddress,
+          publicKey: unisatPublicKey,
+          disableTweakSigner: Boolean(psbt.data.inputs[index]?.tapLeafScript?.length),
+          useTweakedSigner: psbt.data.inputs[index]?.tapLeafScript?.length ? false : undefined,
         }));
 
     // 60-second timeout
@@ -555,11 +575,14 @@ export class UnisatAdapter extends BaseWalletAdapter {
 
     // Build toSignInputs with address for UniSat
     const unisatAddress = this.wallet.address;
+    const unisatPublicKey = this.wallet.publicKey;
     const toSignInputs = options?.to_sign_inputs
       ? options.to_sign_inputs.map((input) => ({
           index: input.index,
           address: input.address || unisatAddress,
+          publicKey: unisatPublicKey,
           sighashTypes: input.sighash_types,
+          disableTweakSigner: input.disable_tweak_signer || input.disable_tweaked_public_key,
         }))
       : undefined;
 

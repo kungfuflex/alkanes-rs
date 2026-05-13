@@ -396,6 +396,25 @@ pub struct EnhancedExecuteParams {
     /// without a synced indexer notion (devnet/regtest).
     #[serde(default)]
     pub max_indexed_height: Option<u64>,
+    /// Data source used by the PSBT builder for spendable UTXO discovery and
+    /// alkane-carrier annotations. Defaults to the historical metashrew/Lua
+    /// path. `espo` uses `essentials.get_address_spendable_outpoints`.
+    #[serde(default, alias = "utxoSource")]
+    pub utxo_source: UtxoDataSource,
+}
+
+/// UTXO data source for EnhancedExecuteParams.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UtxoDataSource {
+    Metashrew,
+    Espo,
+}
+
+impl Default for UtxoDataSource {
+    fn default() -> Self {
+        Self::Metashrew
+    }
 }
 
 /// Caller-supplied per-outpoint TxOut data for `EnhancedExecuteParams::prefetched_utxos`.
