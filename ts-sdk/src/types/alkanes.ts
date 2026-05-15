@@ -17,10 +17,18 @@ export interface AlkaneId {
  * Strategy for handling UTXOs that contain ordinal inscriptions
  *
  * - 'exclude': Fail if any selected UTXO contains inscriptions
- * - 'preserve': Split inscribed UTXOs to protect inscriptions, broadcast atomically
+ * - 'preserve': Split inscribed UTXOs to protect inscriptions + refund any
+ *   alkane balances on them via a Protostone OP_RETURN. Non-alkane Runestone
+ *   runes are NOT refunded — they're burned when the inscribed UTXO is spent.
+ * - 'split': Like 'preserve', but ALSO refunds non-alkane Runestone runes on
+ *   inscribed UTXOs by appending refund Edicts to the split-tx Runestone.
+ *   Pairs with `skipOutpoints` for skipping the per-UTXO unisat-ord query on
+ *   outpoints the caller has already verified clean. Use this when the
+ *   wallet's UTXO set may carry vanilla runes (BRC-20-style assets) and you
+ *   need to preserve them across swaps.
  * - 'burn': (default for execute-style SDK calls) Allow spending inscribed UTXOs without protection (destroys inscriptions)
  */
-export type OrdinalsStrategy = 'exclude' | 'preserve' | 'burn';
+export type OrdinalsStrategy = 'exclude' | 'preserve' | 'split' | 'burn';
 
 /**
  * Base execution parameters for Alkanes operations
@@ -48,7 +56,8 @@ export interface AlkanesExecuteBaseParams {
    * Strategy for handling UTXOs that contain ordinal inscriptions (optional)
    * Execute-style SDK calls default this to 'burn' when omitted.
    * - 'exclude': Fail if inscribed UTXOs must be spent
-   * - 'preserve': Split inscribed UTXOs to protect inscriptions
+   * - 'preserve': Split inscribed UTXOs to protect inscriptions (alkane refund only)
+   * - 'split': Like 'preserve', plus non-alkane Runestone rune refund
    * - 'burn': Allow spending inscribed UTXOs (destroys inscriptions)
    */
   ordinals_strategy?: OrdinalsStrategy;
@@ -58,6 +67,29 @@ export interface AlkanesExecuteBaseParams {
    * through parent transactions to detect inscriptions on pending outputs
    */
   mempool_indexer?: boolean;
+  /**
+   * Outpoints the caller has already verified as ordinal-clean (no
+   * inscriptions). Each entry is `"txid:vout"`. When the active
+   * `ordinals_strategy` performs inscription detection
+   * (`'exclude'` / `'preserve'` / `'split'`), any selected UTXO in this set
+   * bypasses the per-UTXO unisat-ord round-trip and is treated as clean.
+   *
+   * Primary use case is `'split'`: the frontend pre-fetches ordinal state
+   * for its UTXO set in parallel with the swap UI's quote pipeline, then
+   * passes the confirmed-clean outpoints here so the SDK doesn't repeat
+   * the work on the click-to-confirm path.
+   *
+   * Trust contract: the SDK trusts the caller. A stale or wrong entry
+   * here means an inscribed UTXO may be spent without protection (same
+   * risk surface as `'burn'` for that outpoint). Invalidate on every
+   * block-tip change.
+   *
+   * Also accessible as `skip_outpoints` for snake_case symmetry with
+   * other params.
+   */
+  skipOutpoints?: string[];
+  /** Snake_case alias for `skipOutpoints` (same field at the JSON boundary). */
+  skip_outpoints?: string[];
 }
 
 // ============================================================================

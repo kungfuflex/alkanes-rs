@@ -2841,6 +2841,10 @@ impl alkanes_cli_common::SystemAlkanes for SystemAlkanes {
                     mempool_indexer: false,
                     split_transactions: false,
                     known_pending_tx_hexes: Vec::new(),
+                    prefetched_utxos: Vec::new(),
+                    max_indexed_height: None,
+                    utxo_source: Default::default(),
+                    skip_outpoints: Vec::new(),
                 };
 
                 let mut current_state = provider.execute(execute_params.clone()).await?;

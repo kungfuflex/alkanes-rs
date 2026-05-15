@@ -124,6 +124,7 @@ pub async fn init_pool(
         prefetched_utxos: Vec::new(),
         max_indexed_height: None,
         utxo_source: Default::default(),
+        skip_outpoints: Vec::new(),
     };
     
     // Execute
@@ -228,6 +229,7 @@ pub async fn execute_swap(
         prefetched_utxos: Vec::new(),
         max_indexed_height: None,
         utxo_source: Default::default(),
+        skip_outpoints: Vec::new(),
     };
     
     // Execute

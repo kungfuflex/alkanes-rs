@@ -20,6 +20,7 @@ use crate::traits::{OrdProvider, EsploraProvider, DeezelProvider};
 use bitcoin::{OutPoint, TxOut, Transaction, ScriptBuf, Address, Txid};
 use bitcoin::hashes::Hash;
 use bitcoin::psbt::Psbt;
+use protorune_support::balance_sheet::ProtoruneRuneId;
 
 #[cfg(not(feature = "std"))]
 use alloc::{string::String, vec::Vec, vec, format};
@@ -354,7 +355,7 @@ impl<'a, P: OrdProvider + EsploraProvider> OrdinalsHandler<'a, P> {
     ///
     /// Returns:
     /// - Ok(None) if no inscriptions found or strategy is Burn
-    /// - Ok(Some(plans)) if strategy is Preserve and inscribed UTXOs need splitting
+    /// - Ok(Some(plans)) if strategy is Preserve/Split and inscribed UTXOs need splitting
     /// - Err if strategy is Exclude and inscribed UTXOs were found
     pub async fn check_utxos_for_inscriptions(
         &self,
@@ -363,61 +364,57 @@ impl<'a, P: OrdProvider + EsploraProvider> OrdinalsHandler<'a, P> {
         fee_rate: f32,
         mempool_indexer: bool,
     ) -> Result<Option<Vec<SplitPlan>>> {
-        match strategy {
-            OrdinalsStrategy::Burn => {
-                // Just proceed without checking
-                log::debug!("Ordinals strategy: burn - skipping inscription check");
-                Ok(None)
-            }
-            OrdinalsStrategy::Exclude | OrdinalsStrategy::Preserve => {
-                let mut split_plans: Vec<SplitPlan> = Vec::new();
-                let mut inscribed_utxos: Vec<String> = Vec::new();
+        if !strategy.requires_inscription_check() {
+            log::debug!("Ordinals strategy: burn - skipping inscription check");
+            return Ok(None);
+        }
 
-                // Check each UTXO for inscriptions
-                for (outpoint, txout) in funding_utxos {
-                    let inscriptions = self.get_utxo_inscriptions(outpoint, mempool_indexer).await?;
+        let mut split_plans: Vec<SplitPlan> = Vec::new();
+        let mut inscribed_utxos: Vec<String> = Vec::new();
 
-                    if !inscriptions.is_empty() {
-                        let utxo_value = txout.value.to_sat();
+        // Check each UTXO for inscriptions
+        for (outpoint, txout) in funding_utxos {
+            let inscriptions = self.get_utxo_inscriptions(outpoint, mempool_indexer).await?;
 
-                        match strategy {
-                            OrdinalsStrategy::Exclude => {
-                                // Record this for error message
-                                inscribed_utxos.push(format!("{} ({} inscriptions)", outpoint, inscriptions.len()));
-                            }
-                            OrdinalsStrategy::Preserve => {
-                                // Calculate split plan
-                                if let Some(plan) = self.calculate_split(*outpoint, utxo_value, &inscriptions, fee_rate) {
-                                    split_plans.push(plan);
-                                } else {
-                                    // Cannot split this UTXO - return error
-                                    return Err(AlkanesError::Wallet(format!(
-                                        "UTXO {} contains inscriptions but cannot be safely split. \
-                                        Please use a different UTXO without inscriptions or use --ordinals-strategy burn.",
-                                        outpoint
-                                    )));
-                                }
-                            }
-                            _ => unreachable!(),
-                        }
-                    }
-                }
+            if !inscriptions.is_empty() {
+                let utxo_value = txout.value.to_sat();
 
                 match strategy {
-                    OrdinalsStrategy::Exclude if !inscribed_utxos.is_empty() => {
-                        Err(AlkanesError::Wallet(format!(
-                            "Cannot proceed: the following UTXOs contain inscriptions and ordinals_strategy is 'exclude':\n  {}\n\
-                            Use --ordinals-strategy preserve to protect inscriptions, or --ordinals-strategy burn to allow spending them.",
-                            inscribed_utxos.join("\n  ")
-                        )))
+                    OrdinalsStrategy::Exclude => {
+                        // Record this for error message
+                        inscribed_utxos.push(format!("{} ({} inscriptions)", outpoint, inscriptions.len()));
                     }
-                    OrdinalsStrategy::Preserve if !split_plans.is_empty() => {
-                        log::info!("🔀 Found {} inscribed UTXO(s) requiring split transaction", split_plans.len());
-                        Ok(Some(split_plans))
+                    OrdinalsStrategy::Preserve | OrdinalsStrategy::Split => {
+                        // Calculate split plan
+                        if let Some(plan) = self.calculate_split(*outpoint, utxo_value, &inscriptions, fee_rate) {
+                            split_plans.push(plan);
+                        } else {
+                            // Cannot split this UTXO - return error
+                            return Err(AlkanesError::Wallet(format!(
+                                "UTXO {} contains inscriptions but cannot be safely split. \
+                                Please use a different UTXO without inscriptions or use --ordinals-strategy burn.",
+                                outpoint
+                            )));
+                        }
                     }
-                    _ => Ok(None),
+                    OrdinalsStrategy::Burn => unreachable!("filtered above by requires_inscription_check"),
                 }
             }
+        }
+
+        match strategy {
+            OrdinalsStrategy::Exclude if !inscribed_utxos.is_empty() => {
+                Err(AlkanesError::Wallet(format!(
+                    "Cannot proceed: the following UTXOs contain inscriptions and ordinals_strategy is 'exclude':\n  {}\n\
+                    Use --ordinals-strategy preserve (or split) to protect inscriptions, or --ordinals-strategy burn to allow spending them.",
+                    inscribed_utxos.join("\n  ")
+                )))
+            }
+            OrdinalsStrategy::Preserve | OrdinalsStrategy::Split if !split_plans.is_empty() => {
+                log::info!("🔀 Found {} inscribed UTXO(s) requiring split transaction", split_plans.len());
+                Ok(Some(split_plans))
+            }
+            _ => Ok(None),
         }
     }
 
@@ -494,68 +491,145 @@ impl<'a, P: OrdProvider + EsploraProvider> OrdinalsHandler<'a, P> {
 ///
 /// Returns:
 /// - Ok(None) if no inscriptions found or strategy is Burn
-/// - Ok(Some(plans)) if strategy is Preserve and inscribed UTXOs need splitting
+/// - Ok(Some(plans)) if strategy is Preserve/Split and inscribed UTXOs need splitting
 /// - Err if strategy is Exclude and inscribed UTXOs were found
+///
+/// `skip_outpoints` is a hint set of outpoints the caller has already verified
+/// as ordinal-clean (typically via the wallet's own ord cache). Those outpoints
+/// bypass the per-UTXO `get_output` round-trip and are treated as inscription-free.
 pub async fn check_utxos_for_inscriptions_with_provider(
     provider: &dyn DeezelProvider,
     funding_utxos: &[(OutPoint, TxOut)],
     strategy: OrdinalsStrategy,
     fee_rate: f32,
     mempool_indexer: bool,
+    skip_outpoints: &[OutPoint],
 ) -> Result<Option<Vec<SplitPlan>>> {
-    match strategy {
-        OrdinalsStrategy::Burn => {
-            log::debug!("Ordinals strategy: burn - skipping inscription check");
-            Ok(None)
+    if !strategy.requires_inscription_check() {
+        log::debug!("Ordinals strategy: burn - skipping inscription check");
+        return Ok(None);
+    }
+
+    let skip_set: std::collections::HashSet<OutPoint> =
+        skip_outpoints.iter().copied().collect();
+
+    let mut split_plans: Vec<SplitPlan> = Vec::new();
+    let mut inscribed_utxos: Vec<String> = Vec::new();
+
+    for (outpoint, txout) in funding_utxos {
+        // Skip the ord round-trip for outpoints the caller already verified clean.
+        if skip_set.contains(outpoint) {
+            log::debug!(
+                "Skipping ord check for {} (in skip_outpoints hint set)",
+                outpoint
+            );
+            continue;
         }
-        OrdinalsStrategy::Exclude | OrdinalsStrategy::Preserve => {
-            let mut split_plans: Vec<SplitPlan> = Vec::new();
-            let mut inscribed_utxos: Vec<String> = Vec::new();
 
-            for (outpoint, txout) in funding_utxos {
-                let inscriptions = get_utxo_inscriptions_with_provider(
-                    provider,
-                    outpoint,
-                    mempool_indexer,
-                ).await?;
+        let inscriptions = get_utxo_inscriptions_with_provider(
+            provider,
+            outpoint,
+            mempool_indexer,
+        ).await?;
 
-                if !inscriptions.is_empty() {
-                    let utxo_value = txout.value.to_sat();
-
-                    match strategy {
-                        OrdinalsStrategy::Exclude => {
-                            inscribed_utxos.push(format!("{} ({} inscriptions)", outpoint, inscriptions.len()));
-                        }
-                        OrdinalsStrategy::Preserve => {
-                            if let Some(plan) = calculate_split(*outpoint, utxo_value, &inscriptions, fee_rate) {
-                                split_plans.push(plan);
-                            } else {
-                                return Err(AlkanesError::Wallet(format!(
-                                    "UTXO {} contains inscriptions but cannot be safely split. \
-                                    Please use a different UTXO or use --ordinals-strategy burn.",
-                                    outpoint
-                                )));
-                            }
-                        }
-                        _ => unreachable!(),
-                    }
-                }
-            }
+        if !inscriptions.is_empty() {
+            let utxo_value = txout.value.to_sat();
 
             match strategy {
-                OrdinalsStrategy::Exclude if !inscribed_utxos.is_empty() => {
-                    Err(AlkanesError::Wallet(format!(
-                        "Cannot proceed: the following UTXOs contain inscriptions and ordinals_strategy is 'exclude':\n  {}\n\
-                        Use --ordinals-strategy preserve to protect inscriptions, or --ordinals-strategy burn to allow spending them.",
-                        inscribed_utxos.join("\n  ")
-                    )))
+                OrdinalsStrategy::Exclude => {
+                    inscribed_utxos.push(format!("{} ({} inscriptions)", outpoint, inscriptions.len()));
                 }
-                OrdinalsStrategy::Preserve if !split_plans.is_empty() => {
-                    log::info!("🔀 Found {} inscribed UTXO(s) requiring split transaction", split_plans.len());
-                    Ok(Some(split_plans))
+                OrdinalsStrategy::Preserve | OrdinalsStrategy::Split => {
+                    if let Some(plan) = calculate_split(*outpoint, utxo_value, &inscriptions, fee_rate) {
+                        split_plans.push(plan);
+                    } else {
+                        return Err(AlkanesError::Wallet(format!(
+                            "UTXO {} contains inscriptions but cannot be safely split. \
+                            Please use a different UTXO or use --ordinals-strategy burn.",
+                            outpoint
+                        )));
+                    }
                 }
-                _ => Ok(None),
+                OrdinalsStrategy::Burn => unreachable!("filtered above by requires_inscription_check"),
             }
+        }
+    }
+
+    match strategy {
+        OrdinalsStrategy::Exclude if !inscribed_utxos.is_empty() => {
+            Err(AlkanesError::Wallet(format!(
+                "Cannot proceed: the following UTXOs contain inscriptions and ordinals_strategy is 'exclude':\n  {}\n\
+                Use --ordinals-strategy preserve (or split) to protect inscriptions, or --ordinals-strategy burn to allow spending them.",
+                inscribed_utxos.join("\n  ")
+            )))
+        }
+        OrdinalsStrategy::Preserve | OrdinalsStrategy::Split if !split_plans.is_empty() => {
+            log::info!("🔀 Found {} inscribed UTXO(s) requiring split transaction", split_plans.len());
+            Ok(Some(split_plans))
+        }
+        _ => Ok(None),
+    }
+}
+
+/// Query non-alkane Runestone rune balances on a specific UTXO via the
+/// `protorunes_by_outpoint` view with `protocol_tag = 0` (vanilla protorunes /
+/// runes — anything that isn't an alkane).
+///
+/// Used by `OrdinalsStrategy::Split` to discover rune balances on inscribed
+/// UTXOs so the split-tx can route them back to a clean rune output via
+/// Runestone edicts.
+///
+/// Returns `Vec<(rune_id, amount)>`. Empty vec when:
+/// - the UTXO carries no non-alkane runes,
+/// - the provider can't reach the view function,
+/// - or the response contains only alkane-protocol balances.
+///
+/// Fail-open semantics match `get_utxo_inscriptions_with_provider`: a provider
+/// error logs a warning and returns empty rather than aborting the whole
+/// transaction, since rune detection is a best-effort refund — the alternative
+/// (failing the swap) is worse than silently spending one inscribed UTXO whose
+/// rune balance happened to be unobservable.
+pub async fn get_utxo_runes_with_provider(
+    provider: &dyn DeezelProvider,
+    outpoint: &OutPoint,
+) -> Result<Vec<(ProtoruneRuneId, u128)>> {
+    use crate::traits::AlkanesProvider;
+    let txid_str = outpoint.txid.to_string();
+    match provider.get_protorunes_by_outpoint(&txid_str, outpoint.vout, None, 0).await {
+        Ok(resp) => {
+            use crate::alkanes::balance_sheet::BalanceSheetOperations;
+            let balances = resp.balance_sheet.balances();
+            let mut out: Vec<(ProtoruneRuneId, u128)> = Vec::with_capacity(balances.len());
+            for (rune_id, amount) in balances {
+                if *amount > 0 {
+                    // Convert from the local alkanes::balance_sheet::ProtoruneRuneId
+                    // (carried by ProtoruneOutpointResponse) to the
+                    // protorune_support::balance_sheet::ProtoruneRuneId that
+                    // the executor's split-tx builder consumes. Both have
+                    // identical (block: u128, tx: u128) shape.
+                    let support_id = ProtoruneRuneId {
+                        block: rune_id.block,
+                        tx: rune_id.tx,
+                    };
+                    out.push((support_id, *amount));
+                }
+            }
+            if !out.is_empty() {
+                log::info!(
+                    "Found {} non-alkane rune balance(s) on {}: {:?}",
+                    out.len(),
+                    outpoint,
+                    out.iter().map(|(id, amt)| format!("{}:{}={}", id.block, id.tx, amt)).collect::<Vec<_>>()
+                );
+            }
+            Ok(out)
+        }
+        Err(e) => {
+            log::warn!(
+                "Could not query runes on {} - proceeding without rune refund: {}",
+                outpoint, e
+            );
+            Ok(vec![])
         }
     }
 }
@@ -888,5 +962,367 @@ mod tests {
 
         assert_eq!(safe_amount, 5001);
         assert!(clean_amount > DUST_LIMIT);
+    }
+
+    // ============================================================
+    // OrdinalsStrategy::Split tests
+    //
+    // RUN VIA: rcargo test -p alkanes-cli-common ordinals::tests::test_split_*
+    //
+    // These tests exercise the new `Split` variant added in
+    // crate `feat/ordinals-split`. They use `MockProvider` (and the
+    // new `set_rune_balance` / `set_inscription` helpers) to drive
+    // `check_utxos_for_inscriptions_with_provider` and
+    // `get_utxo_runes_with_provider` deterministically — no real
+    // unisat-ord or metashrew is touched.
+    //
+    // The actual `build_split_psbt` builder is `async fn` on a
+    // private `EnhancedAlkanesExecutor`, so the rune/inscription
+    // refund coverage is split:
+    //   - These tests verify the *detection* paths
+    //     (`check_utxos_for_inscriptions_with_provider` + the
+    //     `OrdinalsStrategy` enum helpers + `skip_outpoints` honor +
+    //     `get_utxo_runes_with_provider` per-outpoint rune fetch).
+    //   - `build_split_psbt`'s rune-refund Edict assembly is gated
+    //     on `params.ordinals_strategy.refunds_runes()` and a
+    //     non-empty rune map. Test coverage for it requires
+    //     full-executor scaffolding that already exists in
+    //     `crates/alkanes-cli-common/tests/integration_alkanes_execute.rs`
+    //     (pre-broken on develop; not in scope for this branch).
+    //     Once that suite is restored, append:
+    //       - test_split_emits_rune_edicts_in_op_return
+    //       - test_split_preserves_protostone_alkane_routing
+    // ============================================================
+
+    use crate::alkanes::types::OrdinalsStrategy;
+    use crate::mock_provider::MockProvider;
+    use bitcoin::OutPoint;
+
+    fn test_outpoint(seed: u8) -> OutPoint {
+        let mut bytes = [0u8; 32];
+        bytes[0] = seed;
+        OutPoint {
+            txid: bitcoin::Txid::from_byte_array(bytes),
+            vout: 0,
+        }
+    }
+
+    fn test_txid_str(seed: u8) -> String {
+        let mut bytes = [0u8; 32];
+        bytes[0] = seed;
+        bitcoin::Txid::from_byte_array(bytes).to_string()
+    }
+
+    fn dust_txout() -> TxOut {
+        TxOut {
+            value: bitcoin::Amount::from_sat(10_000),
+            script_pubkey: bitcoin::ScriptBuf::new(),
+        }
+    }
+
+    /// Synthetic inscription_id of the form `<txid>i0`. The mock's
+    /// `InscriptionId::from_str` will round-trip this.
+    fn test_inscription_id(txid_str: &str) -> String {
+        format!("{}i0", txid_str)
+    }
+
+    #[test]
+    fn test_split_strategy_helpers() {
+        // Cheapest unit test: the enum's helper methods. Other tests
+        // rely on these behaving correctly.
+        assert!(!OrdinalsStrategy::Burn.requires_inscription_check());
+        assert!(OrdinalsStrategy::Exclude.requires_inscription_check());
+        assert!(OrdinalsStrategy::Preserve.requires_inscription_check());
+        assert!(OrdinalsStrategy::Split.requires_inscription_check());
+
+        assert!(!OrdinalsStrategy::Burn.builds_split_tx());
+        assert!(!OrdinalsStrategy::Exclude.builds_split_tx());
+        assert!(OrdinalsStrategy::Preserve.builds_split_tx());
+        assert!(OrdinalsStrategy::Split.builds_split_tx());
+
+        // Only Split refunds non-alkane runes.
+        assert!(!OrdinalsStrategy::Preserve.refunds_runes());
+        assert!(OrdinalsStrategy::Split.refunds_runes());
+        assert!(!OrdinalsStrategy::Burn.refunds_runes());
+        assert!(!OrdinalsStrategy::Exclude.refunds_runes());
+    }
+
+    #[test]
+    fn test_split_strategy_serde_roundtrip() {
+        // The frontend always sends the strategy as a lowercase string.
+        // Confirm `"split"` deserializes correctly and round-trips.
+        let s: OrdinalsStrategy = serde_json::from_str("\"split\"").unwrap();
+        assert_eq!(s, OrdinalsStrategy::Split);
+
+        let back = serde_json::to_string(&OrdinalsStrategy::Split).unwrap();
+        assert_eq!(back, "\"split\"");
+    }
+
+    #[tokio::test]
+    async fn test_split_with_inscription_only() {
+        // UTXO carries one inscription at offset 1000, no alkanes, no
+        // runes. Detection should return a SplitPlan; rune fetch should
+        // return empty (no rune entries registered in the mock).
+        let provider = MockProvider::default();
+        let outpoint = test_outpoint(1);
+        let txid_str = test_txid_str(1);
+        let inscription_id = test_inscription_id(&txid_str);
+        provider.set_inscription(&txid_str, 0, &inscription_id, 1000);
+
+        let utxos = vec![(outpoint, dust_txout())];
+        let plans = check_utxos_for_inscriptions_with_provider(
+            &provider,
+            &utxos,
+            OrdinalsStrategy::Split,
+            10.0,
+            false,
+            &[],
+        )
+        .await
+        .expect("inscription detection must succeed");
+
+        let plans = plans.expect("inscription found => Some(plans)");
+        assert_eq!(plans.len(), 1, "one inscribed UTXO => one plan");
+        assert_eq!(plans[0].outpoint, outpoint);
+        assert_eq!(plans[0].safe_amount, 1001, "safe = offset+1");
+
+        // No runes registered => empty rune fetch.
+        let runes = get_utxo_runes_with_provider(&provider, &outpoint)
+            .await
+            .expect("rune fetch must succeed");
+        assert!(runes.is_empty(), "no runes registered => empty");
+    }
+
+    #[tokio::test]
+    async fn test_split_with_alkane_only() {
+        // UTXO carries an alkane balance + inscription. Split should
+        // behave the same as Preserve here (alkane refund already
+        // covered by the existing build_split_psbt code path).
+        let provider = MockProvider::default();
+        let outpoint = test_outpoint(2);
+        let txid_str = test_txid_str(2);
+        let inscription_id = test_inscription_id(&txid_str);
+        provider.set_inscription(&txid_str, 0, &inscription_id, 500);
+        provider
+            .alkane_balances
+            .lock()
+            .unwrap()
+            .insert(format!("{}:0", txid_str), vec![(2, 0, 5_000_000)]);
+
+        let utxos = vec![(outpoint, dust_txout())];
+        let plans = check_utxos_for_inscriptions_with_provider(
+            &provider,
+            &utxos,
+            OrdinalsStrategy::Split,
+            10.0,
+            false,
+            &[],
+        )
+        .await
+        .unwrap()
+        .expect("inscription found => Some(plans)");
+        assert_eq!(plans.len(), 1);
+
+        // No non-alkane runes (protocol_tag=0 returns empty).
+        let runes = get_utxo_runes_with_provider(&provider, &outpoint)
+            .await
+            .unwrap();
+        assert!(runes.is_empty(), "alkane on tag=1 must not leak into tag=0 rune query");
+    }
+
+    #[tokio::test]
+    async fn test_split_with_rune_only() {
+        // UTXO carries a non-alkane rune + inscription. The detection
+        // produces a SplitPlan, and the rune fetch returns the rune
+        // balance so the builder can emit a refund Edict.
+        let provider = MockProvider::default();
+        let outpoint = test_outpoint(3);
+        let txid_str = test_txid_str(3);
+        let inscription_id = test_inscription_id(&txid_str);
+        provider.set_inscription(&txid_str, 0, &inscription_id, 0);
+        provider.set_rune_balance(&txid_str, 0, 840_000, 5, 1_234_000);
+
+        let utxos = vec![(outpoint, dust_txout())];
+        let plans = check_utxos_for_inscriptions_with_provider(
+            &provider,
+            &utxos,
+            OrdinalsStrategy::Split,
+            10.0,
+            false,
+            &[],
+        )
+        .await
+        .unwrap()
+        .expect("inscription found => Some(plans)");
+        assert_eq!(plans.len(), 1);
+
+        let runes = get_utxo_runes_with_provider(&provider, &outpoint)
+            .await
+            .unwrap();
+        assert_eq!(runes.len(), 1, "one rune registered => one balance");
+        assert_eq!(runes[0].0.block, 840_000);
+        assert_eq!(runes[0].0.tx, 5);
+        assert_eq!(runes[0].1, 1_234_000);
+    }
+
+    #[tokio::test]
+    async fn test_split_with_inscription_and_rune() {
+        // Same as rune_only but with the inscription explicitly at
+        // a non-zero offset. Confirms the SplitPlan respects the offset
+        // and the rune fetch is independent of the inscription lookup.
+        let provider = MockProvider::default();
+        let outpoint = test_outpoint(4);
+        let txid_str = test_txid_str(4);
+        let inscription_id = test_inscription_id(&txid_str);
+        provider.set_inscription(&txid_str, 0, &inscription_id, 2_500);
+        provider.set_rune_balance(&txid_str, 0, 800_000, 1, 999);
+
+        let utxos = vec![(outpoint, dust_txout())];
+        let plans = check_utxos_for_inscriptions_with_provider(
+            &provider,
+            &utxos,
+            OrdinalsStrategy::Split,
+            10.0,
+            false,
+            &[],
+        )
+        .await
+        .unwrap()
+        .expect("inscription found => Some(plans)");
+        assert_eq!(plans[0].safe_amount, 2_501, "safe = max(offset+1, DUST)");
+
+        let runes = get_utxo_runes_with_provider(&provider, &outpoint)
+            .await
+            .unwrap();
+        assert_eq!(runes.len(), 1);
+        assert_eq!(runes[0].1, 999);
+    }
+
+    #[tokio::test]
+    async fn test_split_with_all_three() {
+        // Inscription + alkane + rune all on the same UTXO. The
+        // detection produces a SplitPlan; alkane balance is *not*
+        // returned by the rune fetch (protocol_tag separation);
+        // both balances are visible via their respective channels.
+        let provider = MockProvider::default();
+        let outpoint = test_outpoint(5);
+        let txid_str = test_txid_str(5);
+        let inscription_id = test_inscription_id(&txid_str);
+        provider.set_inscription(&txid_str, 0, &inscription_id, 100);
+        provider
+            .alkane_balances
+            .lock()
+            .unwrap()
+            .insert(format!("{}:0", txid_str), vec![(2, 0, 1_000_000)]);
+        provider.set_rune_balance(&txid_str, 0, 850_000, 2, 7_777);
+
+        let utxos = vec![(outpoint, dust_txout())];
+        let plans = check_utxos_for_inscriptions_with_provider(
+            &provider,
+            &utxos,
+            OrdinalsStrategy::Split,
+            10.0,
+            false,
+            &[],
+        )
+        .await
+        .unwrap()
+        .expect("inscription found => Some(plans)");
+        assert_eq!(plans.len(), 1);
+
+        let runes = get_utxo_runes_with_provider(&provider, &outpoint)
+            .await
+            .unwrap();
+        assert_eq!(runes.len(), 1, "only the rune balance returns from tag=0");
+        assert_eq!(runes[0].1, 7_777);
+    }
+
+    #[tokio::test]
+    async fn test_split_skip_outpoints_hint() {
+        // UTXO has an inscription registered. With its outpoint in
+        // `skip_outpoints`, detection MUST NOT call get_output for it
+        // and MUST return None (treat as clean). Verified by setting
+        // up an inscription that would otherwise produce a plan and
+        // checking that we get None back.
+        let provider = MockProvider::default();
+        let outpoint = test_outpoint(6);
+        let txid_str = test_txid_str(6);
+        let inscription_id = test_inscription_id(&txid_str);
+        provider.set_inscription(&txid_str, 0, &inscription_id, 100);
+
+        let utxos = vec![(outpoint, dust_txout())];
+
+        // Sanity: without the hint, detection finds the inscription.
+        let plans_without = check_utxos_for_inscriptions_with_provider(
+            &provider,
+            &utxos,
+            OrdinalsStrategy::Split,
+            10.0,
+            false,
+            &[],
+        )
+        .await
+        .unwrap();
+        assert!(plans_without.is_some(), "without skip hint => plan emitted");
+
+        // With the hint: outpoint bypassed, no plan emitted.
+        let plans_with = check_utxos_for_inscriptions_with_provider(
+            &provider,
+            &utxos,
+            OrdinalsStrategy::Split,
+            10.0,
+            false,
+            &[outpoint],
+        )
+        .await
+        .unwrap();
+        assert!(plans_with.is_none(), "skip hint => UTXO treated as clean");
+    }
+
+    #[tokio::test]
+    async fn test_split_preserves_protostone_action() {
+        // Confirms the surface invariant: Split degrades to Preserve
+        // when no inscriptions exist (no split tx needed). The main
+        // protostone (the swap/wrap/etc) executes against the original
+        // UTXO. We can't run the executor here, but we can verify
+        // that detection returns None for a clean UTXO, which is the
+        // signal `execute.rs` uses to skip building a split tx.
+        let provider = MockProvider::default();
+        let outpoint = test_outpoint(7);
+        // No inscription, no rune, no alkane registered.
+
+        let utxos = vec![(outpoint, dust_txout())];
+        let plans = check_utxos_for_inscriptions_with_provider(
+            &provider,
+            &utxos,
+            OrdinalsStrategy::Split,
+            10.0,
+            false,
+            &[],
+        )
+        .await
+        .unwrap();
+        assert!(plans.is_none(),
+            "clean UTXO => no split tx => main protostone path unaffected");
+    }
+
+    #[test]
+    fn test_skip_outpoints_deserializes_string_array() {
+        // The WASM JSON boundary always sends `skip_outpoints` as
+        // `Vec<String>` (`"txid:vout"` format). Verify the custom
+        // deserializer in `EnhancedExecuteParams` parses that shape
+        // correctly. We hand-construct via the public helper because
+        // EnhancedExecuteParams is too big to assemble in a test.
+        use crate::alkanes::types::parse_outpoint_str;
+        let s = format!("{}:5", test_txid_str(42));
+        let op = parse_outpoint_str(&s).unwrap();
+        assert_eq!(op.vout, 5);
+
+        // Malformed input rejected (no colon).
+        assert!(parse_outpoint_str("not_an_outpoint").is_err());
+
+        // Bad vout rejected.
+        let s_bad = format!("{}:not_a_number", test_txid_str(42));
+        assert!(parse_outpoint_str(&s_bad).is_err());
     }
 }

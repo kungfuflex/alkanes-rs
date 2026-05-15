@@ -2013,6 +2013,7 @@ impl DeezelProvider for BrowserWalletProvider {
                 prefetched_utxos: Vec::new(),
         max_indexed_height: None,
         utxo_source: Default::default(),
+        skip_outpoints: Vec::new(),
         };
 
         match executor.execute(params).await? {
@@ -2059,6 +2060,7 @@ impl DeezelProvider for BrowserWalletProvider {
                 prefetched_utxos: Vec::new(),
         max_indexed_height: None,
         utxo_source: Default::default(),
+        skip_outpoints: Vec::new(),
         };
 
         match executor.execute(params).await? {

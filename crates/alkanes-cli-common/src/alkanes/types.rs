@@ -86,11 +86,57 @@ pub enum OrdinalsStrategy {
     Exclude,
     /// Preserve inscriptions by splitting UTXOs before spending
     /// Creates a split transaction that sends inscribed sats to a safe output
-    /// Uses sendrawtransactions to atomically broadcast split + main transaction
+    /// Uses sendrawtransactions to atomically broadcast split + main transaction.
+    ///
+    /// Refunds alkane balances on inscribed UTXOs to a clean alkane output via
+    /// a Protostone OP_RETURN. Does NOT refund non-alkane Runestone runes — those
+    /// are burned at the BTC level when the inscribed UTXO is spent. Use
+    /// `Split` instead when callers need rune-level refund as well.
     Preserve,
+    /// Like `Preserve`, but ALSO refunds non-alkane Runestone runes living on
+    /// inscribed UTXOs by emitting refund Edicts in the split-tx OP_RETURN.
+    ///
+    /// Behavior:
+    /// 1. Detects inscriptions via unisat-ord (same as `Preserve`).
+    /// 2. Detects non-alkane rune balances via `protorunes_by_outpoint` with
+    ///    `protocol_tag = 0` (vanilla protorunes / runes).
+    /// 3. Builds a split-tx whose Runestone OP_RETURN contains:
+    ///    - A Protostone (protocol_tag=1) routing alkane refunds to a clean
+    ///      alkane output (same as `Preserve`).
+    ///    - Top-level `Runestone.edicts` routing each non-alkane rune to a
+    ///      dedicated clean rune output.
+    /// 4. Honors `EnhancedExecuteParams::skip_outpoints` — outpoints in the
+    ///    hint set bypass the unisat-ord roundtrip and are treated as
+    ///    confirmed-clean. The frontend uses this to pre-fetch ordinal state
+    ///    via its own pipeline and skip the SDK's per-UTXO ord query.
+    ///
+    /// When `Split` encounters a UTXO with neither inscriptions, alkanes, nor
+    /// runes the UTXO passes through with no split (cheaper than `Preserve`
+    /// for that case because `Preserve` would still build a split tx if any
+    /// other selected UTXO was inscribed, while `Split` makes the same
+    /// decision but enriches the OP_RETURN with rune edicts only when needed).
+    Split,
     /// Allow spending inscribed UTXOs without protection (burns the inscription)
     /// Use with caution - this will destroy any inscriptions on spent UTXOs
     Burn,
+}
+
+impl OrdinalsStrategy {
+    /// True when the strategy requires inscription detection (Exclude, Preserve, Split).
+    pub fn requires_inscription_check(&self) -> bool {
+        !matches!(self, OrdinalsStrategy::Burn)
+    }
+
+    /// True when the strategy will build a split transaction to refund
+    /// inscribed UTXO contents (Preserve, Split).
+    pub fn builds_split_tx(&self) -> bool {
+        matches!(self, OrdinalsStrategy::Preserve | OrdinalsStrategy::Split)
+    }
+
+    /// True when the strategy refunds non-alkane Runestone runes (Split only).
+    pub fn refunds_runes(&self) -> bool {
+        matches!(self, OrdinalsStrategy::Split)
+    }
 }
 
 /// Input requirement specification
@@ -401,6 +447,76 @@ pub struct EnhancedExecuteParams {
     /// path. `espo` uses `essentials.get_address_spendable_outpoints`.
     #[serde(default, alias = "utxoSource")]
     pub utxo_source: UtxoDataSource,
+    /// Outpoints that the caller has already verified as ordinal-clean (no
+    /// inscriptions) via an external pipeline (e.g. wallet's own ord cache).
+    /// When the active `ordinals_strategy` requires inscription detection
+    /// (`Exclude` / `Preserve` / `Split`), any selected UTXO in this set
+    /// bypasses the per-UTXO unisat-ord query and is treated as clean.
+    ///
+    /// Currently honored by the `Split` strategy. `Preserve` and `Exclude`
+    /// also respect the hint (the same code path), but the primary use case
+    /// is `Split` where the frontend already pre-fetches ordinal state in
+    /// parallel with the swap UI's quote pipeline and wants to amortize the
+    /// cost away from the click-to-confirm path.
+    ///
+    /// Trust contract: the SDK trusts the caller. A stale or malformed
+    /// outpoint here means an inscribed UTXO may be spent without protection
+    /// (same risk surface as `OrdinalsStrategy::Burn` for that one outpoint).
+    /// Callers should invalidate this list on every block-tip change.
+    #[serde(default, alias = "skipOutpoints", deserialize_with = "deserialize_skip_outpoints")]
+    pub skip_outpoints: Vec<bitcoin::OutPoint>,
+}
+
+/// Accept `skip_outpoints` as either:
+/// - `Vec<OutPoint>` (Rust-side direct construction), or
+/// - `Vec<String>` with each entry formatted as `"txid:vout"` (JSON from JS).
+///
+/// The string form is what the WASM JSON boundary always emits, since
+/// `bitcoin::OutPoint` doesn't have a stable serde representation across the
+/// FFI boundary.
+fn deserialize_skip_outpoints<'de, D>(deserializer: D) -> Result<Vec<bitcoin::OutPoint>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::Error;
+    let raw = serde_json::Value::deserialize(deserializer)?;
+    let arr = match raw {
+        serde_json::Value::Null => return Ok(Vec::new()),
+        serde_json::Value::Array(arr) => arr,
+        _ => return Err(D::Error::custom("skip_outpoints must be an array")),
+    };
+    let mut out = Vec::with_capacity(arr.len());
+    for v in arr {
+        match v {
+            serde_json::Value::String(s) => {
+                let parsed = parse_outpoint_str(&s)
+                    .map_err(|e| D::Error::custom(format!("invalid outpoint '{}': {}", s, e)))?;
+                out.push(parsed);
+            }
+            other => {
+                // Allow direct {txid, vout} object form too for symmetry with bitcoin::OutPoint.
+                let op: bitcoin::OutPoint = serde_json::from_value(other)
+                    .map_err(|e| D::Error::custom(format!("invalid outpoint: {}", e)))?;
+                out.push(op);
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Parse a `"txid:vout"` string into a `bitcoin::OutPoint`.
+///
+/// Public so the WASM provider's option-block parsers can call it directly
+/// without round-tripping through serde_json wrapping.
+pub fn parse_outpoint_str(s: &str) -> core::result::Result<bitcoin::OutPoint, String> {
+    use core::str::FromStr;
+    let (txid_str, vout_str) = s.rsplit_once(':')
+        .ok_or_else(|| "missing ':' separator".to_string())?;
+    let txid = bitcoin::Txid::from_str(txid_str)
+        .map_err(|e| format!("bad txid: {}", e))?;
+    let vout: u32 = vout_str.parse()
+        .map_err(|e| format!("bad vout: {}", e))?;
+    Ok(bitcoin::OutPoint { txid, vout })
 }
 
 /// UTXO data source for EnhancedExecuteParams.

@@ -2607,7 +2607,12 @@ impl<'a> Brc20ProgExecutor<'a> {
     ) -> Result<Option<SplitResult>> {
         use crate::alkanes::types::OrdinalsStrategy;
 
-        // Burn strategy: skip inscription check entirely
+        // Burn strategy: skip inscription check entirely.
+        // (Split degrades to Preserve behavior here — brc20_prog doesn't yet
+        // implement Runestone-level rune refund. Inscriptions and alkanes
+        // are still protected; non-alkane runes on inscribed UTXOs would be
+        // burned. Mirror the Split rune-refund logic from the main
+        // `build_split_psbt` path here when brc20_prog gains a Split user.)
         if ordinals_strategy == OrdinalsStrategy::Burn {
             log::info!("🔥 Ordinals strategy is 'burn' - skipping inscription check");
             return Ok(None);

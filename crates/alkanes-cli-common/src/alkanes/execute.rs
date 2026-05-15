@@ -1168,6 +1168,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                 params.ordinals_strategy,
                 fee_rate_sat_vb,
                 params.mempool_indexer,
+                &params.skip_outpoints,
             ).await {
                 Ok(None) => {
                     log::info!("✅ No ordinal inscriptions found in commit UTXOs");
@@ -1335,6 +1336,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                     params.ordinals_strategy,
                     fee_rate_sat_vb,
                     params.mempool_indexer,
+                    &params.skip_outpoints,
                 ).await {
                     Ok(None) => {
                         log::info!("✅ No ordinal inscriptions found in selected UTXOs");
@@ -3318,6 +3320,37 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
     ) -> Result<(Psbt, u64, Vec<OutPoint>, Vec<(OutPoint, Vec<(AlkaneId, u64)>)>, Vec<OutPoint>)> {
         use bitcoin::transaction::Version;
 
+        // When the active strategy is `Split`, also fetch non-alkane rune
+        // balances on each inscribed UTXO so the split-tx can route them
+        // back to a clean output via Runestone edicts. `Preserve` skips this
+        // (matches the old behavior — runes get burned).
+        //
+        // The fetch is fail-open (see `get_utxo_runes_with_provider` doc):
+        // a provider error here returns an empty rune map and we proceed as
+        // if no runes were present, rather than aborting the whole tx.
+        let split_utxo_runes: alloc::collections::BTreeMap<OutPoint, Vec<(ProtoruneRuneId, u128)>> =
+            if params.ordinals_strategy.refunds_runes() {
+                let mut map = alloc::collections::BTreeMap::new();
+                for plan in plans {
+                    let runes = crate::ordinals::get_utxo_runes_with_provider(
+                        self.provider,
+                        &plan.outpoint,
+                    ).await.unwrap_or_default();
+                    if !runes.is_empty() {
+                        map.insert(plan.outpoint, runes);
+                    }
+                }
+                if !map.is_empty() {
+                    log::info!(
+                        "🪨 Split-rune-aware: {} inscribed UTXOs carry non-alkane runes",
+                        map.len()
+                    );
+                }
+                map
+            } else {
+                alloc::collections::BTreeMap::new()
+            };
+
         // Get safe address for split outputs
         let safe_address_str = params.change_address.as_ref()
             .map(|s| s.as_str())
@@ -3395,59 +3428,155 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         // Alkane-aware split: if any inscribed UTXOs carry alkanes, add a dedicated
         // clean alkane output and a protostone OP_RETURN to route alkanes there.
         // This prevents alkanes from being lost when their UTXO is split for inscriptions.
+        //
+        // Rune-aware split (Split strategy only): additionally, if any inscribed
+        // UTXOs carry non-alkane runes, add a dedicated clean rune output and
+        // append refund Edicts to the Runestone (top-level `edicts` field).
+        // The same Runestone OP_RETURN carries both the Protostone (alkanes)
+        // and the rune edicts — they coexist in the existing `Runestone`
+        // shape: `protocol` for the protostone payload, `edicts` for the
+        // direct rune refunds.
         let has_alkanes = !split_utxo_alkanes.is_empty();
+        let has_runes = !split_utxo_runes.is_empty();
+        let needs_runestone = has_alkanes || has_runes;
         let mut alkane_outpoints_with_balances: Vec<(OutPoint, Vec<(AlkaneId, u64)>)> = Vec::new();
+        // Rune outpoints aren't returned to the caller right now — runes are
+        // refunded to the alkane change address but the main tx's UTXO
+        // selector doesn't track non-alkane runes. The split-tx output is
+        // visible on-chain, so the wallet will pick it up on the next
+        // balance refresh. Kept here as a Vec for symmetry with alkanes and
+        // future extension.
+        let mut rune_outpoint_index: Option<u32> = None;
 
-        if has_alkanes {
-            // Add a clean alkane output at the end (before OP_RETURN)
-            let alkane_output_index = outputs.len() as u32;
-            outputs.push(TxOut {
-                value: bitcoin::Amount::from_sat(DUST_LIMIT),
-                script_pubkey: alkane_change_address.script_pubkey(),
-            });
-
-            // Aggregate all alkanes from inscribed UTXOs
-            let mut aggregated_alkanes: alloc::collections::BTreeMap<AlkaneId, u64> = alloc::collections::BTreeMap::new();
-            for (_outpoint, alkanes) in split_utxo_alkanes {
-                for (alkane_id, amount) in alkanes {
-                    *aggregated_alkanes.entry(alkane_id.clone()).or_insert(0) += amount;
-                }
-            }
-
-            // Build protostone edicts to route each alkane to the clean alkane output
-            let mut protostone_edicts = Vec::new();
-            let mut alkane_output_balances = Vec::new();
-            for (alkane_id, amount) in &aggregated_alkanes {
-                // Edict: send all of this alkane to the clean alkane output (vN)
-                protostone_edicts.push(ProtoruneEdict {
-                    id: ProtoruneRuneId {
-                        block: alkane_id.block as u128,
-                        tx: alkane_id.tx as u128,
-                    },
-                    amount: *amount as u128,
-                    output: alkane_output_index as u128,
+        if needs_runestone {
+            // 1. Allocate the alkane refund output (if any alkanes).
+            let alkane_output_index = if has_alkanes {
+                let idx = outputs.len() as u32;
+                outputs.push(TxOut {
+                    value: bitcoin::Amount::from_sat(DUST_LIMIT),
+                    script_pubkey: alkane_change_address.script_pubkey(),
                 });
-                alkane_output_balances.push((alkane_id.clone(), *amount));
-                log::info!("  Split alkane edict: {}:{} × {} → v{}",
-                    alkane_id.block, alkane_id.tx, amount, alkane_output_index);
-            }
-
-            // Build the protostone (protocol_tag 1 for alkanes)
-            let split_protostone = Protostone {
-                protocol_tag: 1u128,
-                message: vec![],
-                pointer: Some(alkane_output_index),
-                refund: Some(alkane_output_index),
-                edicts: protostone_edicts,
-                from: None,
-                burn: None,
+                Some(idx)
+            } else {
+                None
             };
 
-            // Encode the protostone into a Runestone OP_RETURN script
-            let protocol_values = vec![split_protostone].encipher()?;
+            // 2. Allocate the rune refund output (if any runes). Goes to the
+            //    alkane_change_address as well — same surface for protocol
+            //    tokens. Frontends can split this onto a separate address if
+            //    they ever need to.
+            let rune_output_index = if has_runes {
+                let idx = outputs.len() as u32;
+                outputs.push(TxOut {
+                    value: bitcoin::Amount::from_sat(DUST_LIMIT),
+                    script_pubkey: alkane_change_address.script_pubkey(),
+                });
+                rune_outpoint_index = Some(idx);
+                Some(idx)
+            } else {
+                None
+            };
+
+            // 3. Build the alkane protostone (if needed).
+            let alkane_protostone_payload = if let Some(idx) = alkane_output_index {
+                let mut aggregated_alkanes: alloc::collections::BTreeMap<AlkaneId, u64> =
+                    alloc::collections::BTreeMap::new();
+                for (_outpoint, alkanes) in split_utxo_alkanes {
+                    for (alkane_id, amount) in alkanes {
+                        *aggregated_alkanes.entry(alkane_id.clone()).or_insert(0) += amount;
+                    }
+                }
+
+                let mut protostone_edicts = Vec::new();
+                let mut alkane_output_balances = Vec::new();
+                for (alkane_id, amount) in &aggregated_alkanes {
+                    protostone_edicts.push(ProtoruneEdict {
+                        id: ProtoruneRuneId {
+                            block: alkane_id.block as u128,
+                            tx: alkane_id.tx as u128,
+                        },
+                        amount: *amount as u128,
+                        output: idx as u128,
+                    });
+                    alkane_output_balances.push((alkane_id.clone(), *amount));
+                    log::info!("  Split alkane edict: {}:{} × {} → v{}",
+                        alkane_id.block, alkane_id.tx, amount, idx);
+                }
+
+                let split_protostone = Protostone {
+                    protocol_tag: 1u128,
+                    message: vec![],
+                    pointer: Some(idx),
+                    refund: Some(idx),
+                    edicts: protostone_edicts,
+                    from: None,
+                    burn: None,
+                };
+
+                alkane_outpoints_with_balances.push((
+                    OutPoint {
+                        txid: bitcoin::Txid::from_byte_array([0u8; 32]), // Placeholder, updated below
+                        vout: idx,
+                    },
+                    alkane_output_balances,
+                ));
+
+                log::info!("🔗 Added alkane routing: {} alkane types → clean output v{}",
+                    aggregated_alkanes.len(), idx);
+
+                Some(vec![split_protostone].encipher()?)
+            } else {
+                None
+            };
+
+            // 4. Build the top-level Runestone rune edicts (if needed).
+            //    Each non-alkane rune balance gets one Edict routing the full
+            //    amount to the dedicated rune output.
+            let rune_edicts: Vec<ordinals::Edict> = if let Some(idx) = rune_output_index {
+                let mut aggregated_runes: alloc::collections::BTreeMap<ProtoruneRuneId, u128> =
+                    alloc::collections::BTreeMap::new();
+                for (_outpoint, runes) in &split_utxo_runes {
+                    for (rune_id, amount) in runes {
+                        *aggregated_runes.entry(rune_id.clone()).or_insert(0) =
+                            aggregated_runes.get(rune_id).copied().unwrap_or(0).saturating_add(*amount);
+                    }
+                }
+
+                let mut edicts = Vec::with_capacity(aggregated_runes.len());
+                for (rune_id, amount) in &aggregated_runes {
+                    // Runestone Edict uses ordinals::RuneId (u64 block, u32 tx).
+                    // ProtoruneRuneId carries u128/u128 — for vanilla runes the
+                    // values fit by construction (real rune IDs come from
+                    // bitcoin block heights & tx indices). Saturate if a
+                    // pathological input arrives so we don't panic.
+                    let rid = ordinals::RuneId {
+                        block: rune_id.block.try_into().unwrap_or(u64::MAX),
+                        tx: rune_id.tx.try_into().unwrap_or(u32::MAX),
+                    };
+                    edicts.push(ordinals::Edict {
+                        id: rid,
+                        amount: *amount,
+                        output: idx,
+                    });
+                    log::info!("  Split rune edict: {}:{} × {} → v{}",
+                        rune_id.block, rune_id.tx, amount, idx);
+                }
+
+                log::info!("🪨 Added rune routing: {} rune types → clean output v{}",
+                    aggregated_runes.len(), idx);
+                edicts
+            } else {
+                Vec::new()
+            };
+
+            // 5. Encode everything into a single Runestone OP_RETURN.
+            //    `protocol` carries the alkane protostone payload; `edicts`
+            //    carries the rune refunds; `pointer` defaults to the alkane
+            //    output if present, else the rune output.
             let runestone = Runestone {
-                protocol: Some(protocol_values),
-                pointer: Some(alkane_output_index),
+                protocol: alkane_protostone_payload,
+                pointer: alkane_output_index.or(rune_output_index),
+                edicts: rune_edicts,
                 ..Default::default()
             };
             let runestone_script = runestone.encipher();
@@ -3456,19 +3585,11 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                 value: bitcoin::Amount::ZERO,
                 script_pubkey: runestone_script,
             });
-
-            // Track that the clean alkane output will carry these alkanes
-            alkane_outpoints_with_balances.push((
-                OutPoint {
-                    txid: bitcoin::Txid::from_byte_array([0u8; 32]), // Placeholder, updated below
-                    vout: alkane_output_index,
-                },
-                alkane_output_balances,
-            ));
-
-            log::info!("🔗 Added alkane routing: {} alkane types → clean output v{} with OP_RETURN protostone",
-                aggregated_alkanes.len(), alkane_output_index);
         }
+
+        // Avoid unused-var warning when rune_outpoint_index isn't consumed
+        // downstream yet (placeholder for future return-to-caller wiring).
+        let _ = rune_outpoint_index;
 
         // Compute total output value already committed (alkane DUST_LIMIT
         // outputs are the only non-OP_RETURN extras beyond the per-plan
@@ -3595,12 +3716,13 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         }
 
         log::info!(
-            "Built split PSBT: {} inputs ({} inscribed + {} extras) → {} outputs (alkane:{}, top-up owed: {} sats, fee: {})",
+            "Built split PSBT: {} inputs ({} inscribed + {} extras) → {} outputs (alkane:{}, rune:{}, top-up owed: {} sats, fee: {})",
             psbt.unsigned_tx.input.len(),
             plans.len(),
             consumed_extras.len(),
             psbt.unsigned_tx.output.len(),
             if has_alkanes { "1+OP_RETURN" } else { "0" },
+            if has_runes { "1" } else { "0" },
             clean_topup_owed,
             estimated_fee,
         );

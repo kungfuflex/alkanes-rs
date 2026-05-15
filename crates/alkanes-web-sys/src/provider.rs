@@ -1087,7 +1087,7 @@ impl WebProvider {
             };
 
             // Parse options (from_addresses, change_address, etc.)
-            let (trace_enabled, mine_enabled, auto_confirm, raw_output, from_addresses, change_address, alkanes_change_address, ordinals_strategy, mempool_indexer, split_transactions, known_pending_tx_hexes, prefetched_utxos, max_indexed_height, utxo_source) = if let Some(opts_json) = &options_json {
+            let (trace_enabled, mine_enabled, auto_confirm, raw_output, from_addresses, change_address, alkanes_change_address, ordinals_strategy, mempool_indexer, split_transactions, known_pending_tx_hexes, prefetched_utxos, max_indexed_height, utxo_source, skip_outpoints) = if let Some(opts_json) = &options_json {
                 let opts: serde_json::Value = serde_json::from_str(opts_json)
                     .map_err(|e| JsValue::from_str(&format!("Invalid options JSON: {}", e)))?;
 
@@ -1112,6 +1112,19 @@ impl WebProvider {
                 // reject the whole flow even when clean UTXOs were available.
                 let ord_strategy: alkanes_cli_common::alkanes::types::OrdinalsStrategy = opts.get("ordinals_strategy")
                     .and_then(|v| serde_json::from_value(v.clone()).ok())
+                    .unwrap_or_default();
+
+                // Pre-verified-clean outpoints (frontend-provided ord cache).
+                // Used by `OrdinalsStrategy::Split` (and any other check-mode
+                // strategy) to short-circuit the per-UTXO unisat-ord query.
+                // Each entry is `"txid:vout"` parsed via the shared helper.
+                let skip_ops: Vec<bitcoin::OutPoint> = opts.get("skip_outpoints")
+                    .or_else(|| opts.get("skipOutpoints"))
+                    .and_then(|v| v.as_array())
+                    .map(|arr| arr.iter()
+                        .filter_map(|item| item.as_str())
+                        .filter_map(|s| alkanes_cli_common::alkanes::types::parse_outpoint_str(s).ok())
+                        .collect())
                     .unwrap_or_default();
 
                 let mempool_idx = opts.get("mempool_indexer").and_then(|v| v.as_bool()).unwrap_or(false);
@@ -1163,9 +1176,10 @@ impl WebProvider {
                     prefetched,
                     max_idx,
                     utxo_src,
+                    skip_ops,
                 )
             } else {
-                (false, false, true, false, None, None, None, Default::default(), false, false, Vec::new(), Vec::new(), None, Default::default())
+                (false, false, true, false, None, None, None, Default::default(), false, false, Vec::new(), Vec::new(), None, Default::default(), Vec::new())
             };
 
             let params = EnhancedExecuteParams {
@@ -1188,6 +1202,7 @@ impl WebProvider {
                 prefetched_utxos,
                 max_indexed_height,
                 utxo_source,
+                skip_outpoints,
             };
 
             provider.execute(params).await
@@ -1241,7 +1256,7 @@ impl WebProvider {
             };
 
             // Parse options
-            let (trace_enabled, mine_enabled, auto_confirm, raw_output, from_addresses, change_address, alkanes_change_address, ordinals_strategy, mempool_indexer, split_transactions, known_pending_tx_hexes, prefetched_utxos, max_indexed_height, utxo_source) = if let Some(opts_json) = &options_json {
+            let (trace_enabled, mine_enabled, auto_confirm, raw_output, from_addresses, change_address, alkanes_change_address, ordinals_strategy, mempool_indexer, split_transactions, known_pending_tx_hexes, prefetched_utxos, max_indexed_height, utxo_source, skip_outpoints) = if let Some(opts_json) = &options_json {
                 let opts: serde_json::Value = serde_json::from_str(opts_json)
                     .map_err(|e| JsValue::from_str(&format!("Invalid options JSON: {}", e)))?;
 
@@ -1293,6 +1308,17 @@ impl WebProvider {
                     .and_then(|v| serde_json::from_value(v.clone()).ok())
                     .unwrap_or_default();
 
+                // Pre-verified-clean outpoints (see alkanesExecuteWithStrings
+                // for full rationale). Honored primarily by `OrdinalsStrategy::Split`.
+                let skip_ops: Vec<bitcoin::OutPoint> = opts.get("skip_outpoints")
+                    .or_else(|| opts.get("skipOutpoints"))
+                    .and_then(|v| v.as_array())
+                    .map(|arr| arr.iter()
+                        .filter_map(|item| item.as_str())
+                        .filter_map(|s| alkanes_cli_common::alkanes::types::parse_outpoint_str(s).ok())
+                        .collect())
+                    .unwrap_or_default();
+
                 (
                     opts.get("trace_enabled").and_then(|v| v.as_bool()).unwrap_or(false),
                     opts.get("mine_enabled").and_then(|v| v.as_bool()).unwrap_or(false),
@@ -1308,9 +1334,10 @@ impl WebProvider {
                     prefetched,
                     max_idx,
                     utxo_src,
+                    skip_ops,
                 )
             } else {
-                (false, false, true, false, None, None, None, Default::default(), false, false, Vec::new(), Vec::new(), None, Default::default())
+                (false, false, true, false, None, None, None, Default::default(), false, false, Vec::new(), Vec::new(), None, Default::default(), Vec::new())
             };
 
             let params = EnhancedExecuteParams {
@@ -1333,6 +1360,7 @@ impl WebProvider {
                 prefetched_utxos,
                 max_indexed_height,
                 utxo_source,
+                skip_outpoints,
             };
 
             // Use execute_full to handle the complete flow internally
@@ -4178,6 +4206,7 @@ impl WebProvider {
                 .and_then(|v| v.as_str())
                 .map(|s| match s {
                     "preserve" => alkanes_cli_common::alkanes::types::OrdinalsStrategy::Preserve,
+                    "split" => alkanes_cli_common::alkanes::types::OrdinalsStrategy::Split,
                     "burn" => alkanes_cli_common::alkanes::types::OrdinalsStrategy::Burn,
                     _ => alkanes_cli_common::alkanes::types::OrdinalsStrategy::Exclude,
                 })
@@ -9750,6 +9779,7 @@ impl DeezelProvider for WebProvider {
                 prefetched_utxos: Vec::new(),
                 max_indexed_height: None,
                 utxo_source: Default::default(),
+                skip_outpoints: Vec::new(),
         };
 
         match executor.execute(params).await? {
@@ -9794,6 +9824,7 @@ impl DeezelProvider for WebProvider {
                 prefetched_utxos: Vec::new(),
                 max_indexed_height: None,
                 utxo_source: Default::default(),
+                skip_outpoints: Vec::new(),
         };
 
         match executor.execute(params).await? {
