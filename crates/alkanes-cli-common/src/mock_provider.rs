@@ -59,6 +59,18 @@ pub struct MockProvider {
     pub internal_key: XOnlyPublicKey,
     /// Mock alkane balances per outpoint: (txid_hex, vout) → Vec<(block, tx, amount)>
     pub alkane_balances: Arc<Mutex<HashMap<String, Vec<(u64, u64, u64)>>>>,
+    /// Mock non-alkane rune balances per outpoint, keyed identically to
+    /// `alkane_balances` but returned only when `protocol_tag=0`. Used by
+    /// `OrdinalsStrategy::Split` tests to exercise rune-refund Edict
+    /// construction without a real protorune indexer.
+    pub rune_balances: Arc<Mutex<HashMap<String, Vec<(u64, u64, u64)>>>>,
+    /// Mock inscription presence per outpoint, keyed identically to
+    /// `alkane_balances`. Each entry is a list of `(inscription_id_str,
+    /// sat_offset)`. `get_output` returns these when present, defaulting
+    /// to an empty list (== clean) otherwise. Used by `OrdinalsStrategy`
+    /// tests that need controllable inscription state without a real
+    /// unisat-ord roundtrip.
+    pub inscriptions_by_outpoint: Arc<Mutex<HashMap<String, Vec<(String, u64)>>>>,
     /// Session-scoped pending-tx store. Provided so integration tests
     /// can wire chained-broadcast scenarios without spinning up an
     /// `Arc<dyn PendingTxStore>` of their own. `Some` by default so
@@ -87,8 +99,34 @@ impl MockProvider {
             secret_key,
             internal_key,
             alkane_balances: Arc::new(Mutex::new(HashMap::new())),
+            rune_balances: Arc::new(Mutex::new(HashMap::new())),
+            inscriptions_by_outpoint: Arc::new(Mutex::new(HashMap::new())),
             pending_tx_store: crate::pending_tx_store::MemoryPendingTxStore::new(),
         }
+    }
+
+    /// Test helper: register a non-alkane rune balance on an outpoint.
+    /// Returned by `get_protorunes_by_outpoint` when `protocol_tag == 0`.
+    pub fn set_rune_balance(&self, txid: &str, vout: u32, block: u64, tx: u64, amount: u64) {
+        let key = format!("{}:{}", txid, vout);
+        self.rune_balances
+            .lock()
+            .unwrap()
+            .entry(key)
+            .or_default()
+            .push((block, tx, amount));
+    }
+
+    /// Test helper: register an inscription on an outpoint.
+    /// Returned by `get_output` so OrdProvider sees a non-empty inscription list.
+    pub fn set_inscription(&self, txid: &str, vout: u32, inscription_id: &str, sat_offset: u64) {
+        let key = format!("{}:{}", txid, vout);
+        self.inscriptions_by_outpoint
+            .lock()
+            .unwrap()
+            .entry(key)
+            .or_default()
+            .push((inscription_id.to_string(), sat_offset));
     }
     
     pub fn set_keypair(&mut self, secret_key: SecretKey, public_key: bitcoin::PublicKey) {
@@ -665,21 +703,28 @@ impl MetashrewRpcProvider for MockProvider {
         Ok(ProtoruneWalletResponse { balances: outpoints })
     }
     
-    async fn get_protorunes_by_outpoint(&self, txid: &str, vout: u32, _block_tag: Option<String>, _protocol_tag: u128) -> Result<ProtoruneOutpointResponse> {
-        // Look up alkane balances from the mock's `alkane_balances`
-        // map keyed by `txid:vout`. Each entry is a `Vec<(block, tx,
-        // amount)>` matching the on-chain protorune balance layout.
-        // Returns an empty balance sheet if the outpoint isn't
-        // registered. This is what cargo tests rely on to set up
-        // deterministic alkane-aware UTXO selection scenarios.
+    async fn get_protorunes_by_outpoint(&self, txid: &str, vout: u32, _block_tag: Option<String>, protocol_tag: u128) -> Result<ProtoruneOutpointResponse> {
+        // Look up balances from the mock's per-outpoint maps.
+        // `protocol_tag == 1` → alkane_balances (legacy default).
+        // `protocol_tag == 0` → rune_balances (used by `OrdinalsStrategy::Split` tests).
+        // Other tags → empty balance sheet.
+        // Each map entry is a `Vec<(block, tx, amount)>` matching the
+        // on-chain protorune balance layout. Returns an empty balance
+        // sheet if the outpoint isn't registered.
         use crate::alkanes::balance_sheet::{
             BalanceSheet, CachedBalanceSheet, ProtoruneRuneId,
         };
         use std::collections::BTreeMap;
         let key = format!("{}:{}", txid, vout);
-        let ab = self.alkane_balances.lock().unwrap();
-        let entries = ab.get(&key).cloned().unwrap_or_default();
-        drop(ab);
+        let entries = if protocol_tag == 0 {
+            let rb = self.rune_balances.lock().unwrap();
+            rb.get(&key).cloned().unwrap_or_default()
+        } else {
+            // Default to alkanes for protocol_tag=1 and any other value
+            // (back-compat with tests that don't pass a protocol_tag).
+            let ab = self.alkane_balances.lock().unwrap();
+            ab.get(&key).cloned().unwrap_or_default()
+        };
 
         let mut balances: BTreeMap<ProtoruneRuneId, u128> = BTreeMap::new();
         for (block, tx, amount) in entries {
@@ -1052,7 +1097,55 @@ use crate::traits::EspoProvider;
 
 #[async_trait(?Send)]
 impl OrdProvider for MockProvider {
-    async fn get_inscription(&self, _inscription_id: &str) -> Result<OrdInscription> {
+    async fn get_inscription(&self, inscription_id: &str) -> Result<OrdInscription> {
+        // Look up the registered inscription's (outpoint, offset) so the
+        // SatPoint round-trip used by `get_utxo_inscriptions_with_provider`
+        // returns the offset the test set up. Falls through to `todo!()`
+        // only when the inscription_id was never registered — that path
+        // wasn't reachable before, so existing tests that called
+        // get_inscription stay broken in the same way (they didn't work
+        // before this change either).
+        use ordinals::SatPoint;
+        let ibo = self.inscriptions_by_outpoint.lock().unwrap();
+        for (outpoint_str, entries) in ibo.iter() {
+            for (id_str, sat_offset) in entries {
+                if id_str == inscription_id {
+                    let parts: Vec<&str> = outpoint_str.splitn(2, ':').collect();
+                    let (txid_str, vout_str) = (parts[0], parts.get(1).copied().unwrap_or("0"));
+                    let txid = bitcoin::Txid::from_str(txid_str)
+                        .map_err(|e| AlkanesError::Other(format!("bad txid in mock inscription: {}", e)))?;
+                    let vout: u32 = vout_str.parse()
+                        .map_err(|e| AlkanesError::Other(format!("bad vout in mock inscription: {}", e)))?;
+                    let id = crate::vendored_ord::InscriptionId::from_str(id_str)
+                        .map_err(|e| AlkanesError::Other(format!("bad inscription id: {}", e)))?;
+                    return Ok(OrdInscription {
+                        address: None,
+                        charms: vec![],
+                        child_count: 0,
+                        children: vec![],
+                        content_length: None,
+                        content_type: None,
+                        effective_content_type: None,
+                        fee: 0,
+                        height: 0,
+                        id: id.clone(),
+                        next: None,
+                        number: 0,
+                        parents: vec![],
+                        previous: None,
+                        rune: None,
+                        sat: None,
+                        satpoint: SatPoint {
+                            outpoint: bitcoin::OutPoint { txid, vout },
+                            offset: *sat_offset,
+                        },
+                        timestamp: 0,
+                        value: None,
+                        metaprotocol: None,
+                    });
+                }
+            }
+        }
         todo!()
     }
     async fn get_inscriptions_in_block(&self, _block_hash: &str) -> Result<OrdInscriptions> {
@@ -1080,7 +1173,10 @@ impl OrdProvider for MockProvider {
         todo!()
     }
     async fn get_output(&self, output: &str) -> Result<OrdOutput> {
-        // Return a minimal output with no inscriptions
+        // Return a minimal output, defaulting to no inscriptions. If the
+        // caller registered an inscription via `set_inscription`, return
+        // that instead so OrdinalsStrategy tests can drive the inscription
+        // detection paths deterministically.
         let parts: Vec<&str> = output.split(':').collect();
         let (txid_str, vout) = if parts.len() == 2 {
             (parts[0], parts[1].parse::<u32>().unwrap_or(0))
@@ -1089,11 +1185,25 @@ impl OrdProvider for MockProvider {
         };
         let txid = bitcoin::Txid::from_str(txid_str)
             .unwrap_or_else(|_| bitcoin::Txid::from_str("0000000000000000000000000000000000000000000000000000000000000000").unwrap());
+
+        let key = format!("{}:{}", txid_str, vout);
+        let inscription_ids: Vec<crate::vendored_ord::InscriptionId> = {
+            let ibo = self.inscriptions_by_outpoint.lock().unwrap();
+            ibo.get(&key)
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|(id_str, _offset)| {
+                    crate::vendored_ord::InscriptionId::from_str(&id_str).ok()
+                })
+                .collect()
+        };
+
         Ok(OrdOutput {
             address: None,
             confirmations: 100,
             indexed: true,
-            inscriptions: Some(vec![]),
+            inscriptions: Some(inscription_ids),
             outpoint: OutPoint::new(txid, vout),
             runes: None,
             sat_ranges: None,
