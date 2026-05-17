@@ -423,6 +423,46 @@ fn build_prefetched_alkanes_map(
     Ok(Some(map))
 }
 
+/// True when every `(block, tx) -> amount` in `alkanes_needed` is already
+/// satisfied by the union of asserted balances in `prefetched_utxos`.
+///
+/// This lets `select_utxos` skip the metashrew `provider.sync()` wait when the
+/// caller has done the discovery legwork on their side and is presenting a
+/// self-contained UTXO set. Callers that supply prefetched alkane balances
+/// (e.g. subfrost-app's `useWalletState` + canonical
+/// `metashrew_view protorunesbyoutpoint` path) own freshness for those entries;
+/// re-confirming via a sync poll is wasted work and can stall swaps for tens
+/// of seconds when the public indexer lags bitcoind by a block or two.
+///
+/// Returns `false` (i.e. fall back to sync) on any malformed prefetched entry
+/// — same conservative posture as `build_prefetched_alkanes_map`'s callers.
+fn prefetched_covers_alkanes_needed(
+    prefetched_utxos: &[PrefetchedUtxo],
+    alkanes_needed: &alloc::collections::BTreeMap<(u64, u64), u64>,
+) -> bool {
+    if alkanes_needed.is_empty() {
+        return true;
+    }
+    let map = match build_prefetched_alkanes_map(prefetched_utxos) {
+        Ok(Some(m)) => m,
+        _ => return false,
+    };
+    let mut available: alloc::collections::BTreeMap<(u128, u128), u128> =
+        alloc::collections::BTreeMap::new();
+    for balances in map.values() {
+        for (rune_id, amount) in balances {
+            *available.entry((rune_id.block, rune_id.tx)).or_insert(0) += *amount;
+        }
+    }
+    for ((block, tx), amount) in alkanes_needed {
+        let key = (*block as u128, *tx as u128);
+        if available.get(&key).copied().unwrap_or(0) < (*amount as u128) {
+            return false;
+        }
+    }
+    true
+}
+
 fn json_u64(value: &serde_json::Value) -> Option<u64> {
     value.as_u64().or_else(|| value.as_str().and_then(|s| s.parse::<u64>().ok()))
 }
@@ -2067,6 +2107,16 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         if !alkanes_needed.is_empty() {
             if using_espo_source {
                 log::info!("Alkane inputs required -- using Espo spendable outpoint balances");
+            } else if prefetched_covers_alkanes_needed(prefetched_utxos, &alkanes_needed) {
+                // Caller (e.g. subfrost-app's useWalletState path) has asserted
+                // alkane balances per outpoint that already satisfy every
+                // requirement. They own freshness for those entries; no need to
+                // burn the metashrew sync poll loop here (saves ~5-30s when the
+                // public indexer lags bitcoind by a block or two).
+                log::info!(
+                    "Alkane inputs required -- caller-supplied prefetched_utxos cover all {} alkane requirement(s); skipping indexer sync",
+                    alkanes_needed.len()
+                );
             } else {
                 log::info!("Alkane inputs required -- syncing indexer before balance query");
                 self.provider.sync().await?;
@@ -5298,5 +5348,163 @@ mod tests {
         // Just the field — not the full struct — to keep the test focused.
         let parsed: serde_json::Value = serde_json::from_str(&json.to_string()).unwrap();
         assert_eq!(parsed["max_indexed_height"].as_u64(), Some(948_720));
+    }
+
+    // ---- prefetched_covers_alkanes_needed coverage ----
+    //
+    // Pins the short-circuit invariant for the sync gate in select_utxos. Live
+    // call sites: subfrost-app's useWalletState path supplies prefetched_utxos
+    // with .alkanes asserted per outpoint; when those balances cover
+    // alkanes_needed, the metashrew sync poll must be skipped (the gate that
+    // historically stalled mainnet swaps for ~30s when the public indexer was
+    // a block or two behind bitcoind).
+
+    fn mk_alkane(block: u128, tx: u128, amount: &str) -> PrefetchedAlkane {
+        PrefetchedAlkane { block, tx, amount: amount.to_string() }
+    }
+
+    fn mk_prefetched(outpoint: &str, alkanes: Option<Vec<PrefetchedAlkane>>) -> PrefetchedUtxo {
+        PrefetchedUtxo {
+            outpoint: outpoint.to_string(),
+            value: 546,
+            script_pubkey_hex: "0014deadbeef00000000000000000000000000000000".to_string(),
+            alkanes,
+        }
+    }
+
+    // Stable txid stubs that satisfy OutPoint::from_str's 64-hex requirement.
+    const TXID_A_COV: &str = "1111111111111111111111111111111111111111111111111111111111111111";
+    const TXID_B: &str = "2222222222222222222222222222222222222222222222222222222222222222";
+    const TXID_C: &str = "3333333333333333333333333333333333333333333333333333333333333333";
+
+    #[test]
+    fn prefetched_covers_alkanes_empty_needed_is_trivially_covered() {
+        let needed = alloc::collections::BTreeMap::new();
+        assert!(prefetched_covers_alkanes_needed(&[], &needed));
+        assert!(prefetched_covers_alkanes_needed(
+            &[mk_prefetched(&format!("{}:0", TXID_A_COV), None)],
+            &needed,
+        ));
+    }
+
+    #[test]
+    fn prefetched_covers_alkanes_single_utxo_meets_requirement() {
+        let prefetched = vec![mk_prefetched(
+            &format!("{}:0", TXID_A_COV),
+            Some(vec![mk_alkane(2, 0, "5000")]),
+        )];
+        let mut needed = alloc::collections::BTreeMap::new();
+        needed.insert((2u64, 0u64), 5000u64);
+        assert!(prefetched_covers_alkanes_needed(&prefetched, &needed));
+    }
+
+    #[test]
+    fn prefetched_covers_alkanes_aggregates_across_multiple_outpoints() {
+        // Two dust UTXOs each carrying half of the requested DIESEL. Selector
+        // can spend both; gate must recognise the sum.
+        let prefetched = vec![
+            mk_prefetched(&format!("{}:0", TXID_A_COV), Some(vec![mk_alkane(2, 0, "300")])),
+            mk_prefetched(&format!("{}:1", TXID_B), Some(vec![mk_alkane(2, 0, "700")])),
+        ];
+        let mut needed = alloc::collections::BTreeMap::new();
+        needed.insert((2u64, 0u64), 1000u64);
+        assert!(prefetched_covers_alkanes_needed(&prefetched, &needed));
+    }
+
+    #[test]
+    fn prefetched_covers_alkanes_falls_back_when_short() {
+        // 999 < 1000 — must NOT short-circuit; selector still needs the sync
+        // to discover the missing balance from indexer.
+        let prefetched = vec![mk_prefetched(
+            &format!("{}:0", TXID_A_COV),
+            Some(vec![mk_alkane(2, 0, "999")]),
+        )];
+        let mut needed = alloc::collections::BTreeMap::new();
+        needed.insert((2u64, 0u64), 1000u64);
+        assert!(!prefetched_covers_alkanes_needed(&prefetched, &needed));
+    }
+
+    #[test]
+    fn prefetched_covers_alkanes_falls_back_when_token_missing_from_cache() {
+        // Cache covers DIESEL (2:0) but not METHANE (2:1). Requirement on
+        // METHANE must trigger sync — gate cannot lie about token presence.
+        let prefetched = vec![mk_prefetched(
+            &format!("{}:0", TXID_A_COV),
+            Some(vec![mk_alkane(2, 0, "9999")]),
+        )];
+        let mut needed = alloc::collections::BTreeMap::new();
+        needed.insert((2u64, 1u64), 1u64);
+        assert!(!prefetched_covers_alkanes_needed(&prefetched, &needed));
+    }
+
+    #[test]
+    fn prefetched_covers_alkanes_requires_every_requirement_covered() {
+        // Mixed: DIESEL covered, METHANE not. Must NOT short-circuit on first
+        // hit — every entry has to be satisfied.
+        let prefetched = vec![
+            mk_prefetched(&format!("{}:0", TXID_A_COV), Some(vec![mk_alkane(2, 0, "5000")])),
+            mk_prefetched(&format!("{}:0", TXID_B), Some(vec![mk_alkane(2, 1, "10")])),
+        ];
+        let mut needed = alloc::collections::BTreeMap::new();
+        needed.insert((2u64, 0u64), 4000u64);
+        needed.insert((2u64, 1u64), 100u64);
+        assert!(!prefetched_covers_alkanes_needed(&prefetched, &needed));
+    }
+
+    #[test]
+    fn prefetched_covers_alkanes_no_assertions_falls_back() {
+        // PrefetchedUtxo with alkanes=None means "caller has no assertion".
+        // build_prefetched_alkanes_map returns Ok(None); coverage check must
+        // fall back to sync rather than silently treating cache as authoritative.
+        let prefetched = vec![mk_prefetched(&format!("{}:0", TXID_A_COV), None)];
+        let mut needed = alloc::collections::BTreeMap::new();
+        needed.insert((2u64, 0u64), 1u64);
+        assert!(!prefetched_covers_alkanes_needed(&prefetched, &needed));
+    }
+
+    #[test]
+    fn prefetched_covers_alkanes_empty_balances_means_clean_outpoint() {
+        // alkanes=Some(vec![]) is the authoritative "no alkanes here" signal.
+        // Doesn't cover any DIESEL requirement, so coverage check returns false.
+        let prefetched = vec![mk_prefetched(&format!("{}:0", TXID_A_COV), Some(vec![]))];
+        let mut needed = alloc::collections::BTreeMap::new();
+        needed.insert((2u64, 0u64), 1u64);
+        assert!(!prefetched_covers_alkanes_needed(&prefetched, &needed));
+    }
+
+    #[test]
+    fn prefetched_covers_alkanes_malformed_amount_falls_back() {
+        // build_prefetched_alkanes_map surfaces a Validation error on a bad
+        // amount string. Coverage check must treat that as fall-through, not
+        // panic and not silently skip the sync.
+        let prefetched = vec![mk_prefetched(
+            &format!("{}:0", TXID_A_COV),
+            Some(vec![mk_alkane(2, 0, "not-a-number")]),
+        )];
+        let mut needed = alloc::collections::BTreeMap::new();
+        needed.insert((2u64, 0u64), 1u64);
+        assert!(!prefetched_covers_alkanes_needed(&prefetched, &needed));
+    }
+
+    #[test]
+    fn prefetched_covers_alkanes_handles_three_distinct_tokens() {
+        // Realistic swap: needs DIESEL + frBTC + LP token in one tx. Cache
+        // has all three. Pin that no token is silently dropped from the
+        // aggregation pass.
+        let prefetched = vec![
+            mk_prefetched(
+                &format!("{}:0", TXID_A_COV),
+                Some(vec![mk_alkane(2, 0, "100"), mk_alkane(32, 0, "200")]),
+            ),
+            mk_prefetched(
+                &format!("{}:0", TXID_C),
+                Some(vec![mk_alkane(2, 4, "50")]),
+            ),
+        ];
+        let mut needed = alloc::collections::BTreeMap::new();
+        needed.insert((2u64, 0u64), 100u64);
+        needed.insert((32u64, 0u64), 200u64);
+        needed.insert((2u64, 4u64), 50u64);
+        assert!(prefetched_covers_alkanes_needed(&prefetched, &needed));
     }
 }
