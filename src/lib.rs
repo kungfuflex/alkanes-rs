@@ -26,7 +26,13 @@ pub mod fuel_probe;
 pub mod indexer;
 pub mod message;
 pub mod network;
-#[cfg(any(test, feature = "test-utils", feature = "diesel-precompile"))]
+// precompile_diesel is always compiled into production builds. Whether
+// it actually dispatches depends on the runtime height check in
+// vm/utils.rs::run_after_special — on mainnet it activates at height
+// >= V220_FORK_HEIGHT (the same gate as the slim frBTC swap), and on
+// regtest/altcoins it activates from genesis because V220_FORK_HEIGHT
+// is 0 there. The `fastpath` feature forces activation from genesis
+// even on chains with a nonzero fork height (regtest/dev only).
 pub mod precompile_diesel;
 pub mod precompiled;
 pub mod tables;

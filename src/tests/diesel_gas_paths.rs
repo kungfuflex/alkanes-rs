@@ -6,6 +6,20 @@
 //! asserts each bucket contains exactly one unique gas value.
 
 use crate::fuel_probe::{self, Record};
+
+/// Returns an RAII guard that re-disables shadow mode when dropped. The
+/// shadow flag is a module-level static so we have to be careful not to
+/// leak it across tests; a guard ensures we restore the default state
+/// even if an assertion panics.
+struct ShadowDisableOnDrop;
+impl Drop for ShadowDisableOnDrop {
+    fn drop(&mut self) {
+        crate::precompile_diesel::shadow_disable();
+    }
+}
+fn scopeguard_shadow_disable() -> ShadowDisableOnDrop {
+    ShadowDisableOnDrop
+}
 use crate::index_block;
 use crate::tests::helpers::{
     self as alkane_helpers, assert_return_context, assert_revert_context, clear,
@@ -122,6 +136,13 @@ fn build_mint_block(height: u32, n: usize) -> bitcoin::Block {
 #[wasm_bindgen_test]
 fn diesel_gas_paths_exhaustive() -> Result<()> {
     clear();
+    // The runtime precompile dispatch in vm/utils.rs short-circuits the
+    // wasm path on regtest (V220_FORK_HEIGHT=0). This test exists to
+    // observe wasm gas via fuel_probe, so we enable shadow mode for the
+    // duration — that flag causes the dispatcher to skip the precompile
+    // and let the wasm run as before.
+    crate::precompile_diesel::shadow_enable();
+    let _shadow_guard = scopeguard_shadow_disable();
 
     // === Phase 1: setup the diesel precompile ====================================
     setup_diesel_only()?;

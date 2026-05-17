@@ -158,8 +158,14 @@ fn run_wasm_path(
     // top of a top-level call. For these tests we use the per-tx minimum.
     let start_fuel = crate::vm::fuel::minimum_fuel(parcel.height as u32);
     fuel_probe::clear();
-    let (response, total_gas) =
-        run_after_special(context.clone(), binary.clone(), start_fuel)?;
+    // run_after_special would normally dispatch to the precompile on
+    // regtest (V220_FORK_HEIGHT=0). Enable shadow mode so the dispatcher
+    // skips the precompile and the wasm path runs, which is what this
+    // test wants to observe.
+    crate::precompile_diesel::shadow_enable();
+    let result = run_after_special(context.clone(), binary.clone(), start_fuel);
+    crate::precompile_diesel::shadow_disable();
+    let (response, total_gas) = result?;
     let wasmi_internal_gas = fuel_probe::snapshot()
         .iter()
         .last()

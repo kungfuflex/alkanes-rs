@@ -1,15 +1,18 @@
-//! End-to-end smoke test for the mainnet-feature DIESEL precompile.
+//! End-to-end smoke test for the mainnet precompile dispatch.
 //!
-//! Runs only when both `mainnet` AND `diesel-precompile` are enabled — i.e.
-//! the production build configuration. Drives a single DIESEL mint through
-//! `index_block` (which, under `diesel-precompile`, bypasses wasmi entirely
-//! and routes to `run_diesel_eoa`) and asserts that the resulting balance
-//! sheet at the mint output contains the expected value_per_mint amount.
+//! Runs only when `mainnet` is enabled. The precompile is always
+//! compiled in (no longer feature-gated), but its dispatch is height-
+//! gated: it fires only at heights >= V220_FORK_HEIGHT on mainnet.
+//! This test mints at SMOKE_HEIGHT > V220_FORK_HEIGHT so that
+//! `index_block` routes the call through `run_diesel_eoa` natively
+//! (no wasmi), then asserts the balance sheet at the mint output
+//! contains the expected value_per_mint amount.
 //!
-//! This is the consensus-relevant E2E gate: if the precompile produces an
-//! incorrect storage write or transfer amount, this test fails.
+//! This is the consensus-relevant E2E gate: if the precompile produces
+//! an incorrect storage write or transfer amount at the fork height,
+//! this test fails.
 
-#![cfg(all(feature = "mainnet", feature = "diesel-precompile"))]
+#![cfg(feature = "mainnet")]
 
 use crate::index_block;
 use crate::message::AlkaneMessageContext;
@@ -34,8 +37,11 @@ use wasm_bindgen_test::wasm_bindgen_test;
 use metashrew_core::{print, println, stdio::{stdout, Write}};
 
 const DIESEL: AlkaneId = AlkaneId { block: 2, tx: 0 };
-// Post-GENESIS_UPGRADE_EOA_BLOCK_HEIGHT (917_888), pre-V220_FORK_HEIGHT (950_000).
-const SMOKE_HEIGHT: u32 = 925_000;
+// Post-V220_FORK_HEIGHT (950_000): the precompile auto-activates here, so
+// the wasmi-bypass path is exercised. SMOKE_HEIGHT - 1 is used for setup
+// (it indexes a coinbase-only block to deploy DIESEL state) — that's
+// still post-fork so we don't have to switch binaries during the test.
+const SMOKE_HEIGHT: u32 = 950_001;
 
 fn setup() -> Result<()> {
     let auth_cellpack = Cellpack {

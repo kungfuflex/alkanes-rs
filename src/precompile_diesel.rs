@@ -30,6 +30,7 @@ use alkanes_support::{
     response::ExtendedCallResponse,
     storage::StorageMap,
 };
+#[cfg(any(test, feature = "test-utils"))]
 use std::sync::Mutex as StdMutex;
 use anyhow::{anyhow, Result};
 use bitcoin::hashes::Hash;
@@ -602,14 +603,16 @@ fn _unused_silence_imports() {
 }
 
 // ============================================================================
-// Shadow comparison harness
+// Shadow comparison harness — test-only.
 // ============================================================================
 //
 // In shadow mode, run_after_special runs BOTH wasm and precompile for every
 // DIESEL call, and records observations here. Production code doesn't touch
-// this — it's only for the side-by-side equivalence test.
+// this — it's only for the side-by-side equivalence test, so every item is
+// cfg-gated to test/test-utils so the production wasm stays small.
 
 /// Outcome of one shadow comparison.
+#[cfg(any(test, feature = "test-utils"))]
 #[derive(Debug, Clone)]
 pub struct ShadowRecord {
     pub path: Option<DieselPath>,
@@ -625,24 +628,32 @@ pub struct ShadowRecord {
     pub divergence_reason: Option<String>,
 }
 
+#[cfg(any(test, feature = "test-utils"))]
 static SHADOW_RECORDS: StdMutex<Vec<ShadowRecord>> = StdMutex::new(Vec::new());
+#[cfg(any(test, feature = "test-utils"))]
 static SHADOW_ENABLED: StdMutex<bool> = StdMutex::new(false);
 
+#[cfg(any(test, feature = "test-utils"))]
 pub fn shadow_enable() {
     *SHADOW_ENABLED.lock().unwrap() = true;
 }
+#[cfg(any(test, feature = "test-utils"))]
 pub fn shadow_disable() {
     *SHADOW_ENABLED.lock().unwrap() = false;
 }
+#[cfg(any(test, feature = "test-utils"))]
 pub fn shadow_is_enabled() -> bool {
     *SHADOW_ENABLED.lock().unwrap()
 }
+#[cfg(any(test, feature = "test-utils"))]
 pub fn shadow_clear() {
     SHADOW_RECORDS.lock().unwrap().clear();
 }
+#[cfg(any(test, feature = "test-utils"))]
 pub fn shadow_snapshot() -> Vec<ShadowRecord> {
     SHADOW_RECORDS.lock().unwrap().clone()
 }
+#[cfg(any(test, feature = "test-utils"))]
 pub fn shadow_push(r: ShadowRecord) {
     SHADOW_RECORDS.lock().unwrap().push(r);
 }
@@ -655,6 +666,7 @@ pub fn shadow_push(r: ShadowRecord) {
 /// wasm has already mutated its own AlkanesInstance, but the runtime
 /// context's `message.atomic` is shared, and the wasm doesn't pipe storage
 /// during execution, so reading atomic now reflects the pre-call state.
+#[cfg(any(test, feature = "test-utils"))]
 pub fn shadow_compare(
     ctx_arc: std::sync::Arc<std::sync::Mutex<AlkanesRuntimeContext>>,
     wasm_result: &Result<(ExtendedCallResponse, u64), anyhow::Error>,
@@ -786,6 +798,7 @@ pub fn shadow_compare(
     shadow_push(record);
 }
 
+#[cfg(any(test, feature = "test-utils"))]
 fn strip_revert_prefix(s: String) -> String {
     // The wasm SDK macro wraps every Err as `Error: <inner>`, then the host
     // wraps the data again as `ALKANES: revert: Error: <inner>`. The

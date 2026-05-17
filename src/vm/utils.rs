@@ -263,22 +263,37 @@ pub fn run_after_special(
 
     // DIESEL precompile: bypass wasmi for the hot-path mint and view
     // opcodes when the tx is a single-mint-protostone (the common case).
-    // Multi-mint-protostone txs (where the 2nd would revert anyway) fall
-    // through to the wasm path because their gas accounting is tx-size
-    // dependent and a constant gas table doesn't fit them.
-    #[cfg(feature = "diesel-precompile")]
-    {
-        let should_precompile = {
-            let ctx = context.lock().unwrap();
-            crate::precompile_diesel::matches_precompile_for_ctx(&ctx)
-        };
-        if should_precompile {
-            let (resp, gas, _path) = crate::precompile_diesel::run_diesel_eoa(
-                context.clone(),
-                &crate::precompile_diesel::CHAIN_GAS,
-            )?;
-            return Ok((resp, gas));
-        }
+    // Activation:
+    //   * height >= V220_FORK_HEIGHT — the same fork that swaps fr_btc
+    //     to slim. On regtest/altcoins V220_FORK_HEIGHT=0 so this fires
+    //     from genesis; on mainnet it fires at 950_000. Pre-fork blocks
+    //     walk the wasm path byte-equivalent to v2.1.7.
+    //   * OR `--features fastpath` — dev override.
+    // Multi-mint-protostone txs always fall through to the wasm path
+    // because their gas accounting is tx-size dependent and a constant
+    // gas table doesn't fit them. Consensus equivalence between the
+    // precompile and the wasm path is enforced by tests::diesel_shadow.
+    let should_precompile = {
+        let ctx = context.lock().unwrap();
+        let height = ctx.message.height as u32;
+        let activated =
+            cfg!(feature = "fastpath") || height >= crate::network::genesis::V220_FORK_HEIGHT;
+        // In test/test-utils builds, shadow_compare needs to observe the
+        // wasm path's gas/response to validate equivalence. When shadow
+        // mode is enabled, force the wasm path to run instead of routing
+        // through the precompile — the precompile will be invoked by
+        // shadow_compare itself for comparison.
+        #[cfg(any(test, feature = "test-utils"))]
+        let activated =
+            activated && !crate::precompile_diesel::shadow_is_enabled();
+        activated && crate::precompile_diesel::matches_precompile_for_ctx(&ctx)
+    };
+    if should_precompile {
+        let (resp, gas, _path) = crate::precompile_diesel::run_diesel_eoa(
+            context.clone(),
+            &crate::precompile_diesel::CHAIN_GAS,
+        )?;
+        return Ok((resp, gas));
     }
 
     let mut instance = AlkanesInstance::from_alkane(context.clone(), binary.clone(), start_fuel)?;
