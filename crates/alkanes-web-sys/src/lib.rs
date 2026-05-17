@@ -1,4 +1,4 @@
-// Rebuild trigger (2026-05-17): picks up alkanes-cli-common PR #259
+// Rebuild trigger (2026-05-17): picks up alkanes-cli-common PR #259 + PR #260
 // (skip provider.sync() in select_utxos when prefetched_utxos cover
 // alkanes_needed). cli-common is a transitive Cargo dep; publish-npm.yml's
 // path filter doesn't see those, so this comment lives in alkanes-web-sys
