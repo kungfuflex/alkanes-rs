@@ -261,12 +261,62 @@ pub fn run_after_special(
         );
     }
 
-    let mut instance = AlkanesInstance::from_alkane(context.clone(), binary.clone(), start_fuel)?;
-    let response = instance.execute()?;
+    // DIESEL precompile: bypass wasmi for the hot-path mint and view
+    // opcodes when the tx is a single-mint-protostone (the common case).
+    // Multi-mint-protostone txs (where the 2nd would revert anyway) fall
+    // through to the wasm path because their gas accounting is tx-size
+    // dependent and a constant gas table doesn't fit them.
+    #[cfg(feature = "diesel-precompile")]
+    {
+        let should_precompile = {
+            let ctx = context.lock().unwrap();
+            crate::precompile_diesel::matches_precompile_for_ctx(&ctx)
+        };
+        if should_precompile {
+            let (resp, gas, _path) = crate::precompile_diesel::run_diesel_eoa(
+                context.clone(),
+                &crate::precompile_diesel::CHAIN_GAS,
+            )?;
+            return Ok((resp, gas));
+        }
+    }
 
-    let remaining_fuel = instance.store.get_fuel()?;
-    let storage_len = response.storage.serialize().len() as u64;
+    let mut instance = AlkanesInstance::from_alkane(context.clone(), binary.clone(), start_fuel)?;
+    let exec_result = instance.execute();
+
+    // Capture fuel consumption for ALL paths (success and revert) so the
+    // fuel_probe can observe revert-path gas costs too. We read store fuel
+    // before propagating any error.
+    let remaining_fuel = instance.store.get_fuel().unwrap_or(0);
     let height = context.lock().unwrap().message.height as u32;
+
+    #[cfg(any(test, feature = "test-utils"))]
+    {
+        let ctx = context.lock().unwrap();
+        let target = ctx.myself.clone();
+        let opcode = ctx.inputs.first().copied().unwrap_or(0);
+        drop(ctx);
+        // Probe records the wasmi-internal fuel consumed regardless of
+        // success/revert. Storage-byte fuel only applies on success and is
+        // added below for the success path.
+        let probe_gas = start_fuel.saturating_sub(remaining_fuel);
+        crate::fuel_probe::record(target, opcode, height, probe_gas);
+    }
+
+    let response = match exec_result {
+        Ok(r) => r,
+        Err(e) => {
+            // Shadow-compare the revert path before propagating.
+            #[cfg(any(test, feature = "test-utils"))]
+            {
+                let failed: Result<(ExtendedCallResponse, u64), anyhow::Error> =
+                    Err(anyhow!(e.to_string()));
+                crate::precompile_diesel::shadow_compare(context.clone(), &failed);
+            }
+            return Err(e);
+        }
+    };
+    let storage_len = response.storage.serialize().len() as u64;
 
     #[cfg(feature = "debug-log")]
     {
@@ -300,6 +350,13 @@ pub fn run_after_special(
             opt
         },
     ))?;
+
+    #[cfg(any(test, feature = "test-utils"))]
+    {
+        let success_outcome: Result<(ExtendedCallResponse, u64), anyhow::Error> =
+            Ok((response.clone(), fuel_used));
+        crate::precompile_diesel::shadow_compare(context.clone(), &success_outcome);
+    }
 
     Ok((response, fuel_used))
 }

@@ -20,6 +20,14 @@ pub mod crash;
 #[cfg(test)]
 pub mod determinism;
 #[cfg(test)]
+pub mod diesel_gas_paths;
+#[cfg(test)]
+pub mod diesel_mainnet_smoke;
+#[cfg(test)]
+pub mod diesel_shadow;
+#[cfg(test)]
+pub mod diesel_sidebyside;
+#[cfg(test)]
 pub mod edict_then_message;
 #[cfg(test)]
 pub mod factory;
