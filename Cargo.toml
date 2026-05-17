@@ -83,6 +83,13 @@ merkle_distributor = []
 free_mint = []
 upgradeable = []
 debug-log = []
+# Enables a native (Rust) reimplementation of the DIESEL alkane (id 2:0)
+# that bypasses wasmi instantiation for opcodes 77/99/100/101 when the tx
+# contains exactly one mint protostone. Consensus equivalence is enforced
+# by `tests::diesel_shadow`. The per-chain gas constants come from a
+# shadow-mode calibration against the wasm binary built with the same
+# feature set; defaults are tuned to the regtest binary.
+diesel-precompile = []
 
 
 [dependencies]
