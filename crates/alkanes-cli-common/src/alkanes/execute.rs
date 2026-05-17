@@ -3277,13 +3277,49 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             .sum();
     
         let change_value = total_input_value.saturating_sub(total_output_value_sans_change).saturating_sub(capped_fee);
-    
-        if let Some(change_output) = outputs.iter_mut().find(|o| o.value.to_sat() == 0 && !o.script_pubkey.is_op_return()) {
-            change_output.value = bitcoin::Amount::from_sat(change_value);
-        } else if let Some(last_output) = outputs.iter_mut().last() {
-             if !last_output.script_pubkey.is_op_return() {
-                last_output.value = bitcoin::Amount::from_sat(last_output.value.to_sat() + change_value);
-             }
+
+        // Change placement.
+        //
+        // Preference order:
+        //   1. A zero-value, non-OP_RETURN placeholder (canonical: caller used
+        //      `create_outputs` which appends one pointing at change_address).
+        //   2. The LAST non-OP_RETURN output (walk backwards so an appended
+        //      runestone OP_RETURN doesn't gate this off — that was the bug
+        //      c12 reported 2026-05-17: outputs were [wrap_to_signer, dust,
+        //      OP_RETURN] with no placeholder; the old `outputs.iter_mut().last()`
+        //      hit the OP_RETURN and the inner `!is_op_return()` guard skipped
+        //      the assignment → change_value silently disappeared into fees).
+        //
+        // If neither path can absorb the change AND it's above dust, return
+        // an error — silently turning user funds into miner fees is the worst
+        // possible failure mode for a wallet operation.
+        const DUST_THRESHOLD_SATS: u64 = 546;
+        if change_value > 0 {
+            let placed = if let Some(change_output) = outputs.iter_mut()
+                .find(|o| o.value.to_sat() == 0 && !o.script_pubkey.is_op_return())
+            {
+                change_output.value = bitcoin::Amount::from_sat(change_value);
+                true
+            } else if let Some(target) = outputs.iter_mut()
+                .rev()
+                .find(|o| !o.script_pubkey.is_op_return())
+            {
+                target.value = bitcoin::Amount::from_sat(target.value.to_sat() + change_value);
+                true
+            } else {
+                false
+            };
+
+            if !placed && change_value > DUST_THRESHOLD_SATS {
+                return Err(AlkanesError::Wallet(format!(
+                    "build_psbt_and_fee: cannot place {change_value} sats of change \
+                     — every output is OP_RETURN. Caller must supply at least one \
+                     non-OP_RETURN output (typically a zero-value change placeholder \
+                     via create_outputs) so the surplus has somewhere to land."
+                )));
+            }
+            // change_value <= dust with no placement target: silently dropped
+            // (standard Bitcoin Core dust policy).
         }
     
         let mut psbt = Psbt::from_unsigned_tx(bitcoin::Transaction {
@@ -5506,5 +5542,147 @@ mod tests {
         needed.insert((32u64, 0u64), 200u64);
         needed.insert((2u64, 4u64), 50u64);
         assert!(prefetched_covers_alkanes_needed(&prefetched, &needed));
+    }
+
+    // -------------------------------------------------------------------------
+    // c12 BTC->alkane swap repro: build_psbt_and_fee silently drops change
+    //
+    // Reported by c12hz in ALKANES #general-chat 2026-05-17:
+    //   "I'm trying to swap from btc to an alkane on subfrost app. The unisat
+    //    tx view shows me it's spending my entire btc balance (even though I
+    //    only selected 25%) and none of the outputs go back to my wallet"
+    //
+    // Hypothesis: when the caller's `outputs` list does NOT include an explicit
+    // zero-value non-OP_RETURN change placeholder, AND `runestone_script` is
+    // passed (so an OP_RETURN gets appended inside build_psbt_and_fee), the
+    // change-finder at execute.rs:3281 finds nothing matching `value == 0 &&
+    // !is_op_return()`, falls through to the "add to last output" branch which
+    // is gated by `!is_op_return()` on the LAST output (now the just-appended
+    // OP_RETURN) — so the change_value computed but NEVER WRITTEN. The diff
+    // between input and output becomes the implicit fee, burning the user's
+    // change into miner fees.
+    //
+    // This test FAILS on the buggy code and PASSES on the fix.
+    // -------------------------------------------------------------------------
+    #[tokio::test]
+    async fn build_psbt_and_fee_writes_change_when_op_return_is_last() {
+        use bitcoin::{Amount, OutPoint, ScriptBuf, TxOut, Txid};
+
+        let mut provider = MockProvider::new(Network::Regtest);
+        let recipient_addr = WalletProvider::get_address(&provider).await.unwrap();
+        let recipient_script = bitcoin::Address::from_str(&recipient_addr)
+            .unwrap()
+            .require_network(Network::Regtest)
+            .unwrap()
+            .script_pubkey();
+
+        // Stub a single 100_000-sat BTC UTXO for the wallet.
+        let stub_txid =
+            Txid::from_str("1111111111111111111111111111111111111111111111111111111111111111")
+                .unwrap();
+        let stub_outpoint = OutPoint { txid: stub_txid, vout: 0 };
+        provider
+            .utxos
+            .lock()
+            .unwrap()
+            .push((stub_outpoint, TxOut {
+                value: Amount::from_sat(100_000),
+                script_pubkey: recipient_script.clone(),
+            }));
+
+        let mut executor = EnhancedAlkanesExecutor::new(&mut provider);
+
+        // Atomic wrap+swap outputs shape (matches what
+        // execute_with_strings's caller hands to build_psbt_and_fee BEFORE
+        // create_outputs's change-placeholder is added):
+        //   [ wrap-to-signer (10_000 sats), alkane-receive-dust (546 sats) ]
+        //
+        // NOTE: this deliberately omits the change placeholder so we exercise
+        // the buggy fallback path. The runestone OP_RETURN is appended by
+        // build_psbt_and_fee itself (third arg), so the final output list will
+        // be [10_000-sats-to-signer, 546-sats-dust, OP_RETURN].
+        let outputs = vec![
+            TxOut { value: Amount::from_sat(10_000), script_pubkey: recipient_script.clone() },
+            TxOut { value: Amount::from_sat(546),    script_pubkey: recipient_script.clone() },
+        ];
+
+        // Non-empty runestone OP_RETURN so build_psbt_and_fee appends it
+        // as the last output (the exact scenario c12 hit on UniSat).
+        let runestone_script = ScriptBuf::from(vec![0x6a, 0x01, 0xff]); // OP_RETURN <1-byte>
+
+        let (psbt, capped_fee, _vsize) = executor
+            .build_psbt_and_fee(
+                vec![stub_outpoint],
+                outputs,
+                Some(runestone_script),
+                Some(1.0), // 1 sat/vbyte — keeps fee small so change is clearly visible
+                None,
+                None,
+                None,
+            )
+            .await
+            .expect("build_psbt_and_fee should succeed");
+
+        let total_input: u64 = 100_000;
+        let total_explicit_output: u64 = 10_000 + 546; // explicit non-zero, non-OP_RETURN
+
+        // Sum the non-OP_RETURN output values from the BUILT PSBT.
+        let total_in_psbt: u64 = psbt
+            .unsigned_tx
+            .output
+            .iter()
+            .filter(|o| !o.script_pubkey.is_op_return())
+            .map(|o| o.value.to_sat())
+            .sum();
+
+        let actual_fee_paid = total_input - total_in_psbt;
+        let expected_max_fee = capped_fee + 100; // 100-sat tolerance for rounding
+
+        // BUG REPRO: with the buggy code, total_in_psbt stays at 10_546 (the
+        // explicit outputs only) because no change was written anywhere. That
+        // means actual_fee_paid = 89_454, but capped_fee is ~few-hundred sats.
+        // The user's ~89_000 sats of change silently disappears into miner fees.
+        //
+        // FIX EXPECTATION: total_in_psbt > total_explicit_output, with the
+        // delta being exactly the change_value. actual_fee_paid stays close to
+        // capped_fee.
+        assert!(
+            actual_fee_paid <= expected_max_fee,
+            "BUG REPRO: build_psbt_and_fee dropped change. total_input={}, \
+             total_outputs_in_psbt={}, computed_capped_fee={}, \
+             implicit_fee_paid={}. Excess of {} sats was silently burned. \
+             Outputs in PSBT: {:?}",
+            total_input,
+            total_in_psbt,
+            capped_fee,
+            actual_fee_paid,
+            actual_fee_paid.saturating_sub(capped_fee),
+            psbt.unsigned_tx
+                .output
+                .iter()
+                .map(|o| (o.value.to_sat(), o.script_pubkey.is_op_return()))
+                .collect::<Vec<_>>(),
+        );
+
+        // Stronger assertion: there should be a non-OP_RETURN output carrying
+        // the change. With the explicit outputs being 10_000 + 546 = 10_546,
+        // and total input being 100_000, change should be ~89_400+ sats.
+        let max_non_op_return_value = psbt
+            .unsigned_tx
+            .output
+            .iter()
+            .filter(|o| !o.script_pubkey.is_op_return())
+            .map(|o| o.value.to_sat())
+            .max()
+            .unwrap_or(0);
+
+        assert!(
+            max_non_op_return_value > total_explicit_output,
+            "Expected a change output to have absorbed the surplus. \
+             Largest non-OP_RETURN output: {} sats. \
+             Total explicit pre-build output: {} sats.",
+            max_non_op_return_value,
+            total_explicit_output,
+        );
     }
 }
