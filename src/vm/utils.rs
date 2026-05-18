@@ -263,30 +263,58 @@ pub fn run_after_special(
 
     // DIESEL precompile: bypass wasmi for the hot-path mint and view
     // opcodes when the tx is a single-mint-protostone (the common case).
-    // Activation:
-    //   * height >= V220_FORK_HEIGHT — the same fork that swaps fr_btc
-    //     to slim. On regtest/altcoins V220_FORK_HEIGHT=0 so this fires
-    //     from genesis; on mainnet it fires at 950_000. Pre-fork blocks
-    //     walk the wasm path byte-equivalent to v2.1.7.
-    //   * OR `--features fastpath` — dev override.
-    // Multi-mint-protostone txs always fall through to the wasm path
-    // because their gas accounting is tx-size dependent and a constant
-    // gas table doesn't fit them. Consensus equivalence between the
-    // precompile and the wasm path is enforced by tests::diesel_shadow.
+    //
+    // v2.2.0-rc.4: activation is **feature-gated only**. The precompile
+    // code still compiles into every build (so `run_diesel_eoa` is
+    // callable from `tests::diesel_sidebyside` / `tests::diesel_shadow`
+    // for the shadow-compare path), but the dispatcher only routes
+    // through it when `--features fastpath` is enabled. With the default
+    // feature set (`--features mainnet`) the precompile is **never**
+    // dispatched and every DIESEL call walks the wasm path —
+    // byte-equivalent to v2.1.7 / pre-V220 behaviour. There is no
+    // height gate any more: production mainnet stays on wasm
+    // indefinitely until we explicitly cut a `fastpath`-enabled release.
+    //
+    // The prior height-gated activation (`height >= V220_FORK_HEIGHT`)
+    // was removed after meta verify-pod observations on 2026-05-18
+    // showed the precompile path diverging from canonical (Unisat /
+    // Fairmints / Alkanode / wasmi production pods) by ~25 DIESEL of
+    // pool reserves and ~0.3 DIESEL of total supply at h=949960 with
+    // fastpath active. The single-tx enumerated paths in
+    // `diesel_sidebyside` / `diesel_shadow` still pass byte-equivalent;
+    // the divergence is therefore in a multi-tx / cross-contract
+    // interaction not yet covered by the test suite. Until that gap is
+    // closed and a `tests::diesel_shadow` invocation actually
+    // reproduces the production divergence in CI, the default build
+    // must not ship the precompile as the dispatch path.
+    //
+    // Multi-mint-protostone txs (matched-out by
+    // `matches_precompile_for_ctx`) still fall through to the wasm path
+    // unconditionally because their gas accounting is tx-size
+    // dependent and the constant gas table doesn't fit them.
     let should_precompile = {
-        let ctx = context.lock().unwrap();
-        let height = ctx.message.height as u32;
-        let activated =
-            cfg!(feature = "fastpath") || height >= crate::network::genesis::V220_FORK_HEIGHT;
-        // In test/test-utils builds, shadow_compare needs to observe the
-        // wasm path's gas/response to validate equivalence. When shadow
-        // mode is enabled, force the wasm path to run instead of routing
-        // through the precompile — the precompile will be invoked by
-        // shadow_compare itself for comparison.
-        #[cfg(any(test, feature = "test-utils"))]
-        let activated =
-            activated && !crate::precompile_diesel::shadow_is_enabled();
-        activated && crate::precompile_diesel::matches_precompile_for_ctx(&ctx)
+        #[cfg(feature = "fastpath")]
+        {
+            let ctx = context.lock().unwrap();
+            // In test/test-utils builds, shadow_compare needs to observe
+            // the wasm path's gas/response to validate equivalence. When
+            // shadow mode is enabled, force the wasm path to run instead
+            // of routing through the precompile — the precompile will be
+            // invoked by shadow_compare itself for comparison.
+            #[cfg(any(test, feature = "test-utils"))]
+            {
+                !crate::precompile_diesel::shadow_is_enabled()
+                    && crate::precompile_diesel::matches_precompile_for_ctx(&ctx)
+            }
+            #[cfg(not(any(test, feature = "test-utils")))]
+            {
+                crate::precompile_diesel::matches_precompile_for_ctx(&ctx)
+            }
+        }
+        #[cfg(not(feature = "fastpath"))]
+        {
+            false
+        }
     };
     if should_precompile {
         let (resp, gas, _path) = crate::precompile_diesel::run_diesel_eoa(
