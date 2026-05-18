@@ -26,13 +26,26 @@ pub mod fuel_probe;
 pub mod indexer;
 pub mod message;
 pub mod network;
-// precompile_diesel is always compiled into production builds. Whether
-// it actually dispatches depends on the runtime height check in
-// vm/utils.rs::run_after_special — on mainnet it activates at height
-// >= V220_FORK_HEIGHT (the same gate as the slim frBTC swap), and on
-// regtest/altcoins it activates from genesis because V220_FORK_HEIGHT
-// is 0 there. The `fastpath` feature forces activation from genesis
-// even on chains with a nonzero fork height (regtest/dev only).
+// precompile_diesel is always compiled into production builds (the
+// `tests::diesel_shadow` and `tests::diesel_sidebyside` paths need
+// `run_diesel_eoa` callable directly to compare against the wasm
+// dispatch). Whether the live indexer dispatcher routes DIESEL calls
+// through the precompile depends on the `fastpath` Cargo feature:
+//
+//   * default build (`--features mainnet` — what production ships):
+//     precompile is NEVER dispatched. Every DIESEL call walks the wasm
+//     path, byte-equivalent to v2.1.7. No height gate.
+//
+//   * `--features mainnet,fastpath`: precompile dispatches for every
+//     single-mint-protostone tx from genesis. Used by the meta verify
+//     pod and other experimental indexers.
+//
+// The pre-v2.2.0-rc.4 "activate at height >= V220_FORK_HEIGHT on
+// mainnet" behaviour was removed after the verify-pod observed a
+// non-trivial divergence between fastpath and the canonical wasm
+// indexers (Unisat / Fairmints / Alkanode) — see the rationale in
+// vm/utils.rs::run_after_special. Production mainnet stays on wasm
+// until that gap is reproduced in `tests::diesel_shadow` and fixed.
 pub mod precompile_diesel;
 pub mod precompiled;
 pub mod tables;
