@@ -106,7 +106,11 @@ mod tests {
         // assert_eq!(_addr_str, addr_str);
     }
 
+    // v3: address-index family removed from the canonical indexer.
+    // OUTPOINTS_FOR_ADDRESS is no longer written. Address-keyed lookups
+    // live in espo middleware (via esplora's UTXO API).
     #[wasm_bindgen_test]
+    #[ignore]
     fn outpoints_by_address() {
         clear();
         let test_block = helpers::create_block_with_sample_tx();
@@ -129,7 +133,9 @@ mod tests {
         assert_eq!(list_str, outpoint_hex);
     }
 
+    // v3: address-index family removed — see `outpoints_by_address`.
     #[wasm_bindgen_test]
+    #[ignore]
     fn runes_by_address_test() {
         clear();
         let (test_block, _) = helpers::create_block_with_rune_tx(None);
