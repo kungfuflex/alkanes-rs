@@ -1,0 +1,32 @@
+{
+  "name": "alkanes-mcp-server",
+  "version": "1.0.0",
+  "description": "MCP server for alkanes-cli - exposes all CLI commands as MCP tools",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "alkanes-mcp-server": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "watch": "tsc --watch"
+  },
+  "keywords": [
+    "mcp",
+    "alkanes",
+    "bitcoin",
+    "cli"
+  ],
+  "author": "Alkanes Team",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.4"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3"
+  }
+}
