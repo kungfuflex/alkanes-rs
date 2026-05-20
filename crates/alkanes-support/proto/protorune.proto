@@ -28,6 +28,9 @@ message BalanceSheetItem {
 
 message BalanceSheet {
   repeated BalanceSheetItem entries = 1;
+  // v3 chunked-outpoint API: see protorune-support/proto/protorune.proto
+  // for the full doc. Unset / absent = unspent.
+  optional uint32 spent_at_height = 2;
 }
 
 message Outpoint {

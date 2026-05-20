@@ -27,6 +27,14 @@ message BalanceSheetItem {
 
 message BalanceSheet {
   repeated BalanceSheetItem entries = 1;
+  // v3 chunked-outpoint API: when the outpoint that owns this
+  // balance sheet is consumed as a transaction input, the indexer
+  // rewrites the chunk with `spent_at_height = Some(h)`. Replaces the
+  // v2 spentness probe that read OUTPOINT_SPENDABLE_BY.len() > 1 (an
+  // incidental side-effect of the now-removed address index).
+  //
+  // Unset / absent = unspent.
+  optional uint32 spent_at_height = 2;
 }
 
 message Outpoint {
