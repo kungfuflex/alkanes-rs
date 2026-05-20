@@ -265,15 +265,36 @@ fn block_reward(height: u64) -> u128 {
 
 fn max_supply() -> u128 {
     // Regtest: u128::MAX (per ChainConfiguration impl). Mainnet:
-    // 156_250_000_00000000. Branches on feature in the wasm; mirror here.
+    // mirrors `GenesisAlkane::max_supply` from
+    // `crates/alkanes-std-genesis-alkane-upgraded-eoa/src/lib.rs:106`.
     #[cfg(feature = "mainnet")]
     {
-        156_250_000_00000000u128
+        156_250_000_000_000u128
     }
     #[cfg(not(feature = "mainnet"))]
     {
         u128::MAX
     }
+}
+
+/// Test-only accessor for the precompile's compile-time `max_supply`
+/// constant. Used by `tests::diesel_divergence_repro` to assert
+/// byte-equivalence with the wasm `GenesisAlkane::max_supply` value
+/// without standing up a full wasm runtime.
+#[cfg(any(test, feature = "test-utils"))]
+pub fn _test_only_max_supply() -> u128 {
+    max_supply()
+}
+
+/// Test-only accessor for `number_diesel_mints`. Used by
+/// `tests::diesel_divergence_repro` to exercise the
+/// decode-error-propagation behavior of the precompile's mint counter
+/// without going through the full `run_diesel_eoa` dispatch.
+#[cfg(any(test, feature = "test-utils"))]
+pub fn _test_only_number_diesel_mints(
+    ctx: &AlkanesRuntimeContext,
+) -> Result<u128> {
+    number_diesel_mints(ctx)
 }
 
 /// Sums the value of every output in the block's coinbase tx. Mirrors
@@ -316,10 +337,17 @@ fn number_diesel_mints(ctx: &AlkanesRuntimeContext) -> Result<u128> {
                 if calldata.is_empty() {
                     continue;
                 }
-                let list = match decode_varint_list(&mut Cursor::new(calldata)) {
-                    Ok(l) => l,
-                    Err(_) => continue,
-                };
+                // v3 divergence fix: propagate the varint decode error
+                // instead of skipping the malformed protostone. The wasm
+                // path's `_get_number_diesel_mints` in
+                // `vm/host_functions.rs:659` uses `?` to propagate the
+                // same error; pre-fix the precompile used
+                // `Err(_) => continue` which silently produced a lower
+                // count → larger `value_per_mint` → divergent
+                // `/totalsupply`. Suspected cause of the h=949478
+                // divergence documented in
+                // `.fastpath-bug-investigation/`.
+                let list = decode_varint_list(&mut Cursor::new(calldata))?;
                 if list.len() < 2 {
                     continue;
                 }

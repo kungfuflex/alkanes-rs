@@ -20,6 +20,8 @@ pub mod crash;
 #[cfg(test)]
 pub mod determinism;
 #[cfg(test)]
+pub mod diesel_divergence_repro;
+#[cfg(test)]
 pub mod diesel_gas_paths;
 #[cfg(test)]
 pub mod diesel_mainnet_smoke;
