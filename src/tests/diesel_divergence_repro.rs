@@ -178,3 +178,154 @@ fn number_diesel_mints_empty_block_returns_zero() -> Result<()> {
 fn number_diesel_mints_propagates_decode_error_on_malformed_protostone() {
     // intentionally empty — see doc comment for the gap.
 }
+
+// ============================================================================
+// §3 — Cross-contract DIESEL mint must fall through to wasm
+// ============================================================================
+
+/// Audit divergence class #3: when a non-EOA caller invokes DIESEL
+/// mint via `extcall(target=2:0, opcode=77)`, the precompile must
+/// decline to dispatch so the wasm path runs and charges canonical
+/// fuel for the EOA-check trap.
+///
+/// Pre-fix the precompile would dispatch, reach
+/// `run_mint_communist`, and immediately error `Err("Diesel mint
+/// must be called from EOA")` with **zero internal gas** — vs wasmi
+/// which executes setup-up-to-the-check and charges that fuel
+/// before trapping. The fuel delta affects the calling alkane's
+/// per-tx budget on cross-contract DIESEL invocations.
+///
+/// Phase 3 of the PrecompiledAlkane abstraction fixes this by
+/// having `DieselEoa::requires_eoa(77)` return true, which causes
+/// `can_dispatch::<DieselEoa>` to return false for non-EOA mint
+/// calls. The dispatcher returns `None`, signaling the caller
+/// (`vm/utils.rs::run_after_special`) to fall through to wasm.
+///
+/// This test verifies the dispatcher's gate behavior directly by
+/// calling `try_dispatch_precompile::<DieselEoa>` with a context
+/// where `caller != 0:0` and asserting it returns `None`.
+#[wasm_bindgen_test]
+fn precompile_falls_through_on_non_eoa_caller() -> Result<()> {
+    use crate::precompile::try_dispatch_precompile;
+    use crate::precompile_diesel::{DieselEoa, DieselPathGas, DIESEL_ID};
+    use crate::tests::helpers::clear;
+    use crate::vm::runtime::AlkanesRuntimeContext;
+    use alkanes_support::cellpack::Cellpack;
+    use alkanes_support::id::AlkaneId;
+    use metashrew_core::index_pointer::AtomicPointer;
+    use protorune::message::MessageContextParcel;
+    use protorune::test_helpers::create_block_with_coinbase_tx;
+    use protorune_support::balance_sheet::BalanceSheet;
+    use std::sync::{Arc, Mutex};
+
+    clear();
+
+    let block = create_block_with_coinbase_tx(2);
+    let cellpack = Cellpack {
+        target: DIESEL_ID,
+        inputs: vec![77],
+    };
+    let parcel = MessageContextParcel {
+        atomic: AtomicPointer::default(),
+        runes: vec![],
+        transaction: block.txdata[0].clone(),
+        block: block.clone(),
+        height: 2u64,
+        pointer: 0,
+        refund_pointer: 0,
+        calldata: cellpack.encipher(),
+        sheets: Box::<BalanceSheet<AtomicPointer>>::new(BalanceSheet::default()),
+        txindex: 0,
+        vout: 0,
+        runtime_balances: Box::<BalanceSheet<AtomicPointer>>::new(BalanceSheet::default()),
+    };
+    let context = Arc::new(Mutex::new(
+        AlkanesRuntimeContext::from_parcel_and_cellpack(&parcel, &cellpack),
+    ));
+
+    // Set caller to a non-EOA alkane id (simulates a DEX router or
+    // proxy contract invoking DIESEL via extcall) and target to
+    // DIESEL.
+    {
+        let mut ctx = context.lock().unwrap();
+        ctx.caller = AlkaneId { block: 4, tx: 17 };
+        ctx.myself = DIESEL_ID;
+    }
+
+    let table = DieselPathGas::default();
+    let result = try_dispatch_precompile::<DieselEoa>(context, &table);
+    assert!(
+        result.is_none(),
+        "precompile must decline to dispatch when caller != 0:0 for opcode 77; \
+         dispatcher returned: {:?}",
+        result.as_ref().map(|r| r.is_ok())
+    );
+    Ok(())
+}
+
+/// Companion to the above: opcode 99 (get_name) is a pure view and
+/// does NOT require EOA. A cross-contract caller invoking it must
+/// still be dispatchable — `requires_eoa(99) == false`.
+///
+/// This guards against an over-eager Phase 3 implementation that
+/// would block view opcodes alongside mint, defeating the
+/// fastpath's whole purpose for read-only DEX integrations.
+#[wasm_bindgen_test]
+fn precompile_view_opcode_does_not_require_eoa() -> Result<()> {
+    use crate::precompile::try_dispatch_precompile;
+    use crate::precompile_diesel::{DieselEoa, DieselPathGas, DIESEL_ID};
+    use crate::tests::helpers::clear;
+    use crate::vm::runtime::AlkanesRuntimeContext;
+    use alkanes_support::cellpack::Cellpack;
+    use alkanes_support::id::AlkaneId;
+    use metashrew_core::index_pointer::AtomicPointer;
+    use protorune::message::MessageContextParcel;
+    use protorune::test_helpers::create_block_with_coinbase_tx;
+    use protorune_support::balance_sheet::BalanceSheet;
+    use std::sync::{Arc, Mutex};
+
+    clear();
+
+    let block = create_block_with_coinbase_tx(2);
+    let cellpack = Cellpack {
+        target: DIESEL_ID,
+        inputs: vec![99],
+    };
+    let parcel = MessageContextParcel {
+        atomic: AtomicPointer::default(),
+        runes: vec![],
+        transaction: block.txdata[0].clone(),
+        block: block.clone(),
+        height: 2u64,
+        pointer: 0,
+        refund_pointer: 0,
+        calldata: cellpack.encipher(),
+        sheets: Box::<BalanceSheet<AtomicPointer>>::new(BalanceSheet::default()),
+        txindex: 0,
+        vout: 0,
+        runtime_balances: Box::<BalanceSheet<AtomicPointer>>::new(BalanceSheet::default()),
+    };
+    let context = Arc::new(Mutex::new(
+        AlkanesRuntimeContext::from_parcel_and_cellpack(&parcel, &cellpack),
+    ));
+    {
+        let mut ctx = context.lock().unwrap();
+        ctx.caller = AlkaneId { block: 4, tx: 17 };
+        ctx.myself = DIESEL_ID;
+    }
+
+    let table = DieselPathGas::default();
+    let result = try_dispatch_precompile::<DieselEoa>(context, &table);
+    assert!(
+        result.is_some(),
+        "precompile must dispatch view opcode 99 even from non-EOA caller; \
+         dispatcher returned None (treating as decline)"
+    );
+    let inner = result.unwrap();
+    assert!(
+        inner.is_ok(),
+        "view opcode 99 dispatch should succeed: {:?}",
+        inner.err()
+    );
+    Ok(())
+}

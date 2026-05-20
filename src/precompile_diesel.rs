@@ -597,15 +597,22 @@ fn run_mint_communist(
 // ===========================================================================
 
 /// ZST implementing the [`crate::precompile::PrecompiledAlkane`] trait
-/// for the DIESEL EOA alkane (2:0). Phase 2 of the abstraction rollout:
-/// existing tests (`diesel_sidebyside`, `diesel_shadow`) call into the
-/// helpers below via `run_diesel_eoa` and stay byte-equivalent.
+/// for the DIESEL EOA alkane (2:0).
 ///
-/// Phase 3 will flip `requires_eoa(77) = true` and
-/// `requires_solo_cellpack(77) = true` once shadow-tests for the
-/// fall-through behavior land — those will eliminate divergence
-/// classes #3 and #4 from the audit by routing problematic calls to
-/// wasm where the gas accounting is canonical.
+/// Phase 3 (current): `requires_eoa(77) = true` makes the generic
+/// dispatcher fall through to wasm for cross-contract DIESEL mint
+/// invocations (caller != 0:0). The audit's divergence class #3
+/// reproduced as: the pre-abstraction precompile would error
+/// `Err("Diesel mint must be called from EOA")` with **zero** internal
+/// gas, while wasmi executes setup-up-to-the-check and charges that
+/// fuel — a divergence that affects a calling alkane's remaining
+/// per-tx fuel budget. By falling through, the wasm path runs and
+/// charges canonical fuel. Proof test:
+/// `tests::diesel_precompile_falls_through_on_non_eoa_caller`.
+///
+/// Phase 4 will add proof tests for divergence classes #1 (h=949478
+/// replay), #5 (long-chain storage-read fuel) and #6 (malformed-varint
+/// adjacency — already fixed by commit b6ca458d's `?`-propagation).
 pub struct DieselEoa;
 
 impl crate::precompile::PrecompiledAlkane for DieselEoa {
@@ -621,11 +628,25 @@ impl crate::precompile::PrecompiledAlkane for DieselEoa {
         opcode == 77
     }
 
-    // Phase 2 leaves `requires_eoa` and `requires_solo_cellpack` at
-    // their trait defaults (false) so existing tests' caller shapes
-    // continue to dispatch through. Phase 3 flips both to true for
-    // opcode 77 alongside the proof-tests for cases 3 + 4 of the
-    // divergence audit.
+    /// Phase 3 — divergence audit class #3 fix.
+    ///
+    /// Opcode 77 (mint) must be invoked from EOA (caller == 0:0).
+    /// Pre-abstraction, the precompile reached `run_mint_communist`
+    /// and immediately errored on `caller != 0:0` returning
+    /// `Err(_)` with zero internal gas — diverging from wasmi which
+    /// executes setup-up-to-the-check and charges that fuel before
+    /// trapping.
+    ///
+    /// Returning true here causes `can_dispatch` to short-circuit
+    /// to false for non-EOA mint calls so the caller
+    /// (`vm/utils.rs::run_after_special`) falls through to wasm
+    /// where the fuel accounting is canonical.
+    ///
+    /// Opcodes 99/100/101 (views) don't require EOA — they're
+    /// pure reads.
+    fn requires_eoa(opcode: u128) -> bool {
+        opcode == 77
+    }
 
     fn execute(
         ctx: &AlkanesRuntimeContext,
