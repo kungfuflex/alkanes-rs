@@ -124,3 +124,27 @@ message RuntimeInput {
 message Runtime {
   BalanceSheet balances = 1;
 }
+
+// v3 `address-indexing` opt-in feature: per-address chunked outpoint
+// snapshot.
+//
+// One chunk per address — the writer in
+// `protorune::index_spendables_address_index` reads the existing
+// chunk, applies the per-block diff (add outputs paid to this
+// address, remove outputs consumed as inputs from this address),
+// re-sorts by `(txid_le, vout)` ascending and writes it back via
+// `set_chunk`. One chain entry per address per block regardless of
+// how many of that address's outpoints were touched.
+//
+// Determinism contract: the outpoint list MUST be sorted by
+// `(txid_le, vout)` ascending. View callers iterate this list in
+// order and need byte-equal RPC responses across nodes.
+message AddressOutpoints {
+  // Outpoints currently spendable by this address, sorted by
+  // (txid_le, vout) ascending. The ordering is load-bearing.
+  repeated Outpoint outpoints = 1;
+  // Block height at which this snapshot was assembled. Defensive
+  // breadcrumb — if a stale chunk leaks from somewhere, the height
+  // mismatch makes it obvious.
+  uint32 height = 2;
+}

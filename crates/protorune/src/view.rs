@@ -164,36 +164,62 @@ pub fn outpoint_to_outpoint_response(outpoint: &OutPoint) -> Result<OutpointResp
     })
 }
 
+/// View entry-point for the `runesbyaddress` JSON-RPC method.
+///
+/// Gated behind the `address-indexing` Cargo feature. When OFF (the
+/// default), returns an explicit "feature not enabled" error so callers
+/// know the canonical v3 mainnet wasm does NOT serve this view —
+/// address-keyed lookups are served from esplora's UTXO API via espo
+/// middleware. Operators who need an indexer-served address-by-x
+/// surface must rebuild the wasm with `--features mainnet,address-indexing`.
+///
+/// Determinism note: the iteration order matches the chunked
+/// `AddressOutpoints` proto, which is sorted by `(txid_le, vout)`
+/// ascending by `address_index::write_address_index`. View consumers
+/// can rely on byte-equal responses across nodes.
+///
+/// Performance note: the per-outpoint balance-sheet reads in the loop
+/// below are independent and side-effect-free — a future PR will
+/// dispatch them concurrently via `metashrew_core::view::spawn` once
+/// that wrapper ships in the host. This PR keeps the synchronous loop
+/// to avoid a forward dependency on the not-yet-shipped wasm-side
+/// wrapper.
+#[cfg(feature = "address-indexing")]
 pub fn runes_by_address(input: &Vec<u8>) -> Result<WalletResponse> {
+    use crate::address_index;
     let mut result: WalletResponse = WalletResponse::default();
     if let Some(req) = proto::protorune::WalletRequest::decode(input.as_ref()).ok() {
-        result.outpoints = tables::OUTPOINTS_FOR_ADDRESS
-            .select(&req.wallet)
-            .get_list()
+        let chunk = match address_index::load_chunk(&req.wallet) {
+            Some(c) => c,
+            None => return Ok(result),
+        };
+        // Iteration order is the on-disk chunk order, which is the
+        // canonical (txid_le, vout) ascending order. See
+        // `address_index::write_address_index` for the sort invariant.
+        result.outpoints = chunk
+            .outpoints
             .into_iter()
-            .map(|v| -> Result<OutPoint> {
-                let mut cursor = Cursor::new(v.as_ref().clone());
-                Ok(consensus_decode::<bitcoin::blockdata::transaction::OutPoint>(&mut cursor)?)
-            })
-            .collect::<Result<Vec<OutPoint>>>()?
-            .into_iter()
-            .filter_map(|v| -> Option<Result<OutpointResponse>> {
-                let outpoint_bytes = match outpoint_to_bytes(&v) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        return Some(Err(e));
-                    }
+            .map(|op| -> Result<OutpointResponse> {
+                let outpoint = OutPoint {
+                    txid: bitcoin::Txid::from_byte_array(
+                        <Vec<u8> as AsRef<[u8]>>::as_ref(&op.txid).try_into()?,
+                    ),
+                    vout: op.vout,
                 };
-                let _address = tables::OUTPOINT_SPENDABLE_BY.select(&outpoint_bytes).get();
-                if req.wallet.len() == _address.len() {
-                    Some(outpoint_to_outpoint_response(&v))
-                } else {
-                    None
-                }
+                outpoint_to_outpoint_response(&outpoint)
             })
             .collect::<Result<Vec<OutpointResponse>>>()?;
     }
     Ok(result)
+}
+
+/// Stub: `runesbyaddress` is gated behind the `address-indexing` Cargo
+/// feature. See the gated arm above for the full description.
+#[cfg(not(feature = "address-indexing"))]
+pub fn runes_by_address(_input: &Vec<u8>) -> Result<WalletResponse> {
+    Err(anyhow!(
+        "runesbyaddress requires --features address-indexing — recompile the alkanes wasm with the flag"
+    ))
 }
 
 pub fn protorunes_by_outpoint(input: &Vec<u8>) -> Result<OutpointResponse> {
@@ -228,41 +254,74 @@ pub fn runes_by_outpoint(input: &Vec<u8>) -> Result<OutpointResponse> {
     }
 }
 
+/// View entry-point for the `protorunesbyaddress` JSON-RPC method.
+///
+/// Gated behind the `address-indexing` Cargo feature. See the
+/// `runes_by_address` doc-comment for the full feature gating policy
+/// and determinism contract. The wasm-side `protorunesbyaddress`
+/// export in `src/lib.rs` is itself feature-gated, so when the feature
+/// is OFF the JSON-RPC layer will get a "view function not found"
+/// error rather than reaching this stub — but we still return a clear
+/// error for the rlib path (tests, the alkanes-rpc-core dispatch
+/// layer when present, etc.).
+///
+/// IMPORTANT: this view is NOT the optimal way to query address
+/// state in production. The intended primary path is "esplora UTXO
+/// API → list of outpoints → `protorunesbyoutpoint` on each", which
+/// scales to whatever esplora can already serve and is parallel by
+/// construction. This view is a convenience for operators who
+/// explicitly opted in.
+#[cfg(feature = "address-indexing")]
 pub fn protorunes_by_address(input: &Vec<u8>) -> Result<WalletResponse> {
+    use crate::address_index;
     let mut result: WalletResponse = WalletResponse::default();
     if let Some(req) = proto::protorune::ProtorunesWalletRequest::decode(input.as_ref()).ok() {
-        result.outpoints = tables::OUTPOINTS_FOR_ADDRESS
-            .select(&req.wallet)
-            .get_list()
+        let chunk = match address_index::load_chunk(&req.wallet) {
+            Some(c) => c,
+            None => return Ok(result),
+        };
+        let protocol_tag: u128 = req.clone().protocol_tag.unwrap().into();
+        // Iteration order is the on-disk chunk order. See
+        // `address_index::write_address_index` for the sort invariant.
+        //
+        // TODO(view::spawn): each protorune_outpoint_to_outpoint_response
+        // call is an independent storage read. Dispatch via
+        // `metashrew_core::view::spawn` once the wasm-side wrapper
+        // ships. Synchronous loop today; one-line change later.
+        result.outpoints = chunk
+            .outpoints
             .into_iter()
-            .map(|v| -> Result<OutPoint> {
-                let mut cursor = Cursor::new(v.as_ref().clone());
-                Ok(consensus_decode::<bitcoin::blockdata::transaction::OutPoint>(&mut cursor)?)
-            })
-            .collect::<Result<Vec<OutPoint>>>()?
-            .into_iter()
-            .filter_map(|v| -> Option<Result<OutpointResponse>> {
-                let outpoint_bytes = match outpoint_to_bytes(&v) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        return Some(Err(e));
-                    }
+            .map(|op| -> Result<OutpointResponse> {
+                let outpoint = OutPoint {
+                    txid: bitcoin::Txid::from_byte_array(
+                        <Vec<u8> as AsRef<[u8]>>::as_ref(&op.txid).try_into()?,
+                    ),
+                    vout: op.vout,
                 };
-                let _address = tables::OUTPOINT_SPENDABLE_BY.select(&outpoint_bytes).get();
-                if req.wallet.len() == _address.len() {
-                    Some(protorune_outpoint_to_outpoint_response(
-                        &v,
-                        req.clone().protocol_tag.unwrap().into(),
-                    ))
-                } else {
-                    None
-                }
+                protorune_outpoint_to_outpoint_response(&outpoint, protocol_tag)
             })
             .collect::<Result<Vec<OutpointResponse>>>()?;
     }
     Ok(result)
 }
 
+/// Stub: `protorunesbyaddress` is gated behind the `address-indexing`
+/// Cargo feature.
+#[cfg(not(feature = "address-indexing"))]
+pub fn protorunes_by_address(_input: &Vec<u8>) -> Result<WalletResponse> {
+    Err(anyhow!(
+        "protorunesbyaddress requires --features address-indexing — recompile the alkanes wasm with the flag"
+    ))
+}
+
+/// Legacy linked-list-backed protorunes-by-address variant. The
+/// linked-list table (`OUTPOINT_SPENDABLE_BY_ADDRESS`) is populated by
+/// `index_spendables_ll`, which is NOT on the v3 default dispatch
+/// path. We keep the symbol available under `address-indexing` for
+/// any caller that explicitly opts into the linked-list flow, but the
+/// canonical opt-in path goes through `protorunes_by_address` above
+/// against the chunked /v3/addr/* state.
+#[cfg(feature = "address-indexing")]
 pub fn protorunes_by_address2(input: &Vec<u8>) -> Result<WalletResponse> {
     let mut result: WalletResponse = WalletResponse::default();
     if let Some(req) = proto::protorune::ProtorunesWalletRequest::decode(input.as_ref()).ok() {
@@ -281,6 +340,13 @@ pub fn protorunes_by_address2(input: &Vec<u8>) -> Result<WalletResponse> {
             .collect::<Result<Vec<OutpointResponse>>>()?
     }
     Ok(result)
+}
+
+#[cfg(not(feature = "address-indexing"))]
+pub fn protorunes_by_address2(_input: &Vec<u8>) -> Result<WalletResponse> {
+    Err(anyhow!(
+        "protorunesbyaddress2 requires --features address-indexing — recompile the alkanes wasm with the flag"
+    ))
 }
 
 pub fn runes_by_height(input: &Vec<u8>) -> Result<RunesResponse> {

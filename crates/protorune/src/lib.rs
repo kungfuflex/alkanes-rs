@@ -59,6 +59,8 @@ use std::sync::Arc;
 const BLACKLISTED_TX_HASHES: [&str; 1] =
     ["5cbb0c466dd08d7af9223d45105fbbf0fdc9fb7cda4831c183d6b0cb5ba60fb0"];
 
+#[cfg(feature = "address-indexing")]
+pub mod address_index;
 pub mod balance_sheet;
 pub mod message;
 pub mod protoburn;
@@ -745,12 +747,20 @@ impl Protorune {
         }
         Ok(())
     }
-    pub fn index_spendables(txdata: &Vec<Transaction>) -> Result<BTreeSet<Vec<u8>>> {
+    pub fn index_spendables(
+        txdata: &Vec<Transaction>,
+        height: u32,
+    ) -> Result<BTreeSet<Vec<u8>>> {
+        // `height` is consumed only when --features address-indexing is
+        // enabled. Default builds keep the parameter for API stability
+        // (cheaper than a feature-conditional signature).
+        #[cfg(not(feature = "address-indexing"))]
+        let _ = height;
         // Track unique addresses that have their spendable outpoints updated
-        #[cfg(feature = "cache")]
+        #[cfg(any(feature = "cache", feature = "address-indexing"))]
         let mut updated_addresses: BTreeSet<Vec<u8>> = BTreeSet::new();
 
-        #[cfg(not(feature = "cache"))]
+        #[cfg(not(any(feature = "cache", feature = "address-indexing")))]
         let updated_addresses: BTreeSet<Vec<u8>> = BTreeSet::new();
 
         for (txindex, transaction) in txdata.iter().enumerate() {
@@ -776,15 +786,35 @@ impl Protorune {
             // When --features cache is enabled, populate
             // updated_addresses from output script pubkeys directly so
             // cache invalidation downstream still sees the right set.
-            #[cfg(feature = "cache")]
+            #[cfg(all(feature = "cache", not(feature = "address-indexing")))]
             for output in transaction.output.iter() {
                 if Payload::from_script(&output.script_pubkey).is_ok() {
-                    if let Ok(address_str) = to_address_str(&output.script_pubkey) {
+                    if let std::result::Result::Ok(address_str) =
+                        to_address_str(&output.script_pubkey)
+                    {
                         updated_addresses.insert(address_str.into_bytes());
                     }
                 }
             }
         }
+
+        // v3 `address-indexing` opt-in: rewrite one chunked
+        // AddressOutpoints record per affected address. This is the
+        // sole place where /v3/addr/* state is written. The accumulator
+        // pattern guarantees one chunk write per address per block,
+        // regardless of how many of that address's outpoints were
+        // touched. Determinism contract: outpoints are sorted by
+        // (txid_le, vout) ascending. See `crate::address_index` for the
+        // full design discussion.
+        //
+        // The address-indexing writer ALSO populates updated_addresses
+        // (with the same union-of-inputs-and-outputs set), so when
+        // --features cache,address-indexing are both on we don't
+        // double-walk the outputs in the loop above — the
+        // `not(feature = "address-indexing")` cfg-gate skips that
+        // walk.
+        #[cfg(feature = "address-indexing")]
+        crate::address_index::write_address_index(txdata, height, &mut updated_addresses)?;
 
         // Return the set of updated addresses
         Ok(updated_addresses)
@@ -1168,7 +1198,7 @@ impl Protorune {
         Self::index_outpoints(&block, height)?;
 
         // Get the set of updated addresses
-        let updated_addresses = Self::index_spendables(&block.txdata)?;
+        let updated_addresses = Self::index_spendables(&block.txdata, height as u32)?;
 
         Self::freeze_storage(height);
         Self::index_unspendables::<T>(&block, height)?;

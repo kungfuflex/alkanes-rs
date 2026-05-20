@@ -96,6 +96,13 @@ debug-log = ["metashrew-core/debug-log", "protorune/debug-log"]
 # for regtest/dev where there is no fork height. Consensus equivalence
 # is enforced by `tests::diesel_shadow`.
 fastpath = []
+# Opt-in operator feature: restores the v2-style address-keyed views
+# (`protorunesbyaddress` / `runesbyaddress` / `spendablesbyaddress`).
+# See `crates/protorune/Cargo.toml` for the full description.
+# OFF in the canonical mainnet build. Operators opt in via:
+#   cargo build --release --target wasm32-unknown-unknown \
+#     --features mainnet,address-indexing -p alkanes
+address-indexing = ["protorune/address-indexing"]
 
 
 [dependencies]

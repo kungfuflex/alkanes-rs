@@ -154,7 +154,15 @@ pub fn meta() -> i32 {
     }
 }
 
-#[cfg(not(test))]
+// `runesbyaddress`, `spendablesbyaddress`, and `protorunesbyaddress` are
+// gated behind the `address-indexing` Cargo feature. The canonical v3
+// mainnet wasm build does NOT enable the feature, in which case these
+// `#[no_mangle]` exports are absent from the binary entirely — the
+// metashrew_view dispatcher will return "view function not found",
+// which is the right signal for callers expecting an address-keyed
+// view from a wasm that doesn't ship one. Operators who need these
+// views must rebuild with `--features mainnet,address-indexing`.
+#[cfg(all(not(test), feature = "address-indexing"))]
 #[no_mangle]
 pub fn runesbyaddress() -> i32 {
     configure_network();
@@ -187,7 +195,7 @@ pub fn runesbyoutpoint() -> i32 {
     export_bytes(result.encode_to_vec())
 }
 
-#[cfg(not(test))]
+#[cfg(all(not(test), feature = "address-indexing"))]
 #[no_mangle]
 pub fn spendablesbyaddress() -> i32 {
     configure_network();
@@ -199,7 +207,7 @@ pub fn spendablesbyaddress() -> i32 {
     export_bytes(result.encode_to_vec())
 }
 
-#[cfg(not(test))]
+#[cfg(all(not(test), feature = "address-indexing"))]
 #[no_mangle]
 pub fn protorunesbyaddress() -> i32 {
     configure_network();
