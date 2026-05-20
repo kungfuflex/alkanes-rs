@@ -46,6 +46,13 @@ pub mod network;
 // indexers (Unisat / Fairmints / Alkanode) — see the rationale in
 // vm/utils.rs::run_after_special. Production mainnet stays on wasm
 // until that gap is reproduced in `tests::diesel_shadow` and fixed.
+// v3 generic precompile abstraction — see precompile-abstraction-plan.md
+// in the subkube fastpath investigation dir. The trait lets us add
+// future precompiles (frBTC wrap/unwrap, OrbitalInstance batch reads,
+// etc.) without re-deriving the consensus-invariant safety envelope
+// each time. DieselEoa moves to a trait impl in a follow-up commit
+// (Phase 2 of the rollout).
+pub mod precompile;
 pub mod precompile_diesel;
 pub mod precompiled;
 pub mod tables;
