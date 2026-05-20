@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use crate::balance_sheet::load_sheet;
+    use crate::balance_sheet::{load_sheet, load_sheet_chunked};
     use crate::message::MessageContext;
     use protorune_support::balance_sheet::{BalanceSheet, ProtoruneRuneId};
     use protorune_support::proto::protorune::{
@@ -404,7 +404,7 @@ mod tests {
             block: config.rune_etch_height as u128,
             tx: config.rune_etch_vout as u128,
         };
-        let sheet = load_sheet(
+        let sheet = load_sheet_chunked(
             &tables::RUNES
                 .OUTPOINT_TO_RUNES
                 .select(&consensus_encode(&outpoint).unwrap()),

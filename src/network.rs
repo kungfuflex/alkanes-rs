@@ -22,7 +22,7 @@ use anyhow::Result;
 use bitcoin::{Block, OutPoint, Transaction};
 use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
 use metashrew_support::index_pointer::KeyValuePointer;
-use protorune::balance_sheet::PersistentRecord;
+use protorune::balance_sheet::{save_chunked, PersistentRecord};
 use protorune::message::{MessageContext, MessageContextParcel};
 #[allow(unused_imports)]
 use protorune::tables::{RuneTable, RUNES};
@@ -281,10 +281,13 @@ pub fn setup_frsigil(block: &Block) -> Result<()> {
         txid: tx_hex_to_txid(genesis::GENESIS_OUTPOINT)?,
         vout: 0,
     })?;
-    <AlkaneTransferParcel as TryInto<BalanceSheet<AtomicPointer>>>::try_into(
-        response2.alkanes.into(),
-    )?
-    .save(
+    // v3 chunked-outpoint write: one chunk for the genesis outpoint.
+    let sheet: BalanceSheet<AtomicPointer> =
+        <AlkaneTransferParcel as TryInto<BalanceSheet<AtomicPointer>>>::try_into(
+            response2.alkanes.into(),
+        )?;
+    save_chunked(
+        &sheet,
         &mut atomic.derive(
             &RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
                 .OUTPOINT_TO_RUNES
@@ -448,10 +451,13 @@ pub fn setup_diesel(block: &Block) -> Result<()> {
         txid: tx_hex_to_txid(genesis::GENESIS_OUTPOINT)?,
         vout: 0,
     })?;
-    <AlkaneTransferParcel as TryInto<BalanceSheet<AtomicPointer>>>::try_into(
-        response.alkanes.into(),
-    )?
-    .save(
+    // v3 chunked-outpoint write: one chunk for the genesis outpoint.
+    let sheet: BalanceSheet<AtomicPointer> =
+        <AlkaneTransferParcel as TryInto<BalanceSheet<AtomicPointer>>>::try_into(
+            response.alkanes.into(),
+        )?;
+    save_chunked(
+        &sheet,
         &mut atomic.derive(
             &RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
                 .OUTPOINT_TO_RUNES

@@ -1,5 +1,8 @@
 use crate::tables::RuneTable;
-use crate::{balance_sheet::load_sheet, tables};
+use crate::{
+    balance_sheet::{load_sheet, load_sheet_chunked},
+    tables,
+};
 use anyhow::{anyhow, Result};
 use bitcoin;
 use protorune_support::balance_sheet::{BalanceSheetOperations, ProtoruneRuneId};
@@ -43,7 +46,8 @@ pub fn protorune_outpoint_to_outpoint_response(
 ) -> Result<OutpointResponse> {
     //    println!("protocol_id: {}", protocol_id);
     let outpoint_bytes = outpoint_to_bytes(outpoint)?;
-    let balance_sheet = load_sheet(
+    // v3 chunked-outpoint read.
+    let balance_sheet = load_sheet_chunked(
         &tables::RuneTable::for_protocol(protocol_id)
             .OUTPOINT_TO_RUNES
             .select(&outpoint_bytes),
@@ -85,7 +89,8 @@ pub fn protorune_outpoint_to_outpoint_response(
 
 pub fn rune_outpoint_to_outpoint_response(outpoint: &OutPoint) -> Result<OutpointResponse> {
     let outpoint_bytes = outpoint_to_bytes(outpoint)?;
-    let balance_sheet = load_sheet(&tables::RUNES.OUTPOINT_TO_RUNES.select(&outpoint_bytes));
+    // v3 chunked-outpoint read.
+    let balance_sheet = load_sheet_chunked(&tables::RUNES.OUTPOINT_TO_RUNES.select(&outpoint_bytes));
 
     let mut height: u128 = tables::RUNES
         .OUTPOINT_TO_HEIGHT
@@ -123,7 +128,8 @@ pub fn rune_outpoint_to_outpoint_response(outpoint: &OutPoint) -> Result<Outpoin
 
 pub fn outpoint_to_outpoint_response(outpoint: &OutPoint) -> Result<OutpointResponse> {
     let outpoint_bytes = outpoint_to_bytes(outpoint)?;
-    let balance_sheet = load_sheet(&tables::RUNES.OUTPOINT_TO_RUNES.select(&outpoint_bytes));
+    // v3 chunked-outpoint read.
+    let balance_sheet = load_sheet_chunked(&tables::RUNES.OUTPOINT_TO_RUNES.select(&outpoint_bytes));
     let mut height: u128 = tables::RUNES
         .OUTPOINT_TO_HEIGHT
         .select(&outpoint_bytes)

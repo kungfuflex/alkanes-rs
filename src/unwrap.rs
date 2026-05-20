@@ -9,12 +9,15 @@ use metashrew_core::index_pointer::IndexPointer;
 use metashrew_core::{get_cache, println, stdio::stdout};
 use metashrew_support::index_pointer::KeyValuePointer;
 use metashrew_support::utils::{consensus_decode, consensus_encode, is_empty};
-use protorune::tables::OUTPOINT_SPENDABLE_BY;
+use protorune::balance_sheet::get_chunked_spent_at_height;
+use protorune::tables;
 use std::fmt::Write;
 use std::io::Cursor;
 use std::sync::Arc;
 
+use crate::message::AlkaneMessageContext;
 use crate::network::genesis;
+use protorune::message::MessageContext;
 
 pub fn fr_btc_storage_pointer() -> IndexPointer {
     IndexPointer::from_keyword("/alkanes/")
@@ -109,11 +112,21 @@ pub fn fr_btc_payments_at_block(v: u128) -> Vec<Vec<u8>> {
         .collect::<Vec<Vec<u8>>>()
 }
 
-/// Check if a payment's spendable outpoint is still unfulfilled
+/// Check if a payment's spendable outpoint is still unfulfilled.
+///
+/// v3: reads the chunked balance sheet for the outpoint under
+/// `OUTPOINT_TO_RUNES` for the alkanes protocol and checks the
+/// `spent_at_height` field. Unset / absent = unspent = unfulfilled.
+///
+/// Replaces the v2 `OUTPOINT_SPENDABLE_BY[outpoint].len() > 1` probe, which
+/// piggy-backed on the now-removed address index — see the v3 plan and
+/// the chunked-outpoint section of `crates/protorune/src/balance_sheet.rs`.
 fn is_payment_unfulfilled(payment: &Payment) -> Result<bool> {
     let spendable_bytes = consensus_encode(&payment.spendable)?;
-    let spendable_by = OUTPOINT_SPENDABLE_BY.select(&spendable_bytes).get();
-    Ok(spendable_by.len() > 1)
+    let ptr = tables::RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
+        .OUTPOINT_TO_RUNES
+        .select(&spendable_bytes);
+    Ok(get_chunked_spent_at_height(&ptr).is_none())
 }
 
 /// Serialize a Payment into bytes for the pending cache
@@ -265,9 +278,8 @@ pub fn view(height: u128) -> Result<PendingUnwrapsResponse> {
         for payment_list_bytes in fr_btc_payments_at_block(i) {
             let deserialized_payments = deserialize_payments(&payment_list_bytes)?;
             for mut payment in deserialized_payments {
-                let spendable_bytes = consensus_encode(&payment.spendable)?;
-                let spendable_by = OUTPOINT_SPENDABLE_BY.select(&spendable_bytes).get();
-                if spendable_by.len() <= 1 {
+                // v3: same spentness probe as is_payment_unfulfilled.
+                if !is_payment_unfulfilled(&payment)? {
                     payment.fulfilled = true;
                 }
                 if !payment.fulfilled {
@@ -309,9 +321,8 @@ pub fn update_last_block(height: u128) -> Result<()> {
         for payment_list_bytes in all_payment_list_bytes {
             let deserialized_payments = deserialize_payments(&payment_list_bytes)?;
             for payment in deserialized_payments {
-                let spendable_bytes = consensus_encode(&payment.spendable)?;
-                let spendable_by = OUTPOINT_SPENDABLE_BY.select(&spendable_bytes).get();
-                if spendable_by.len() > 1 {
+                // v3: spentness via chunked balance sheet.
+                if is_payment_unfulfilled(&payment)? {
                     all_fulfilled = false;
                     break;
                 }

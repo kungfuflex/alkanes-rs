@@ -26,7 +26,7 @@ use bitcoin::{OutPoint, Witness};
 use metashrew_core::index_pointer::IndexPointer;
 use metashrew_support::index_pointer::KeyValuePointer;
 use metashrew_support::utils::consensus_encode;
-use protorune::balance_sheet::load_sheet;
+use protorune::balance_sheet::{load_sheet, load_sheet_chunked};
 use protorune::message::MessageContext;
 use protorune::tables::RuneTable;
 use protorune::test_helpers::create_block_with_coinbase_tx;
@@ -157,7 +157,7 @@ fn diesel_mainnet_precompile_smoke() -> Result<()> {
                 txid: tx.compute_txid(),
                 vout,
             };
-            let sheet = load_sheet(
+            let sheet = load_sheet_chunked(
                 &RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
                     .OUTPOINT_TO_RUNES
                     .select(&consensus_encode(&outpoint)?),

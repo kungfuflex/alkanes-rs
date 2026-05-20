@@ -16,7 +16,9 @@
 //! Enable with `--features runes` to compile the canonical-ord parity tests
 //! ported from kungfuflex/v2.1.8 (commit 47bd86b3) into your build.
 
-use crate::balance_sheet::{load_sheet, PersistentRecord};
+use crate::balance_sheet::{
+    clear_chunked_balances, load_sheet, load_sheet_chunked, save_chunked, PersistentRecord,
+};
 use crate::message::MessageContext;
 use crate::protorune_init::index_unique_protorunes;
 use crate::protostone::{
@@ -235,7 +237,8 @@ impl Protorune {
             .iter()
             .map(|input| {
                 let outpoint_bytes = consensus_encode(&input.previous_output)?;
-                Ok(load_sheet(&mut atomic.derive(
+                // v3 chunked-outpoint read: one chunk per outpoint.
+                Ok(load_sheet_chunked(&mut atomic.derive(
                     &tables::RUNES.OUTPOINT_TO_RUNES.select(&outpoint_bytes),
                 )))
             })
@@ -315,7 +318,9 @@ impl Protorune {
             //     "Saving balance sheet {:?} to outpoint {:?}",
             //     sheet, outpoint
             // );
-            sheet.save(
+            // v3 chunked-outpoint write: one chunk per outpoint per block.
+            save_chunked(
+                &sheet,
                 &mut atomic.derive(
                     &tables::RUNES
                         .OUTPOINT_TO_RUNES
@@ -729,7 +734,13 @@ impl Protorune {
             for input in &tx.input {
                 //all inputs must be used up, even in cenotaphs
                 let key = consensus_encode(&input.previous_output)?;
-                clear_balances(&mut tables::RUNES.OUTPOINT_TO_RUNES.select(&key));
+                // v3 chunked-outpoint: mark the consumed input chunk as
+                // spent at this height (zero entries, spent_at_height set).
+                // Replaces the legacy multi-pointer clear_balances.
+                clear_chunked_balances(
+                    &mut tables::RUNES.OUTPOINT_TO_RUNES.select(&key),
+                    height as u32,
+                );
             }
         }
         Ok(())
@@ -922,7 +933,9 @@ impl Protorune {
             //     "saving balancesheet: {:#?} to outpoint: {:#?}",
             //     sheet, outpoint
             // );
-            sheet.save(
+            // v3 chunked-outpoint write: one chunk per outpoint per block.
+            save_chunked(
+                &sheet,
                 &mut atomic.derive(
                     &table
                         .OUTPOINT_TO_RUNES
@@ -993,11 +1006,12 @@ impl Protorune {
             );
 
             // load the balance sheets
+            // v3 chunked-outpoint read: one chunk per outpoint.
             let sheets: Vec<BalanceSheet<AtomicPointer>> = tx
                 .input
                 .iter()
                 .map(|input| {
-                    Ok(load_sheet(
+                    Ok(load_sheet_chunked(
                         &mut atomic.derive(
                             &table
                                 .OUTPOINT_TO_RUNES
@@ -1111,7 +1125,12 @@ impl Protorune {
             for input in &tx.input {
                 //all inputs must be used up, even in cenotaphs
                 let key = consensus_encode(&input.previous_output)?;
-                clear_balances(&mut table.OUTPOINT_TO_RUNES.select(&key));
+                // v3 chunked-outpoint: mark the consumed input chunk as
+                // spent at this height (zero entries, spent_at_height set).
+                clear_chunked_balances(
+                    &mut table.OUTPOINT_TO_RUNES.select(&key),
+                    height as u32,
+                );
             }
         }
         Ok(())
