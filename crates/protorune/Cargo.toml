@@ -48,6 +48,6 @@ prost = { workspace = true }
 prost-types = { workspace = true }
 
 [dev-dependencies]
-metashrew-core = { git = "https://github.com/sandshrewmetaprotocols/metashrew", tag = "v9.0.5-rc.8", features = ["test-utils"] }
+metashrew-core = { path = "/home/ubuntu/metashrew/crates/metashrew-core", features = ["test-utils"] }
 getrandom = { version = "0.2.15", features = ["js"] }
 protorune = { path = ".", features = ["test-utils"] }
