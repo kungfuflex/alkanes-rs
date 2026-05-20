@@ -180,12 +180,14 @@ pub fn can_dispatch<P: PrecompiledAlkane>(ctx: &AlkanesRuntimeContext) -> bool {
     true
 }
 
-/// Run a precompile end-to-end if it claims the current call. The
-/// returned `Option` is:
+/// Run a precompile end-to-end if it claims the current call.
 ///
-///   * `None` — the precompile declined to dispatch (call falls
-///     through to wasm)
-///   * `Some(Ok((response, total_gas)))` — precompile ran successfully
+///   * `None` — the precompile declined to dispatch; the caller
+///     falls through to wasm
+///   * `Some(Ok((response, total_gas, path)))` — precompile ran
+///     successfully. `path` is the trait's typed classification of
+///     which branch executed (used by shadow-tests for diagnostics
+///     + gas-table validation).
 ///   * `Some(Err(_))` — precompile claimed the call but execution
 ///     errored (revert path)
 ///
@@ -194,7 +196,7 @@ pub fn can_dispatch<P: PrecompiledAlkane>(ctx: &AlkanesRuntimeContext) -> bool {
 pub fn try_dispatch_precompile<P: PrecompiledAlkane>(
     ctx_arc: Arc<Mutex<AlkanesRuntimeContext>>,
     gas: &P::GasTable,
-) -> Option<Result<(ExtendedCallResponse, u64)>> {
+) -> Option<Result<(ExtendedCallResponse, u64, P::Path)>> {
     // Gate check + height capture in one lock acquire.
     let height = {
         let ctx = ctx_arc.lock().unwrap();
@@ -223,7 +225,7 @@ pub fn try_dispatch_precompile<P: PrecompiledAlkane>(
         Some(v) => v,
         None => return Some(Err(anyhow!("gas overflow"))),
     };
-    Some(Ok((response, total)))
+    Some(Ok((response, total, path)))
 }
 
 /// Count mint protostones in a tx that target the given alkane id +

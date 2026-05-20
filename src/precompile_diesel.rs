@@ -22,6 +22,10 @@
 //! values match what wasmi charges for the same path on the same binary; that
 //! invariant is enforced by `tests::diesel_sidebyside`.
 
+// Only used by the cfg-gated shadow-test code below; the
+// dispatcher in `crate::precompile` is what adds storage_byte_fuel
+// for the production path.
+#[cfg(any(test, feature = "test-utils"))]
 use crate::vm::fuel::fuel_per_store_byte;
 use crate::vm::runtime::AlkanesRuntimeContext;
 use alkanes_support::{
@@ -381,39 +385,44 @@ fn current_txid_bytes(ctx: &AlkanesRuntimeContext) -> Vec<u8> {
 /// The returned `ExtendedCallResponse.storage` should be piped to atomic by
 /// the caller exactly as the wasm path's storage map is piped — i.e. via
 /// `pipe_storagemap_to(response.storage, atomic.derive(/alkanes/2:0))`.
-/// Run the DIESEL precompile. Returns `(response, total_gas, path)` where
-/// `total_gas = internal_gas_from_table + storage_byte_fuel`, matching the
-/// semantics of `run_after_special`'s `fuel_used`.
+///
+/// Phase 2 of the PrecompiledAlkane abstraction: this is now a thin
+/// wrapper around `try_dispatch_precompile::<DieselEoa>`. The trait
+/// `DieselEoa` lives below; the body of dispatch lives in
+/// `crate::precompile`. Behavior is byte-equivalent — verified by the
+/// `diesel_sidebyside` + `diesel_shadow` tests.
 pub fn run_diesel_eoa(
     ctx_arc: Arc<Mutex<AlkanesRuntimeContext>>,
     gas: &DieselPathGas,
 ) -> Result<(ExtendedCallResponse, u64, DieselPath)> {
-    let (opcode, height) = {
-        let ctx = ctx_arc.lock().unwrap();
-        (
-            ctx.inputs
-                .first()
-                .copied()
-                .ok_or_else(|| anyhow!("diesel precompile: missing opcode"))?,
-            ctx.message.height as u32,
-        )
-    };
+    match crate::precompile::try_dispatch_precompile::<DieselEoa>(ctx_arc, gas) {
+        Some(r) => r,
+        None => Err(anyhow!(
+            "diesel precompile: dispatcher declined (caller should fall through to wasm)"
+        )),
+    }
+}
 
-    let (response, internal_gas, path) = match opcode {
-        77 => run_mint(ctx_arc, gas),
-        99 => run_view_name(ctx_arc, gas, DieselPath::ViewGetName, "DIESEL"),
-        100 => run_view_name(ctx_arc, gas, DieselPath::ViewGetSymbol, "DIESEL"),
-        101 => run_view_total_supply(ctx_arc, gas),
-        op => return Err(anyhow!("diesel precompile: unsupported opcode {}", op)),
-    }?;
-    let storage_len = response.storage.serialize().len() as u64;
-    let storage_fuel = fuel_per_store_byte(height)
-        .checked_mul(storage_len)
-        .ok_or_else(|| anyhow!("storage fuel overflow"))?;
-    let total = internal_gas
-        .checked_add(storage_fuel)
-        .ok_or_else(|| anyhow!("gas overflow"))?;
-    Ok((response, total, path))
+/// Routes a DIESEL call by opcode. Caller (the
+/// [`crate::precompile::try_dispatch_precompile`] generic dispatcher)
+/// has already verified the call is dispatchable; this is purely the
+/// per-opcode body.
+fn execute_diesel(
+    ctx: &AlkanesRuntimeContext,
+    pending: &mut StorageMap,
+) -> Result<(ExtendedCallResponse, DieselPath)> {
+    let opcode = ctx
+        .inputs
+        .first()
+        .copied()
+        .ok_or_else(|| anyhow!("diesel precompile: missing opcode"))?;
+    match opcode {
+        77 => run_mint(ctx, pending),
+        99 => run_view_name(ctx, DieselPath::ViewGetName, "DIESEL"),
+        100 => run_view_name(ctx, DieselPath::ViewGetSymbol, "DIESEL"),
+        101 => run_view_total_supply(ctx),
+        op => Err(anyhow!("diesel precompile: unsupported opcode {}", op)),
+    }
 }
 
 fn forward_response(ctx: &AlkanesRuntimeContext) -> ExtendedCallResponse {
@@ -425,65 +434,52 @@ fn forward_response(ctx: &AlkanesRuntimeContext) -> ExtendedCallResponse {
 }
 
 fn run_view_name(
-    ctx_arc: Arc<Mutex<AlkanesRuntimeContext>>,
-    gas: &DieselPathGas,
+    ctx: &AlkanesRuntimeContext,
     path: DieselPath,
     text: &str,
-) -> Result<(ExtendedCallResponse, u64, DieselPath)> {
-    let ctx = ctx_arc.lock().unwrap();
-    let mut response = forward_response(&ctx);
-    drop(ctx);
+) -> Result<(ExtendedCallResponse, DieselPath)> {
+    debug_assert!(matches!(
+        path,
+        DieselPath::ViewGetName | DieselPath::ViewGetSymbol
+    ));
+    let mut response = forward_response(ctx);
     response.data = text.as_bytes().to_vec();
-    let g = match path {
-        DieselPath::ViewGetName => gas.view_get_name,
-        DieselPath::ViewGetSymbol => gas.view_get_symbol,
-        _ => unreachable!(),
-    };
-    Ok((response, g, path))
+    Ok((response, path))
 }
 
 fn run_view_total_supply(
-    ctx_arc: Arc<Mutex<AlkanesRuntimeContext>>,
-    gas: &DieselPathGas,
-) -> Result<(ExtendedCallResponse, u64, DieselPath)> {
-    let ctx = ctx_arc.lock().unwrap();
+    ctx: &AlkanesRuntimeContext,
+) -> Result<(ExtendedCallResponse, DieselPath)> {
     let pending = StorageMap::default();
-    let total_supply = read_u128(&ctx, &pending, b"/totalsupply");
-    let mut response = forward_response(&ctx);
-    drop(ctx);
+    let total_supply = read_u128(ctx, &pending, b"/totalsupply");
+    let mut response = forward_response(ctx);
     response.data = total_supply.to_le_bytes().to_vec();
-    Ok((response, gas.view_get_total_supply, DieselPath::ViewGetTotalSupply))
+    Ok((response, DieselPath::ViewGetTotalSupply))
 }
 
 fn run_mint(
-    ctx_arc: Arc<Mutex<AlkanesRuntimeContext>>,
-    gas: &DieselPathGas,
-) -> Result<(ExtendedCallResponse, u64, DieselPath)> {
-    let ctx = ctx_arc.lock().unwrap();
-    let pending = StorageMap::default();
-    let upgrade_initialized = read_len(&ctx, &pending, b"/upgrade_initialized") > 0;
-    drop(ctx);
-
+    ctx: &AlkanesRuntimeContext,
+    pending: &mut StorageMap,
+) -> Result<(ExtendedCallResponse, DieselPath)> {
+    let upgrade_initialized = read_len(ctx, pending, b"/upgrade_initialized") > 0;
     if upgrade_initialized {
-        run_mint_communist(ctx_arc, gas)
+        run_mint_communist(ctx, pending)
     } else {
-        run_mint_legacy(ctx_arc, gas)
+        run_mint_legacy(ctx, pending)
     }
 }
 
 fn run_mint_legacy(
-    ctx_arc: Arc<Mutex<AlkanesRuntimeContext>>,
-    gas: &DieselPathGas,
-) -> Result<(ExtendedCallResponse, u64, DieselPath)> {
-    let ctx = ctx_arc.lock().unwrap();
-    let mut pending = StorageMap::default();
+    ctx: &AlkanesRuntimeContext,
+    pending: &mut StorageMap,
+) -> Result<(ExtendedCallResponse, DieselPath)> {
     let height = ctx.message.height;
     let height_key: Vec<u8> = {
         let mut k = b"/seen/".to_vec();
         k.extend_from_slice(&height.to_le_bytes());
         k
     };
-    let already_minted = read_len(&ctx, &pending, &height_key) > 0;
+    let already_minted = read_len(ctx, pending, &height_key) > 0;
     if already_minted {
         return Err(anyhow!(format!(
             "already minted for block {}",
@@ -492,7 +488,7 @@ fn run_mint_legacy(
     }
     pending.set(&height_key, &[1u8, 0, 0, 0]);
 
-    let total_supply_now = read_u128(&ctx, &pending, b"/totalsupply");
+    let total_supply_now = read_u128(ctx, pending, b"/totalsupply");
     if total_supply_now >= max_supply() {
         return Err(anyhow!("total supply has been reached"));
     }
@@ -500,23 +496,20 @@ fn run_mint_legacy(
     let new_supply = total_supply_now
         .checked_add(reward)
         .ok_or_else(|| anyhow!("total supply overflow"))?;
-    write_u128(&mut pending, b"/totalsupply", new_supply);
+    write_u128(pending, b"/totalsupply", new_supply);
 
-    let mut response = forward_response(&ctx);
+    let mut response = forward_response(ctx);
     response.alkanes.0.push(AlkaneTransfer {
         id: DIESEL_ID,
         value: reward,
     });
-    response.storage = pending;
-    drop(ctx);
-    Ok((response, gas.legacy_first_of_block, DieselPath::LegacyFirstOfBlock))
+    Ok((response, DieselPath::LegacyFirstOfBlock))
 }
 
 fn run_mint_communist(
-    ctx_arc: Arc<Mutex<AlkanesRuntimeContext>>,
-    gas: &DieselPathGas,
-) -> Result<(ExtendedCallResponse, u64, DieselPath)> {
-    let ctx = ctx_arc.lock().unwrap();
+    ctx: &AlkanesRuntimeContext,
+    pending: &mut StorageMap,
+) -> Result<(ExtendedCallResponse, DieselPath)> {
     let caller = ctx.caller.clone();
     if caller != AlkaneId::new(0, 0) {
         return Err(anyhow!(
@@ -524,14 +517,13 @@ fn run_mint_communist(
         ));
     }
 
-    let mut pending = StorageMap::default();
     let height = ctx.message.height;
 
     // enforce_one_mint_per_tx
-    let txid = current_txid_bytes(&ctx);
+    let txid = current_txid_bytes(ctx);
     let mut tx_hash_key: Vec<u8> = b"/tx-hashes/".to_vec();
     tx_hash_key.extend_from_slice(&txid);
-    if read_len(&ctx, &pending, &tx_hash_key) > 0 {
+    if read_len(ctx, pending, &tx_hash_key) > 0 {
         return Err(anyhow!("Transaction already used for minting"));
     }
     pending.set(&tx_hash_key, &[1u8]);
@@ -539,16 +531,16 @@ fn run_mint_communist(
     // enforce_no_upgraded_mints_with_legacy_mints
     let mut seen_key: Vec<u8> = b"/seen/".to_vec();
     seen_key.extend_from_slice(&height.to_le_bytes());
-    if read_len(&ctx, &pending, &seen_key) > 0 {
+    if read_len(ctx, pending, &seen_key) > 0 {
         return Err(anyhow!("upgraded mint in the same block as legacy mint"));
     }
 
     // Precompiled extcalls: number_diesel_mints, total_miner_fee
-    let total_mints = number_diesel_mints(&ctx)?;
+    let total_mints = number_diesel_mints(ctx)?;
     if total_mints == 0 {
         return Err(anyhow!("diesel precompile: no mint protostones in block"));
     }
-    let miner_fee = total_miner_fee(&ctx);
+    let miner_fee = total_miner_fee(ctx);
     let reward = block_reward(height);
     let total_tx_fee = if miner_fee > reward {
         miner_fee - reward
@@ -561,51 +553,105 @@ fn run_mint_communist(
     // observe_upgraded_mint
     let mut upgraded_seen_key: Vec<u8> = b"/upgraded_seen/".to_vec();
     upgraded_seen_key.extend_from_slice(&height.to_le_bytes());
-    let upgraded_seen_present = read_len(&ctx, &pending, &upgraded_seen_key) > 0;
+    let upgraded_seen_present = read_len(ctx, pending, &upgraded_seen_key) > 0;
 
     let path;
     if !upgraded_seen_present {
         pending.set(&upgraded_seen_key, &[1u8, 0, 0, 0]);
         // claimable_fees: if empty, set to 0 (no-op-ish), then increase by diesel_fee
-        let fees_now = read_u128(&ctx, &pending, b"/fees");
+        let fees_now = read_u128(ctx, pending, b"/fees");
         let new_fees = fees_now
             .checked_add(diesel_fee)
             .ok_or_else(|| anyhow!("claimable_fees overflow"))?;
-        write_u128(&mut pending, b"/fees", new_fees);
+        write_u128(pending, b"/fees", new_fees);
         // increase_total_supply(diesel_fee)
-        let ts_after_fee_inc = read_u128(&ctx, &pending, b"/totalsupply")
+        let ts_after_fee_inc = read_u128(ctx, pending, b"/totalsupply")
             .checked_add(diesel_fee)
             .ok_or_else(|| anyhow!("totalsupply overflow"))?;
-        write_u128(&mut pending, b"/totalsupply", ts_after_fee_inc);
+        write_u128(pending, b"/totalsupply", ts_after_fee_inc);
         path = DieselPath::CommunistFirstOfBlock;
     } else {
         path = DieselPath::CommunistSubsequent;
     }
 
     // supply check + final increase
-    let ts_now = read_u128(&ctx, &pending, b"/totalsupply");
+    let ts_now = read_u128(ctx, pending, b"/totalsupply");
     if ts_now >= max_supply() {
         return Err(anyhow!("total supply has been reached"));
     }
     let new_ts = ts_now
         .checked_add(value_per_mint)
         .ok_or_else(|| anyhow!("totalsupply overflow"))?;
-    write_u128(&mut pending, b"/totalsupply", new_ts);
+    write_u128(pending, b"/totalsupply", new_ts);
 
-    let mut response = forward_response(&ctx);
+    let mut response = forward_response(ctx);
     response.alkanes.0.push(AlkaneTransfer {
         id: DIESEL_ID,
         value: value_per_mint,
     });
-    response.storage = pending;
-    drop(ctx);
+    Ok((response, path))
+}
 
-    let g = match path {
-        DieselPath::CommunistFirstOfBlock => gas.communist_first_of_block,
-        DieselPath::CommunistSubsequent => gas.communist_subsequent,
-        _ => unreachable!(),
-    };
-    Ok((response, g, path))
+// ===========================================================================
+// DieselEoa: PrecompiledAlkane impl
+// ===========================================================================
+
+/// ZST implementing the [`crate::precompile::PrecompiledAlkane`] trait
+/// for the DIESEL EOA alkane (2:0). Phase 2 of the abstraction rollout:
+/// existing tests (`diesel_sidebyside`, `diesel_shadow`) call into the
+/// helpers below via `run_diesel_eoa` and stay byte-equivalent.
+///
+/// Phase 3 will flip `requires_eoa(77) = true` and
+/// `requires_solo_cellpack(77) = true` once shadow-tests for the
+/// fall-through behavior land — those will eliminate divergence
+/// classes #3 and #4 from the audit by routing problematic calls to
+/// wasm where the gas accounting is canonical.
+pub struct DieselEoa;
+
+impl crate::precompile::PrecompiledAlkane for DieselEoa {
+    const TARGET_ID: AlkaneId = DIESEL_ID;
+    type Path = DieselPath;
+    type GasTable = DieselPathGas;
+
+    fn handles_opcode(opcode: u128) -> bool {
+        matches!(opcode, 77 | 99 | 100 | 101)
+    }
+
+    fn is_mint_opcode(opcode: u128) -> bool {
+        opcode == 77
+    }
+
+    // Phase 2 leaves `requires_eoa` and `requires_solo_cellpack` at
+    // their trait defaults (false) so existing tests' caller shapes
+    // continue to dispatch through. Phase 3 flips both to true for
+    // opcode 77 alongside the proof-tests for cases 3 + 4 of the
+    // divergence audit.
+
+    fn execute(
+        ctx: &AlkanesRuntimeContext,
+        pending: &mut StorageMap,
+    ) -> Result<(ExtendedCallResponse, Self::Path)> {
+        execute_diesel(ctx, pending)
+    }
+
+    fn gas_for_path(path: Self::Path, gas: &Self::GasTable) -> u64 {
+        match path {
+            DieselPath::CommunistFirstOfBlock => gas.communist_first_of_block,
+            DieselPath::CommunistSubsequent => gas.communist_subsequent,
+            DieselPath::CommunistRevertOnePerTx => gas.communist_revert_one_per_tx,
+            DieselPath::CommunistRevertLegacySeen => gas.communist_revert_legacy_seen,
+            DieselPath::LegacyFirstOfBlock => gas.legacy_first_of_block,
+            DieselPath::LegacyRevertAlreadyMinted => gas.legacy_revert_already_minted,
+            DieselPath::ViewGetName => gas.view_get_name,
+            DieselPath::ViewGetSymbol => gas.view_get_symbol,
+            DieselPath::ViewGetTotalSupply => gas.view_get_total_supply,
+            // NotEoa is a tag for shadow-trace classification; its gas
+            // is meaningless (the dispatcher would have fallen through
+            // before reaching this path). Returning 0 keeps the match
+            // total without introducing a spurious gas-table field.
+            DieselPath::NotEoa => 0,
+        }
+    }
 }
 
 impl DieselPath {
