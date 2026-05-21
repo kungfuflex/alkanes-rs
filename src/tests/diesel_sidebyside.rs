@@ -48,10 +48,20 @@ use wasm_bindgen_test::wasm_bindgen_test;
 use metashrew_core::{println, print, stdio::{stdout, Write}};
 
 /// Builds the indexer state required to exercise communist DIESEL paths:
-///   * height 0: auth-token factory deployed (triggers setup_diesel + EOA
-///     binary at 2:0).
-///   * height 1: opcode 1 invoked against the premine UTXO, setting
-///     `/upgrade_initialized` so subsequent mints take the communist path.
+///   * height 0: auth-token factory deployed (triggers setup_diesel +
+///     EOA binary at 2:0).
+///   * `/upgrade_initialized` set DIRECTLY via IndexPointer (no opcode-1
+///     wasm tx). This bypasses the upgrade's premine check, which would
+///     otherwise reject because no DIESEL.initialize was run beforehand
+///     to mint premine into the `GENESIS_OUTPOINT` UTXO the upgrade tx
+///     references as its prevout. Without this direct-write, the upgrade
+///     reverts silently and subsequent mints take the legacy path —
+///     which kept these proof-tests red since task #14 landed.
+///
+///     See the longer-form rationale on
+///     `diesel_shadow::run_upgrade`; same key path
+///     (`/alkanes/<2:0>/storage//upgrade_initialized`), same single-byte
+///     `0x01` payload the wasm `upgrade()` handler writes.
 fn setup_with_upgrade() -> Result<()> {
     let auth_cellpack = Cellpack {
         target: AlkaneId {
@@ -66,33 +76,14 @@ fn setup_with_upgrade() -> Result<()> {
     );
     index_block(&block, 0)?;
 
-    // Upgrade at height 1
-    let premine_outpoint = OutPoint {
-        txid: Txid::from_byte_array(
-            <Vec<u8> as AsRef<[u8]>>::as_ref(
-                &hex::decode(genesis::GENESIS_OUTPOINT)?
-                    .iter()
-                    .cloned()
-                    .rev()
-                    .collect::<Vec<u8>>(),
-            )
-            .try_into()?,
-        ),
-        vout: 0,
-    };
-    let upgrade = Cellpack {
-        target: DIESEL_ID,
-        inputs: vec![1],
-    };
-    let mut block1 = create_block_with_coinbase_tx(1);
-    let upgrade_tx = alkane_helpers::create_multiple_cellpack_with_witness_and_in(
-        Witness::new(),
-        vec![upgrade],
-        premine_outpoint,
-        false,
-    );
-    block1.txdata.push(upgrade_tx);
-    index_block(&block1, 1)?;
+    // Direct-write the upgrade flag — see fn doc-comment for the
+    // wasm-upgrade-reverts-silently rationale.
+    let mut ptr = IndexPointer::default()
+        .keyword("/alkanes/")
+        .select(&DIESEL_ID.into())
+        .keyword("/storage/")
+        .select(&b"/upgrade_initialized".to_vec());
+    ptr.set_value::<u8>(0x01);
     Ok(())
 }
 

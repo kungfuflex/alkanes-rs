@@ -55,54 +55,36 @@ fn setup_diesel_only() -> Result<()> {
 }
 
 fn run_upgrade(height: u32) -> Result<()> {
-    // On mainnet, the legacy DIESEL binary uses the default 50M premine
-    // (no per-chain override in alkanes-std-genesis-alkane) while the EOA
-    // binary expects 44T (44_000_000_000_000). That mismatch makes the
-    // opcode-1 upgrade reject "Premine is not spent into the upgrade".
+    // Direct-write `/upgrade_initialized = 0x01` under DIESEL's storage
+    // subtree. Same key path the wasm `upgrade()` handler writes to (see
+    // `alkanes-std-genesis-alkane-upgraded-eoa::upgrade`); this just
+    // bypasses the wasm ceremony.
+    //
+    // Why direct-write on BOTH chains (was only mainnet pre-fix):
+    //   * mainnet: legacy binary's 50M default premine doesn't match
+    //     the EOA binary's 44T expectation → wasm opcode 1 rejects
+    //     with "Premine is not spent into the upgrade".
+    //   * regtest: the upgrade tx referenced `GENESIS_OUTPOINT` as its
+    //     prevout, but the test setup never ran DIESEL.initialize first
+    //     to MINT the premine into that outpoint — so the upgrade tx's
+    //     incoming_alkanes is empty, wasm sees no premine, same reject.
+    //     (The reject is silent — index_block doesn't fail the test,
+    //     it just doesn't write /upgrade_initialized, and the
+    //     subsequent mint runs the legacy path. That's the bug class
+    //     that kept these proof-tests red since task #14 landed.)
+    //
     // For shadow-mode gas calibration we don't care about the upgrade
-    // *mechanism* — we just need /upgrade_initialized set so mints take
-    // the communist branch. Write it directly.
-    #[cfg(feature = "mainnet")]
-    {
-        let _ = height;
-        let mut ptr = IndexPointer::default()
-            .keyword("/alkanes/")
-            .select(&DIESEL_ID.into())
-            .keyword("/storage/")
-            .select(&b"/upgrade_initialized".to_vec());
-        ptr.set_value::<u8>(0x01);
-        return Ok(());
-    }
-    #[cfg(not(feature = "mainnet"))]
-    {
-        let premine_outpoint = OutPoint {
-            txid: Txid::from_byte_array(
-                <Vec<u8> as AsRef<[u8]>>::as_ref(
-                    &hex::decode(genesis::GENESIS_OUTPOINT)?
-                        .iter()
-                        .cloned()
-                        .rev()
-                        .collect::<Vec<u8>>(),
-                )
-                .try_into()?,
-            ),
-            vout: 0,
-        };
-        let upgrade = Cellpack {
-            target: DIESEL_ID,
-            inputs: vec![1],
-        };
-        let mut block = create_block_with_coinbase_tx(height);
-        let tx = alkane_helpers::create_multiple_cellpack_with_witness_and_in(
-            Witness::new(),
-            vec![upgrade],
-            premine_outpoint,
-            false,
-        );
-        block.txdata.push(tx);
-        index_block(&block, height)?;
-        Ok(())
-    }
+    // *mechanism* — we just need the storage flag flipped. Same applies
+    // to diesel_sidebyside's setup_with_upgrade, which now uses the same
+    // direct-write approach.
+    let _ = height;
+    let mut ptr = IndexPointer::default()
+        .keyword("/alkanes/")
+        .select(&DIESEL_ID.into())
+        .keyword("/storage/")
+        .select(&b"/upgrade_initialized".to_vec());
+    ptr.set_value::<u8>(0x01);
+    Ok(())
 }
 
 fn build_mint_block(height: u32, n: usize) -> Block {
