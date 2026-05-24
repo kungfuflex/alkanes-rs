@@ -3330,6 +3330,9 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes, fr
                 mempool_indexer: false,
                 split_transactions: false,
                 known_pending_tx_hexes: Vec::new(),
+                prefetched_utxos: Vec::new(),
+                max_indexed_height: None,
+                utxo_source: alkanes_cli_common::alkanes::types::UtxoDataSource::default(),
             };
 
             println!("\n📤 Executing swap...");
@@ -4056,6 +4059,9 @@ fn to_enhanced_execute_params(args: AlkanesExecute) -> Result<alkanes::types::En
         mempool_indexer: false,
         split_transactions: false,
         known_pending_tx_hexes: Vec::new(),
+        prefetched_utxos: Vec::new(),
+        max_indexed_height: None,
+        utxo_source: alkanes::types::UtxoDataSource::default(),
     })
 }
 

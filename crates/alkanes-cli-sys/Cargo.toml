@@ -14,7 +14,7 @@ rand = { workspace = true }
 bitcoin = { workspace = true }
 secp256k1 = { workspace = true }
 psbt-v2 = "0.1.0"
-alkanes-cli-common = { path = "../alkanes-cli-common", features = ["std"] }
+alkanes-cli-common = { path = "../alkanes-cli-common", features = ["std", "cache-sqlite"] }
 alkanes-asc = { path = "../alkanes-asc" }
 colored = "2.0"
 url = { workspace = true }
@@ -32,3 +32,8 @@ tokio = { workspace = true, features = ["rt-multi-thread", "macros", "fs", "io-u
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 tokio = { workspace = true, features = ["macros", "rt", "sync"] }
+
+[features]
+# Default-on persistent sqlite cache. Disable with `--no-default-features`.
+default = ["cache-sqlite"]
+cache-sqlite = ["alkanes-cli-common/cache-sqlite"]

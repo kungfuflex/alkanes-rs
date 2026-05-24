@@ -9,6 +9,12 @@ use crate::{
     ordinals::OrdinalsHandler,
     AlkanesError, JsonValue, Result,
 };
+#[cfg(feature = "std")]
+use crate::cache::{AlkanesCache, BlockHash};
+#[cfg(feature = "std")]
+use std::sync::Arc;
+#[cfg(feature = "std")]
+use tokio::sync::RwLock;
 use serde_json::json;
 use crate::alkanes::execute::EnhancedAlkanesExecutor;
 use crate::alkanes::balance_sheet::BalanceSheetOperations;
@@ -131,6 +137,16 @@ pub struct ConcreteProvider {
     #[cfg(feature = "native-deps")]
     http_client: reqwest::Client,
     secp: Secp256k1<All>,
+    /// Optional cache for metashrew_view results. When `Some`, immutable
+    /// methods (`getbytecode`, `meta`) are cached forever and tip-bound
+    /// methods are cached against the current tip hash (if known).
+    #[cfg(feature = "std")]
+    cache: Option<Arc<dyn AlkanesCache>>,
+    /// Current chain tip — populated by an optional background watcher
+    /// (see [`crate::cache::integration::scope_for_method`]). When `None`,
+    /// tip-bound methods bypass the cache.
+    #[cfg(feature = "std")]
+    current_tip: Arc<RwLock<Option<BlockHash>>>,
     }
 
 
@@ -234,6 +250,10 @@ impl ConcreteProvider {
             #[cfg(feature = "native-deps")]
             http_client: reqwest::Client::new(),
             secp: Secp256k1::new(),
+            #[cfg(feature = "std")]
+            cache: None,
+            #[cfg(feature = "std")]
+            current_tip: Arc::new(RwLock::new(None)),
         })
     }
 
@@ -306,6 +326,10 @@ impl ConcreteProvider {
             #[cfg(feature = "native-deps")]
             http_client: reqwest::Client::new(),
             secp: Secp256k1::new(),
+            #[cfg(feature = "std")]
+            cache: None,
+            #[cfg(feature = "std")]
+            current_tip: Arc::new(RwLock::new(None)),
         })
     }
 
@@ -320,6 +344,10 @@ impl ConcreteProvider {
             #[cfg(feature = "native-deps")]
             http_client: reqwest::Client::new(),
             secp: Secp256k1::new(),
+            #[cfg(feature = "std")]
+            cache: None,
+            #[cfg(feature = "std")]
+            current_tip: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -327,9 +355,46 @@ impl ConcreteProvider {
         match self.rpc_config.provider.as_str() { "mainnet" => bitcoin::Network::Bitcoin, "testnet" => bitcoin::Network::Testnet, "signet" => bitcoin::Network::Signet, _ => bitcoin::Network::Regtest }
     }
 
+    /// Attach a cache backend. Callers in `alkanes-cli` typically pass a
+    /// [`crate::cache::sqlite::SqliteCache`] opened at `~/.alkanes/cache.sqlite3`;
+    /// callers in `subfrost-mobile` pass a [`crate::cache::grpc::GrpcCache`].
+    /// Tests use [`crate::cache::in_memory::InMemoryCache`].
+    #[cfg(feature = "std")]
+    pub fn with_cache(mut self, cache: Arc<dyn AlkanesCache>) -> Self {
+        self.cache = Some(cache);
+        self
+    }
+
+    /// Manually record the current chain tip. Used by external callers
+    /// that already track height/hash, or by the optional tip-watcher
+    /// background task in [`crate::cache::tip_watcher`].
+    #[cfg(feature = "std")]
+    pub async fn set_current_tip(&self, tip: BlockHash) {
+        let prior = {
+            let mut guard = self.current_tip.write().await;
+            let prev = *guard;
+            *guard = Some(tip);
+            prev
+        };
+        // On real reorg (tip changed but wasn't None before), notify cache.
+        if let (Some(cache), Some(prev)) = (self.cache.as_ref(), prior) {
+            if prev != tip {
+                if let Err(e) = cache.on_reorg(tip).await {
+                    log::warn!("cache.on_reorg failed (ignored): {e}");
+                }
+            }
+        }
+    }
+
+    #[cfg(feature = "std")]
+    async fn current_tip_value(&self) -> Option<BlockHash> {
+        *self.current_tip.read().await
+    }
+
     pub async fn metashrew_view_call(&self, method: &str, params: &str, height: &str) -> Result<Vec<u8>> {
         // Use the centralized RPC target resolution
         let target = self.rpc_config.get_metashrew_rpc_target();
+        let target_url = target.url.clone();
 
         // In qubitcoin mode, translate metashrew_view → secondaryview
         let (rpc_method, rpc_params) = if self.rpc_config.is_qubitcoin_mode() {
@@ -337,7 +402,70 @@ impl ConcreteProvider {
         } else {
             ("metashrew_view", serde_json::json!([method, params, height]))
         };
-        let result = self.call(&target.url, rpc_method, rpc_params, 1).await?;
+
+        // Cache-aware path: only when cache is configured AND we're not
+        // peeking at a non-`latest` height (historical-height queries are
+        // rare and not worth the extra key complexity yet).
+        #[cfg(feature = "std")]
+        {
+            if self.cache.is_some() && height == "latest" {
+                let tip = self.current_tip_value().await;
+                let network = self.rpc_config.provider.clone();
+                // Re-borrow to satisfy lifetime: extract the static label
+                let static_method: &'static str = match method {
+                    "getbytecode" => "getbytecode",
+                    "meta" => "meta",
+                    "simulate" => "simulate",
+                    "trace" => "trace",
+                    "traceblock" => "traceblock",
+                    "protorunesbyaddress" => "protorunesbyaddress",
+                    "protorunesbyoutpoint" => "protorunesbyoutpoint",
+                    "getbalance" => "getbalance",
+                    "getinventory" => "getinventory",
+                    "getstorageat" => "getstorageat",
+                    "txscript" => "txscript",
+                    "unwrap" => "unwrap",
+                    _ => "",
+                };
+                if !static_method.is_empty() {
+                    let cache = self.cache.clone();
+                    let rpc_method_owned = rpc_method.to_string();
+                    let rpc_params_clone = rpc_params.clone();
+                    let url_clone = target_url.clone();
+                    let result_bytes = crate::cache::integration::cached_view_call(
+                        cache.as_ref(),
+                        &network,
+                        tip,
+                        static_method,
+                        params,
+                        move || {
+                            let url = url_clone.clone();
+                            let rpc_method = rpc_method_owned.clone();
+                            let rpc_params = rpc_params_clone.clone();
+                            async move {
+                                let v = self.call(&url, &rpc_method, rpc_params, 1).await?;
+                                let s = v.as_str().ok_or_else(|| {
+                                    AlkanesError::RpcError(
+                                        "metashrew_view result is not a string".to_string(),
+                                    )
+                                })?;
+                                let s = s.strip_prefix("0x").unwrap_or(s);
+                                hex::decode(s).map_err(|e| {
+                                    AlkanesError::RpcError(format!(
+                                        "Failed to decode metashrew_view hex: {e}"
+                                    ))
+                                })
+                            }
+                        },
+                    )
+                    .await?;
+                    return Ok(result_bytes);
+                }
+            }
+        }
+
+        // Uncached / wasm / qubitcoin path: original behaviour.
+        let result = self.call(&target_url, rpc_method, rpc_params, 1).await?;
 
         // The result should be a hex string starting with "0x"
         let hex_str = result.as_str()

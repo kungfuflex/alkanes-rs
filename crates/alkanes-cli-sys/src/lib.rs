@@ -226,6 +226,47 @@ impl SystemAlkanes {
             log::info!("Qubitcoin single-process mode: {}", qbc_url);
         }
 
+        // Attach the persistent cache unless the user opts out. We swallow
+        // any open error (permission denied, disk full, etc.) and run
+        // without a cache rather than failing the whole CLI — caching is a
+        // reliability/perf enhancement, not a hard requirement.
+        #[cfg(feature = "cache-sqlite")]
+        {
+            let cache_disabled = std::env::var("ALKANES_NO_CACHE")
+                .map(|v| !v.is_empty() && v != "0" && v.to_ascii_lowercase() != "false")
+                .unwrap_or(false);
+            if !cache_disabled {
+                let path = alkanes_cli_common::cache::sqlite::default_cache_path();
+                match alkanes_cli_common::cache::sqlite::SqliteCache::open(&path).await {
+                    Ok(cache) => {
+                        log::debug!("Opened persistent cache at {}", path.display());
+                        provider = provider.with_cache(std::sync::Arc::new(cache));
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "Failed to open cache at {} ({}). Falling back to in-memory cache.",
+                            path.display(),
+                            e
+                        );
+                        provider = provider
+                            .with_cache(std::sync::Arc::new(
+                                alkanes_cli_common::cache::in_memory::InMemoryCache::new(),
+                            ));
+                    }
+                }
+            } else {
+                log::info!("Cache disabled via ALKANES_NO_CACHE env var");
+            }
+        }
+        // When cache-sqlite is not compiled in, fall back to in-memory so
+        // retry + rate-limit handling still applies.
+        #[cfg(all(not(feature = "cache-sqlite"), feature = "std"))]
+        {
+            provider = provider.with_cache(std::sync::Arc::new(
+                alkanes_cli_common::cache::in_memory::InMemoryCache::new(),
+            ));
+        }
+
         if let Some(passphrase) = &args.passphrase {
             log::debug!("Setting passphrase for wallet");
             provider.set_passphrase(Some(passphrase.clone()));
@@ -768,6 +809,9 @@ impl EspoProvider for SystemAlkanes {
     }
     async fn get_address_outpoints(&self, address: &str) -> Result<alkanes_cli_common::JsonValue> {
         self.provider.get_address_outpoints(address).await
+    }
+    async fn get_address_spendable_outpoints(&self, address: &str) -> Result<alkanes_cli_common::JsonValue> {
+        self.provider.get_address_spendable_outpoints(address).await
     }
     async fn get_outpoint_balances(&self, outpoint: &str) -> Result<alkanes_cli_common::JsonValue> {
         self.provider.get_outpoint_balances(outpoint).await
@@ -2841,6 +2885,9 @@ impl alkanes_cli_common::SystemAlkanes for SystemAlkanes {
                     mempool_indexer: false,
                     split_transactions: false,
                     known_pending_tx_hexes: Vec::new(),
+                    prefetched_utxos: Vec::new(),
+                    max_indexed_height: None,
+                    utxo_source: alkanes_cli_common::alkanes::types::UtxoDataSource::default(),
                 };
 
                 let mut current_state = provider.execute(execute_params.clone()).await?;

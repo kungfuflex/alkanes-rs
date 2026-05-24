@@ -39,6 +39,9 @@ pub mod integration;
 #[cfg(feature = "std")]
 pub mod noop;
 
+#[cfg(all(test, feature = "std"))]
+mod e2e_provider_test;
+
 #[cfg(all(feature = "std", feature = "cache-sqlite"))]
 pub mod sqlite;
 

@@ -94,8 +94,12 @@ pub async fn cached_view_call<F, Fut>(
     fetch: F,
 ) -> Result<Bytes, AlkanesError>
 where
-    F: Fn() -> Fut + Send + Sync,
-    Fut: Future<Output = Result<Bytes, AlkanesError>> + Send,
+    // The fetcher's future doesn't have to be Send — `JsonRpcProvider::call`
+    // (the production source) uses `#[async_trait(?Send)]`. The cache trait
+    // itself is `Send + Sync` so its own await points are Send; we just don't
+    // propagate that requirement to the closure.
+    F: Fn() -> Fut,
+    Fut: Future<Output = Result<Bytes, AlkanesError>>,
 {
     let scope = scope_for_method(method, tip_hash);
     let key = make_key(method, network, params_hex);
