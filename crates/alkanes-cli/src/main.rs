@@ -1243,7 +1243,13 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes, fr
                 exec_args.from = Some(resolved_from);
             }
 
-            let params = to_enhanced_execute_params(exec_args)?;
+            // Fetch the indexer tip first so the planner can skip UTXOs at
+            // heights metashrew hasn't seen yet (otherwise we'd silently spend
+            // alkanes the indexer didn't catalog). Falls back to None on RPC
+            // failure → degraded "no filter" mode rather than blocking.
+            let max_indexed_height =
+                alkanes::indexer_lag::fetch_max_indexed_height_or_none(system.provider()).await;
+            let params = to_enhanced_execute_params(exec_args, max_indexed_height)?;
             let mut executor = alkanes::execute::EnhancedAlkanesExecutor::new(system.provider_mut());
 
             // Use execute_full() which implements the presign pattern with atomic broadcasting
@@ -3312,6 +3318,10 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes, fr
                 protostones.push(unwrap_proto);
             }
             
+            // Indexer-lag filter: skip UTXOs above metashrew tip so the
+            // planner doesn't silently spend alkanes the indexer hasn't seen.
+            let max_indexed_height = alkanes_cli_common::alkanes::indexer_lag::
+                fetch_max_indexed_height_or_none(system.provider()).await;
             let mut executor = EnhancedAlkanesExecutor::new(system.provider_mut());
             let execute_params = EnhancedExecuteParams {
                 input_requirements: input_reqs,
@@ -3331,7 +3341,7 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes, fr
                 split_transactions: false,
                 known_pending_tx_hexes: Vec::new(),
                 prefetched_utxos: Vec::new(),
-                max_indexed_height: None,
+                max_indexed_height,
                 utxo_source: alkanes_cli_common::alkanes::types::UtxoDataSource::default(),
             };
 
@@ -4037,7 +4047,10 @@ fn pretty_print_transaction_analysis(tx: &bitcoin::Transaction) {
     }
 }
 
-fn to_enhanced_execute_params(args: AlkanesExecute) -> Result<alkanes::types::EnhancedExecuteParams> {
+fn to_enhanced_execute_params(
+    args: AlkanesExecute,
+    max_indexed_height: Option<u64>,
+) -> Result<alkanes::types::EnhancedExecuteParams> {
     let input_requirements = args.inputs.map(|s| alkanes::parsing::parse_input_requirements(&s)).transpose()?.unwrap_or_default();
     let protostones = alkanes::parsing::parse_protostones(&args.protostones.join(" "))?;
     let envelope_data = args.envelope.map(std::fs::read).transpose()?;
@@ -4060,7 +4073,7 @@ fn to_enhanced_execute_params(args: AlkanesExecute) -> Result<alkanes::types::En
         split_transactions: false,
         known_pending_tx_hexes: Vec::new(),
         prefetched_utxos: Vec::new(),
-        max_indexed_height: None,
+        max_indexed_height,
         utxo_source: alkanes::types::UtxoDataSource::default(),
     })
 }

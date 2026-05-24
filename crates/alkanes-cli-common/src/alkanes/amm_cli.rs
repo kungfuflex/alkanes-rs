@@ -102,6 +102,11 @@ pub async fn init_pool(
     
     let protostones = parse_protostones(&calldata)?;
 
+    // Indexer-lag filter for pool-init (this spends user alkanes — must
+    // skip UTXOs above metashrew tip to avoid silent burn).
+    let max_indexed_height = crate::alkanes::indexer_lag::
+        fetch_max_indexed_height_or_none(provider).await;
+
     // Build execute params with alkanes_change_address set to enable auto-change
     let mut executor = EnhancedAlkanesExecutor::new(provider);
     let execute_params = EnhancedExecuteParams {
@@ -122,10 +127,10 @@ pub async fn init_pool(
         split_transactions: false,
         known_pending_tx_hexes: Vec::new(),
         prefetched_utxos: Vec::new(),
-        max_indexed_height: None,
+        max_indexed_height,
         utxo_source: Default::default(),
     };
-    
+
     // Execute
     let state = executor.execute(execute_params.clone()).await?;
     let result = match state {
@@ -134,9 +139,9 @@ pub async fn init_pool(
         }
         _ => return Err(AlkanesError::Validation("Unexpected execution state".to_string())),
     };
-    
+
     let txid = result.reveal_txid.clone();
-    
+
     if !params.trace {
         println!("✅ Pool initialized!");
         println!("📝 Transaction: {}", txid);
@@ -206,6 +211,10 @@ pub async fn execute_swap(
     
     let protostones = parse_protostones(&calldata)?;
 
+    // Indexer-lag filter for swap (spends alkanes).
+    let max_indexed_height = crate::alkanes::indexer_lag::
+        fetch_max_indexed_height_or_none(provider).await;
+
     // Build execute params
     let mut executor = EnhancedAlkanesExecutor::new(provider);
     let execute_params = EnhancedExecuteParams {
@@ -226,7 +235,7 @@ pub async fn execute_swap(
         split_transactions: false,
         known_pending_tx_hexes: Vec::new(),
         prefetched_utxos: Vec::new(),
-        max_indexed_height: None,
+        max_indexed_height,
         utxo_source: Default::default(),
     };
     

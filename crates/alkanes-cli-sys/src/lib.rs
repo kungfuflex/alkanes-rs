@@ -2867,6 +2867,9 @@ impl alkanes_cli_common::SystemAlkanes for SystemAlkanes {
                     resolved
                 };
 
+                 // Indexer-lag filter: skip UTXOs above metashrew tip.
+                 let max_indexed_height = alkanes_cli_common::alkanes::indexer_lag::
+                     fetch_max_indexed_height_or_none(&provider).await;
                  // Create enhanced execute parameters
                  let execute_params = alkanes_cli_common::alkanes::types::EnhancedExecuteParams {
                      fee_rate,
@@ -2886,7 +2889,7 @@ impl alkanes_cli_common::SystemAlkanes for SystemAlkanes {
                     split_transactions: false,
                     known_pending_tx_hexes: Vec::new(),
                     prefetched_utxos: Vec::new(),
-                    max_indexed_height: None,
+                    max_indexed_height,
                     utxo_source: alkanes_cli_common::alkanes::types::UtxoDataSource::default(),
                 };
 

@@ -28,6 +28,7 @@ pub mod utils;
 pub mod wrap_btc;
 pub mod amm;
 pub mod amm_cli;
+pub mod indexer_lag;
 pub mod pool_details;
 pub mod batch_pools;
 pub mod experimental_asm;

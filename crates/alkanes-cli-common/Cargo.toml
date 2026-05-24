@@ -130,7 +130,7 @@ tonic = { version = "0.12", default-features = false, features = ["codegen", "pr
 prost-types = { version = "0.13", optional = true }
 
 [features]
-default = ["std", "wasm-inspection", "native-deps"]
+default = ["std", "wasm-inspection", "native-deps", "cache-sqlite"]
 std = ["tokio", "reqwest", "url", "bitcoincore-rpc", "dirs", "tempfile", "futures", "async-trait"]
 wasm-inspection = ["wasmi", "wasmprinter", "wat", "spin", "wasmparser", "web-sys", "js-sys", "wasm-bindgen-futures"]
 native-deps = []
