@@ -17,6 +17,7 @@ members = [
     "alkanes/alkanes-std-test",
     "alkanes/alkanes-std-test-2",
     "vendor/frtun-pair",
+    "vendor/subfrost-wc",
     "vendor/qubitcoin-crypto",
     "vendor/qubitcoin-primitives",
     "vendor/qubitcoin-serialize",
