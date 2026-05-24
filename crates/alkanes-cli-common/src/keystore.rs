@@ -318,6 +318,158 @@ impl Keystore {
 
         Ok(mnemonic_str)
     }
+
+    /// Canonical keystore format version. Matches the `version` field that
+    /// `ts-sdk/src/keystore/index.ts:306` writes for every new keystore.
+    /// Older Rust-produced keystores wrote "10.0.0" (the workspace package
+    /// version at the time) which made them look like a totally different
+    /// schema to the ts-sdk loader.
+    pub const CANONICAL_VERSION: &'static str = "1.0";
+
+    /// Returns `true` if this keystore was written by an older code path
+    /// and would be rejected (or silently misread) by the canonical
+    /// ts-sdk loader. Criteria:
+    ///
+    ///   * `encrypted_mnemonic` is PGP-armored ASCII (the old Rust
+    ///     `new()` path emitted this; ts-sdk expects raw hex from
+    ///     `bufferToHex`).
+    ///   * `version` is not the canonical `"1.0"` — covers the
+    ///     "10.0.0" workspace-version stamp Rust used to write.
+    ///   * `pbkdf2_params.iterations` is not 131072 (the ethers.js /
+    ///     ts-sdk default).
+    ///
+    /// We do NOT flag the presence of `account_xpubs` (the Rust
+    /// extension map) — that's an additive field that the ts-sdk
+    /// loader ignores via JSON's structural typing.
+    pub fn is_legacy(&self) -> bool {
+        let armored = self.encrypted_mnemonic.trim().starts_with("-----BEGIN");
+        let bad_version = self.version != Self::CANONICAL_VERSION;
+        let bad_iters = self.pbkdf2_params.iterations != crate::crypto::KEYSTORE_PBKDF_ITERATIONS;
+        armored || bad_version || bad_iters
+    }
+
+    /// Rewrite the keystore in-place to the canonical ts-sdk format.
+    /// Requires the decrypted mnemonic + passphrase because re-encryption
+    /// needs both (we can't reuse the old ciphertext if the iteration
+    /// count or armor changed).
+    ///
+    /// What changes:
+    ///   * `encrypted_mnemonic`        → raw hex (no PGP armor)
+    ///   * `pbkdf2_params.{salt,nonce}` → fresh randoms
+    ///   * `pbkdf2_params.iterations`   → 131072
+    ///   * `pbkdf2_params.algorithm`    → "aes-256-gcm"
+    ///   * `version`                    → "1.0"
+    ///
+    /// What's preserved:
+    ///   * `master_fingerprint`         (derived from mnemonic — stable)
+    ///   * `created_at`                 (don't lie about when the user paired)
+    ///   * `account_xpub` + `account_xpubs` map (re-derived defensively
+    ///     in case the old keystore was missing entries — same mnemonic
+    ///     produces the same xpubs)
+    ///   * `hd_paths`                   (re-emitted as the canonical templates)
+    ///
+    /// Returns `Ok(true)` if anything actually changed, `Ok(false)` if
+    /// the keystore was already canonical.
+    pub fn upgrade_in_place(&mut self, mnemonic: &str, passphrase: &str) -> Result<bool> {
+        if !self.is_legacy() {
+            return Ok(false);
+        }
+
+        // 1. Re-encrypt with canonical params. This regenerates salt +
+        //    nonce as 32+12 random bytes, encrypts at 131072 iterations.
+        let (ciphertext, salt, nonce) =
+            crate::crypto::encrypt_for_keystore(mnemonic.as_bytes(), passphrase)?;
+
+        // 2. Re-derive xpubs from the mnemonic so any missing map entries
+        //    get filled in. We use the same logic as Keystore::new but
+        //    keep the existing fingerprint/created_at — the wallet's
+        //    identity doesn't change.
+        let mnemonic_parsed = Mnemonic::parse_in(bip39::Language::English, mnemonic)
+            .map_err(|e| AlkanesError::Wallet(format!("upgrade: bad mnemonic: {e}")))?;
+        let seed = mnemonic_parsed.to_seed("");
+        let secp = Secp256k1::new();
+        let mainnet_root = Xpriv::new_master(Network::Bitcoin, &seed)?;
+        let testnet_root = Xpriv::new_master(Network::Testnet, &seed)?;
+
+        let mut account_xpubs = BTreeMap::new();
+        let bip_standards = [
+            ("p2tr", "86"),
+            ("p2wpkh", "84"),
+            ("p2sh-p2wpkh", "49"),
+            ("p2pkh", "44"),
+        ];
+        for (address_type, bip_number) in &bip_standards {
+            let mainnet_path_str = format!("m/{}'/{}'/{}", bip_number, "0", "0'");
+            let mainnet_path = DerivationPath::from_str(&mainnet_path_str)?;
+            let mainnet_xpriv = mainnet_root.derive_priv(&secp, &mainnet_path)?;
+            let mainnet_xpub = Xpub::from_priv(&secp, &mainnet_xpriv);
+            account_xpubs.insert(
+                format!("{}:mainnet", address_type),
+                mainnet_xpub.to_string(),
+            );
+
+            let testnet_path_str = format!("m/{}'/{}'/{}", bip_number, "1", "0'");
+            let testnet_path = DerivationPath::from_str(&testnet_path_str)?;
+            let testnet_xpriv = testnet_root.derive_priv(&secp, &testnet_path)?;
+            let testnet_xpub = Xpub::from_priv(&secp, &testnet_xpriv);
+            account_xpubs.insert(
+                format!("{}:testnet", address_type),
+                testnet_xpub.to_string(),
+            );
+        }
+        // Zcash extension (same shape as new()).
+        {
+            let zcash_mainnet_path = DerivationPath::from_str("m/44'/133'/0'")?;
+            let zcash_mainnet_xpriv = mainnet_root.derive_priv(&secp, &zcash_mainnet_path)?;
+            let zcash_mainnet_xpub = Xpub::from_priv(&secp, &zcash_mainnet_xpriv);
+            account_xpubs.insert(
+                "p2pkh-zec:mainnet".to_string(),
+                zcash_mainnet_xpub.to_string(),
+            );
+            let zcash_testnet_path = DerivationPath::from_str("m/44'/1'/0'")?;
+            let zcash_testnet_xpriv = testnet_root.derive_priv(&secp, &zcash_testnet_path)?;
+            let zcash_testnet_xpub = Xpub::from_priv(&secp, &zcash_testnet_xpriv);
+            account_xpubs.insert(
+                "p2pkh-zec:testnet".to_string(),
+                zcash_testnet_xpub.to_string(),
+            );
+        }
+        let default_account_xpub = account_xpubs
+            .get("p2tr:mainnet")
+            .cloned()
+            .unwrap_or_default();
+
+        // 3. Standard hd_paths templates — match Keystore::new exactly.
+        let mut hd_paths = BTreeMap::new();
+        hd_paths.insert("p2tr".to_string(), "m/86'/COIN'/0'/0/0".to_string());
+        hd_paths.insert("p2wpkh".to_string(), "m/84'/COIN'/0'/0/0".to_string());
+        hd_paths.insert(
+            "p2sh-p2wpkh".to_string(),
+            "m/49'/COIN'/0'/0/0".to_string(),
+        );
+        hd_paths.insert("p2pkh".to_string(), "m/44'/COIN'/0'/0/0".to_string());
+        hd_paths.insert(
+            "p2pkh-zec".to_string(),
+            "m/44'/ZEC_COIN'/0'/0/0".to_string(),
+        );
+
+        // 4. Commit the rewrite. Preserve created_at + master_fingerprint
+        //    (the mnemonic determines the fingerprint anyway, but we
+        //    keep the existing string to avoid noisy diffs).
+        self.encrypted_mnemonic = hex::encode(&ciphertext);
+        self.version = Self::CANONICAL_VERSION.to_string();
+        self.pbkdf2_params = PbkdfParams {
+            salt: hex::encode(salt),
+            nonce: Some(hex::encode(nonce)),
+            iterations: crate::crypto::KEYSTORE_PBKDF_ITERATIONS,
+            algorithm: Some("aes-256-gcm".to_string()),
+        };
+        self.account_xpub = default_account_xpub;
+        self.account_xpubs = account_xpubs;
+        self.hd_paths = hd_paths;
+        Ok(true)
+    }
+
     pub fn get_addresses(
         &self,
         network: Network,
@@ -513,5 +665,110 @@ impl DeezelWallet {
         let path_str = format!("m/86'/1'/0'/0/{index}");
         let path = DerivationPath::from_str(&path_str)?;
         derive_address(&self.mnemonic.to_string(), &path, self.network)
+    }
+}
+
+#[cfg(all(test, feature = "std"))]
+mod legacy_upgrade_tests {
+    use super::*;
+
+    const TEST_MNEMONIC: &str =
+        "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+    const TEST_PASSPHRASE: &str = "testpass";
+
+    fn make_canonical_keystore() -> Keystore {
+        let m = Mnemonic::parse_in(bip39::Language::English, TEST_MNEMONIC).unwrap();
+        Keystore::new(&m, Network::Bitcoin, TEST_PASSPHRASE, None).unwrap()
+    }
+
+    #[test]
+    fn canonical_keystore_is_not_legacy() {
+        let k = make_canonical_keystore();
+        assert!(!k.is_legacy(), "freshly-built keystore must already be canonical");
+    }
+
+    #[test]
+    fn legacy_version_flag_is_legacy() {
+        let mut k = make_canonical_keystore();
+        k.version = "10.0.0".to_string();
+        assert!(k.is_legacy(), "version != \"1.0\" must trigger upgrade");
+    }
+
+    #[test]
+    fn legacy_iteration_count_is_legacy() {
+        let mut k = make_canonical_keystore();
+        k.pbkdf2_params.iterations = 600_000;
+        assert!(k.is_legacy(), "non-131072 iteration count must trigger upgrade");
+    }
+
+    #[test]
+    fn armored_encrypted_mnemonic_is_legacy() {
+        let mut k = make_canonical_keystore();
+        k.encrypted_mnemonic =
+            "-----BEGIN ENCRYPTED MNEMONIC-----\nZOGfWK+H\n-----END ENCRYPTED MNEMONIC-----\n"
+                .to_string();
+        assert!(k.is_legacy(), "PGP-armored ciphertext must trigger upgrade");
+    }
+
+    #[test]
+    fn upgrade_is_noop_when_already_canonical() {
+        let mut k = make_canonical_keystore();
+        let changed = k.upgrade_in_place(TEST_MNEMONIC, TEST_PASSPHRASE).unwrap();
+        assert!(!changed, "canonical keystore upgrade must report no change");
+    }
+
+    #[test]
+    fn upgrade_rewrites_version_iters_and_encryption() {
+        let mut k = make_canonical_keystore();
+        // Simulate the on-disk shape of a 10.0.0-era keystore: stamped
+        // version, 600k iterations.
+        k.version = "10.0.0".to_string();
+        k.pbkdf2_params.iterations = 600_000;
+        // Stale ciphertext — caller passes the plaintext mnemonic to upgrade,
+        // so we don't have to actually re-encrypt by hand here.
+        let original_fp = k.master_fingerprint.clone();
+        let original_created_at = k.created_at;
+        let changed = k.upgrade_in_place(TEST_MNEMONIC, TEST_PASSPHRASE).unwrap();
+        assert!(changed);
+        assert_eq!(k.version, Keystore::CANONICAL_VERSION);
+        assert_eq!(
+            k.pbkdf2_params.iterations,
+            crate::crypto::KEYSTORE_PBKDF_ITERATIONS
+        );
+        assert_eq!(k.pbkdf2_params.algorithm.as_deref(), Some("aes-256-gcm"));
+        assert!(
+            !k.encrypted_mnemonic.starts_with("-----BEGIN"),
+            "upgraded ciphertext must NOT be PGP-armored"
+        );
+        // The fingerprint + created_at are wallet identity — must be
+        // preserved across an upgrade so external integrations don't think
+        // it's a new wallet.
+        assert_eq!(k.master_fingerprint, original_fp);
+        assert_eq!(k.created_at, original_created_at);
+        // The mnemonic still decrypts after the rewrite.
+        let recovered = k.decrypt_mnemonic(TEST_PASSPHRASE).unwrap();
+        assert_eq!(recovered, TEST_MNEMONIC);
+    }
+
+    #[test]
+    fn upgraded_keystore_passes_is_legacy_check() {
+        let mut k = make_canonical_keystore();
+        k.version = "10.0.0".to_string();
+        k.upgrade_in_place(TEST_MNEMONIC, TEST_PASSPHRASE).unwrap();
+        assert!(!k.is_legacy(), "post-upgrade keystore must be canonical");
+    }
+
+    #[test]
+    fn upgrade_preserves_account_xpubs_map() {
+        let mut k = make_canonical_keystore();
+        let original_p2tr_mainnet = k.account_xpubs.get("p2tr:mainnet").cloned();
+        k.version = "10.0.0".to_string();
+        k.upgrade_in_place(TEST_MNEMONIC, TEST_PASSPHRASE).unwrap();
+        // The mnemonic determines the xpubs deterministically, so they
+        // must be identical before and after the upgrade.
+        assert_eq!(
+            k.account_xpubs.get("p2tr:mainnet").cloned(),
+            original_p2tr_mainnet
+        );
     }
 }
