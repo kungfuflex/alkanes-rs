@@ -16,6 +16,7 @@ members = [
     "alkanes/alkanes-std-merkle-distributor",
     "alkanes/alkanes-std-test",
     "alkanes/alkanes-std-test-2",
+    "vendor/frtun-pair",
     "vendor/qubitcoin-crypto",
     "vendor/qubitcoin-primitives",
     "vendor/qubitcoin-serialize",
