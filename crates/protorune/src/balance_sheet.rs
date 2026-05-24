@@ -226,6 +226,14 @@ pub fn clear_balances<T: KeyValuePointer>(ptr: &T) {
 /// burned), and the chunk is written as a zero-entries protobuf — preserving
 /// the chain semantics that `load_sheet_chunked` returns an empty sheet for
 /// cenotaph-burned outpoints, same as the legacy `save(is_cenotaph=true)`.
+///
+/// **Overwrite semantics** — the chunk REPLACES any prior chunk at the same
+/// outpoint. Safe for the normal block-apply path because `balances_by_output`
+/// already represents the full per-output balance computed from a single tx's
+/// edicts. Unsafe when MULTIPLE callers write to the same outpoint within the
+/// same block (e.g. genesis init where `setup_diesel` + `setup_frsigil`
+/// each call `save_chunked` against `GENESIS_OUTPOINT` — the second wipes
+/// the first). For those call sites use [`save_chunked_merging`] instead.
 pub fn save_chunked<P, T>(sheet: &BalanceSheet<P>, ptr: &mut T, is_cenotaph: bool)
 where
     P: KeyValuePointer + Clone,
@@ -241,6 +249,44 @@ where
     };
     let encoded = proto_sheet.encode_to_vec();
     ptr.set_chunk(&encoded);
+}
+
+/// Like [`save_chunked`] but APPENDS the new balances to whatever chunk
+/// already exists at `ptr`. Required at genesis where multiple
+/// `setup_*` functions each contribute a different alkane to the
+/// shared `GENESIS_OUTPOINT` — using plain `save_chunked` would let
+/// the second write wipe out the first.
+///
+/// `is_cenotaph=true` bypasses the merge and writes an empty chunk
+/// (matching the cenotaph contract of [`save_chunked`]).
+///
+/// Returns `Err` only if balance addition would overflow `u128` — a
+/// theoretical concern only; genesis premines are well below that
+/// bound.
+pub fn save_chunked_merging<P, T>(
+    sheet: &BalanceSheet<P>,
+    ptr: &mut T,
+    is_cenotaph: bool,
+) -> Result<()>
+where
+    P: KeyValuePointer + Clone,
+    T: KeyValuePointer + Clone,
+{
+    if is_cenotaph {
+        save_chunked(sheet, ptr, true);
+        return Ok(());
+    }
+    // Read existing chunk (empty BalanceSheet if absent).
+    let existing: BalanceSheet<T> = load_sheet_chunked(ptr);
+    // Start from the new sheet (cheap clone — cached BTreeMap), then
+    // add every (rune, balance) from existing. `increase` does
+    // saturating-ish add with overflow check; we propagate on error.
+    let mut combined: BalanceSheet<P> = sheet.clone();
+    for (rune, value) in existing.balances() {
+        combined.increase(rune, *value)?;
+    }
+    save_chunked(&combined, ptr, false);
+    Ok(())
 }
 
 /// Read the chunked balance sheet for an outpoint at the current read

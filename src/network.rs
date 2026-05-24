@@ -22,7 +22,7 @@ use anyhow::Result;
 use bitcoin::{Block, OutPoint, Transaction};
 use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
 use metashrew_support::index_pointer::KeyValuePointer;
-use protorune::balance_sheet::{save_chunked, PersistentRecord};
+use protorune::balance_sheet::{save_chunked, save_chunked_merging, PersistentRecord};
 use protorune::message::{MessageContext, MessageContextParcel};
 #[allow(unused_imports)]
 use protorune::tables::{RuneTable, RUNES};
@@ -281,12 +281,18 @@ pub fn setup_frsigil(block: &Block) -> Result<()> {
         txid: tx_hex_to_txid(genesis::GENESIS_OUTPOINT)?,
         vout: 0,
     })?;
-    // v3 chunked-outpoint write: one chunk for the genesis outpoint.
+    // v3 chunked-outpoint write: MERGE into the genesis outpoint's
+    // chunk. `setup_diesel` ran first and wrote the 44T DIESEL
+    // premine there; if we used plain `save_chunked` we'd overwrite
+    // that with just the frSIGIL entry — which is exactly what was
+    // happening pre-fix and caused the v10 pod to lose the DIESEL
+    // premine on the genesis outpoint, snowballing into ~33 DIESEL
+    // supply drift by h=922k (see bisect at h=913,043 upgrade tx).
     let sheet: BalanceSheet<AtomicPointer> =
         <AlkaneTransferParcel as TryInto<BalanceSheet<AtomicPointer>>>::try_into(
             response2.alkanes.into(),
         )?;
-    save_chunked(
+    save_chunked_merging(
         &sheet,
         &mut atomic.derive(
             &RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
@@ -294,7 +300,7 @@ pub fn setup_frsigil(block: &Block) -> Result<()> {
                 .select(&outpoint_bytes),
         ),
         false,
-    );
+    )?;
     pipe_storagemap_to(
         &response2.storage,
         &mut atomic
@@ -451,12 +457,16 @@ pub fn setup_diesel(block: &Block) -> Result<()> {
         txid: tx_hex_to_txid(genesis::GENESIS_OUTPOINT)?,
         vout: 0,
     })?;
-    // v3 chunked-outpoint write: one chunk for the genesis outpoint.
+    // v3 chunked-outpoint write: MERGE into the genesis outpoint's
+    // chunk so subsequent `setup_*` calls in the same block (notably
+    // `setup_frsigil` for the frSIGIL precompile) don't wipe the
+    // DIESEL premine. See `save_chunked_merging` for the rationale +
+    // the upstream incident this fix prevents.
     let sheet: BalanceSheet<AtomicPointer> =
         <AlkaneTransferParcel as TryInto<BalanceSheet<AtomicPointer>>>::try_into(
             response.alkanes.into(),
         )?;
-    save_chunked(
+    save_chunked_merging(
         &sheet,
         &mut atomic.derive(
             &RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
@@ -464,7 +474,7 @@ pub fn setup_diesel(block: &Block) -> Result<()> {
                 .select(&outpoint_bytes),
         ),
         false,
-    );
+    )?;
     pipe_storagemap_to(
         &response.storage,
         &mut atomic.derive(&IndexPointer::from_keyword("/alkanes/").select(&myself.clone().into())),
