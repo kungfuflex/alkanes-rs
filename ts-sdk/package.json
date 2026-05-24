@@ -24,6 +24,12 @@
     "./wasm/node-loader.cjs": {
       "require": "./wasm/node-loader.cjs",
       "default": "./wasm/node-loader.cjs"
+    },
+    "./walletconnect": {
+      "types": "./dist/walletconnect/index.d.ts",
+      "import": "./dist/walletconnect/index.mjs",
+      "require": "./dist/walletconnect/index.js",
+      "default": "./dist/walletconnect/index.mjs"
     }
   },
   "files": [
@@ -71,6 +77,7 @@
     "directory": "ts-sdk"
   },
   "dependencies": {
+    "@subfrost/walletconnect": "file:../../subfrost-mobile/ts-sdk",
     "@bitcoinerlab/secp256k1": "^1.1.1",
     "bip32": "^4.0.0",
     "bip39": "^3.1.0",

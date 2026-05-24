@@ -142,6 +142,10 @@ pub enum Commands {
     /// ESPO subcommands (alkanes balance indexer with PostgreSQL backend)
     #[command(subcommand)]
     Espo(EspoCommands),
+    /// WalletConnect signer integration — pair with subfrost-mobile and sign
+    /// PSBTs over the relay.
+    #[command(subcommand)]
+    Wc(WcCommands),
     /// Decode a PSBT (Partially Signed Bitcoin Transaction) without calling bitcoind
     Decodepsbt {
         /// PSBT as base64 string
@@ -2718,6 +2722,49 @@ pub enum SubfrostCommands {
     },
 }
 
+/// WalletConnect subcommands. Pair with subfrost-mobile (or any compatible
+/// wallet implementing the subfrost custom WalletConnect protocol) and
+/// delegate signing to the mobile device over the relay.
+///
+/// Typical CLI flow:
+///   1. `alkanes-cli wc pair`                  → prints the pairing URI + code
+///   2. user types the code into subfrost-mobile and accepts
+///   3. session is stashed under `~/.alkanes/wc-session.json`
+///   4. subsequent `alkanes-cli alkanes execute … --use-walletconnect`
+///      will route PSBT signing through the relay instead of the local
+///      keystore.
+#[derive(Subcommand, Debug, Clone, Serialize, Deserialize)]
+pub enum WcCommands {
+    /// Print a fresh pairing URI + code; block until the mobile wallet
+    /// pairs. Stashes the session for later signing.
+    Pair {
+        /// Relay endpoint. Defaults to `wss://wc.subfrost.io/`.
+        #[arg(long)]
+        relay_url: Option<String>,
+        /// Origin string shown to the wallet. Defaults to "alkanes-cli".
+        #[arg(long, default_value = "alkanes-cli")]
+        origin: String,
+        /// How long to wait (seconds) for the wallet to accept.
+        #[arg(long, default_value_t = 300)]
+        timeout_secs: u64,
+    },
+    /// Fetch the wallet's account list (uses an existing paired session).
+    Accounts {},
+    /// Sign a PSBT (hex-encoded) using the paired mobile wallet. Useful
+    /// for testing the signer surface in isolation; normally you'd let
+    /// `alkanes execute --use-walletconnect` do this transparently.
+    SignPsbt {
+        /// PSBT as hex string (un-base64-d).
+        psbt_hex: String,
+        /// Comma-separated addresses the wallet should sign inputs for.
+        #[arg(long, value_delimiter = ',')]
+        addresses: Vec<String>,
+    },
+    /// Forget the stashed session (the wallet retains its own copy
+    /// until the user revokes it from the mobile UI).
+    Revoke {},
+}
+
 /// ESPO subcommands (alkanes balance indexer with PostgreSQL backend)
 #[derive(Subcommand, Debug, Clone, Serialize, Deserialize)]
 pub enum EspoCommands {
@@ -3212,6 +3259,9 @@ impl Commands {
             Commands::Subfrost(_) => false,
             // ESPO queries don't need wallet
             Commands::Espo(_) => false,
+            // WalletConnect operates against the remote signer, not the
+            // local keystore — never needs the local wallet.
+            Commands::Wc(_) => false,
             // PSBT decoding doesn't need wallet
             Commands::Decodepsbt { .. } => false,
         }

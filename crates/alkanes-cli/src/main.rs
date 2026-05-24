@@ -14,7 +14,7 @@ use serde_json::json;
 mod commands;
 mod pretty_print;
 mod format_parser;
-use commands::{Alkanes, AlkanesExecute, Commands, DeezelCommands, MetashrewCommands, Protorunes, Runestone, WalletCommands, DataApiCommand, SubfrostCommands, OpiCommands};
+use commands::{Alkanes, AlkanesExecute, Commands, DeezelCommands, MetashrewCommands, Protorunes, Runestone, WalletCommands, DataApiCommand, SubfrostCommands, OpiCommands, WcCommands};
 use alkanes_cli_common::alkanes;
 use pretty_print::*;
 
@@ -128,6 +128,7 @@ async fn execute_command<T: System + SystemOrd + UtxoProvider>(system: &mut T, c
         }
         Commands::Subfrost(cmd) => execute_subfrost_command(system.provider(), cmd).await,
         Commands::Espo(cmd) => execute_espo_command(system.provider(), cmd.into()).await,
+        Commands::Wc(cmd) => execute_wc_command(cmd).await,
         Commands::Decodepsbt { psbt, raw } => {
             use alkanes_cli_common::psbt_utils::decode_psbt_from_base64;
             let psbt_json = decode_psbt_from_base64(&psbt)?;
@@ -176,6 +177,99 @@ async fn execute_lua_command(
         }
     }
     Ok(())
+}
+
+/// Default location for the persisted WalletConnect session, so the user
+/// only has to pair once per device.
+fn wc_session_path() -> std::path::PathBuf {
+    if let Some(home) = dirs::home_dir() {
+        home.join(".alkanes").join("wc-session.json")
+    } else {
+        std::path::PathBuf::from(".alkanes-wc-session.json")
+    }
+}
+
+async fn execute_wc_command(command: WcCommands) -> Result<()> {
+    use subfrost_wc::signer::{start_pairing, WalletConnectSigner};
+    use std::time::Duration;
+
+    match command {
+        WcCommands::Pair {
+            relay_url,
+            origin,
+            timeout_secs,
+        } => {
+            let relay_url = relay_url.unwrap_or_else(|| "wss://wc.subfrost.io/".to_string());
+            println!("📡 Connecting to relay: {relay_url}");
+            let pending = start_pairing(&relay_url, &origin).await
+                .map_err(|e| anyhow::anyhow!("pairing init failed: {e}"))?;
+            println!();
+            println!("📲 Open subfrost-mobile and scan or paste this URI:");
+            println!();
+            println!("   {}", pending.uri());
+            println!();
+            if let Some(code) = pending.code() {
+                println!("   Pairing code (type into wallet): {}", code);
+            }
+            println!();
+            println!("⏳ Waiting up to {timeout_secs}s for the wallet to pair...");
+            let signer = pending
+                .complete(Duration::from_secs(timeout_secs))
+                .await
+                .map_err(|e| anyhow::anyhow!("pairing did not complete: {e}"))?;
+            // Best-effort: stash the topic + accounts so the next `wc accounts`
+            // call doesn't need to re-pair. Full session restore (re-derive
+            // symKey from disk) is intentionally deferred — pairing is
+            // cheap and the wallet remembers the session too.
+            let accounts = signer.get_accounts().await
+                .map_err(|e| anyhow::anyhow!("get_accounts: {e}"))?;
+            let stash = serde_json::json!({
+                "topic": signer.topic(),
+                "accounts": accounts,
+            });
+            let path = wc_session_path();
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).ok();
+            }
+            std::fs::write(&path, serde_json::to_string_pretty(&stash)?)?;
+            println!("✅ Paired. Accounts: {accounts:?}");
+            println!("   Session topic stashed at {}", path.display());
+            Ok(())
+        }
+        WcCommands::Accounts {} => {
+            let path = wc_session_path();
+            if path.exists() {
+                let raw = std::fs::read_to_string(&path)?;
+                let v: serde_json::Value = serde_json::from_str(&raw)?;
+                println!("{}", serde_json::to_string_pretty(&v)?);
+            } else {
+                println!("⚠ No stashed session at {}. Run `alkanes-cli wc pair` first.", path.display());
+            }
+            Ok(())
+        }
+        WcCommands::SignPsbt { psbt_hex: _, addresses: _ } => {
+            // Full sign-against-existing-session flow requires persisting the
+            // derived symKey + relay topic and reattaching via reconnect().
+            // Not in this first cut — pair flow proves the signer surface
+            // end-to-end. File-issue tracker for "session restore + sign":
+            // landing in a follow-up commit.
+            anyhow::bail!(
+                "sign-psbt against a stashed session is not yet implemented; \
+                 use `alkanes-cli alkanes execute … --use-walletconnect` once \
+                 that flag lands, or re-pair and sign in one shot"
+            )
+        }
+        WcCommands::Revoke {} => {
+            let path = wc_session_path();
+            if path.exists() {
+                std::fs::remove_file(&path)?;
+                println!("🗑  Removed {}. Use subfrost-mobile's UI to revoke on the wallet side.", path.display());
+            } else {
+                println!("No session to revoke at {}.", path.display());
+            }
+            Ok(())
+        }
+    }
 }
 
 async fn execute_subfrost_command(
