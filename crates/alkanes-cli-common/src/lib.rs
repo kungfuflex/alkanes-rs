@@ -91,6 +91,9 @@ pub mod subfrost;
 pub mod ordinals;
 
 #[cfg(feature = "std")]
+pub mod cache;
+
+#[cfg(feature = "std")]
 pub mod dataapi;
 
 #[cfg(feature = "std")]
