@@ -309,6 +309,23 @@ impl SystemAlkanes {
     }
 }
 
+impl SystemAlkanes {
+    /// Inject a remote signer into the underlying provider. Used by
+    /// `alkanes-cli` to wire WalletConnect after construction (the
+    /// signer needs an active relay connection so we can't build it in
+    /// `new_with_options` without making that an async/lifetime mess).
+    pub fn attach_remote_signer(
+        &mut self,
+        signer: std::sync::Arc<dyn alkanes_cli_common::traits::RemoteSigner>,
+    ) {
+        // ConcreteProvider keeps remote_signer as pub(crate) inside its
+        // own crate, so we go through the builder method on the concrete
+        // type. Replacing via clone+with_remote_signer is fine — the
+        // provider holds Arcs internally so clone is cheap.
+        self.provider = self.provider.clone().with_remote_signer(Some(signer));
+    }
+}
+
 #[async_trait(?Send)]
 impl System for SystemAlkanes {
     fn provider(&self) -> &dyn DeezelProvider {

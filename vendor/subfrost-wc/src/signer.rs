@@ -65,6 +65,10 @@ pub struct PairingInProgress {
     pub topic: String,
     own_priv: StaticSecret,
     relay: DappRelay,
+    /// Relay endpoint (e.g. `wss://wc.subfrost.io/`). Kept on the
+    /// pairing handle so a successful `complete()` can stash it on the
+    /// resulting signer for later session restore.
+    relay_url: String,
     /// The optional 6-char code printed by the dapp side for the user
     /// to type into the wallet — mixed into HKDF along with the topic.
     code: Option<String>,
@@ -79,6 +83,23 @@ pub struct WalletConnectSigner {
     relay: DappRelay,
     topic: String,
     origin: String,
+    relay_url: String,
+    accounts: Vec<String>,
+}
+
+/// Serializable on-disk representation of a paired session. The symKey is
+/// the only sensitive field — store the resulting file with mode 0600 (or
+/// the platform equivalent). Compromise of the symKey alone is not catastrophic
+/// because the mobile wallet still has to approve every sign request, but
+/// it would let an attacker eavesdrop on subsequent sign traffic.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct PersistedSession {
+    pub topic: String,
+    pub relay_url: String,
+    pub origin: String,
+    /// 32-byte ChaCha20-Poly1305 key, base64-encoded.
+    pub sym_key_b64: String,
+    pub accounts: Vec<String>,
 }
 
 impl core::fmt::Debug for WalletConnectSigner {
@@ -129,6 +150,7 @@ pub async fn start_pairing(
         topic,
         own_priv,
         relay,
+        relay_url,
         code: Some(code),
         origin,
     })
@@ -147,11 +169,13 @@ pub async fn join_pairing(uri: &str) -> Result<PairingInProgress, SignerError> {
         webapp_pub_b64: own_pub_b64,
     });
     relay.open().await?;
+    let relay_url = pending.relay_url.clone();
     Ok(PairingInProgress {
         uri: uri.to_string(),
         topic: pending.topic,
         own_priv,
         relay,
+        relay_url,
         // The pairing-URI parser doesn't extract `code` today (it's a
         // dapp-side-only artifact for CLI mode), so we leave it None
         // here. join_pairing is rare; CLI flow prefers start_pairing.
@@ -185,11 +209,16 @@ impl PairingInProgress {
             None => self.topic.clone(),
         };
         let sym_key = ecdh_derive(&self.own_priv, &mobile_pub, &hkdf_info)?;
+        // We can't pull relay_url out of DappRelay (private field), so
+        // re-cache it on the signer for later persistence.
+        let relay_url = self.relay_url.clone();
         Ok(WalletConnectSigner {
             sym_key,
             relay: self.relay,
             topic: self.topic,
             origin: self.origin,
+            relay_url,
+            accounts: Vec::new(),
         })
     }
 
@@ -294,6 +323,68 @@ impl WalletConnectSigner {
     pub fn topic(&self) -> &str {
         &self.topic
     }
+
+    pub fn accounts(&self) -> &[String] {
+        &self.accounts
+    }
+
+    /// Cache the account list on the signer. Typically called once right
+    /// after pairing — the result is stored in the persisted-session
+    /// blob so future `--use-walletconnect` invocations don't have to
+    /// round-trip just to discover which addresses to spend from.
+    pub fn set_accounts(&mut self, accounts: Vec<String>) {
+        self.accounts = accounts;
+    }
+
+    /// Serialize to disk-storable form. The symKey is base64'd; callers
+    /// MUST write the resulting JSON with 0600 permissions (or whatever
+    /// "owner-only readable" looks like on the host platform).
+    pub fn to_persisted(&self) -> PersistedSession {
+        PersistedSession {
+            topic: self.topic.clone(),
+            relay_url: self.relay_url.clone(),
+            origin: self.origin.clone(),
+            sym_key_b64: B64.encode(self.sym_key),
+            accounts: self.accounts.clone(),
+        }
+    }
+
+    /// Re-attach to a previously-paired session. Opens a fresh WSS
+    /// (`subscribe`-style, no new `init`/key derivation), and returns
+    /// a signer ready to use the persisted symKey.
+    ///
+    /// Fails if the relay rejects the subscribe (typically because the
+    /// session expired on the relay side — pair again).
+    pub async fn restore(session: PersistedSession) -> Result<Self, SignerError> {
+        let sym_key_bytes = B64
+            .decode(&session.sym_key_b64)
+            .map_err(|e| SignerError::Crypto(CryptoError::BadPubLen(format!("{e}").len())))?;
+        if sym_key_bytes.len() != KEY_LEN {
+            return Err(SignerError::Crypto(CryptoError::BadPubLen(
+                sym_key_bytes.len(),
+            )));
+        }
+        let mut sym_key = [0u8; KEY_LEN];
+        sym_key.copy_from_slice(&sym_key_bytes);
+
+        // We don't have the dapp pub anymore — but reconnect just sends
+        // `subscribe`, no key exchange.
+        let relay = DappRelay::new(RelayConfig {
+            relay_url: session.relay_url.clone(),
+            topic: session.topic.clone(),
+            webapp_pub_b64: String::new(),
+        });
+        relay.reconnect().await?;
+
+        Ok(Self {
+            sym_key,
+            relay,
+            topic: session.topic,
+            origin: session.origin,
+            relay_url: session.relay_url,
+            accounts: session.accounts,
+        })
+    }
 }
 
 fn unexpected(expected: &'static str, got: &Plaintext) -> SignerError {
@@ -347,6 +438,54 @@ fn url_param_encode(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
+
+    #[test]
+    fn persisted_session_roundtrips_through_json() {
+        let original = PersistedSession {
+            topic: "abc-123".to_string(),
+            relay_url: "wss://wc.subfrost.io/".to_string(),
+            origin: "alkanes-cli".to_string(),
+            sym_key_b64: B64.encode([7u8; 32]),
+            accounts: vec![
+                "bc1p…aaa".to_string(),
+                "bc1q…bbb".to_string(),
+            ],
+        };
+        let json = serde_json::to_string(&original).unwrap();
+        let parsed: PersistedSession = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.topic, original.topic);
+        assert_eq!(parsed.relay_url, original.relay_url);
+        assert_eq!(parsed.sym_key_b64, original.sym_key_b64);
+        assert_eq!(parsed.accounts, original.accounts);
+    }
+
+    #[test]
+    fn restore_rejects_bad_symkey_length() {
+        // PersistedSession with a 16-byte symKey (not 32) — should error.
+        let bad = PersistedSession {
+            topic: "abc".to_string(),
+            relay_url: "wss://nowhere.example/".to_string(),
+            origin: "test".to_string(),
+            sym_key_b64: B64.encode([1u8; 16]),
+            accounts: vec![],
+        };
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let r = rt.block_on(async move { WalletConnectSigner::restore(bad).await });
+        match r {
+            Err(SignerError::Crypto(CryptoError::BadPubLen(_))) => {}
+            Err(other) => {
+                // Connection failure is also acceptable (we point at a
+                // bogus URL); we just want to make sure it errors instead
+                // of silently using a truncated key.
+                eprintln!("got expected error: {other}");
+            }
+            Ok(_) => panic!("should have errored on bad symkey length"),
+        }
+    }
 
     #[test]
     fn pairing_code_shape() {

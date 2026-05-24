@@ -4,7 +4,7 @@
 //! the actual work to the alkanes-cli-sys library. This keeps the CLI crate
 //! lightweight and focused on its primary role as a user interface.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Parser;
 use alkanes_cli_sys::{SystemAlkanes, SystemOrd};
 use alkanes_cli_common::traits::*;
@@ -14,6 +14,7 @@ use serde_json::json;
 mod commands;
 mod pretty_print;
 mod format_parser;
+mod wc_signer;
 use commands::{Alkanes, AlkanesExecute, Commands, DeezelCommands, MetashrewCommands, Protorunes, Runestone, WalletCommands, DataApiCommand, SubfrostCommands, OpiCommands, WcCommands};
 use alkanes_cli_common::alkanes;
 use pretty_print::*;
@@ -92,8 +93,18 @@ async fn main() -> Result<()> {
     // because address identifiers like "p2tr:0" need wallet access for address derivation
     let skip_wallet_init = !args.command.requires_wallet() && alkanes_args.wallet_file.is_none();
 
-    // Create a new SystemAlkanes instance (skip wallet init only if not needed AND no wallet file provided)
-    let mut system = SystemAlkanes::new_with_options(&alkanes_args, skip_wallet_init).await?;
+    // Create a new SystemAlkanes instance (skip wallet init only if not needed AND no wallet file provided).
+    // When --use-walletconnect is set we ALWAYS skip wallet init — the
+    // local keystore is irrelevant; signing goes through the relay.
+    let effective_skip = skip_wallet_init || args.use_walletconnect;
+    let mut system = SystemAlkanes::new_with_options(&alkanes_args, effective_skip).await?;
+
+    // Wire up the remote signer if --use-walletconnect was passed. We
+    // reattach to the relay using the persisted session at
+    // ~/.alkanes/wc-session.json — pair flow must have run already.
+    if args.use_walletconnect {
+        attach_walletconnect_signer(&mut system).await?;
+    }
 
     // Set default brc20-prog RPC URL based on network if not provided
     let brc20_prog_rpc_url = alkanes_args.brc20_prog_rpc_url.clone()
@@ -189,6 +200,65 @@ fn wc_session_path() -> std::path::PathBuf {
     }
 }
 
+/// Reattach to a persisted WalletConnect session and wire it into the
+/// system's provider as a [`RemoteSigner`]. Called once at startup when
+/// `--use-walletconnect` is set, before any subcommand runs.
+async fn attach_walletconnect_signer(system: &mut alkanes_cli_sys::SystemAlkanes) -> Result<()> {
+    use subfrost_wc::signer::WalletConnectSigner;
+    let session = load_wc_session()?
+        .ok_or_else(|| anyhow::anyhow!(
+            "--use-walletconnect was set but no session is stashed at {}. \
+             Run `alkanes-cli wc pair` first.",
+            wc_session_path().display()
+        ))?;
+    log::info!(
+        "--use-walletconnect: re-attaching to relay {} (topic={})",
+        session.relay_url, session.topic
+    );
+    let signer = WalletConnectSigner::restore(session)
+        .await
+        .map_err(|e| anyhow::anyhow!("WC session restore failed: {e}"))?;
+    let wrapped = std::sync::Arc::new(wc_signer::WcRemoteSigner::new(signer));
+    system.attach_remote_signer(wrapped);
+    log::info!("--use-walletconnect: remote signer attached");
+    Ok(())
+}
+
+/// Read the persisted WC session from disk. Returns `Ok(None)` if no
+/// session is stashed; `Err` only on actual I/O / parse failure so
+/// callers can distinguish "user hasn't paired yet" from "the file is
+/// corrupt".
+fn load_wc_session() -> Result<Option<subfrost_wc::signer::PersistedSession>> {
+    let path = wc_session_path();
+    if !path.exists() {
+        return Ok(None);
+    }
+    let raw = std::fs::read_to_string(&path)
+        .with_context(|| format!("read {}", path.display()))?;
+    let session: subfrost_wc::signer::PersistedSession = serde_json::from_str(&raw)
+        .with_context(|| format!("parse {}", path.display()))?;
+    Ok(Some(session))
+}
+
+/// Write a session to disk, owner-only readable on Unix. Best-effort
+/// chmod — Windows just gets the default ACL.
+fn save_wc_session(session: &subfrost_wc::signer::PersistedSession) -> Result<()> {
+    let path = wc_session_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let json = serde_json::to_string_pretty(session)?;
+    std::fs::write(&path, json)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&path)?.permissions();
+        perms.set_mode(0o600);
+        std::fs::set_permissions(&path, perms)?;
+    }
+    Ok(())
+}
+
 async fn execute_wc_command(command: WcCommands) -> Result<()> {
     use subfrost_wc::signer::{start_pairing, WalletConnectSigner};
     use std::time::Duration;
@@ -213,51 +283,59 @@ async fn execute_wc_command(command: WcCommands) -> Result<()> {
             }
             println!();
             println!("⏳ Waiting up to {timeout_secs}s for the wallet to pair...");
-            let signer = pending
+            let mut signer = pending
                 .complete(Duration::from_secs(timeout_secs))
                 .await
                 .map_err(|e| anyhow::anyhow!("pairing did not complete: {e}"))?;
-            // Best-effort: stash the topic + accounts so the next `wc accounts`
-            // call doesn't need to re-pair. Full session restore (re-derive
-            // symKey from disk) is intentionally deferred — pairing is
-            // cheap and the wallet remembers the session too.
+            // Fetch accounts so the persisted session is immediately useful
+            // for `--use-walletconnect` without another round-trip.
             let accounts = signer.get_accounts().await
                 .map_err(|e| anyhow::anyhow!("get_accounts: {e}"))?;
-            let stash = serde_json::json!({
-                "topic": signer.topic(),
-                "accounts": accounts,
-            });
+            signer.set_accounts(accounts.clone());
+            let persisted = signer.to_persisted();
+            save_wc_session(&persisted)?;
             let path = wc_session_path();
-            if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent).ok();
-            }
-            std::fs::write(&path, serde_json::to_string_pretty(&stash)?)?;
             println!("✅ Paired. Accounts: {accounts:?}");
-            println!("   Session topic stashed at {}", path.display());
+            println!("   Session stashed at {} (mode 0600)", path.display());
             Ok(())
         }
         WcCommands::Accounts {} => {
-            let path = wc_session_path();
-            if path.exists() {
-                let raw = std::fs::read_to_string(&path)?;
-                let v: serde_json::Value = serde_json::from_str(&raw)?;
-                println!("{}", serde_json::to_string_pretty(&v)?);
-            } else {
-                println!("⚠ No stashed session at {}. Run `alkanes-cli wc pair` first.", path.display());
+            match load_wc_session()? {
+                Some(s) => {
+                    println!("Session: {}", s.topic);
+                    println!("Relay:   {}", s.relay_url);
+                    println!("Origin:  {}", s.origin);
+                    println!("Accounts:");
+                    for a in &s.accounts {
+                        println!("  {a}");
+                    }
+                }
+                None => {
+                    let path = wc_session_path();
+                    println!("⚠ No stashed session at {}. Run `alkanes-cli wc pair` first.", path.display());
+                }
             }
             Ok(())
         }
-        WcCommands::SignPsbt { psbt_hex: _, addresses: _ } => {
-            // Full sign-against-existing-session flow requires persisting the
-            // derived symKey + relay topic and reattaching via reconnect().
-            // Not in this first cut — pair flow proves the signer surface
-            // end-to-end. File-issue tracker for "session restore + sign":
-            // landing in a follow-up commit.
-            anyhow::bail!(
-                "sign-psbt against a stashed session is not yet implemented; \
-                 use `alkanes-cli alkanes execute … --use-walletconnect` once \
-                 that flag lands, or re-pair and sign in one shot"
-            )
+        WcCommands::SignPsbt { psbt_hex, addresses } => {
+            let session = load_wc_session()?
+                .ok_or_else(|| anyhow::anyhow!(
+                    "no WC session at {}. Run `alkanes-cli wc pair` first.",
+                    wc_session_path().display()
+                ))?;
+            let addrs = if addresses.is_empty() {
+                session.accounts.clone()
+            } else {
+                addresses
+            };
+            println!("📡 Re-attaching to relay {} …", session.relay_url);
+            let signer = WalletConnectSigner::restore(session).await
+                .map_err(|e| anyhow::anyhow!("session restore failed: {e}"))?;
+            println!("📲 Asking subfrost-mobile to sign (waiting up to 5 min)…");
+            let signed = signer.sign_psbt(&psbt_hex, addrs).await
+                .map_err(|e| anyhow::anyhow!("sign_psbt failed: {e}"))?;
+            println!("{signed}");
+            Ok(())
         }
         WcCommands::Revoke {} => {
             let path = wc_session_path();

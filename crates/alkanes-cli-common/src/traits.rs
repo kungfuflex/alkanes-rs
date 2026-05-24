@@ -252,6 +252,48 @@ pub trait WalletProvider {
 
 }
 
+/// Async PSBT-signing trait for **remote** signers (WalletConnect over
+/// frtun, hardware wallets behind a USB transport, multisig
+/// coordinators, etc.).
+///
+/// Distinct from [`WalletProvider::sign_psbt`] in that no local
+/// keystore is involved — the caller has an unsigned PSBT and asks
+/// some external party to sign it. The remote signer also tells us
+/// which addresses it controls, so callers can scope coin selection.
+///
+/// Implementations live outside `alkanes-cli-common`:
+///   * `alkanes-cli`'s WalletConnect adapter wraps
+///     `subfrost_wc::signer::WalletConnectSigner` (a paired mobile).
+///   * Future HW-wallet adapters could implement this against e.g.
+///     Coldcard / Trezor.
+///
+/// [`crate::provider::ConcreteProvider`] holds an `Option<Arc<dyn
+/// RemoteSigner>>`. When present, `WalletProvider::sign_psbt` delegates
+/// to it BEFORE the local keystore path; absent, the existing keystore
+/// behaviour is unchanged.
+#[async_trait(?Send)]
+pub trait RemoteSigner: Send + Sync {
+    /// Sign the unsigned PSBT and return the signed one. The remote
+    /// signer is expected to populate witness data on every input
+    /// belonging to one of the addresses it controls; inputs from other
+    /// signers are passed through.
+    async fn sign_psbt(
+        &self,
+        psbt: &bitcoin::psbt::Psbt,
+        addresses: &[String],
+    ) -> Result<bitcoin::psbt::Psbt>;
+
+    /// Return the addresses this signer can sign for. Typically called
+    /// once and cached by the caller.
+    async fn get_addresses(&self) -> Result<Vec<String>>;
+
+    /// Short human-readable name for log messages (e.g. "walletconnect",
+    /// "coldcard").
+    fn backend_name(&self) -> &'static str {
+        "remote"
+    }
+}
+
 /// Wallet configuration
 #[derive(Debug, Clone)]
 pub struct WalletConfig {

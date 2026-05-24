@@ -147,6 +147,11 @@ pub struct ConcreteProvider {
     /// tip-bound methods bypass the cache.
     #[cfg(feature = "std")]
     current_tip: Arc<RwLock<Option<BlockHash>>>,
+    /// Optional remote signer. When `Some`, `WalletProvider::sign_psbt`
+    /// delegates to it instead of the local keystore. Powers the
+    /// `--use-walletconnect` flow.
+    #[cfg(feature = "std")]
+    pub(crate) remote_signer: Option<Arc<dyn crate::traits::RemoteSigner>>,
     }
 
 
@@ -254,6 +259,8 @@ impl ConcreteProvider {
             cache: None,
             #[cfg(feature = "std")]
             current_tip: Arc::new(RwLock::new(None)),
+            #[cfg(feature = "std")]
+            remote_signer: None,
         })
     }
 
@@ -330,6 +337,8 @@ impl ConcreteProvider {
             cache: None,
             #[cfg(feature = "std")]
             current_tip: Arc::new(RwLock::new(None)),
+            #[cfg(feature = "std")]
+            remote_signer: None,
         })
     }
 
@@ -348,6 +357,8 @@ impl ConcreteProvider {
             cache: None,
             #[cfg(feature = "std")]
             current_tip: Arc::new(RwLock::new(None)),
+            #[cfg(feature = "std")]
+            remote_signer: None,
         }
     }
 
@@ -363,6 +374,24 @@ impl ConcreteProvider {
     pub fn with_cache(mut self, cache: Arc<dyn AlkanesCache>) -> Self {
         self.cache = Some(cache);
         self
+    }
+
+    /// Attach a remote signer. When present, `sign_psbt` delegates here
+    /// instead of consulting the local keystore — powers
+    /// `--use-walletconnect`. Pass `None` to clear.
+    #[cfg(feature = "std")]
+    pub fn with_remote_signer(
+        mut self,
+        signer: Option<Arc<dyn crate::traits::RemoteSigner>>,
+    ) -> Self {
+        self.remote_signer = signer;
+        self
+    }
+
+    /// True if a remote signer is configured. Useful for hint logging.
+    #[cfg(feature = "std")]
+    pub fn has_remote_signer(&self) -> bool {
+        self.remote_signer.is_some()
     }
 
     /// Manually record the current chain tip. Used by external callers
@@ -2500,6 +2529,13 @@ impl WalletProvider for ConcreteProvider {
     }
     
     async fn sign_psbt(&mut self, psbt: &bitcoin::psbt::Psbt) -> Result<bitcoin::psbt::Psbt> {
+        // Remote signer takes precedence — when --use-walletconnect is
+        // active, the local keystore path is never consulted.
+        if let Some(signer) = self.remote_signer.clone() {
+            log::info!("sign_psbt: delegating to remote signer [{}]", signer.backend_name());
+            let addresses = signer.get_addresses().await.unwrap_or_default();
+            return signer.sign_psbt(psbt, &addresses).await;
+        }
         let mut psbt = psbt.clone();
         let mut tx = psbt.clone().extract_tx().map_err(|e| AlkanesError::Other(e.to_string()))?;
         let network = self.get_network();

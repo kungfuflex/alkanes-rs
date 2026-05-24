@@ -42,6 +42,15 @@ pub struct DeezelCommands {
     /// Wallet private key file path (for signing with a single key)
     #[arg(long, conflicts_with_all = ["wallet_file", "wallet_address", "wallet_key"])]
     pub wallet_key_file: Option<String>,
+    /// Sign every PSBT through WalletConnect instead of the local
+    /// keystore. Requires a prior `alkanes-cli wc pair` to have stashed
+    /// a session at `~/.alkanes/wc-session.json`. Mutually exclusive
+    /// with the local-key flags.
+    #[arg(
+        long,
+        conflicts_with_all = ["wallet_file", "wallet_key", "wallet_key_file"]
+    )]
+    pub use_walletconnect: bool,
     /// JSON-RPC URL (defaults based on provider: subfrost-regtest, signet, mainnet)
     #[arg(long)]
     pub jsonrpc_url: Option<String>,
