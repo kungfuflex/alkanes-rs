@@ -31,7 +31,7 @@ dependencies = [
 
 [[package]]
 name = "alkanes"
-version = "3.0.0-alpha.1"
+version = "3.0.0-alpha.2"
 dependencies = [
  "alkanes",
  "alkanes-support",
@@ -48,7 +48,7 @@ dependencies = [
  "metashrew-support",
  "num",
  "once_cell",
- "ordinals 3.0.0-alpha.1",
+ "ordinals 3.0.0-alpha.2",
  "prost",
  "prost-types",
  "protorune",
@@ -66,7 +66,7 @@ dependencies = [
 
 [[package]]
 name = "alkanes-build"
-version = "3.0.0-alpha.1"
+version = "3.0.0-alpha.2"
 dependencies = [
  "clap",
  "hex",
@@ -74,7 +74,7 @@ dependencies = [
 
 [[package]]
 name = "alkanes-macros"
-version = "3.0.0-alpha.1"
+version = "3.0.0-alpha.2"
 dependencies = [
  "ciborium",
  "proc-macro2",
@@ -85,7 +85,7 @@ dependencies = [
 
 [[package]]
 name = "alkanes-runtime"
-version = "3.0.0-alpha.1"
+version = "3.0.0-alpha.2"
 dependencies = [
  "alkanes-macros",
  "alkanes-support",
@@ -98,7 +98,7 @@ dependencies = [
 
 [[package]]
 name = "alkanes-std-auth-token"
-version = "3.0.0-alpha.1"
+version = "3.0.0-alpha.2"
 dependencies = [
  "alkanes-runtime",
  "alkanes-std-factory-support",
@@ -111,7 +111,7 @@ dependencies = [
 
 [[package]]
 name = "alkanes-std-beacon-proxy"
-version = "3.0.0-alpha.1"
+version = "3.0.0-alpha.2"
 dependencies = [
  "alkanes-runtime",
  "alkanes-support",
@@ -123,19 +123,19 @@ dependencies = [
 
 [[package]]
 name = "alkanes-std-factory-support"
-version = "3.0.0-alpha.1"
+version = "3.0.0-alpha.2"
 dependencies = [
  "alkanes-runtime",
  "alkanes-support",
  "anyhow",
  "bitcoin 0.32.5",
  "metashrew-support",
- "ordinals 3.0.0-alpha.1",
+ "ordinals 3.0.0-alpha.2",
 ]
 
 [[package]]
 name = "alkanes-std-genesis-alkane"
-version = "3.0.0-alpha.1"
+version = "3.0.0-alpha.2"
 dependencies = [
  "alkanes-runtime",
  "alkanes-support",
@@ -148,7 +148,7 @@ dependencies = [
 
 [[package]]
 name = "alkanes-std-genesis-alkane-upgraded"
-version = "3.0.0-alpha.1"
+version = "3.0.0-alpha.2"
 dependencies = [
  "alkanes-runtime",
  "alkanes-support",
@@ -161,7 +161,7 @@ dependencies = [
 
 [[package]]
 name = "alkanes-std-genesis-alkane-upgraded-eoa"
-version = "3.0.0-alpha.1"
+version = "3.0.0-alpha.2"
 dependencies = [
  "alkanes-runtime",
  "alkanes-support",
@@ -174,7 +174,7 @@ dependencies = [
 
 [[package]]
 name = "alkanes-std-genesis-protorune"
-version = "3.0.0-alpha.1"
+version = "3.0.0-alpha.2"
 dependencies = [
  "alkanes-runtime",
  "alkanes-support",
@@ -187,7 +187,7 @@ dependencies = [
 
 [[package]]
 name = "alkanes-std-merkle-distributor"
-version = "3.0.0-alpha.1"
+version = "3.0.0-alpha.2"
 dependencies = [
  "alkanes-runtime",
  "alkanes-support",
@@ -196,7 +196,7 @@ dependencies = [
  "borsh",
  "metashrew-support",
  "num",
- "ordinals 3.0.0-alpha.1",
+ "ordinals 3.0.0-alpha.2",
  "protorune-support",
  "ruint",
  "sha2",
@@ -204,7 +204,7 @@ dependencies = [
 
 [[package]]
 name = "alkanes-std-orbital"
-version = "3.0.0-alpha.1"
+version = "3.0.0-alpha.2"
 dependencies = [
  "alkanes-runtime",
  "alkanes-support",
@@ -218,7 +218,7 @@ dependencies = [
 
 [[package]]
 name = "alkanes-std-owned-token"
-version = "3.0.0-alpha.1"
+version = "3.0.0-alpha.2"
 dependencies = [
  "alkanes-runtime",
  "alkanes-std-factory-support",
@@ -226,13 +226,13 @@ dependencies = [
  "anyhow",
  "bitcoin 0.32.5",
  "metashrew-support",
- "ordinals 3.0.0-alpha.1",
+ "ordinals 3.0.0-alpha.2",
  "protorune-support",
 ]
 
 [[package]]
 name = "alkanes-std-proxy"
-version = "3.0.0-alpha.1"
+version = "3.0.0-alpha.2"
 dependencies = [
  "alkanes-runtime",
  "alkanes-support",
@@ -244,7 +244,7 @@ dependencies = [
 
 [[package]]
 name = "alkanes-std-test"
-version = "3.0.0-alpha.1"
+version = "3.0.0-alpha.2"
 dependencies = [
  "alkanes-runtime",
  "alkanes-support",
@@ -256,7 +256,7 @@ dependencies = [
 
 [[package]]
 name = "alkanes-std-test-2"
-version = "3.0.0-alpha.1"
+version = "3.0.0-alpha.2"
 dependencies = [
  "alkanes-runtime",
  "alkanes-support",
@@ -268,7 +268,7 @@ dependencies = [
 
 [[package]]
 name = "alkanes-std-upgradeable"
-version = "3.0.0-alpha.1"
+version = "3.0.0-alpha.2"
 dependencies = [
  "alkanes-runtime",
  "alkanes-support",
@@ -280,7 +280,7 @@ dependencies = [
 
 [[package]]
 name = "alkanes-std-upgradeable-beacon"
-version = "3.0.0-alpha.1"
+version = "3.0.0-alpha.2"
 dependencies = [
  "alkanes-runtime",
  "alkanes-support",
@@ -292,7 +292,7 @@ dependencies = [
 
 [[package]]
 name = "alkanes-support"
-version = "3.0.0-alpha.1"
+version = "3.0.0-alpha.2"
 dependencies = [
  "anyhow",
  "bitcoin 0.32.5",
@@ -1595,7 +1595,7 @@ dependencies = [
 
 [[package]]
 name = "ordinals"
-version = "3.0.0-alpha.1"
+version = "3.0.0-alpha.2"
 dependencies = [
  "bitcoin 0.32.5",
  "derive_more 1.0.0",
@@ -1802,7 +1802,7 @@ dependencies = [
 
 [[package]]
 name = "protorune"
-version = "3.0.0-alpha.1"
+version = "3.0.0-alpha.2"
 dependencies = [
  "anyhow",
  "bitcoin 0.32.5",
@@ -1812,7 +1812,7 @@ dependencies = [
  "metashrew-core",
  "metashrew-support",
  "once_cell",
- "ordinals 3.0.0-alpha.1",
+ "ordinals 3.0.0-alpha.2",
  "prost",
  "prost-types",
  "protorune",
@@ -1826,14 +1826,14 @@ dependencies = [
 
 [[package]]
 name = "protorune-support"
-version = "3.0.0-alpha.1"
+version = "3.0.0-alpha.2"
 dependencies = [
  "anyhow",
  "bech32 0.11.0",
  "bitcoin 0.32.5",
  "hex",
  "metashrew-support",
- "ordinals 3.0.0-alpha.1",
+ "ordinals 3.0.0-alpha.2",
  "prost",
  "prost-build",
  "prost-types",

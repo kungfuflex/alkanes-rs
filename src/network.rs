@@ -1,6 +1,7 @@
 use crate::message::AlkaneMessageContext;
 use crate::precompiled::fr_btc_build_v1_1_0;
 use crate::precompiled::fr_btc_build_v1_2_0;
+use crate::precompiled::fr_btc_build_v1_3_0;
 #[allow(unused_imports)]
 use crate::precompiled::{
     alkanes_std_genesis_alkane_dogecoin_build, alkanes_std_genesis_alkane_fractal_build,
@@ -37,15 +38,19 @@ use {
 };
 
 pub fn fr_btc_bytes() -> Vec<u8> {
-    // On chains where V220 is active from genesis (regtest + alt-coin
-    // networks where V220_FORK_HEIGHT=0), `setup_frbtc` must deploy and
-    // initialize the slim binary directly. If we deploy bulky here and
-    // later swap to slim via `check_and_upgrade_precompiled`, the swap
-    // overwrites bytes but preserves bulky's init storage — slim then
-    // executes against an unfamiliar storage layout and fuel-exhausts.
-    // For mainnet (V220_FORK_HEIGHT=950_000 > 0), this returns bulky to
-    // replicate the historical setup at block 880_000.
-    if genesis::V220_FORK_HEIGHT == 0 {
+    // On chains where V220/V230 are active from genesis (regtest +
+    // alt-coin networks), `setup_frbtc` must deploy and initialize the
+    // newest slim binary directly. If we deploy an older variant here
+    // and later swap via `check_and_upgrade_precompiled`, the swap
+    // overwrites bytes but preserves the older init storage — and the
+    // newer build then executes against an unfamiliar storage layout.
+    // For mainnet (V220_FORK_HEIGHT=950_000 > 0), this returns bulky
+    // to replicate the historical setup at block 880_000; the v220 and
+    // v230 swaps run later via `check_and_upgrade_precompiled` as the
+    // chain crosses each fork height.
+    if genesis::V230_FORK_HEIGHT == 0 {
+        fr_btc_build_v1_3_0::get_bytes()
+    } else if genesis::V220_FORK_HEIGHT == 0 {
         fr_btc_build_v1_2_0::get_bytes()
     } else {
         fr_btc_build::get_bytes()
@@ -147,6 +152,14 @@ pub mod genesis {
     /// kungfuflex/v2.1.8-slim-frbtc). On regtest the fork is genesis-coincident
     /// so all tests run against the post-fork behaviour by default.
     pub const V220_FORK_HEIGHT: u32 = 0;
+    /// v2.3.0 fork: activates fr_btc v1.3.0 with self-healing
+    /// `/signer_script_cached` storage. First wrap after fork pays
+    /// the ~2.34M-fuel tap_tweak cost once + caches the 34-byte
+    /// P2TR script_pubkey; every subsequent wrap reads the cache and
+    /// costs <300k fuel. Restores the original v2.2 fuel-budget
+    /// projection (slim binary alone did not eliminate the per-wrap
+    /// tap_tweak on the default x-only signer key).
+    pub const V230_FORK_HEIGHT: u32 = 0;
 }
 
 #[cfg(feature = "mainnet")]
@@ -160,6 +173,12 @@ pub mod genesis {
     pub const GENESIS_UPGRADE_EOA_BLOCK_HEIGHT: u32 = 917_888;
     /// v2.2.0 mainnet fork: slim fr_btc.wasm + extcall revert containment.
     pub const V220_FORK_HEIGHT: u32 = 950_000;
+    /// v2.3.0 mainnet fork: fr_btc v1.3.0 with self-healing tap_tweak
+    /// cache. Eliminates the per-wrap ~2M-fuel hit observed post-V220
+    /// (the slim binary kept the runtime tap_tweak because the genesis
+    /// signer is still the default 32-byte x-only key — verified by
+    /// `alkanes-cli simulate "32:0:77"` showing gas_used 2,338,990).
+    pub const V230_FORK_HEIGHT: u32 = 960_000;
 }
 
 #[cfg(feature = "fractal")]
@@ -171,6 +190,7 @@ pub mod genesis {
     pub const GENESIS_UPGRADE_BLOCK_HEIGHT: u32 = 228_194;
     pub const GENESIS_UPGRADE_EOA_BLOCK_HEIGHT: u32 = 228_194;
     pub const V220_FORK_HEIGHT: u32 = 0;
+    pub const V230_FORK_HEIGHT: u32 = 0;
 }
 
 #[cfg(feature = "dogecoin")]
@@ -182,6 +202,7 @@ pub mod genesis {
     pub const GENESIS_UPGRADE_BLOCK_HEIGHT: u32 = 872_101;
     pub const GENESIS_UPGRADE_EOA_BLOCK_HEIGHT: u32 = 872_101;
     pub const V220_FORK_HEIGHT: u32 = 0;
+    pub const V230_FORK_HEIGHT: u32 = 0;
 }
 
 #[cfg(feature = "luckycoin")]
@@ -193,6 +214,7 @@ pub mod genesis {
     pub const GENESIS_UPGRADE_BLOCK_HEIGHT: u32 = 872_101;
     pub const GENESIS_UPGRADE_EOA_BLOCK_HEIGHT: u32 = 872_101;
     pub const V220_FORK_HEIGHT: u32 = 0;
+    pub const V230_FORK_HEIGHT: u32 = 0;
 }
 
 #[cfg(feature = "bellscoin")]
@@ -204,6 +226,7 @@ pub mod genesis {
     pub const GENESIS_UPGRADE_BLOCK_HEIGHT: u32 = 288_906;
     pub const GENESIS_UPGRADE_EOA_BLOCK_HEIGHT: u32 = 288_906;
     pub const V220_FORK_HEIGHT: u32 = 0;
+    pub const V230_FORK_HEIGHT: u32 = 0;
 }
 
 pub fn is_active(height: u64) -> bool {
@@ -407,6 +430,31 @@ pub fn check_and_upgrade_precompiled(height: u32) -> Result<()> {
                 IndexPointer::from_keyword("/alkanes/")
                     .select(&(AlkaneId { block: 32, tx: 0 }).into())
                     .set(Arc::new(compress(fr_btc_build_v1_2_0::get_bytes())?));
+            }
+        }
+    }
+    // v2.3.0 fork: replace fr_btc precompile bytes with v1.3.0, which
+    // adds a self-healing `/signer_script_cached` storage slot to
+    // `get_signer_script`. v1.2.0 still re-derives the P2TR script via
+    // `tap_tweak` on every wrap (~2M fuel) because the mainnet genesis
+    // contract was never init'd — its signer is the hardcoded default
+    // 32-byte x-only key, so the byte-prefix fast-path is never hit.
+    // v1.3.0 caches the tweaked result on first wrap; every subsequent
+    // wrap reads the cache and skips the EC math entirely. Interface
+    // and storage-layout compatible with v1.2.0 — the cache slot is a
+    // new key, all existing storage keys are preserved.
+    if height >= genesis::V230_FORK_HEIGHT {
+        let mut v230_upgrade_ptr = IndexPointer::from_keyword("/genesis-upgraded-v230");
+        if v230_upgrade_ptr.get().len() == 0 {
+            v230_upgrade_ptr.set_value::<u8>(0x01);
+            // When V230 is genesis-coincident, `setup_frbtc` already
+            // deployed v1.3.0 directly via `fr_btc_bytes()`; skip the
+            // byte-swap. For real fork heights, swap v1.2.0 bytes out
+            // for v1.3.0.
+            if genesis::V230_FORK_HEIGHT > 0 {
+                IndexPointer::from_keyword("/alkanes/")
+                    .select(&(AlkaneId { block: 32, tx: 0 }).into())
+                    .set(Arc::new(compress(fr_btc_build_v1_3_0::get_bytes())?));
             }
         }
     }
