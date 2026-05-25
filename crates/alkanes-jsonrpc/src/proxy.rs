@@ -1,24 +1,65 @@
+use crate::cache::MetashrewViewCache;
 use crate::config::Config;
 use crate::jsonrpc::{JsonRpcRequest, JsonRpcResponse, INTERNAL_ERROR};
 use anyhow::Result;
 use reqwest::Client;
 use serde_json::Value;
+use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct ProxyClient {
     client: Client,
     config: Config,
+    /// Optional shared metashrew_view response cache (see cache.rs).
+    /// None = cache disabled, forward_to_metashrew is pure passthrough.
+    cache: Option<Arc<MetashrewViewCache>>,
 }
 
 impl ProxyClient {
     pub fn new(config: Config) -> Self {
+        Self::new_with_cache(config, None)
+    }
+
+    pub fn new_with_cache(config: Config, cache: Option<Arc<MetashrewViewCache>>) -> Self {
         Self {
             client: Client::new(),
             config,
+            cache,
         }
     }
 
     pub async fn forward_to_metashrew(&self, request: &JsonRpcRequest) -> Result<JsonRpcResponse> {
+        // Cache fast-path: metashrew_view calls are deterministic per
+        // (method, args, block_hash). Resolve the request's block_tag to a
+        // stable block_hash; on hit return immediately; on miss fall
+        // through to upstream and store the response. Any cache-side
+        // failure (Redis down, block-hash resolution error) degrades to
+        // passthrough — we never break a request on a cache bug.
+        let cache_keyed_hash = if let Some(cache) = self.cache.as_ref() {
+            if request.method == "metashrew_view" {
+                match cache.resolve_block_hash(request.params.get(2)).await {
+                    Ok((_h, hash)) => {
+                        match cache.lookup(request, &hash).await {
+                            Ok(Some(hit)) => return Ok(hit),
+                            Ok(None) => Some(hash),
+                            Err(e) => {
+                                log::warn!("metashrew_view cache: lookup failed: {}", e);
+                                None
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        log::debug!("metashrew_view cache: resolve_block_hash skipped: {}", e);
+                        None
+                    }
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         let response = self
             .client
             .post(&self.config.metashrew_url)
@@ -27,22 +68,30 @@ impl ProxyClient {
             .await?;
 
         let json_response: Value = response.json().await?;
-        
-        if let Some(error) = json_response.get("error") {
-            Ok(JsonRpcResponse::Error {
+
+        let parsed = if let Some(error) = json_response.get("error") {
+            JsonRpcResponse::Error {
                 jsonrpc: "2.0".to_string(),
                 error: serde_json::from_value(error.clone())?,
                 id: request.id.clone(),
-            })
+            }
         } else if let Some(result) = json_response.get("result") {
-            Ok(JsonRpcResponse::success(result.clone(), request.id.clone()))
+            JsonRpcResponse::success(result.clone(), request.id.clone())
         } else {
-            Ok(JsonRpcResponse::error(
+            JsonRpcResponse::error(
                 INTERNAL_ERROR,
                 "Invalid response from metashrew".to_string(),
                 request.id.clone(),
-            ))
+            )
+        };
+
+        // Store on cache miss path. Only Success responses are cached
+        // (cache.store handles the Error filter internally).
+        if let (Some(cache), Some(hash)) = (self.cache.as_ref(), cache_keyed_hash) {
+            cache.store(request, &parsed, &hash).await;
         }
+
+        Ok(parsed)
     }
 
     /// Forward to the dedicated metashrew-unwrap endpoint if configured,

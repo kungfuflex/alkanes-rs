@@ -19,6 +19,12 @@ pub struct Config {
     pub subfrost_url: String,
 
     pub lua_script_path: Option<String>,
+
+    /// Redis endpoint for the shared metashrew_view response cache. When
+    /// unset, the cache layer is disabled and ProxyClient::forward_to_metashrew
+    /// behaves as a pure passthrough. Format: `redis://host:port` (no auth)
+    /// or `redis://:password@host:port`. See cache.rs for the contract.
+    pub redis_url: Option<String>,
 }
 
 impl Config {
@@ -52,6 +58,8 @@ impl Config {
                 .unwrap_or_else(|_| "http://localhost:8545".to_string()),
 
             lua_script_path: env::var("LUA_SCRIPT_PATH").ok(),
+
+            redis_url: env::var("REDIS_URL").ok(),
         }
     }
 

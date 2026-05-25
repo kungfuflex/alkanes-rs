@@ -1,3 +1,4 @@
+mod cache;
 mod config;
 mod handler;
 mod jsonrpc;
@@ -70,7 +71,33 @@ async fn main() -> std::io::Result<()> {
         lua_executor::ScriptStorage::new()
     };
 
-    let proxy = Arc::new(ProxyClient::new(config.clone()));
+    // Shared metashrew_view response cache. Optional — when REDIS_URL is
+    // unset (or the initial Redis connection fails), we log and proceed
+    // without the cache: ProxyClient::forward_to_metashrew falls back to
+    // its existing passthrough behavior. Hot metashrew_view + alkanes_*
+    // queries hit Redis in O(1) instead of re-running WASM on every call.
+    let cache = if config.redis_url.is_some() {
+        match cache::MetashrewViewCache::from_config(&config).await {
+            Ok(c) => {
+                let c = Arc::new(c);
+                c.start_watermark_refresher();
+                log::info!("metashrew_view cache: enabled");
+                Some(c)
+            }
+            Err(e) => {
+                log::warn!(
+                    "metashrew_view cache: init failed ({}), continuing without cache",
+                    e
+                );
+                None
+            }
+        }
+    } else {
+        log::info!("metashrew_view cache: disabled (REDIS_URL not set)");
+        None
+    };
+
+    let proxy = Arc::new(ProxyClient::new_with_cache(config.clone(), cache));
 
     let server_host = config.server_host.clone();
     let server_port = config.server_port;

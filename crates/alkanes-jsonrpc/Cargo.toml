@@ -33,6 +33,14 @@ bytes = { workspace = true }
 mlua = { version = "0.9", features = ["lua54", "async", "send", "vendored"] }
 sha2 = { workspace = true }
 moka = { version = "0.12", features = ["sync"] }
+# Shared metashrew_view response cache. Same redis version as
+# alkanes-data-api uses (apps/alkanes-data-api/_base/deployment.yaml).
+# Reorg-safe by construction: cache keys include the resolved
+# block_hash, so orphaned-chain entries are never queried after a
+# reorg and age out via LRU.
+redis = { version = "0.25", features = ["tokio-comp", "aio", "connection-manager"] }
+blake3 = "1"
+lru = "0.12"
 
 [dev-dependencies]
 tempfile = "3.0"
