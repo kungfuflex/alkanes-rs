@@ -31,17 +31,43 @@ impl ProxyClient {
     pub async fn forward_to_metashrew(&self, request: &JsonRpcRequest) -> Result<JsonRpcResponse> {
         // Cache fast-path: metashrew_view calls are deterministic per
         // (method, args, block_hash). Resolve the request's block_tag to a
-        // stable block_hash; on hit return immediately; on miss fall
-        // through to upstream and store the response. Any cache-side
-        // failure (Redis down, block-hash resolution error) degrades to
-        // passthrough — we never break a request on a cache bug.
+        // stable (height, block_hash) pair; on hit return immediately; on
+        // miss REWRITE the request's block_tag to the explicit height
+        // before sending upstream — this guarantees upstream computes at
+        // the exact height we keyed (otherwise openresty might rewrite
+        // "latest" to a slightly-different served_height by the time the
+        // upstream call lands, and we'd store a response under the wrong
+        // key → asset-burn risk on the next lookup).
+        //
+        // Any cache-side failure (Redis down, block-hash resolution error)
+        // degrades to passthrough — we never break a request on a cache
+        // bug. Cache only applies to method == "metashrew_view"; other
+        // methods (metashrew_height, etc.) bypass the cache layer.
+        let mut upstream_request = request;
+        let mut rewritten: Option<JsonRpcRequest> = None;
         let cache_keyed_hash = if let Some(cache) = self.cache.as_ref() {
             if request.method == "metashrew_view" {
                 match cache.resolve_block_hash(request.params.get(2)).await {
-                    Ok((_h, hash)) => {
+                    Ok((height, hash)) => {
                         match cache.lookup(request, &hash).await {
                             Ok(Some(hit)) => return Ok(hit),
-                            Ok(None) => Some(hash),
+                            Ok(None) => {
+                                // Rewrite the request body so upstream uses
+                                // the explicit height. This is the
+                                // critical safety step: it removes the
+                                // upstream-race window where the upstream
+                                // could compute against a different
+                                // served_height than the one we used for
+                                // the cache key.
+                                let mut req = request.clone();
+                                while req.params.len() < 3 {
+                                    req.params.push(Value::Null);
+                                }
+                                req.params[2] = Value::String(height.to_string());
+                                rewritten = Some(req);
+                                upstream_request = rewritten.as_ref().unwrap();
+                                Some(hash)
+                            }
                             Err(e) => {
                                 log::warn!("metashrew_view cache: lookup failed: {}", e);
                                 None
@@ -63,7 +89,7 @@ impl ProxyClient {
         let response = self
             .client
             .post(&self.config.metashrew_url)
-            .json(request)
+            .json(upstream_request)
             .send()
             .await?;
 

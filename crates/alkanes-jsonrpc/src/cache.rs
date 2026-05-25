@@ -90,28 +90,46 @@ impl MetashrewViewCache {
         })
     }
 
-    /// Resolve a JSON-RPC `block_tag` (the 3rd element of a metashrew_view
-    /// params array) to (height, block_hash). Handles:
-    ///   * `Value::Null` or missing → served_height watermark
-    ///   * `"latest"` → served_height watermark
-    ///   * `"<N>"` (decimal string) → numeric height, looked up via local
-    ///     LRU then upstream metashrew_getblockhash on miss
+    /// Resolve a JSON-RPC `block_tag` to (height, block_hash). Handles:
+    ///   * `Value::Null` or missing → fresh metashrew_height +
+    ///     metashrew_getblockhash (no watermark cache; see safety note).
+    ///   * `"latest"` → same as missing
+    ///   * `"<N>"` (decimal string) → numeric height, local LRU then
+    ///     upstream metashrew_getblockhash on miss
     ///   * `Number(N)` → same
-    /// Returns Err on any failure; callers should skip the cache and
-    /// passthrough.
+    ///
+    /// SAFETY: the "latest" path is verify-on-every-lookup (no watermark
+    /// cache). The previous design cached the served_height + its
+    /// block_hash for 1s, which left a reorg-race window where a stale
+    /// (height, hash) pair could let a "latest" request hit a Redis
+    /// entry from the orphaned chain — serving an EMPTY balance for a
+    /// utxo that actually has assets on the new chain. Mission-critical
+    /// asset-burn risk. Per-request fresh resolution costs +1ms (cheap
+    /// O(1) metashrew_getblockhash) and closes the window.
+    ///
+    /// Local LRU for explicit-height lookups is kept: those entries are
+    /// immutable except on reorg, and the watermark refresher drops the
+    /// map when it detects a hash change at the current served_height.
     pub async fn resolve_block_hash(&self, block_tag: Option<&Value>) -> Result<(u64, [u8; 32])> {
-        // "latest" / missing → watermark
-        let want_watermark = match block_tag {
+        // "latest" / missing / null → fresh fetch every time. NO watermark
+        // cache. See SAFETY note above — this is the reorg-safe path.
+        let want_latest = match block_tag {
             None => true,
             Some(Value::Null) => true,
             Some(Value::String(s)) if s == "latest" => true,
             _ => false,
         };
-        if want_watermark {
-            return self.read_watermark().await;
+        if want_latest {
+            let height = self.fetch_served_height().await?;
+            let hash = self.fetch_block_hash_at(height).await?;
+            // Seed the LRU so a subsequent explicit-height request at the
+            // same N short-circuits the second RPC.
+            self.height_to_hash.lock().await.put(height, hash);
+            return Ok((height, hash));
         }
 
-        // Numeric (string or number)
+        // Numeric (string or number) — explicit heights are immutable
+        // (until reorg, which the refresher detects + handles).
         let height: u64 = match block_tag {
             Some(Value::String(s)) => s
                 .parse::<u64>()
