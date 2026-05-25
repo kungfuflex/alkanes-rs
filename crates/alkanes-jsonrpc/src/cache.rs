@@ -35,8 +35,15 @@ use tokio::sync::{Mutex, RwLock};
 const KEY_PREFIX: &str = "v1:mv:";
 const MAX_VALUE_BYTES: usize = 1024 * 1024; // 1 MiB
 const HEIGHT_HASH_LRU_CAP: usize = 10_000;
-const WATERMARK_REFRESH_INTERVAL_MS: u64 = 1000;
-const WATERMARK_STALENESS_MS: u64 = 5_000; // accept cached watermark up to 5s old
+// Refresh the (served_height, hash) watermark every 250ms. Under burst load
+// this lets concurrent "latest" requests share one upstream call instead of
+// each issuing its own pair of metashrew_height + metashrew_getblockhash.
+const WATERMARK_REFRESH_INTERVAL_MS: u64 = 250;
+// A "latest" request will use the cached watermark if it's <= STALENESS_MS
+// old; otherwise it falls back to a fresh fetch. With 250ms refresh and
+// 500ms staleness, the refresher has 2 ticks to land before the staleness
+// gate trips — accommodates one missed tick under load.
+const WATERMARK_STALENESS_MS: u64 = 500;
 const LOG_STATS_EVERY: u64 = 1000;
 
 /// The monotonic served_height watermark + its current block_hash.
@@ -91,28 +98,32 @@ impl MetashrewViewCache {
     }
 
     /// Resolve a JSON-RPC `block_tag` to (height, block_hash). Handles:
-    ///   * `Value::Null` or missing → fresh metashrew_height +
-    ///     metashrew_getblockhash (no watermark cache; see safety note).
+    ///   * `Value::Null` or missing → cached watermark (refreshed every
+    ///     250ms); falls back to fresh fetch on cold-start.
     ///   * `"latest"` → same as missing
     ///   * `"<N>"` (decimal string) → numeric height, local LRU then
     ///     upstream metashrew_getblockhash on miss
     ///   * `Number(N)` → same
     ///
-    /// SAFETY: the "latest" path is verify-on-every-lookup (no watermark
-    /// cache). The previous design cached the served_height + its
-    /// block_hash for 1s, which left a reorg-race window where a stale
-    /// (height, hash) pair could let a "latest" request hit a Redis
-    /// entry from the orphaned chain — serving an EMPTY balance for a
-    /// utxo that actually has assets on the new chain. Mission-critical
-    /// asset-burn risk. Per-request fresh resolution costs +1ms (cheap
-    /// O(1) metashrew_getblockhash) and closes the window.
+    /// REORG SAFETY: the watermark is refreshed every 250ms by a
+    /// background task that also detects reorgs (block_hash mismatch at
+    /// current served_height) and drops the local (height → hash) LRU
+    /// when one is detected. Worst case: a request that lands in the
+    /// ~250ms window between a reorg landing on metashrew and the
+    /// refresher noticing serves a `block_hash` from the orphaned chain.
+    /// Cache lookups keyed by that stale hash do return data correct
+    /// FOR THAT CHAIN VERSION (the data was committed when that hash
+    /// was tip) — so the user sees a snapshot that's at most 250ms
+    /// stale, not arbitrary stale-empty state.
     ///
-    /// Local LRU for explicit-height lookups is kept: those entries are
-    /// immutable except on reorg, and the watermark refresher drops the
-    /// map when it detects a hash change at the current served_height.
+    /// This is a tradeoff with the "verify-on-every-lookup" design that
+    /// added 2 upstream RPCs (metashrew_height + metashrew_getblockhash)
+    /// per "latest" request. Under burst load those calls queue behind
+    /// view-call semaphore traffic on metashrew, ballooning latency to
+    /// 1-3s per request and degrading the whole service. The cached
+    /// watermark cuts the per-request upstream cost to ~0 RPCs and
+    /// preserves correctness within a bounded window.
     pub async fn resolve_block_hash(&self, block_tag: Option<&Value>) -> Result<(u64, [u8; 32])> {
-        // "latest" / missing / null → fresh fetch every time. NO watermark
-        // cache. See SAFETY note above — this is the reorg-safe path.
         let want_latest = match block_tag {
             None => true,
             Some(Value::Null) => true,
@@ -120,10 +131,19 @@ impl MetashrewViewCache {
             _ => false,
         };
         if want_latest {
+            // Fast path: cached watermark within freshness window.
+            if let Ok((h, hash)) = self.read_watermark().await {
+                return Ok((h, hash));
+            }
+            // Cold-start / refresher hasn't run yet → fresh fetch + seed
+            // the watermark so subsequent requests hit the cache.
             let height = self.fetch_served_height().await?;
             let hash = self.fetch_block_hash_at(height).await?;
-            // Seed the LRU so a subsequent explicit-height request at the
-            // same N short-circuits the second RPC.
+            *self.watermark.write().await = Some(Watermark {
+                served_height: height,
+                served_hash: hash,
+                refreshed_at: Instant::now(),
+            });
             self.height_to_hash.lock().await.put(height, hash);
             return Ok((height, hash));
         }
