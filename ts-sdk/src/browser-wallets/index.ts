@@ -67,6 +67,21 @@ export interface PsbtSigningOptions {
  */
 export const BROWSER_WALLETS: BrowserWalletInfo[] = [
   {
+    // SUBFROST chrome/firefox extension. Injects `window.subfrost` matching
+    // BrowserWalletInfo's contract (requestAccounts / getAccounts /
+    // getPublicKey / getNetwork / signPsbt / signMessage). Source extension:
+    // github.com/subfrost/subfrost (apps/extension-chrome).
+    id: 'subfrost',
+    name: 'Subfrost',
+    icon: WALLET_ICONS.subfrost,
+    website: 'https://chromewebstore.google.com/category/extensions',
+    injectionKey: 'subfrost',
+    supportsPsbt: true,
+    supportsTaproot: true,
+    supportsOrdinals: true,
+    mobileSupport: false,
+  },
+  {
     id: 'unisat',
     name: 'Unisat Wallet',
     icon: WALLET_ICONS.unisat,
@@ -223,6 +238,13 @@ export function isWalletInstalled(wallet: BrowserWalletInfo): boolean {
 
     // Special detection for wallets with non-standard injection
     switch (wallet.id) {
+      case 'subfrost':
+        // SUBFROST extension defines window.subfrost as a frozen object via
+        // Object.defineProperty. Verify the object has the requestAccounts
+        // method (cheap shape check, no actual call).
+        return typeof win.subfrost === 'object'
+          && win.subfrost !== null
+          && typeof win.subfrost.requestAccounts === 'function';
       case 'phantom':
         return win.phantom?.bitcoin !== undefined;
       case 'magic-eden':
@@ -308,6 +330,9 @@ export class ConnectedWallet {
    */
   async signMessage(message: string): Promise<string> {
     switch (this.info.id) {
+      case 'subfrost':
+        // SUBFROST window.subfrost.signMessage(message, address)
+        return await this.provider.signMessage(message, this.account.address);
       case 'unisat':
       case 'wizz':
         return await this.provider.signMessage(message);
@@ -369,6 +394,9 @@ export class ConnectedWallet {
     }
 
     switch (this.info.id) {
+      case 'subfrost':
+        // SUBFROST window.subfrost.signPsbt(psbtHex, options)
+        return await this.provider.signPsbt(psbtHex, options);
       case 'unisat':
       case 'wizz':
         return await this.provider.signPsbt(psbtHex, options);
@@ -527,6 +555,7 @@ export class WalletConnector {
     let account: WalletAccount;
 
     switch (wallet.id) {
+      case 'subfrost':
       case 'unisat':
       case 'wizz': {
         const accounts = await provider.requestAccounts();
