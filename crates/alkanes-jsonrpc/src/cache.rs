@@ -177,6 +177,30 @@ impl MetashrewViewCache {
         Ok((height, hash))
     }
 
+    /// Return the current pool watermark height. Uses the cached
+    /// watermark if it's within the freshness window (250ms refresher
+    /// behind a 500ms staleness gate); otherwise issues a one-shot
+    /// upstream `metashrew_height` to seed it. This is the canonical
+    /// "what height is the pool serving right now?" question — fan-out
+    /// handlers (see protorunesbyaddress.rs) use it to pin H and to
+    /// re-check drift before returning.
+    pub async fn latest_height(&self) -> Result<u64> {
+        if let Ok((h, _)) = self.read_watermark().await {
+            return Ok(h);
+        }
+        // Cold-start / refresher hasn't run yet → fresh fetch + seed the
+        // watermark so subsequent reads hit the cache.
+        let height = self.fetch_served_height().await?;
+        let hash = self.fetch_block_hash_at(height).await?;
+        *self.watermark.write().await = Some(Watermark {
+            served_height: height,
+            served_hash: hash,
+            refreshed_at: Instant::now(),
+        });
+        self.height_to_hash.lock().await.put(height, hash);
+        Ok(height)
+    }
+
     /// Lookup a metashrew_view response in Redis. Returns Ok(Some(..)) on
     /// hit, Ok(None) on miss, Err on Redis failure.
     pub async fn lookup(
