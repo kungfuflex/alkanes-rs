@@ -329,3 +329,121 @@ fn precompile_view_opcode_does_not_require_eoa() -> Result<()> {
     );
     Ok(())
 }
+
+// ============================================================================
+// §M — h=950,057 tx 600 mainnet divergence (fastpath vs canonical wasm)
+// ============================================================================
+
+/// **Mainnet repro source-of-truth.**
+///
+/// First production block where the fastpath precompile path diverges
+/// from the canonical wasm DIESEL path. Detected 2026-06-01 by
+/// per-height supply diff between the Subfrost canonical metashrew
+/// pool (built without `--features fastpath`) and a third-party
+/// alkanes-rs indexer (built with `--features mainnet,fastpath`).
+///
+/// ## On-chain footprint
+///
+/// - **Tx**: `72f7cff4a52120d4d425b8fd5b89dd66f5de54bfceeb22edc8f6526bb486e9fc`
+///   (display txid), block height 950,057, txindex 600.
+/// - **OP_RETURN** at vout[1]:
+///   `6a5d1cff7f818cec82d08bc0a8a081d29590c0c12dff7fdd80c4928890ad01`
+///   - `6a` OP_RETURN, `5d` OP_PUSHNUM_13, `1c` PUSHBYTES(28), then
+///     the 28-byte runestone body.
+/// - **Decoded** to two protostones (each `protocol_tag=1`,
+///   `ProtoPointer=0`, `Refund=0`, single `Message` u128):
+///   - **#0 (outpoint vout=5)** → `Cellpack { target: AlkaneId { block: 32, tx: 0 }, inputs: [77] }`
+///   - **#1 (outpoint vout=6)** → `Cellpack { target: AlkaneId { block: 2, tx: 0 }, inputs: [77] }` ← DIESEL mint
+/// - **Bitcoin tx has only 4 vouts** (0..3), so the trace outpoint
+///   vout=6 is the alkanes-internal protostone index, not a real
+///   txout — a useful detail when matching trace entries to source
+///   protostones.
+///
+/// ## Observed divergence
+///
+/// Per `metashrew_view "trace" 0x0a20fc…f7721006 950057` against each
+/// indexer:
+///
+/// | Indexer  | Features            | trace len | events |
+/// |----------|---------------------|-----------|--------|
+/// | pool     | `mainnet`           | 275 B     | 1 enter, 3 exits |
+/// | alkanode | `mainnet, fastpath` | 271 B     | 1 enter, 1 exit  |
+///
+/// The wasm path emits 2 extra `AlkanesTraceEvent` payloads (u128 LE
+/// values `791` and `314_769_679`) inside the deeper `exit_context`
+/// frames that the precompile path skips.
+///
+/// Per `metashrew_view "simulate" <DIESEL_SUPPLY_HEX> 950057`:
+///
+/// | Indexer  | `/totalsupply` (atomic units) |
+/// |----------|-------------------------------|
+/// | pool     | 64,395,176,757,065            |
+/// | alkanode | 64,395,177,149,345            |
+/// | **delta**| **+392,280 raw on fastpath**  |
+///
+/// Delta ≈ +0.00392 DIESEL on the precompile side. Divergence
+/// cascades forward — 791 of 798 subsequent traces in the same block
+/// differ at the byte level, but the supply-delta magnitude is fixed
+/// at +392,280 contributing only at tx 600.
+///
+/// ## Reorg-recovery target
+///
+/// Any `fastpath`-built indexer that crossed h=950,057 must
+/// `getblockhash`-walk-back to **height 950,056** (the last clean
+/// height), then re-index forward with a `non-fastpath` wasm. See
+/// `subfrost-api-nextjs/app/docs/platform/reorg/page.mdx` for the
+/// `/v4/reorg/<N>` flow.
+///
+/// ## What this test should do (TODO)
+///
+/// Replay tx 600 against both code paths and assert the wasm path's
+/// `response.alkanes` carries 392,280 atomic units **more** of
+/// DIESEL than the precompile's (the precompile under-mints —
+/// `+392_280` on the wasm side corresponds to `-392_280` of refund
+/// the precompile fails to register, hence the *higher* alkanode
+/// total-supply). The repro needs the block-950,057-start state
+/// (prior-mint `/totalsupply` + `/fees`, `/upgrade_initialized`,
+/// per-mint `/upgraded_seen/<h>` markers, plus the prevout balance
+/// sheet of tx 600's input). That state-snapshot loader does not
+/// exist yet; this stub reserves the test slot and documents the
+/// pre-fix shape.
+///
+/// ## Likely root-cause class
+///
+/// The trace shape (1 enter + 3 exits) implies the wasm path takes a
+/// **multi-frame** code path on this mint — most plausibly because
+/// protostone #0's target `(32, 0)` resolves on wasm into a
+/// fairmint-style proxy that re-emits a DIESEL transfer event, while
+/// the precompile dispatch for `(2, 0)::mint(77)` short-circuits
+/// before observing the prior protostone's side effects. Confirming
+/// this requires §Y — looking at `vm/utils.rs::run_after_special`
+/// vs `precompile_diesel::run_diesel_eoa` for how each handles the
+/// `incoming_alkanes` accumulator at the second protostone of a tx.
+#[wasm_bindgen_test]
+#[ignore = "needs block-950057-start state snapshot loader (prior /totalsupply, \
+            /fees, /upgrade_initialized, prevout balances); re-enable when fixture lands"]
+fn h950057_tx600_fastpath_diverges_from_wasm() {
+    // Source-of-truth constants — keep in sync with the doc comment.
+    const _DIVERGENT_HEIGHT: u32 = 950_057;
+    const _DIVERGENT_TXINDEX: u32 = 600;
+    const _DIVERGENT_PROTOSTONE_VOUT: u32 = 6;
+    const _EXPECTED_SUPPLY_DELTA_RAW: u128 = 392_280;
+    const _DIVERGENT_TXID_DISPLAY: &str =
+        "72f7cff4a52120d4d425b8fd5b89dd66f5de54bfceeb22edc8f6526bb486e9fc";
+
+    // The cellpack of the diverging protostone (#1, DIESEL mint).
+    let _diverging_cellpack = alkanes_support::cellpack::Cellpack {
+        target: alkanes_support::id::AlkaneId { block: 2, tx: 0 },
+        inputs: vec![77],
+    };
+
+    // TODO(@subfrostdev): load block-950,057-start state fixture, build
+    //   a parcel mirroring tx 600 vout=6, run wasm + precompile paths
+    //   and assert `wasm.alkanes.diesel - precomp.alkanes.diesel ==
+    //   EXPECTED_SUPPLY_DELTA_RAW`.
+    panic!(
+        "h=950,057 tx 600 fastpath divergence repro is awaiting the \
+         block-start state-snapshot loader; see test doc comment for \
+         the on-chain footprint and the +392,280-raw supply delta."
+    );
+}
