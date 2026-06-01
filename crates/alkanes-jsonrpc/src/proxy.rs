@@ -16,6 +16,7 @@ pub struct ProxyClient {
 }
 
 impl ProxyClient {
+    #[allow(dead_code)]
     pub fn new(config: Config) -> Self {
         Self::new_with_cache(config, None)
     }
@@ -26,6 +27,29 @@ impl ProxyClient {
             config,
             cache,
         }
+    }
+
+    /// Access the shared metashrew_view cache, if configured. Used by
+    /// fan-out handlers (see protorunesbyaddress.rs) to read the pool
+    /// watermark and pin H for the duration of a request.
+    pub fn cache(&self) -> Option<&Arc<MetashrewViewCache>> {
+        self.cache.as_ref()
+    }
+
+    /// Access the proxy config — handlers use this to call esplora /
+    /// metashrew endpoints directly (e.g. the in-process fan-out helper
+    /// reaches esplora_address::utxo without going through the JSON-RPC
+    /// router because the upstream URL is the same one we already use).
+    #[allow(dead_code)]
+    pub fn config(&self) -> &Config {
+        &self.config
+    }
+
+    /// Access the underlying reqwest client — handlers can reuse the
+    /// connection pool instead of opening fresh sockets.
+    #[allow(dead_code)]
+    pub fn client(&self) -> &Client {
+        &self.client
     }
 
     pub async fn forward_to_metashrew(&self, request: &JsonRpcRequest) -> Result<JsonRpcResponse> {

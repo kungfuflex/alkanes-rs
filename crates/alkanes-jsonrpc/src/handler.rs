@@ -580,6 +580,12 @@ fn encode_protorunesbyoutpoint_request(params: &[Value]) -> Result<String> {
 ///
 /// protocol_tag defaults to 1 (alkanes) if not provided.
 /// Returns the hex-encoded ProtorunesWalletRequest protobuf.
+///
+/// NOTE: this helper is currently unused because protorunesbyaddress is
+/// served in-process via the fan-out handler (see protorunesbyaddress.rs).
+/// We keep it for reference / tests / a possible rollback to the old
+/// upstream-passthrough behavior.
+#[allow(dead_code)]
 fn encode_protorunesbyaddress_request(params: &[Value]) -> Result<String> {
     let input = params.get(0).ok_or_else(|| anyhow::anyhow!("protorunesbyaddress requires an address parameter"))?;
 
@@ -929,6 +935,20 @@ async fn handle_alkanes_method(
     // The alkanes namespace methods should be forwarded to metashrew_view
     // following the same pattern as the TypeScript implementation:
     // metashrew_view(method_name, protobuf_hex_input, block_tag)
+    //
+    // EXCEPTION: protorunesbyaddress is handled in-process via the
+    // reorg-conscious fan-out helper (see protorunesbyaddress.rs). This
+    // replaces the upstream `metashrew_view "protorunesbyaddress"` call,
+    // which forced the WASM view to do a UTXO scan that doesn't share
+    // the per-outpoint cache. The new path issues an esplora UTXO call
+    // + N parallel `protorunesbyoutpoint` calls, all of which go through
+    // the existing metashrew_view cache.
+    if method == "protorunesbyaddress" {
+        return crate::protorunesbyaddress::handle_alkanes_protorunesbyaddress(
+            params, request_id, proxy,
+        )
+        .await;
+    }
 
     let input = params.get(0).cloned().unwrap_or(Value::Null);
 
@@ -1018,19 +1038,12 @@ async fn handle_alkanes_method(
                 }
             }
         }
-        "protorunesbyaddress" => {
-            // Accepts: ["address_string", block_tag] or [{"address": "...", "protocolTag": N}, block_tag]
-            match encode_protorunesbyaddress_request(params) {
-                Ok(hex) => ("protorunesbyaddress", Value::String(hex), "protorunesbyaddress"),
-                Err(e) => {
-                    return Ok(JsonRpcResponse::error(
-                        INTERNAL_ERROR,
-                        format!("Failed to encode protorunesbyaddress request: {}", e),
-                        request_id.clone(),
-                    ));
-                }
-            }
-        }
+        // NOTE: "protorunesbyaddress" is short-circuited above to the
+        // in-process fan-out handler; the encode_protorunesbyaddress_request
+        // helper + matching decode arm are retained below as dead-but-stable
+        // code for the integration paths that still construct
+        // ProtorunesWalletRequest hex by hand (and so we don't churn the
+        // protobuf encoders during this change).
         _ => (method, convert_string_numbers(input), "none")
     };
 
@@ -1107,8 +1120,36 @@ async fn handle_metashrew_method(
     // if configured, to avoid contention with the main metashrew node
     if request.method == "metashrew_view" {
         if let Some(first_param) = request.params.first() {
-            if first_param.as_str() == Some("unwrap") {
-                return proxy.forward_to_metashrew_unwrap(request).await;
+            match first_param.as_str() {
+                Some("unwrap") => {
+                    return proxy.forward_to_metashrew_unwrap(request).await;
+                }
+                // View-style protorunesbyaddress goes through the same
+                // in-process fan-out helper as the top-level method. We
+                // expose both surfaces so clients that call
+                // `metashrew_view("protorunesbyaddress", hex, height)`
+                // get the same reorg-conscious behavior as clients that
+                // call `alkanes_protorunesbyaddress(addr, height)`.
+                Some("protorunesbyaddress") => {
+                    let hex_input = request
+                        .params
+                        .get(1)
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let height_tag = request
+                        .params
+                        .get(2)
+                        .cloned()
+                        .unwrap_or(Value::String("latest".to_string()));
+                    return crate::protorunesbyaddress::handle_metashrew_view_protorunesbyaddress(
+                        hex_input,
+                        &height_tag,
+                        &request.id,
+                        proxy,
+                    )
+                    .await;
+                }
+                _ => {}
             }
         }
     }

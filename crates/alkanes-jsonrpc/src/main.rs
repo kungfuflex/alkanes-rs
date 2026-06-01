@@ -3,6 +3,7 @@ mod config;
 mod handler;
 mod jsonrpc;
 mod lua_executor;
+mod protorunesbyaddress;
 mod proxy;
 mod sandshrew;
 
