@@ -38,9 +38,10 @@
 //   const decoded = session.decode(env);
 //   if (decoded.type === 'result') return decoded.result;  // signed PSBT hex
 //
-// Note: this re-export is currently a path dependency on the
-// subfrost-mobile workspace at `../../../subfrost-mobile/ts-sdk`. If
-// you're building @alkanes/ts-sdk standalone, ensure that path resolves;
-// otherwise this submodule's exports will be unavailable at runtime.
-
-export * from '@subfrost/walletconnect';
+// Note: the upstream @subfrost/walletconnect package is currently only
+// published from `subfrost/subfrost` (private repo). Until it is
+// mirrored on a public registry, this submodule is a documentation
+// stub — consumers should import from `@subfrost/walletconnect`
+// directly while the bridge is being set up. Removing the
+// `export * from` line lets @alkanes/ts-sdk CI publish without a
+// `file:` dependency that doesn't resolve on GitHub Actions runners.
