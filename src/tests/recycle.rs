@@ -265,4 +265,165 @@ mod e2e {
         let _ = Arc::new(());
         Ok(())
     }
+
+    /// SECURITY: an attacker must NOT be able to claim a *victim's* stranded
+    /// balances by simply placing the victim's spk at vout 0 (to satisfy the
+    /// `recipient_script()` lookup against `/recycle/<victim_spk>`) while
+    /// routing the released alkanes to a different output via the protostone
+    /// `pointer`. The claim emits its alkanes into `response.alkanes`, which
+    /// `reconcile` deposits at `parcel.pointer` — independent of the ledger
+    /// key. This PoC exercises that gap end-to-end and asserts the safe
+    /// outcome (alkanes returned to the victim's vout 0, attacker's vout 1
+    /// gets nothing). If this test FAILS — i.e. the attacker's output ends up
+    /// holding `amount` and vout 0 is empty — the recycle bin allows theft.
+    #[test]
+    fn recycle_claim_cannot_be_redirected_via_protostone_pointer() -> Result<()> {
+        h::clear();
+        let tag = AlkaneMessageContext::protocol_tag();
+        let table = RuneTable::for_protocol(tag);
+        let stranded = AlkaneId { block: 2, tx: 4321 };
+        let stranded_rune = ProtoruneRuneId { block: 2, tx: 4321 };
+        let amount: u128 = 777;
+        let victim = eoa_recovery_spk();
+        // distinct EOA, distinct key material — must not collide with `victim`.
+        let attacker: ScriptBuf =
+            ScriptBuf::new_p2wpkh(&bitcoin::WPubkeyHash::from_byte_array([0xAAu8; 20]));
+        assert_ne!(victim, attacker, "victim/attacker spks must differ");
+
+        // 1) seed an outpoint that carries the alkane
+        let seed_op = OutPoint {
+            txid: bitcoin::Txid::from_byte_array([0x42u8; 32]),
+            vout: 0,
+        };
+        let mut seed_sheet = BalanceSheet::<IndexPointer>::default();
+        seed_sheet.increase(&stranded_rune, amount)?;
+        save_chunked(
+            &seed_sheet,
+            &mut table.OUTPOINT_TO_RUNES.select(&consensus_encode(&seed_op)?),
+            false,
+        );
+
+        // 2) strand it: bare-BTC spend paying victim EOA → capture credits 8:dead
+        //    inventory and writes /recycle/<victim_spk>.
+        let strand_tx = Transaction {
+            version: bitcoin::transaction::Version::ONE,
+            lock_time: bitcoin::absolute::LockTime::ZERO,
+            input: vec![TxIn {
+                previous_output: seed_op,
+                script_sig: ScriptBuf::new(),
+                sequence: Sequence::MAX,
+                witness: Witness::new(),
+            }],
+            output: vec![TxOut {
+                value: Amount::from_sat(546),
+                script_pubkey: victim.clone(),
+            }],
+        };
+        let block1 = protorune::test_helpers::create_block_with_txs(vec![strand_tx]);
+        index_block(&block1, 1)?;
+
+        // Sanity: the ledger now owes the victim.
+        assert_eq!(
+            recycle_inventory_balance(&stranded),
+            amount,
+            "8:dead inventory should hold the stranded alkane after capture"
+        );
+        assert_eq!(
+            recycle_ledger(victim.as_bytes()),
+            vec![(stranded_rune.clone(), amount)],
+            "victim ledger should record the stranded balance"
+        );
+
+        // 3) ATTACK: attacker builds a claim tx where vout 0 is the *victim's*
+        //    spk (so `recipient_script()` reads /recycle/<victim_spk>) and vout
+        //    1 is the attacker's spk. The protostone pointer is set to 1 so
+        //    `reconcile` deposits the released alkanes at the attacker's output.
+        let claim_cellpack = Cellpack {
+            target: RECYCLE_ALKANE_ID,
+            inputs: vec![3],
+        };
+        let protostone = protorune_support::protostone::Protostone {
+            message: claim_cellpack.encipher(),
+            pointer: Some(1),   // ← attempted theft: payout to attacker's vout
+            refund: Some(1),
+            edicts: vec![],
+            from: None,
+            burn: None,
+            protocol_tag: tag,
+        };
+        // Use a fresh dummy input the attacker controls — distinct txid from
+        // any prior fixture so capture in this block can't write under it.
+        let dummy_in = TxIn {
+            previous_output: OutPoint {
+                txid: bitcoin::Txid::from_byte_array([0xCCu8; 32]),
+                vout: 0,
+            },
+            script_sig: ScriptBuf::new(),
+            sequence: Sequence::MAX,
+            witness: Witness::new(),
+        };
+        let claim_tx = h::create_protostone_tx_with_inputs(
+            vec![dummy_in],
+            vec![
+                TxOut {
+                    value: Amount::from_sat(546),
+                    script_pubkey: victim.clone(),    // vout 0 = victim's spk (ledger key)
+                },
+                TxOut {
+                    value: Amount::from_sat(546),
+                    script_pubkey: attacker.clone(),  // vout 1 = attacker — payout target
+                },
+            ],
+            protostone,
+        );
+        let block2 = protorune::test_helpers::create_block_with_txs(vec![claim_tx]);
+        index_block(&block2, 2)?;
+
+        let claim_txid = block2.txdata[0].compute_txid();
+        let victim_out = OutPoint { txid: claim_txid, vout: 0 };
+        let attacker_out = OutPoint { txid: claim_txid, vout: 1 };
+        let victim_sheet = load_sheet_chunked(
+            &table.OUTPOINT_TO_RUNES.select(&consensus_encode(&victim_out)?),
+        );
+        let attacker_sheet = load_sheet_chunked(
+            &table.OUTPOINT_TO_RUNES.select(&consensus_encode(&attacker_out)?),
+        );
+
+        // SECURITY EXPECTATION: the attacker's output gets nothing. The only
+        // safe outcomes are (a) the claim reverted (both outputs empty, ledger
+        // intact) or (b) the claim succeeded and routed payout to the victim.
+        // The unsafe outcome — attacker_sheet[stranded_rune] == amount — means
+        // burned alkanes can be stolen by anyone who can name the victim's spk.
+        assert_eq!(
+            attacker_sheet.get_cached(&stranded_rune),
+            0,
+            "VULN: attacker's vout received victim's burned alkanes — \
+             recycle claim payout is steerable via protostone pointer"
+        );
+        // If the claim was allowed to succeed under this construction, the
+        // payout must have gone to the victim and the ledger must be cleared.
+        // If the claim was instead rejected, the ledger should still owe the
+        // victim (so the victim can retry safely).
+        let ledger_after = recycle_ledger(victim.as_bytes());
+        if !ledger_after.is_empty() {
+            assert_eq!(
+                ledger_after,
+                vec![(stranded_rune.clone(), amount)],
+                "rejected claim must leave the victim's ledger intact"
+            );
+            assert_eq!(
+                victim_sheet.get_cached(&stranded_rune),
+                0,
+                "rejected claim must not have moved alkanes anywhere"
+            );
+        } else {
+            assert_eq!(
+                victim_sheet.get_cached(&stranded_rune),
+                amount,
+                "successful claim must have paid the victim's vout, not the attacker's"
+            );
+        }
+        let _ = Arc::new(());
+        Ok(())
+    }
 }

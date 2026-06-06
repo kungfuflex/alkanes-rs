@@ -28,14 +28,16 @@
 
 use crate::utils::alkane_inventory_pointer;
 use alkanes_support::id::AlkaneId;
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use bitcoin::blockdata::block::Block;
 use bitcoin::{ScriptBuf, Transaction};
 use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
 use metashrew_support::index_pointer::KeyValuePointer;
 use protorune::balance_sheet::{clear_chunked_balances, load_sheet_chunked};
+use protorune::message::MessageContextParcel;
 use protorune::tables::RuneTable;
 use protorune_support::balance_sheet::{BalanceSheet, BalanceSheetOperations, ProtoruneRuneId};
+use protorune_support::rune_transfer::RuneTransfer;
 use protorune_support::utils::consensus_encode;
 use std::sync::Arc;
 
@@ -199,4 +201,92 @@ pub fn capture_block(block: &Block, height: u64, protocol_tag: u128) -> Result<(
         }
     }
     Ok(())
+}
+
+/// Native recycle CLAIM handler (alkanes layer), invoked from `handle_message`
+/// for a `8:dead` opcode-3 cellpack.
+///
+/// SECURITY (fixes the ksyao theft PoC, PR #266): the release MUST be bound to
+/// the *actual payout destination*. A wasm claim cannot see `parcel.pointer`
+/// (the protostone output the response is routed to), so it had to key the
+/// ledger off `default_output(tx)` — letting an attacker name a victim's spk at
+/// vout 0 while pointing the payout at their own output. Here we key the ledger
+/// off the spk of `tx.output[parcel.pointer]` — the address that will actually
+/// receive the payout — so a claim can only ever release the ledger of the
+/// address it pays. Naming a victim's spk only returns funds *to the victim*;
+/// theft and grief-burn are both impossible.
+pub fn handle_claim(
+    parcel: &MessageContextParcel,
+) -> Result<(Vec<RuneTransfer>, BalanceSheet<AtomicPointer>)> {
+    // A claim NEVER aborts indexing: an invalid/empty claim is a graceful no-op
+    // (empty outgoing, runtime passed through) so a malformed claim tx can't halt
+    // the indexer or be used as a refund-grief vector. Only a valid claim whose
+    // payout output owns a non-empty ledger releases anything.
+    let runtime = (*parcel.runtime_balances).clone();
+    let noop = Ok((Vec::<RuneTransfer>::new(), runtime.clone()));
+
+    let tx = &parcel.transaction;
+    // The payout destination = the protostone pointer's output. Must be a real,
+    // non-OP_RETURN, EOA (key-path) output. Shadow vouts / OP_RETURN / out-of-
+    // range pointers have no legitimate recycle payout → no-op.
+    let p = parcel.pointer as usize;
+    if p >= tx.output.len() {
+        return noop;
+    }
+    let spk = tx.output[p].script_pubkey.clone();
+    if spk.is_op_return() || !is_eoa(&spk) {
+        return noop;
+    }
+
+    let mut atomic = parcel.atomic.derive(&IndexPointer::default());
+    let owed = decode_ledger(ledger_pointer(&mut atomic, spk.as_bytes()).get().as_ref());
+    if owed.is_empty() {
+        // No ledger for the payout spk — e.g. an attacker pointing the payout at
+        // their own (empty) output. Release nothing, touch nothing.
+        return noop;
+    }
+
+    let mut outgoing: Vec<RuneTransfer> = Vec::with_capacity(owed.len());
+    for (rune, amount) in owed.iter() {
+        if *amount == 0 {
+            continue;
+        }
+        // Debit 8:dead inventory, CLAMPED to the held balance so a ledger /
+        // inventory desync can never over-release (anti-mint backstop). Never
+        // errors — clamps and proceeds.
+        let what_id = AlkaneId { block: rune.block, tx: rune.tx };
+        let what_bytes: Vec<u8> = what_id.into();
+        let who_bytes: Vec<u8> = RECYCLE_ALKANE_ID.into();
+        let mut bp = atomic
+            .derive(&IndexPointer::default())
+            .keyword("/alkanes/")
+            .select(&what_bytes)
+            .keyword("/balances/")
+            .select(&who_bytes);
+        let held = bp.get_value::<u128>();
+        let release = (*amount).min(held);
+        if release == 0 {
+            continue;
+        }
+        bp.set_value::<u128>(held - release);
+        outgoing.push(RuneTransfer {
+            id: what_id.into(),
+            value: release,
+        });
+    }
+
+    // Single-use: zero the ledger so the claim can't be replayed.
+    ledger_pointer(&mut atomic, spk.as_bytes()).set(Arc::new(vec![]));
+    atomic.commit();
+
+    // Runtime passed through unchanged; `outgoing` is routed to parcel.pointer
+    // (the payout output whose ledger we just released) by `reconcile`.
+    Ok((outgoing, runtime))
+}
+
+/// True if a cellpack targets the recycle bin's claim opcode (3).
+pub fn is_recycle_claim(target: &AlkaneId, inputs: &[u128]) -> bool {
+    target.block == RECYCLE_ALKANE_ID.block
+        && target.tx == RECYCLE_ALKANE_ID.tx
+        && inputs.first() == Some(&3u128)
 }
