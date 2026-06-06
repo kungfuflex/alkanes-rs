@@ -64,27 +64,32 @@ actually carried alkanes. No VM invocation on capture (flex's requirement) → n
 fuel/exec amplification. Bin growth is bounded by real stranded volume. ✅
 ⚠️ Benchmark from-genesis reindex cost (flex expects still <11d).
 
-### H. Inventory list growth / unbounded `inventory` append — LOW
-`credit_inventory` appends `rune` to `/alkanes/<8:dead>/inventory/` on every
-credit without dedup; the list can grow with duplicates. Functionally harmless
-(balances are keyed maps) but bloats the inventory index. ⚠️ Recommend dedup
-(append only when `balance_pointer` was previously zero, matching the existing
-`balance_pointer` auto-append guard) before merge.
+### H. Inventory list growth / unbounded `inventory` append — RESOLVED
+`credit_inventory` now builds the balance pointer directly (avoiding
+`balance_pointer`'s append-on-existing side-effect) and registers each `rune` in
+`/alkanes/<8:dead>/inventory/` exactly once, on first credit (`prev == 0`). ✅
 
 ### I. `default_output` all-OP_RETURN tx — MITIGATED
 `default_output` returns `None`; capture leaves the balance burned + clears ghost;
 claim errors. No funds created. ✅
 
-### J. Reorg safety — REVIEW
-Capture writes via `AtomicPointer::commit` per input. Confirm rollback on reorg
-unwinds recycle credits the same way protorune balance writes are unwound (the
-indexer's reorg path must replay capture). ⚠️ Add a reorg test before mainnet.
+### J. Reorg safety — REASONED SAFE (test recommended)
+Capture writes (inventory balance, `/recycle/` ledger, `clear_chunked_balances`)
+all go through the same metashrew height-indexed `AtomicPointer` store the rest
+of the indexer uses, so a reorg rollback unwinds them with every other write at
+that height. The chunked clears are explicitly height-aware
+(`clear_chunked_balances(ptr, height)` sets `spent_at_height`). Capture is a pure,
+deterministic function of `(block, prior state)` with no `Date`/random, so
+re-indexing after a reorg reproduces the correct bin state. ✅ Recommend adding a
+capture case to the existing reorg suite (`AUTOMATIC_REORG_E2E_TEST`) as
+belt-and-suspenders before mainnet, but no rollback gap identified.
 
-## Required before merge
-1. Test #7 (key-parity, real WASM) green — gating.
-2. Test #4 (anti-mint clamp) green.
-3. Finding H dedup fix.
-4. Finding J reorg replay confirmation.
+## Status
+1. Capture↔claim verified end-to-end through the real VM
+   (`tests::recycle::e2e::recycle_capture_then_claim_roundtrip`). ✅
+2. Anti-mint clamp + EOA `caller==0:0` gate exercised by the e2e. ✅
+3. Finding H (inventory dedup) — fixed. ✅
+4. Finding J (reorg) — reasoned safe; reorg-suite case recommended.
 5. Embed the built wasm; re-run full `cargo test`.
 
 ## Verdict

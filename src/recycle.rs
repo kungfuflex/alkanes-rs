@@ -26,7 +26,7 @@
 //! Non-EOA recipients (script-path / bare scripts) are left burned — this is the
 //! intended garbage-collection of spam alkanes spent by non-alkanes wallets.
 
-use crate::utils::{alkane_inventory_pointer, balance_pointer};
+use crate::utils::alkane_inventory_pointer;
 use alkanes_support::id::AlkaneId;
 use anyhow::Result;
 use bitcoin::blockdata::block::Block;
@@ -117,11 +117,23 @@ fn credit_inventory(atomic: &mut AtomicPointer, what: &ProtoruneRuneId, value: u
         block: what.block,
         tx: what.tx,
     };
-    let mut bp = balance_pointer(atomic, &RECYCLE_ALKANE_ID, &what_id);
+    // Build the balance pointer directly rather than via `balance_pointer`, whose
+    // append-on-existing-balance side-effect would add a duplicate `/inventory/`
+    // entry on every subsequent credit (audit H). Register `what` in 8:dead's
+    // inventory index exactly once — on first credit (prev == 0).
+    let what_bytes: Vec<u8> = what_id.into();
+    let who_bytes: Vec<u8> = RECYCLE_ALKANE_ID.into();
+    let mut bp = atomic
+        .derive(&IndexPointer::default())
+        .keyword("/alkanes/")
+        .select(&what_bytes)
+        .keyword("/balances/")
+        .select(&who_bytes);
     let prev = bp.get_value::<u128>();
     bp.set_value::<u128>(prev.saturating_add(value));
-    // register `what` in 8:dead's inventory index if not already present
-    alkane_inventory_pointer(&RECYCLE_ALKANE_ID).append(Arc::new(what_id.into()));
+    if prev == 0 {
+        alkane_inventory_pointer(&RECYCLE_ALKANE_ID).append(Arc::new(what_bytes));
+    }
 }
 
 /// Sweep stranded protocol-tag balances in `block` into the recycle bin.
