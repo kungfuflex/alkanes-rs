@@ -112,7 +112,7 @@ pub fn index_block(block: &Block, height: u32) -> Result<()> {
     // left stranded at a spent input by a protostone-less spend into 8:dead's
     // inventory + per-recipient ledger. Runs from genesis (no height gate) so a
     // reindex recovers historical burns; claims happen later via 8:dead opcode 3.
-    crate::recycle::capture_block(block, AlkaneMessageContext::protocol_tag())?;
+    crate::recycle::capture_block(block, height.into(), AlkaneMessageContext::protocol_tag())?;
 
     if is_active(height.into()) {
         unwrap::update_last_block(height as u128)?;
