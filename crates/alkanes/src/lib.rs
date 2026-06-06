@@ -24,9 +24,13 @@ use std::io::Cursor;
 use view::parcels_from_protobuf;
 pub mod block;
 pub mod etl;
+#[cfg(any(test, feature = "test-utils"))]
+pub mod fuel_probe;
 pub mod indexer;
 pub mod message;
 pub mod network;
+pub mod precompile;
+pub mod precompile_diesel;
 pub mod precompiled;
 pub mod recycle;
 pub mod tables;
