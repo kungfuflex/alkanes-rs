@@ -117,46 +117,19 @@ impl Recycle {
     }
 
     fn claim(&self) -> Result<CallResponse> {
-        let context = self.context()?;
-        // EOA-only: the claim must originate directly from a protostone, not
-        // from another contract calling into 8:dead. A top-level (EOA) call has
-        // caller == 0:0 (the non-contract sentinel); any contract caller is
-        // rejected. Canonical alkanes EOA gate (cf. genesis EOA diesel mint) —
-        // prevents contract-mediated / re-entrant claims.
-        if context.caller != AlkaneId::new(0, 0) {
-            return Err(anyhow!(
-                "recycle claim must be called from an EOA (caller must be 0:0)"
-            ));
-        }
-        let spk = self.recipient_script()?;
-        let owed = self.read_ledger(spk.as_bytes());
-        if owed.is_empty() {
-            return Err(anyhow!("nothing to claim for this script_pubkey"));
-        }
-
-        let mut response = CallResponse::forward(&context.incoming_alkanes);
-        for (id, value) in owed.iter() {
-            // SAFETY INVARIANT: never emit more than 8:dead actually holds in
-            // inventory. Capture credits inventory == ledger, but we clamp
-            // defensively so a ledger/inventory desync can never mint alkanes
-            // out of thin air (ksyao's requirement). A clamp short-fall would
-            // indicate capture corruption and is surfaced as an error rather
-            // than silently minting.
-            let held = self.balance(&context.myself, id);
-            if *value > held {
-                return Err(anyhow!(
-                    "recycle inventory underflow for {}:{} (owed {} > held {})",
-                    id.block, id.tx, value, held
-                ));
-            }
-            response.alkanes.0.push(AlkaneTransfer {
-                id: id.clone(),
-                value: *value,
-            });
-        }
-        // Mark claimed: zero the ledger entry so it can't be replayed.
-        self.ledger_pointer(spk.as_bytes()).set(Arc::new(vec![]));
-        Ok(response)
+        // SECURITY: the claim is handled NATIVELY in the indexer
+        // (`alkanes::recycle::handle_claim`, dispatched from `handle_message`),
+        // NOT here. A wasm claim cannot see the protostone `pointer` (the output
+        // the response is routed to), so it cannot bind the payout to the ledger
+        // key — that decoupling is exactly the theft vector ksyao found (a claim
+        // would read `/recycle/<vout0_spk>` but pay out to an attacker-chosen
+        // pointer). The native handler keys the ledger off the payout output's
+        // spk. During real indexing this opcode never reaches the wasm (the
+        // native intercept runs first); we hard-reject here so a simulate of
+        // `8:dead:3` can never display the old, unsafe behavior.
+        Err(anyhow!(
+            "recycle claim (8:dead:3) is handled natively by the indexer, not the wasm"
+        ))
     }
 
     fn get_recycle_balance(&self) -> Result<CallResponse> {
