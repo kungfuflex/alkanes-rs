@@ -19,10 +19,10 @@ path = "src/bin/rollback.rs"
 async-trait = "0.1"
 rand = "0.8"
 reqwest = { version = "0.12.12", features = ["json"] }
-metashrew-runtime = { path = "../metashrew-runtime" }
+metashrew-runtime = { path = "/home/ubuntu/metashrew/crates/metashrew-runtime" }
 wasmtime = "18.0.4"
 rockshrew-runtime = { path = "../rockshrew-runtime" }
-metashrew-sync = { path = "../metashrew-sync" }
+metashrew-sync = { path = "/home/ubuntu/metashrew/crates/metashrew-sync" }
 serde_json = "1.0.136"
 actix-web = "4.9.0"
 serde = "1.0.217"
@@ -58,7 +58,7 @@ ssh_e2e_tests = []
 tokio-test = "0.4"
 tempfile = "3.8"
 memshrew-runtime = { workspace = true }
-metashrew-core = { path = "../metashrew-core" }
+metashrew-core = { path = "/home/ubuntu/metashrew/crates/metashrew-core" }
 
 
 [profile.release]

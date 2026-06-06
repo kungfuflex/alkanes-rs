@@ -33,7 +33,26 @@ members = [
     "vendor/qubitcoin-indexer-fork",
     "vendor/qubitcoin-rpc",
 ]
-exclude = ["crates/alkanes-web-leptos"]
+exclude = [
+    "crates/alkanes-web-leptos",
+    # v3 alignment: the in-tree v9 metashrew tree is no longer vendored — the core
+    # crates are referenced from ~/metashrew (v10); the operational runner crates
+    # (rockshrew-*/memshrew-*/minimal/macros) are excluded from the alkanes
+    # protocol build and aligned to v10 separately.
+    "crates/metashrew-core",
+    "crates/metashrew-support",
+    "crates/metashrew-runtime",
+    "crates/metashrew-sync",
+    "crates/metashrew-macros",
+    "crates/metashrew-minimal",
+    "crates/metashrew-memory-stress",
+    "crates/memshrew-p2p",
+    "crates/memshrew-runtime",
+    "crates/rockshrew-debug",
+    "crates/rockshrew-diff",
+    "crates/rockshrew-mono",
+    "crates/rockshrew-runtime",
+]
 resolver = "2"
 
 [workspace.metadata.alkanes-data-api]
@@ -51,10 +70,12 @@ anyhow = "1.0.90"
 num = "0.4.3"
 bitcoin = { version = "0.32.4", features = ["rand"] }
 alkanes = { path = "./crates/alkanes" }
-metashrew-core = { path = "./crates/metashrew-core" }
-metashrew-support = { path = "./crates/metashrew-support" }
-metashrew-runtime = { path = "./crates/metashrew-runtime" }
-metashrew-sync = { path = "./crates/metashrew-sync" }
+# v3 alignment: reference ~/metashrew (develop = v10, chunk API) instead of
+# the in-tree v9 vendor. The in-tree crates/metashrew-* are excluded below.
+metashrew-core = { path = "/home/ubuntu/metashrew/crates/metashrew-core" }
+metashrew-support = { path = "/home/ubuntu/metashrew/crates/metashrew-support" }
+metashrew-runtime = { path = "/home/ubuntu/metashrew/crates/metashrew-runtime" }
+metashrew-sync = { path = "/home/ubuntu/metashrew/crates/metashrew-sync" }
 memshrew-runtime = { path = "./crates/memshrew-runtime" }
 memshrew-p2p = { path = "./crates/memshrew-p2p" }
 rockshrew-runtime = { path = "./crates/rockshrew-runtime" }
