@@ -109,6 +109,16 @@ pub fn index_block(block: &Block, height: u32) -> Result<()> {
     let _updated_addresses =
         Protorune::index_block::<AlkaneMessageContext>(block.clone(), height.into())?;
 
+    // Recycle-bin capture (native, no wasmi): sweep any protocol-tag balance left
+    // stranded at a spent input by a protostone-less spend into 8:dead's inventory
+    // + per-recipient ledger. From genesis (no height gate) so a reindex recovers
+    // historical burns; claims happen later via 8:dead opcode 3.
+    crate::recycle::capture_block(
+        block,
+        height.into(),
+        <AlkaneMessageContext as protorune::message::MessageContext>::protocol_tag(),
+    )?;
+
     if is_active(height.into()) {
         unwrap::update_last_block(height as u128)?;
     }

@@ -62,6 +62,8 @@ pub mod merkle_distributor;
 #[cfg(test)]
 pub mod networks;
 #[cfg(test)]
+pub mod recycle;
+#[cfg(test)]
 pub mod special_extcall;
 #[cfg(test)]
 pub mod upgradeable;

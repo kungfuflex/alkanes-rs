@@ -171,6 +171,11 @@ pub fn run_special_cellpacks(
             .set(Arc::new(factory_payload));
         set_alkane_id_to_tx_id(context.clone(), &payload.target)?;
         binary = get_alkane_binary_from_context(context.clone(), &factory)?;
+    } else if cellpack.target.block == 8 {
+        // 8:* — precompiled "life WASM" namespace. The binary is embedded in the
+        // indexer (not deployed from a witness payload, which is the 1:* space).
+        // 8:dead is the recycle bin (alkanes-std-recycle). Target is unchanged.
+        binary = crate::precompiled::precompiled_life_wasm(&cellpack.target)?;
     }
     if &original_target != &payload.target {
         context
