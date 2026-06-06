@@ -1,4 +1,24 @@
-use crate::balance_sheet::{load_sheet, PersistentRecord};
+//! # protorune
+//!
+//! Indexer primitives for rune-balance tracking and protorune (alkane-style)
+//! state transitions.
+//!
+//! ## `runes` feature flag
+//!
+//! Tracking actual rune balances (canonical-ord semantics) is gated behind
+//! the **`runes`** Cargo feature. The canonical alkanes indexer wasm builds
+//! without `runes` — alkanes ignores runes and protoburns at the application
+//! layer, so emitting rune balances would be dead weight in that surface.
+//! The feature exists for downstream protorune consumers that actually need
+//! rune-balance views (cf. the `tests/ord_runes_parity.rs` parity suite,
+//! which is similarly gated).
+//!
+//! Enable with `--features runes` to compile the canonical-ord parity tests
+//! ported from kungfuflex/v2.1.8 (commit 47bd86b3) into your build.
+
+use crate::balance_sheet::{
+    clear_chunked_balances, load_sheet, load_sheet_chunked, save_chunked, PersistentRecord,
+};
 use crate::message::MessageContext;
 use crate::protorune_init::index_unique_protorunes;
 use crate::protostone::{
@@ -42,6 +62,8 @@ const BLACKLISTED_TX_HASHES: [&str; 1] =
 // Logging module must be declared first so macros are available
 pub mod logging;
 
+#[cfg(feature = "address-indexing")]
+pub mod address_index;
 pub mod balance_sheet;
 pub mod message;
 pub mod protoburn;
@@ -222,7 +244,8 @@ impl Protorune {
             .iter()
             .map(|input| {
                 let outpoint_bytes = consensus_encode(&input.previous_output)?;
-                Ok(load_sheet(&mut atomic.derive(
+                // v3 chunked-outpoint read: one chunk per outpoint.
+                Ok(load_sheet_chunked(&mut atomic.derive(
                     &tables::RUNES.OUTPOINT_TO_RUNES.select(&outpoint_bytes),
                 )))
             })
@@ -302,7 +325,9 @@ impl Protorune {
             //     "Saving balance sheet {:?} to outpoint {:?}",
             //     sheet, outpoint
             // );
-            sheet.save(
+            // v3 chunked-outpoint write: one chunk per outpoint per block.
+            save_chunked(
+                &sheet,
                 &mut atomic.derive(
                     &tables::RUNES
                         .OUTPOINT_TO_RUNES
@@ -716,17 +741,31 @@ impl Protorune {
             for input in &tx.input {
                 //all inputs must be used up, even in cenotaphs
                 let key = consensus_encode(&input.previous_output)?;
-                clear_balances(&mut tables::RUNES.OUTPOINT_TO_RUNES.select(&key));
+                // v3 chunked-outpoint: mark the consumed input chunk as
+                // spent at this height (zero entries, spent_at_height set).
+                // Replaces the legacy multi-pointer clear_balances.
+                clear_chunked_balances(
+                    &mut tables::RUNES.OUTPOINT_TO_RUNES.select(&key),
+                    height as u32,
+                );
             }
         }
         Ok(())
     }
-    pub fn index_spendables(txdata: &Vec<Transaction>) -> Result<BTreeSet<Vec<u8>>> {
+    pub fn index_spendables(
+        txdata: &Vec<Transaction>,
+        height: u32,
+    ) -> Result<BTreeSet<Vec<u8>>> {
+        // `height` is consumed only when --features address-indexing is
+        // enabled. Default builds keep the parameter for API stability
+        // (cheaper than a feature-conditional signature).
+        #[cfg(not(feature = "address-indexing"))]
+        let _ = height;
         // Track unique addresses that have their spendable outpoints updated
-        #[cfg(feature = "cache")]
+        #[cfg(any(feature = "cache", feature = "address-indexing"))]
         let mut updated_addresses: BTreeSet<Vec<u8>> = BTreeSet::new();
 
-        #[cfg(not(feature = "cache"))]
+        #[cfg(not(any(feature = "cache", feature = "address-indexing")))]
         let updated_addresses: BTreeSet<Vec<u8>> = BTreeSet::new();
 
         for (txindex, transaction) in txdata.iter().enumerate() {
@@ -735,35 +774,52 @@ impl Protorune {
                 .TXID_TO_TXINDEX
                 .select(&tx_id.as_byte_array().to_vec())
                 .set_value(txindex as u32);
-            for (_index, input) in transaction.input.iter().enumerate() {
-                tables::OUTPOINT_SPENDABLE_BY
-                    .select(&consensus_encode(&input.previous_output)?)
-                    .nullify();
-            }
-            for (index, output) in transaction.output.iter().enumerate() {
-                let outpoint = OutPoint {
-                    txid: tx_id.clone(),
-                    vout: index as u32,
-                };
-                let output_script_pubkey: &ScriptBuf = &output.script_pubkey;
-                if Payload::from_script(output_script_pubkey).is_ok() {
-                    let outpoint_bytes: Vec<u8> = consensus_encode(&outpoint)?;
-                    let address_str = to_address_str(output_script_pubkey)?;
-                    let address = address_str.into_bytes();
 
-                    // Add address to the set of updated addresses
-                    #[cfg(feature = "cache")]
-                    updated_addresses.insert(address.to_vec());
-
-                    tables::OUTPOINTS_FOR_ADDRESS
-                        .select(&address.clone())
-                        .append(Arc::new(outpoint_bytes.clone()));
-                    tables::OUTPOINT_SPENDABLE_BY
-                        .select(&outpoint_bytes.clone())
-                        .set(Arc::new(address.clone()))
+            // v3: the OUTPOINT_SPENDABLE_BY / OUTPOINTS_FOR_ADDRESS
+            // address-index family is no longer canonical state. The
+            // unwrap.rs spentness probe migrated to the chunked
+            // OUTPOINT_TO_RUNES spent_at_height marker; address-keyed
+            // lookups (protorunesbyaddress / runesbyaddress /
+            // spendablesbyaddress) are handled by espo middleware via
+            // esplora's UTXO API. We keep the per-tx TXID_TO_TXINDEX
+            // write above (still load-bearing for txindex resolution in
+            // view.rs::*_outpoint_to_outpoint_response) but drop the
+            // per-input nullify + per-output address write pair —
+            // historically the dominant write source on
+            // address-rich mainnet blocks.
+            //
+            // When --features cache is enabled, populate
+            // updated_addresses from output script pubkeys directly so
+            // cache invalidation downstream still sees the right set.
+            #[cfg(all(feature = "cache", not(feature = "address-indexing")))]
+            for output in transaction.output.iter() {
+                if Payload::from_script(&output.script_pubkey).is_ok() {
+                    if let std::result::Result::Ok(address_str) =
+                        to_address_str(&output.script_pubkey)
+                    {
+                        updated_addresses.insert(address_str.into_bytes());
+                    }
                 }
             }
         }
+
+        // v3 `address-indexing` opt-in: rewrite one chunked
+        // AddressOutpoints record per affected address. This is the
+        // sole place where /v3/addr/* state is written. The accumulator
+        // pattern guarantees one chunk write per address per block,
+        // regardless of how many of that address's outpoints were
+        // touched. Determinism contract: outpoints are sorted by
+        // (txid_le, vout) ascending. See `crate::address_index` for the
+        // full design discussion.
+        //
+        // The address-indexing writer ALSO populates updated_addresses
+        // (with the same union-of-inputs-and-outputs set), so when
+        // --features cache,address-indexing are both on we don't
+        // double-walk the outputs in the loop above — the
+        // `not(feature = "address-indexing")` cfg-gate skips that
+        // walk.
+        #[cfg(feature = "address-indexing")]
+        crate::address_index::write_address_index(txdata, height, &mut updated_addresses)?;
 
         // Return the set of updated addresses
         Ok(updated_addresses)
@@ -909,7 +965,9 @@ impl Protorune {
             //     "saving balancesheet: {:#?} to outpoint: {:#?}",
             //     sheet, outpoint
             // );
-            sheet.save(
+            // v3 chunked-outpoint write: one chunk per outpoint per block.
+            save_chunked(
+                &sheet,
                 &mut atomic.derive(
                     &table
                         .OUTPOINT_TO_RUNES
@@ -980,11 +1038,12 @@ impl Protorune {
             );
 
             // load the balance sheets
+            // v3 chunked-outpoint read: one chunk per outpoint.
             let sheets: Vec<BalanceSheet<AtomicPointer>> = tx
                 .input
                 .iter()
                 .map(|input| {
-                    Ok(load_sheet(
+                    Ok(load_sheet_chunked(
                         &mut atomic.derive(
                             &table
                                 .OUTPOINT_TO_RUNES
@@ -1098,7 +1157,12 @@ impl Protorune {
             for input in &tx.input {
                 //all inputs must be used up, even in cenotaphs
                 let key = consensus_encode(&input.previous_output)?;
-                clear_balances(&mut table.OUTPOINT_TO_RUNES.select(&key));
+                // v3 chunked-outpoint: mark the consumed input chunk as
+                // spent at this height (zero entries, spent_at_height set).
+                clear_chunked_balances(
+                    &mut table.OUTPOINT_TO_RUNES.select(&key),
+                    height as u32,
+                );
             }
         }
         Ok(())
@@ -1106,7 +1170,55 @@ impl Protorune {
 
     #[cfg(feature = "mainnet")]
     fn freeze_storage(height: u64) {
-        if height > 913300 {
+        // OYL_DISBAND_HEIGHT — at this block the OYL AMM is permanently
+        // placed in admin-disabled / codefreeze state. Background:
+        //
+        //   OYL has disbanded as an organization. The original admin
+        //   alkane that controlled the AMM was lost and previously
+        //   re-pegged here to AlkaneId(2, 69805) (see pre-fork branch
+        //   below). After 2026-05-22 we are formalizing the post-OYL
+        //   state of the deployment: administrative privilege on
+        //   `4:65522` (factory) and `4:65523` (proxy) is permanently
+        //   disabled. There is no owner. Protocol fees that the AMM
+        //   would otherwise have routed to the admin via `collect_fees`
+        //   now stay accrued inside each pool's reserves, accruing as
+        //   pro-rata value to existing LP holders (the project owners,
+        //   in OYL's place). This freeze line is the AMM's codefreeze
+        //   marker — fee structure, pool factory template, and admin
+        //   ID are locked at the values they held at this height and
+        //   cannot be changed thereafter.
+        //
+        // Mechanism: at the fork we (1) overwrite the on-storage /auth
+        // pointer with AlkaneId(0, 0), the runtime's "non-contract"
+        // sentinel, so `only_owner()`'s `incoming.contains(auth_token)`
+        // check can never pass — every admin-gated opcode reverts.
+        // We then (2) zero out the factory + proxy's accumulated
+        // balance of `2:69805`. That backlog accumulated because
+        // `alkanes-std-auth-token::authenticate()` did
+        // `CallResponse::forward(incoming) + push(transfer)`, returning
+        // the auth token twice; combined with the runtime's
+        // intentional self-mint rule in `checked_debit_with_minting`
+        // (alkanes/src/utils.rs:88), every owner-only call quietly
+        // net-deposited +1 auth token in the factory's contract
+        // balance. `CreateNewPool` is public and lets any caller pass
+        // `token_a = 2:69805`, so without (2) an attacker could still
+        // fund a fresh AUTH/X pool from the factory's accumulated
+        // stash and redeem via `WithdrawAndBurn`. A security
+        // researcher demonstrated this on 2026-05-22 with a
+        // `metashrew_view simulate` at h=950504 draining 3 auth
+        // tokens through this path. Zeroing closes both the backlog
+        // and any future micro-windows.
+        //
+        // Drift note: external indexers (unisat, alkanode, fairmints)
+        // that don't pick up this patch will continue to report the
+        // pre-fork /auth value and any residual `2:69805` balance on
+        // 4:65522 / 4:65523 — that is acceptable. The only
+        // observable divergence is on a now-permanently-disabled
+        // surface; canonical AMM trading state (reserves, LP supply,
+        // swap pricing) is unaffected.
+        const OYL_DISBAND_HEIGHT: u64 = 950_564;
+
+        if height > 913300 && height < OYL_DISBAND_HEIGHT {
             IndexPointer::from_keyword("/alkanes/")
                 .select(&ProtoruneRuneId::new(4, 65523).into())
                 .keyword("/storage//auth")
@@ -1115,7 +1227,27 @@ impl Protorune {
                 .select(&ProtoruneRuneId::new(4, 65522).into())
                 .keyword("/storage//auth")
                 .set(Arc::new(ProtoruneRuneId::new(2, 69805).into()));
-        };
+        }
+
+        if height >= OYL_DISBAND_HEIGHT {
+            let zero_id: Vec<u8> = ProtoruneRuneId::new(0, 0).into();
+            let auth_id: Vec<u8> = ProtoruneRuneId::new(2, 69805).into();
+            for who in [ProtoruneRuneId::new(4, 65522), ProtoruneRuneId::new(4, 65523)] {
+                let who_id: Vec<u8> = who.into();
+                // (1) /auth pointer → AlkaneId(0,0) → only_owner always reverts
+                IndexPointer::from_keyword("/alkanes/")
+                    .select(&who_id)
+                    .keyword("/storage//auth")
+                    .set(Arc::new(zero_id.clone()));
+                // (2) drain accumulated 2:69805 balance so CreateNewPool
+                //     debit underflows on `checked_debit_with_minting`
+                IndexPointer::from_keyword("/alkanes/")
+                    .select(&auth_id)
+                    .keyword("/balances/")
+                    .select(&who_id)
+                    .set(Arc::new(0u128.to_le_bytes().to_vec()));
+            }
+        }
     }
 
     #[cfg(not(feature = "mainnet"))]
@@ -1139,7 +1271,7 @@ impl Protorune {
         Self::index_outpoints(&block, height)?;
 
         // Get the set of updated addresses
-        let updated_addresses = Self::index_spendables(&block.txdata)?;
+        let updated_addresses = Self::index_spendables(&block.txdata, height as u32)?;
 
         Self::freeze_storage(height);
         Self::index_unspendables::<T>(&block, height)?;
