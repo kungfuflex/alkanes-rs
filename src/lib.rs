@@ -48,6 +48,7 @@ pub mod network;
 // until that gap is reproduced in `tests::diesel_shadow` and fixed.
 pub mod precompile_diesel;
 pub mod precompiled;
+pub mod recycle;
 pub mod tables;
 #[cfg(any(test, feature = "test-utils"))]
 pub mod tests;
