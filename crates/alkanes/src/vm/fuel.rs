@@ -344,6 +344,7 @@ pub const fn minimum_fuel(height: u32) -> u64 {
         MINIMUM_FUEL_START
     }
 }
+
 pub const FUEL_PER_REQUEST_BYTE: u64 = 1;
 pub const FUEL_PER_LOAD_BYTE: u64 = 2;
 pub const FUEL_PER_STORE_BYTE_START: u64 = 8;

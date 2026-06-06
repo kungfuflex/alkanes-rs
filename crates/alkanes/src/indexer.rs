@@ -1,4 +1,5 @@
 use crate::message::AlkaneMessageContext;
+use protorune::message::MessageContext;
 use crate::network::{
     check_and_upgrade_precompiled, clear_view_mode, genesis, genesis_alkane_upgrade_bytes,
     is_active, is_genesis, setup_diesel, setup_frbtc, setup_frsigil,

@@ -1,5 +1,6 @@
 use crate::message::AlkaneMessageContext;
 use crate::precompiled::fr_btc_build_v1_1_0;
+use crate::precompiled::fr_btc_build_v1_2_0;
 #[allow(unused_imports)]
 use crate::precompiled::{
     alkanes_std_genesis_alkane_dogecoin_build, alkanes_std_genesis_alkane_fractal_build,
@@ -21,7 +22,7 @@ use anyhow::Result;
 use bitcoin::{Block, OutPoint, Transaction};
 use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
 use metashrew_support::index_pointer::KeyValuePointer;
-use protorune::balance_sheet::PersistentRecord;
+use protorune::balance_sheet::{save_chunked, save_chunked_merging, PersistentRecord};
 use protorune::message::{MessageContext, MessageContextParcel};
 #[allow(unused_imports)]
 use protorune::tables::{RuneTable, RUNES};
@@ -36,7 +37,19 @@ use {
 };
 
 pub fn fr_btc_bytes() -> Vec<u8> {
-    fr_btc_build::get_bytes()
+    // On chains where V220 is active from genesis (regtest + alt-coin
+    // networks where V220_FORK_HEIGHT=0), `setup_frbtc` must deploy and
+    // initialize the slim binary directly. If we deploy bulky here and
+    // later swap to slim via `check_and_upgrade_precompiled`, the swap
+    // overwrites bytes but preserves bulky's init storage — slim then
+    // executes against an unfamiliar storage layout and fuel-exhausts.
+    // For mainnet (V220_FORK_HEIGHT=950_000 > 0), this returns bulky to
+    // replicate the historical setup at block 880_000.
+    if genesis::V220_FORK_HEIGHT == 0 {
+        fr_btc_build_v1_2_0::get_bytes()
+    } else {
+        fr_btc_build::get_bytes()
+    }
 }
 
 pub fn fr_sigil_bytes() -> Vec<u8> {
@@ -129,6 +142,11 @@ pub mod genesis {
     pub const GENESIS_OUTPOINT_BLOCK_HEIGHT: u64 = 0;
     pub const GENESIS_UPGRADE_BLOCK_HEIGHT: u32 = 0;
     pub const GENESIS_UPGRADE_EOA_BLOCK_HEIGHT: u32 = 0;
+    /// v2.2.0 fork: activates the slim fr_btc.wasm precompile + the
+    /// extcall-child-revert containment fix (ports of kungfuflex/v2.1.8 +
+    /// kungfuflex/v2.1.8-slim-frbtc). On regtest the fork is genesis-coincident
+    /// so all tests run against the post-fork behaviour by default.
+    pub const V220_FORK_HEIGHT: u32 = 0;
 }
 
 #[cfg(feature = "mainnet")]
@@ -140,6 +158,8 @@ pub mod genesis {
     pub const GENESIS_UPGRADE_BLOCK_HEIGHT: u32 = 908_888;
 
     pub const GENESIS_UPGRADE_EOA_BLOCK_HEIGHT: u32 = 917_888;
+    /// v2.2.0 mainnet fork: slim fr_btc.wasm + extcall revert containment.
+    pub const V220_FORK_HEIGHT: u32 = 950_000;
 }
 
 #[cfg(feature = "fractal")]
@@ -150,6 +170,7 @@ pub mod genesis {
     pub const GENESIS_OUTPOINT_BLOCK_HEIGHT: u64 = 228_194;
     pub const GENESIS_UPGRADE_BLOCK_HEIGHT: u32 = 228_194;
     pub const GENESIS_UPGRADE_EOA_BLOCK_HEIGHT: u32 = 228_194;
+    pub const V220_FORK_HEIGHT: u32 = 0;
 }
 
 #[cfg(feature = "dogecoin")]
@@ -160,6 +181,7 @@ pub mod genesis {
     pub const GENESIS_OUTPOINT_BLOCK_HEIGHT: u64 = 872_101;
     pub const GENESIS_UPGRADE_BLOCK_HEIGHT: u32 = 872_101;
     pub const GENESIS_UPGRADE_EOA_BLOCK_HEIGHT: u32 = 872_101;
+    pub const V220_FORK_HEIGHT: u32 = 0;
 }
 
 #[cfg(feature = "luckycoin")]
@@ -170,6 +192,7 @@ pub mod genesis {
     pub const GENESIS_OUTPOINT_BLOCK_HEIGHT: u64 = 872_101;
     pub const GENESIS_UPGRADE_BLOCK_HEIGHT: u32 = 872_101;
     pub const GENESIS_UPGRADE_EOA_BLOCK_HEIGHT: u32 = 872_101;
+    pub const V220_FORK_HEIGHT: u32 = 0;
 }
 
 #[cfg(feature = "bellscoin")]
@@ -180,6 +203,7 @@ pub mod genesis {
     pub const GENESIS_OUTPOINT_BLOCK_HEIGHT: u64 = 288_906;
     pub const GENESIS_UPGRADE_BLOCK_HEIGHT: u32 = 288_906;
     pub const GENESIS_UPGRADE_EOA_BLOCK_HEIGHT: u32 = 288_906;
+    pub const V220_FORK_HEIGHT: u32 = 0;
 }
 
 pub fn is_active(height: u64) -> bool {
@@ -267,17 +291,26 @@ pub fn setup_frsigil(block: &Block) -> Result<()> {
         txid: tx_hex_to_txid(genesis::GENESIS_OUTPOINT)?,
         vout: 0,
     })?;
-    <AlkaneTransferParcel as TryInto<BalanceSheet<AtomicPointer>>>::try_into(
-        response2.alkanes.into(),
-    )?
-    .save(
+    // v3 chunked-outpoint write: MERGE into the genesis outpoint's
+    // chunk. `setup_diesel` ran first and wrote the 44T DIESEL
+    // premine there; if we used plain `save_chunked` we'd overwrite
+    // that with just the frSIGIL entry — which is exactly what was
+    // happening pre-fix and caused the v10 pod to lose the DIESEL
+    // premine on the genesis outpoint, snowballing into ~33 DIESEL
+    // supply drift by h=922k (see bisect at h=913,043 upgrade tx).
+    let sheet: BalanceSheet<AtomicPointer> =
+        <AlkaneTransferParcel as TryInto<BalanceSheet<AtomicPointer>>>::try_into(
+            response2.alkanes.into(),
+        )?;
+    save_chunked_merging(
+        &sheet,
         &mut atomic.derive(
             &RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
                 .OUTPOINT_TO_RUNES
                 .select(&outpoint_bytes),
         ),
         false,
-    );
+    )?;
     pipe_storagemap_to(
         &response2.storage,
         &mut atomic
@@ -352,9 +385,39 @@ pub fn check_and_upgrade_precompiled(height: u32) -> Result<()> {
             IndexPointer::from_keyword("/alkanes/")
                 .select(&(AlkaneId { block: 2, tx: 0 }).into())
                 .set(Arc::new(compress(genesis_alkane_upgrade_bytes_eoa())?));
-            IndexPointer::from_keyword("/alkanes/")
-                .select(&(AlkaneId { block: 32, tx: 0 }).into())
-                .set(Arc::new(compress(fr_btc_build_v1_1_0::get_bytes())?));
+            // Only swap fr_btc to bulky v1.1.0 when V220 has not yet
+            // activated. On chains where V220 is genesis-coincident
+            // (V220_FORK_HEIGHT=0), `setup_frbtc` already deployed slim and
+            // overwriting it here would leak bulky storage semantics back in.
+            if genesis::V220_FORK_HEIGHT > genesis::GENESIS_UPGRADE_EOA_BLOCK_HEIGHT {
+                IndexPointer::from_keyword("/alkanes/")
+                    .select(&(AlkaneId { block: 32, tx: 0 }).into())
+                    .set(Arc::new(compress(fr_btc_build_v1_1_0::get_bytes())?));
+            }
+        }
+    }
+    // v2.2.0 fork: replace the fr_btc precompile bytes (alkane id 32:0) with
+    // the slim 281 KB build. The v1.1.0 (1.5 MB) bytes deployed at
+    // GENESIS_UPGRADE_EOA_BLOCK_HEIGHT remain canonical pre-fork; nodes
+    // re-syncing from before that height still walk through the same
+    // historical wasm blobs in order. Behaviour is interface-compatible —
+    // tap_tweak was restored in fr_btc_v1.2.0 so the slim build is a drop-in
+    // at the precompile boundary.
+    if height >= genesis::V220_FORK_HEIGHT {
+        let mut v220_upgrade_ptr = IndexPointer::from_keyword("/genesis-upgraded-v220");
+        if v220_upgrade_ptr.get().len() == 0 {
+            v220_upgrade_ptr.set_value::<u8>(0x01);
+            // When V220 is genesis-coincident, `setup_frbtc` already deployed
+            // slim with the correct init storage; skip the byte-swap and just
+            // record the upgrade in the pointer. For real fork heights
+            // (V220_FORK_HEIGHT>0), perform the swap as normal — it replaces
+            // the bulky v1.1.0 bytes with slim, leaving the historical
+            // bulky-derived storage in place (slim is interface-compatible).
+            if genesis::V220_FORK_HEIGHT > 0 {
+                IndexPointer::from_keyword("/alkanes/")
+                    .select(&(AlkaneId { block: 32, tx: 0 }).into())
+                    .set(Arc::new(compress(fr_btc_build_v1_2_0::get_bytes())?));
+            }
         }
     }
     Ok(())
@@ -404,17 +467,24 @@ pub fn setup_diesel(block: &Block) -> Result<()> {
         txid: tx_hex_to_txid(genesis::GENESIS_OUTPOINT)?,
         vout: 0,
     })?;
-    <AlkaneTransferParcel as TryInto<BalanceSheet<AtomicPointer>>>::try_into(
-        response.alkanes.into(),
-    )?
-    .save(
+    // v3 chunked-outpoint write: MERGE into the genesis outpoint's
+    // chunk so subsequent `setup_*` calls in the same block (notably
+    // `setup_frsigil` for the frSIGIL precompile) don't wipe the
+    // DIESEL premine. See `save_chunked_merging` for the rationale +
+    // the upstream incident this fix prevents.
+    let sheet: BalanceSheet<AtomicPointer> =
+        <AlkaneTransferParcel as TryInto<BalanceSheet<AtomicPointer>>>::try_into(
+            response.alkanes.into(),
+        )?;
+    save_chunked_merging(
+        &sheet,
         &mut atomic.derive(
             &RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
                 .OUTPOINT_TO_RUNES
                 .select(&outpoint_bytes),
         ),
         false,
-    );
+    )?;
     pipe_storagemap_to(
         &response.storage,
         &mut atomic.derive(&IndexPointer::from_keyword("/alkanes/").select(&myself.clone().into())),
