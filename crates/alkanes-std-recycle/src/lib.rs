@@ -118,6 +118,16 @@ impl Recycle {
 
     fn claim(&self) -> Result<CallResponse> {
         let context = self.context()?;
+        // EOA-only: the claim must originate directly from a protostone, not
+        // from another contract calling into 8:dead. A top-level (EOA) call has
+        // caller == 0:0 (the non-contract sentinel); any contract caller is
+        // rejected. Canonical alkanes EOA gate (cf. genesis EOA diesel mint) —
+        // prevents contract-mediated / re-entrant claims.
+        if context.caller != AlkaneId::new(0, 0) {
+            return Err(anyhow!(
+                "recycle claim must be called from an EOA (caller must be 0:0)"
+            ));
+        }
         let spk = self.recipient_script()?;
         let owed = self.read_ledger(spk.as_bytes());
         if owed.is_empty() {
