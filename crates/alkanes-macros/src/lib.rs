@@ -1,7 +1,7 @@
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::{
-    parse_macro_input, Attribute, Data, DeriveInput, Fields, FieldsNamed, Ident, Lit, LitInt, Meta,
+    parse_macro_input, Attribute, Data, DeriveInput, Fields, Ident, Lit, Meta,
     NestedMeta, Type, TypePath,
 };
 
@@ -508,4 +508,668 @@ pub fn derive_message_dispatch(input: TokenStream) -> TokenStream {
     };
 
     TokenStream::from(expanded)
+}
+
+/// Macro to define storage variable helpers
+/// 
+/// Usage examples:
+/// ```ignore
+/// storage_variable!(ticket_price: u128);
+/// storage_variable!(token: AlkaneId);
+/// storage_variable!(name: String);
+/// storage_variable!(root: Vec<u8>);
+/// storage_variable!(pool_info: PoolInfo);
+/// ```
+/// 
+/// This generates functions based on the type:
+/// 
+/// For `u128` type, generates:
+/// - `{name}_pointer()` - returns StoragePointer
+/// - `{name}()` - gets the value
+/// - `set_{name}(value)` - sets the value
+/// - `increase_{name}(amount)` - increases the value by amount
+/// - `decrease_{name}(amount)` - decreases the value by amount (saturating)
+/// 
+/// For `AlkaneId` and `String` types, generates:
+/// - `{name}_pointer()` - returns StoragePointer
+/// - `{name}()` - gets the value (returns Result)
+/// - `set_{name}(value)` - sets the value
+/// 
+/// For `Vec<u8>` type, generates:
+/// - `{name}_pointer()` - returns StoragePointer
+/// - `{name}()` - gets the value (returns Vec<u8>)
+/// - `set_{name}(value: Vec<u8>)` - sets the value
+/// 
+/// For struct types, generates:
+/// - `{name}_pointer()` - returns StoragePointer
+/// - `{name}()` - gets the value (returns Result)
+/// - `set_{name}(value)` - sets the value
+/// 
+/// For struct types, it requires the struct to implement:
+/// - `from_vec(bytes: &[u8]) -> Result<Self>`
+/// - `try_to_vec(&self) -> Vec<u8>`
+#[proc_macro]
+pub fn storage_variable(input: TokenStream) -> TokenStream {
+    // Parse the input: name: type
+    let parsed = syn::parse_macro_input!(input as StorageVariableInput);
+    
+    let name = &parsed.name;
+    let name_str = name.to_string();
+    let pointer_name = format_ident!("{}_pointer", name);
+    let set_name = format_ident!("set_{}", name);
+    
+    let keyword_path = format!("/{}", name_str);
+    
+    // Generate code based on type
+    let expanded = match &parsed.ty {
+        StorageVariableType::U128 => {
+            let increase_name = format_ident!("increase_{}", name);
+            let decrease_name = format_ident!("decrease_{}", name);
+            
+            quote! {
+                fn #pointer_name(&self) -> alkanes_runtime::storage::StoragePointer {
+                    alkanes_runtime::storage::StoragePointer::from_keyword(#keyword_path)
+                }
+                
+                fn #name(&self) -> u128 {
+                    self.#pointer_name().get_value::<u128>()
+                }
+                
+                fn #set_name(&self, value: u128) {
+                    self.#pointer_name().set_value::<u128>(value);
+                }
+                
+                fn #increase_name(&self, amount: u128) {
+                    let current = self.#name();
+                    self.#set_name(current + amount);
+                }
+                
+                fn #decrease_name(&self, amount: u128) {
+                    let current = self.#name();
+                    self.#set_name(current.saturating_sub(amount));
+                }
+            }
+        }
+        StorageVariableType::AlkaneId => {
+            quote! {
+                fn #pointer_name(&self) -> alkanes_runtime::storage::StoragePointer {
+                    alkanes_runtime::storage::StoragePointer::from_keyword(#keyword_path)
+                }
+                
+                fn #name(&self) -> anyhow::Result<alkanes_support::id::AlkaneId> {
+                    use std::io::Read;
+                    let ptr = self.#pointer_name().get().as_ref().clone();
+                    let mut cursor = std::io::Cursor::<Vec<u8>>::new(ptr);
+                    let mut buf = [0u8; 16];
+                    cursor.read_exact(&mut buf)?;
+                    let block = u128::from_le_bytes(buf);
+                    cursor.read_exact(&mut buf)?;
+                    let tx = u128::from_le_bytes(buf);
+                    Ok(alkanes_support::id::AlkaneId::new(block, tx))
+                }
+                
+                fn #set_name(&self, token_id: alkanes_support::id::AlkaneId) {
+                    let mut ptr = self.#pointer_name();
+                    ptr.set(std::sync::Arc::new(token_id.into()));
+                }
+            }
+        }
+        StorageVariableType::String => {
+            quote! {
+                fn #pointer_name(&self) -> alkanes_runtime::storage::StoragePointer {
+                    alkanes_runtime::storage::StoragePointer::from_keyword(#keyword_path)
+                }
+                
+                fn #name(&self) -> anyhow::Result<String> {
+                    let bytes = self.#pointer_name().get().as_ref().clone();
+                    if bytes.is_empty() {
+                        return Ok(String::new());
+                    }
+                    
+                    if bytes.len() < 4 {
+                        return Err(anyhow::anyhow!("Invalid bytes length for String"));
+                    }
+                    
+                    let name_length = u32::from_le_bytes(bytes[0..4].try_into()?) as usize;
+                    if bytes.len() < 4 + name_length {
+                        return Err(anyhow::anyhow!("Invalid bytes length for String content"));
+                    }
+                    
+                    Ok(String::from_utf8(bytes[4..4 + name_length].to_vec())?)
+                }
+                
+                fn #set_name(&self, value: String) {
+                    let mut bytes = Vec::new();
+                    let name_bytes = value.as_bytes();
+                    bytes.extend_from_slice(&(name_bytes.len() as u32).to_le_bytes());
+                    bytes.extend_from_slice(name_bytes);
+                    
+                    let mut ptr = self.#pointer_name();
+                    ptr.set(std::sync::Arc::new(bytes));
+                }
+            }
+        }
+        StorageVariableType::VecU8 => {
+            quote! {
+                fn #pointer_name(&self) -> alkanes_runtime::storage::StoragePointer {
+                    alkanes_runtime::storage::StoragePointer::from_keyword(#keyword_path)
+                }
+                
+                fn #name(&self) -> Vec<u8> {
+                    self.#pointer_name().get().as_ref().clone()
+                }
+                
+                fn #set_name(&self, v: Vec<u8>) {
+                    self.#pointer_name().set(std::sync::Arc::new(v));
+                }
+            }
+        }
+        StorageVariableType::Struct(struct_name) => {
+            quote! {
+                fn #pointer_name(&self) -> alkanes_runtime::storage::StoragePointer {
+                    alkanes_runtime::storage::StoragePointer::from_keyword(#keyword_path)
+                }
+                
+                fn #name(&self) -> anyhow::Result<#struct_name> {
+                    let bytes = self.#pointer_name().get().as_ref().clone();
+                    #struct_name::from_vec(&bytes)
+                }
+                
+                fn #set_name(&self, value: #struct_name) {
+                    let mut ptr = self.#pointer_name();
+                    ptr.set(std::sync::Arc::new(value.try_to_vec()));
+                }
+            }
+        }
+    };
+    
+    TokenStream::from(expanded)
+}
+
+/// Macro to define mapping storage variable helpers
+/// 
+/// Usage examples:
+/// ```ignore
+/// mapping_variable!(balances: (AlkaneId, u128));
+/// mapping_variable!(names: (u128, String));
+/// mapping_variable!(triple_index: (u128, AlkaneId, u128, u128));
+/// mapping_variable!(data: (String, Vec<u8>));
+/// ```
+/// 
+/// This generates functions for key-value mappings:
+/// - `{map_name}_pointer(&self, key_0: KeyType0, key_1: KeyType1, ...) -> StoragePointer`
+/// - `{map_name}(&self, key_0: KeyType0, key_1: KeyType1, ...) -> ValueType` (or Result<ValueType>)
+/// - `set_{map_name}(&self, key_0: KeyType0, key_1: KeyType1, ..., value: ValueType)`
+/// 
+/// Storage path format: "/{map_name}/{key_0}/{key_1}/..." with `Vec<u8>` segments appended as raw bytes after a slash
+/// 
+/// Supported key types: u128, AlkaneId, String, Vec<u8>
+/// Supported value types: u128, AlkaneId, String, Vec<u8>, structs (with from_vec/try_to_vec)
+#[proc_macro]
+pub fn mapping_variable(input: TokenStream) -> TokenStream {
+    // Parse the input: map_name: (KeyType0, KeyType1, ..., ValueType)
+    let parsed = syn::parse_macro_input!(input as MappingVariableInput);
+    
+    let map_name = &parsed.map_name;
+    let map_name_str = map_name.to_string();
+    let pointer_name = format_ident!("{}_pointer", map_name);
+    let set_name = format_ident!("set_{}", map_name);
+    
+    // Generate code based on key type and value type
+    let expanded = generate_mapping_functions(
+        &pointer_name,
+        map_name,
+        &map_name_str,
+        &set_name,
+        &parsed.key_types,
+        &parsed.value_type,
+    );
+    
+    TokenStream::from(expanded)
+}
+
+fn textual_segment_expr(key_ident: &Ident, key_type: &MappingKeyType) -> proc_macro2::TokenStream {
+    match key_type {
+        MappingKeyType::U128 | MappingKeyType::String => quote! { format!("/{}", #key_ident) },
+        MappingKeyType::AlkaneId => {
+            quote! { format!("/{block}:{tx}", block = #key_ident.block, tx = #key_ident.tx) }
+        }
+        MappingKeyType::VecU8 => panic!("Vec<u8> keys are not textual segments"),
+    }
+}
+
+fn generate_pointer_body(
+    map_name_str: &str,
+    key_types: &[MappingKeyType],
+    key_idents: &[Ident],
+) -> proc_macro2::TokenStream {
+    let base_init = quote! {
+        let mut keyword_path = format!("/{}", #map_name_str);
+    };
+
+    let first_vec_index = key_types
+        .iter()
+        .position(|kt| matches!(kt, MappingKeyType::VecU8));
+
+    if let Some(first_vec_index) = first_vec_index {
+        let before_vec_statements =
+            key_types
+                .iter()
+                .enumerate()
+                .take(first_vec_index)
+                .map(|(idx, key_type)| {
+                    let key_ident = &key_idents[idx];
+                    let segment_expr = textual_segment_expr(key_ident, key_type);
+                    quote! {
+                        keyword_path.push_str(&#segment_expr);
+                    }
+                });
+
+        let mut after_vec_statements = Vec::new();
+
+        for (idx, key_type) in key_types.iter().enumerate().skip(first_vec_index) {
+            let key_ident = &key_idents[idx];
+            match key_type {
+                MappingKeyType::VecU8 => {
+                    if idx > first_vec_index {
+                        let delimiter_ident = format_ident!("__keyword_delimiter_{}", idx);
+                        after_vec_statements.push(quote! {
+                            let #delimiter_ident = vec![b'/'];
+                            pointer = pointer.select(&#delimiter_ident);
+                        });
+                    }
+                    after_vec_statements.push(quote! {
+                        pointer = pointer.select(&#key_ident);
+                    });
+                }
+                _ => {
+                    let segment_ident = format_ident!("__keyword_segment_{}", idx);
+                    let segment_bytes_ident = format_ident!("__keyword_segment_bytes_{}", idx);
+                    let segment_expr = textual_segment_expr(key_ident, key_type);
+                    after_vec_statements.push(quote! {
+                        let #segment_ident = #segment_expr;
+                        let #segment_bytes_ident = #segment_ident.into_bytes();
+                        pointer = pointer.select(&#segment_bytes_ident);
+                    });
+                }
+            }
+        }
+
+        quote! {
+            #base_init
+            #(#before_vec_statements)*
+            keyword_path.push('/');
+            let mut pointer = alkanes_runtime::storage::StoragePointer::from_keyword(&keyword_path);
+            #(#after_vec_statements)*
+            pointer
+        }
+    } else {
+        let segment_statements = key_types.iter().enumerate().map(|(idx, key_type)| {
+            let key_ident = &key_idents[idx];
+            let segment_expr = textual_segment_expr(key_ident, key_type);
+            quote! {
+                keyword_path.push_str(&#segment_expr);
+            }
+        });
+
+        quote! {
+            #base_init
+            #(#segment_statements)*
+            alkanes_runtime::storage::StoragePointer::from_keyword(&keyword_path)
+        }
+    }
+}
+
+fn key_type_to_tokens(key_type: &MappingKeyType) -> proc_macro2::TokenStream {
+    match key_type {
+        MappingKeyType::U128 => quote! { u128 },
+        MappingKeyType::AlkaneId => quote! { alkanes_support::id::AlkaneId },
+        MappingKeyType::String => quote! { String },
+        MappingKeyType::VecU8 => quote! { Vec<u8> },
+    }
+}
+
+#[allow(dead_code)]
+fn value_type_to_tokens(value_type: &MappingValueType) -> proc_macro2::TokenStream {
+    match value_type {
+        MappingValueType::U128 => quote! { u128 },
+        MappingValueType::AlkaneId => quote! { alkanes_support::id::AlkaneId },
+        MappingValueType::String => quote! { String },
+        MappingValueType::VecU8 => quote! { Vec<u8> },
+        MappingValueType::Struct(struct_name) => quote! { #struct_name },
+    }
+}
+
+fn generate_mapping_functions(
+    pointer_name: &Ident,
+    map_name: &Ident,
+    map_name_str: &str,
+    set_name: &Ident,
+    key_types: &[MappingKeyType],
+    value_type: &MappingValueType,
+) -> proc_macro2::TokenStream {
+    assert!(
+        !key_types.is_empty(),
+        "mapping_variable! requires at least one key type"
+    );
+
+    let key_idents: Vec<Ident> = key_types
+        .iter()
+        .enumerate()
+        .map(|(idx, _)| format_ident!("key_{}", idx))
+        .collect();
+
+    let key_params: Vec<proc_macro2::TokenStream> = key_types
+        .iter()
+        .enumerate()
+        .map(|(idx, key_type)| {
+            let ident = &key_idents[idx];
+            let ty_tokens = key_type_to_tokens(key_type);
+            quote! { #ident: #ty_tokens }
+        })
+        .collect();
+
+    let pointer_body = generate_pointer_body(map_name_str, key_types, &key_idents);
+    let pointer_params = key_params.clone();
+
+    let pointer_fn = if pointer_params.is_empty() {
+        quote! {
+            fn #pointer_name(&self) -> alkanes_runtime::storage::StoragePointer {
+                #pointer_body
+            }
+        }
+    } else {
+        quote! {
+            fn #pointer_name(&self, #(#pointer_params),*) -> alkanes_runtime::storage::StoragePointer {
+                #pointer_body
+            }
+        }
+    };
+
+    // Generate get and set functions based on value type
+    let (get_fn, set_fn) = match value_type {
+        MappingValueType::U128 => {
+            let get_params = key_params.clone();
+            let set_params = key_params.clone();
+            let pointer_args_get = key_idents.clone();
+            let pointer_args_set = key_idents.clone();
+
+            let get_quote = quote! {
+                fn #map_name(&self, #(#get_params),*) -> u128 {
+                    self.#pointer_name(#(#pointer_args_get),*).get_value::<u128>()
+                }
+            };
+            let set_quote = quote! {
+                fn #set_name(&self, #(#set_params),*, value: u128) {
+                    self.#pointer_name(#(#pointer_args_set),*).set_value::<u128>(value);
+                }
+            };
+            (get_quote, set_quote)
+        }
+        MappingValueType::AlkaneId => {
+            let get_params = key_params.clone();
+            let set_params = key_params.clone();
+            let pointer_args_get = key_idents.clone();
+            let pointer_args_set = key_idents.clone();
+
+            let get_quote = quote! {
+                fn #map_name(&self, #(#get_params),*) -> anyhow::Result<alkanes_support::id::AlkaneId> {
+                    use std::io::Read;
+                    let ptr = self.#pointer_name(#(#pointer_args_get),*).get().as_ref().clone();
+                    let mut cursor = std::io::Cursor::<Vec<u8>>::new(ptr);
+                    let mut buf = [0u8; 16];
+                    cursor.read_exact(&mut buf)?;
+                    let block = u128::from_le_bytes(buf);
+                    cursor.read_exact(&mut buf)?;
+                    let tx = u128::from_le_bytes(buf);
+                    Ok(alkanes_support::id::AlkaneId::new(block, tx))
+                }
+            };
+            let set_quote = quote! {
+                fn #set_name(&self, #(#set_params),*, value: alkanes_support::id::AlkaneId) {
+                    let mut ptr = self.#pointer_name(#(#pointer_args_set),*);
+                    ptr.set(std::sync::Arc::new(value.into()));
+                }
+            };
+            (get_quote, set_quote)
+        }
+        MappingValueType::String => {
+            let get_params = key_params.clone();
+            let set_params = key_params.clone();
+            let pointer_args_get = key_idents.clone();
+            let pointer_args_set = key_idents.clone();
+
+            let get_quote = quote! {
+                fn #map_name(&self, #(#get_params),*) -> anyhow::Result<String> {
+                    let bytes = self.#pointer_name(#(#pointer_args_get),*).get().as_ref().clone();
+                    if bytes.is_empty() {
+                        return Ok(String::new());
+                    }
+                    
+                    if bytes.len() < 4 {
+                        return Err(anyhow::anyhow!("Invalid bytes length for String"));
+                    }
+                    
+                    let name_length = u32::from_le_bytes(bytes[0..4].try_into()?) as usize;
+                    if bytes.len() < 4 + name_length {
+                        return Err(anyhow::anyhow!("Invalid bytes length for String content"));
+                    }
+                    
+                    Ok(String::from_utf8(bytes[4..4 + name_length].to_vec())?)
+                }
+            };
+            let set_quote = quote! {
+                fn #set_name(&self, #(#set_params),*, value: String) {
+                    let mut bytes = Vec::new();
+                    let name_bytes = value.as_bytes();
+                    bytes.extend_from_slice(&(name_bytes.len() as u32).to_le_bytes());
+                    bytes.extend_from_slice(name_bytes);
+                    
+                    let mut ptr = self.#pointer_name(#(#pointer_args_set),*);
+                    ptr.set(std::sync::Arc::new(bytes));
+                }
+            };
+            (get_quote, set_quote)
+        }
+        MappingValueType::VecU8 => {
+            let get_params = key_params.clone();
+            let set_params = key_params.clone();
+            let pointer_args_get = key_idents.clone();
+            let pointer_args_set = key_idents.clone();
+
+            let get_quote = quote! {
+                fn #map_name(&self, #(#get_params),*) -> Vec<u8> {
+                    self.#pointer_name(#(#pointer_args_get),*).get().as_ref().clone()
+                }
+            };
+            let set_quote = quote! {
+                fn #set_name(&self, #(#set_params),*, v: Vec<u8>) {
+                    self.#pointer_name(#(#pointer_args_set),*).set(std::sync::Arc::new(v));
+                }
+            };
+            (get_quote, set_quote)
+        }
+        MappingValueType::Struct(struct_name) => {
+            let get_params = key_params.clone();
+            let set_params = key_params.clone();
+            let pointer_args_get = key_idents.clone();
+            let pointer_args_set = key_idents.clone();
+
+            let get_quote = quote! {
+                fn #map_name(&self, #(#get_params),*) -> anyhow::Result<#struct_name> {
+                    let bytes = self.#pointer_name(#(#pointer_args_get),*).get().as_ref().clone();
+                    #struct_name::from_vec(&bytes)
+                }
+            };
+            let set_quote = quote! {
+                fn #set_name(&self, #(#set_params),*, value: #struct_name) {
+                    let mut ptr = self.#pointer_name(#(#pointer_args_set),*);
+                    ptr.set(std::sync::Arc::new(value.try_to_vec()));
+                }
+            };
+            (get_quote, set_quote)
+        }
+    };
+    
+    quote! {
+        #pointer_fn
+        #get_fn
+        #set_fn
+    }
+}
+
+enum ParsedType {
+    U128,
+    AlkaneId,
+    String,
+    VecU8,
+    Struct(Ident),
+}
+
+fn parse_type(ty_type: &Type) -> syn::Result<ParsedType> {
+    match ty_type {
+        Type::Path(type_path) => {
+            if let Some(segment) = type_path.path.segments.last() {
+                let seg_name = segment.ident.to_string();
+                
+                // Check for Vec<u8>
+                if seg_name == "Vec" {
+                    if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
+                        if let Some(syn::GenericArgument::Type(inner_type)) = args.args.first() {
+                            if let Type::Path(inner_path) = inner_type {
+                                if let Some(inner_seg) = inner_path.path.segments.last() {
+                                    if inner_seg.ident == "u8" {
+                                        return Ok(ParsedType::VecU8);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    return Err(syn::Error::new_spanned(ty_type, "Only Vec<u8> is supported for Vec types"));
+                }
+                
+                // Check for simple types
+                Ok(match seg_name.as_str() {
+                    "u128" => ParsedType::U128,
+                    "AlkaneId" => ParsedType::AlkaneId,
+                    "String" => ParsedType::String,
+                    _ => ParsedType::Struct(segment.ident.clone()),
+                })
+            } else {
+                Err(syn::Error::new_spanned(ty_type, "Invalid type"))
+            }
+        }
+        _ => Err(syn::Error::new_spanned(ty_type, "Expected type identifier or generic type")),
+    }
+}
+
+enum StorageVariableType {
+    U128,
+    AlkaneId,
+    String,
+    VecU8,
+    Struct(Ident),
+}
+
+struct StorageVariableInput {
+    name: Ident,
+    ty: StorageVariableType,
+}
+
+impl syn::parse::Parse for StorageVariableInput {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        let name: Ident = input.parse()?;
+        input.parse::<syn::Token![:]>()?;
+        
+        let ty_type: Type = input.parse()?;
+        let parsed = parse_type(&ty_type)?;
+        
+        let ty = match parsed {
+            ParsedType::U128 => StorageVariableType::U128,
+            ParsedType::AlkaneId => StorageVariableType::AlkaneId,
+            ParsedType::String => StorageVariableType::String,
+            ParsedType::VecU8 => StorageVariableType::VecU8,
+            ParsedType::Struct(ident) => StorageVariableType::Struct(ident),
+        };
+        
+        Ok(StorageVariableInput { name, ty })
+    }
+}
+
+#[derive(Debug, PartialEq)]
+enum MappingKeyType {
+    U128,
+    AlkaneId,
+    String,
+    VecU8,
+}
+
+enum MappingValueType {
+    U128,
+    AlkaneId,
+    String,
+    VecU8,
+    Struct(Ident),
+}
+
+struct MappingVariableInput {
+    map_name: Ident,
+    key_types: Vec<MappingKeyType>,
+    value_type: MappingValueType,
+}
+
+impl syn::parse::Parse for MappingVariableInput {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        let map_name: Ident = input.parse()?;
+        input.parse::<syn::Token![:]>()?;
+        
+        let content;
+        syn::parenthesized!(content in input);
+        let types: syn::punctuated::Punctuated<Type, syn::Token![,]> =
+            content.parse_terminated(Type::parse)?;
+        
+        if types.len() < 2 {
+            return Err(syn::Error::new(
+                proc_macro2::Span::call_site(),
+                "mapping_variable! requires at least one key type and one value type",
+            ));
+        }
+        
+        let mut type_vec: Vec<Type> = types.into_iter().collect();
+        let value_type_ty = type_vec
+            .pop()
+            .expect("type_vec has at least one element after len check");
+        let value_parsed = parse_type(&value_type_ty)?;
+        let value_type = match value_parsed {
+            ParsedType::U128 => MappingValueType::U128,
+            ParsedType::AlkaneId => MappingValueType::AlkaneId,
+            ParsedType::String => MappingValueType::String,
+            ParsedType::VecU8 => MappingValueType::VecU8,
+            ParsedType::Struct(ident) => MappingValueType::Struct(ident),
+        };
+        
+        let mut key_types = Vec::with_capacity(type_vec.len());
+        for key_type_ty in type_vec {
+            let key_parsed = parse_type(&key_type_ty)?;
+            let key_type = match key_parsed {
+                ParsedType::U128 => MappingKeyType::U128,
+                ParsedType::AlkaneId => MappingKeyType::AlkaneId,
+                ParsedType::String => MappingKeyType::String,
+                ParsedType::VecU8 => MappingKeyType::VecU8,
+                ParsedType::Struct(_) => {
+                    return Err(syn::Error::new_spanned(
+                        &key_type_ty,
+                        "Unsupported key type. Supported: u128, AlkaneId, String, Vec<u8>",
+                    ))
+                }
+            };
+            key_types.push(key_type);
+        }
+        
+        Ok(MappingVariableInput {
+            map_name,
+            key_types,
+            value_type,
+        })
+    }
 }
