@@ -55,6 +55,7 @@ pub mod network;
 pub mod precompile;
 pub mod precompile_diesel;
 pub mod precompiled;
+pub mod recycle;
 pub mod tables;
 #[cfg(any(test, feature = "test-utils"))]
 pub mod tests;
