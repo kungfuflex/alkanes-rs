@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use crate::balance_sheet::load_sheet;
+    use crate::balance_sheet::{load_sheet, load_sheet_chunked};
     use crate::message::{MessageContext, MessageContextParcel};
     use crate::test_helpers::{self as helpers};
     use crate::{tables, Protorune};
@@ -76,13 +76,13 @@ mod tests {
             vout: 0,
         };
         // check runes balance
-        let sheet = load_sheet(
+        let sheet = load_sheet_chunked(
             &tables::RUNES
                 .OUTPOINT_TO_RUNES
                 .select(&consensus_encode(&outpoint_address).unwrap()),
         );
 
-        let protorunes_sheet = load_sheet(
+        let protorunes_sheet = load_sheet_chunked(
             &tables::RuneTable::for_protocol(PROTOCOL_ID.into())
                 .OUTPOINT_TO_RUNES
                 .select(&consensus_encode(&outpoint_address).unwrap()),
