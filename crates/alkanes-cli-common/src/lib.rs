@@ -90,6 +90,14 @@ pub mod proto;
 pub mod subfrost;
 pub mod ordinals;
 
+// New-protocol WalletConnect signer for SUBFROST mobile vc=419+.
+// Gated on the wc-signer feature so non-WC consumers don't pay the
+// crypto/transport dep cost. Native impl (file storage + frtun-pair
+// dialer + reqwest pair-wake) requires `wc-signer-native`; wasm callers
+// only get the codec + traits.
+#[cfg(feature = "wc-signer")]
+pub mod wc_signer;
+
 #[cfg(feature = "std")]
 pub mod cache;
 

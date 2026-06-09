@@ -129,6 +129,14 @@ sqlx = { version = "0.7", default-features = false, features = ["runtime-tokio-r
 tonic = { version = "0.12", default-features = false, features = ["codegen", "prost", "transport"], optional = true }
 prost-types = { version = "0.13", optional = true }
 
+# Optional: new-protocol WalletConnect signer (wc-signer + wc-signer-native).
+# Pure-codec layer compiles to wasm; the native transport (frtun-pair WSS
+# dial + reqwest pair-wake POST) is its own feature. See src/wc_signer/.
+hkdf             = { version = "0.12", optional = true }
+chacha20poly1305 = { version = "0.10", optional = true }
+x25519-dalek     = { version = "2", features = ["static_secrets"], optional = true }
+frtun-pair       = { path = "../../vendor/frtun-pair", optional = true }
+
 [features]
 default = ["std", "wasm-inspection", "native-deps", "cache-sqlite"]
 std = ["tokio", "reqwest", "url", "bitcoincore-rpc", "dirs", "tempfile", "futures", "async-trait"]
@@ -143,6 +151,22 @@ wasip2 = []  # No std, no tokio, no reqwest, no futures, no async-trait - only c
 cache-sqlite = ["std", "sqlx"]
 # gRPC-backed AlkanesCache shim for subfrost-mobile. Requires `std`.
 cache-grpc = ["std", "tonic", "prost-types"]
+
+# Codec-only WC signer (wire + crypto + pairing + storage trait + transport
+# trait). Wasm-safe; no I/O deps.
+wc-signer = ["hkdf", "chacha20poly1305", "x25519-dalek", "async-trait"]
+# Native transport + file storage implementations of the WC signer.
+# Pulls in tokio + reqwest + frtun-pair (with WSS dial enabled) + dirs.
+wc-signer-native = [
+    "wc-signer",
+    "std",
+    "tokio",
+    "reqwest",
+    "futures",
+    "dirs",
+    "frtun-pair/client-native",
+    "url",
+]
 
 test-utils = []
 

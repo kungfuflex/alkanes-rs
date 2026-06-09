@@ -11,7 +11,7 @@ wasm-opt = false
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-alkanes-cli-common = { path = "../alkanes-cli-common", default-features = false, features = ["web-compat", "wasm-inspection"] }
+alkanes-cli-common = { path = "../alkanes-cli-common", default-features = false, features = ["web-compat", "wasm-inspection", "wc-signer"] }
 alkanes-asc = { path = "../alkanes-asc" }
 wasm-bindgen = "0.2"
 serde-wasm-bindgen = "0.6"
@@ -38,6 +38,7 @@ rand = { workspace = true }
 base64 = { workspace = true }
 protobuf = { workspace = true }
 pbkdf2 = { workspace = true }
+x25519-dalek = { version = "2", features = ["static_secrets"] }
 aes-gcm = { workspace = true }
 once_cell = { workspace = true }
 console_error_panic_hook = "0.1"

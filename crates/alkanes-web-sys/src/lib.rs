@@ -56,6 +56,11 @@ pub mod utils;
 pub mod wallet_provider;
 pub mod keystore_wallet;
 
+// New-protocol WalletConnect signer codec exports — codec layer only;
+// transport (browser WebSocket) + storage (IndexedDB) live in JS land
+// and layer on top of these wasm-bindgen exports.
+pub mod wc_signer;
+
 // Re-export wallet provider types for easier access
 pub use wallet_provider::{
     WasmBrowserWalletProvider,

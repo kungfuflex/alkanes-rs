@@ -1,33 +1,38 @@
-//! Adapter that exposes a paired `subfrost_wc::WalletConnectSigner` as
-//! the `alkanes_cli_common::traits::RemoteSigner` trait.
+//! Adapter — exposes the new-protocol `WalletConnectSigner` (from
+//! `alkanes_cli_common::wc_signer`) as the
+//! `alkanes_cli_common::traits::RemoteSigner` trait.
 //!
-//! Lives in `alkanes-cli` (not in `subfrost-wc`) so the vendored
-//! WalletConnect crate stays generic and doesn't need to know about
-//! `alkanes-cli-common`'s trait shapes.
+//! Replaces the old `subfrost_wc::signer::WalletConnectSigner` adapter
+//! that lived here. Same call shape, same Mutex-guarded interior — only
+//! the underlying transport changed (wc-relay → frtun-pair `/v1/pair`).
 //!
-//! Lifetime model: the adapter owns the signer (it's a one-shot per CLI
-//! invocation; we re-attach to the relay at startup, sign, exit). The
-//! relay's background reader task stays alive for the lifetime of the
-//! `WalletConnectSigner` it was spawned with.
+//! Wire protocol exactly matches the SUBFROST mobile vc=419 listener
+//! and the `@alkanes/ts-sdk` walletconnect-cli sender.
 
 use std::sync::Arc;
 
 use alkanes_cli_common::traits::RemoteSigner;
+use alkanes_cli_common::wc_signer::{
+    storage::NativeFileStorage,
+    transport::NativeTransport,
+    WalletConnectSigner,
+};
 use alkanes_cli_common::AlkanesError;
 use bitcoin::psbt::Psbt;
-use subfrost_wc::signer::WalletConnectSigner;
 use tokio::sync::Mutex;
 
-/// `RemoteSigner` impl backed by a `WalletConnectSigner`. Holds the
-/// signer in a `Mutex` because the trait is `&self` but we want serial
-/// access to the relay (only one outstanding sign request at a time —
-/// the mobile UX assumes that).
+/// Concrete native instantiation of the generic signer driver.
+pub type NativeWcSigner = WalletConnectSigner<NativeTransport, NativeFileStorage>;
+
+/// `RemoteSigner` impl backed by the new-protocol signer. Holds the
+/// signer in a `Mutex` because the trait is `&self` but the WC UX
+/// assumes one outstanding sign request at a time per session.
 pub struct WcRemoteSigner {
-    inner: Arc<Mutex<WalletConnectSigner>>,
+    inner: Arc<Mutex<NativeWcSigner>>,
 }
 
 impl WcRemoteSigner {
-    pub fn new(signer: WalletConnectSigner) -> Self {
+    pub fn new(signer: NativeWcSigner) -> Self {
         Self {
             inner: Arc::new(Mutex::new(signer)),
         }
@@ -41,15 +46,15 @@ impl RemoteSigner for WcRemoteSigner {
         psbt: &Psbt,
         addresses: &[String],
     ) -> Result<Psbt, AlkanesError> {
-        // PSBTs go over the wire as hex (matching the JS SDK's wire
-        // shape — `signPsbt(psbt_hex, addresses, ...)`).
+        // PSBTs go over the wire as hex — matches the TS sender's
+        // `signPsbt(psbtHex, addresses, ...)` shape exactly.
         let psbt_bytes = psbt.serialize();
         let psbt_hex = hex::encode(&psbt_bytes);
 
         let signed_hex = {
-            let guard = self.inner.lock().await;
+            let mut guard = self.inner.lock().await;
             guard
-                .sign_psbt(&psbt_hex, addresses.to_vec())
+                .sign_psbt(psbt_hex, addresses.to_vec())
                 .await
                 .map_err(|e| AlkanesError::Wallet(format!("walletconnect sign_psbt: {e}")))?
         };
@@ -61,11 +66,9 @@ impl RemoteSigner for WcRemoteSigner {
     }
 
     async fn get_addresses(&self) -> Result<Vec<String>, AlkanesError> {
-        let guard = self.inner.lock().await;
-        // Prefer the cached account list from the persisted session;
-        // fall back to a fresh getAccounts RPC if empty.
+        let mut guard = self.inner.lock().await;
         if !guard.accounts().is_empty() {
-            return Ok(guard.accounts().to_vec());
+            return Ok(guard.accounts());
         }
         guard
             .get_accounts()

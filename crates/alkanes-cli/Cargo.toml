@@ -13,7 +13,7 @@ path = "src/main.rs"
 [dependencies]
 sha2 = { workspace = true }
 reqwest = { workspace = true, features = ["json"] }
-alkanes-cli-common = { path = "../alkanes-cli-common", features = ["std"] }
+alkanes-cli-common = { path = "../alkanes-cli-common", features = ["std", "wc-signer", "wc-signer-native"] }
 alkanes-cli-sys = { path = "../alkanes-cli-sys" }
 subfrost-wc = { path = "../../vendor/subfrost-wc", features = ["relay-client"] }
 async-trait = { workspace = true }

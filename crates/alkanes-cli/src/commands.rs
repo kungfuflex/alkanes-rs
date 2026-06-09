@@ -2744,16 +2744,19 @@ pub enum SubfrostCommands {
 ///      keystore.
 #[derive(Subcommand, Debug, Clone, Serialize, Deserialize)]
 pub enum WcCommands {
-    /// Print a fresh pairing URI + code; block until the mobile wallet
-    /// pairs. Stashes the session for later signing.
+    /// Print a fresh pairing deeplink + 6-char code; block until the
+    /// SUBFROST mobile wallet dials in via the frtun-pair bridge.
+    /// Persists the session at ~/.alkanes/wc-session.json (mode 0600).
     Pair {
-        /// Relay endpoint. Defaults to `wss://wc.subfrost.io/`.
+        /// frtun-pair bridge URL. Defaults to
+        /// `wss://wss-tls.subfrost.io/v1/pair` (subfrost-wallet-api
+        /// unified ingress).
         #[arg(long)]
-        relay_url: Option<String>,
+        bridge: Option<String>,
         /// Origin string shown to the wallet. Defaults to "alkanes-cli".
         #[arg(long, default_value = "alkanes-cli")]
         origin: String,
-        /// How long to wait (seconds) for the wallet to accept.
+        /// How long to wait (seconds) for the wallet to dial.
         #[arg(long, default_value_t = 300)]
         timeout_secs: u64,
     },
@@ -2769,9 +2772,20 @@ pub enum WcCommands {
         #[arg(long, value_delimiter = ',')]
         addresses: Vec<String>,
     },
+    /// Sign an arbitrary message with one of the wallet's addresses.
+    /// BIP-137 (ECDSA-recoverable) for non-taproot, BIP-340 (schnorr)
+    /// for taproot. Result is base64.
+    SignMessage {
+        /// Message to sign.
+        message: String,
+        /// Address whose private key should sign.
+        #[arg(long)]
+        address: String,
+    },
     /// Forget the stashed session (the wallet retains its own copy
-    /// until the user revokes it from the mobile UI).
-    Revoke {},
+    /// until the user revokes it from the mobile UI). Alias: `revoke`.
+    #[command(alias = "revoke")]
+    Unpair {},
 }
 
 /// ESPO subcommands (alkanes balance indexer with PostgreSQL backend)

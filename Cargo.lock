@@ -393,6 +393,7 @@ dependencies = [
  "bitcoin 0.32.7",
  "bitcoin_hashes 0.14.0",
  "bitcoincore-rpc",
+ "chacha20poly1305",
  "chrono",
  "clap",
  "dirs",
@@ -404,12 +405,14 @@ dependencies = [
  "flate2",
  "frost-core",
  "frost-secp256k1-tr",
+ "frtun-pair",
  "futures",
  "getrandom 0.2.16",
  "gloo-timers",
  "gloo-worker",
  "gloo-worker-macros",
  "hex",
+ "hkdf",
  "js-sys",
  "lazy_static",
  "leb128",
@@ -450,6 +453,7 @@ dependencies = [
  "wasmprinter 0.2.80",
  "wat",
  "web-sys",
+ "x25519-dalek",
 ]
 
 [[package]]
@@ -989,6 +993,7 @@ dependencies = [
  "wasm-bindgen-futures",
  "wasm-bindgen-test",
  "web-sys",
+ "x25519-dalek",
 ]
 
 [[package]]
