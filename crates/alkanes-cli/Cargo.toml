@@ -10,6 +10,15 @@ license = "MIT"
 name = "alkanes-cli"
 path = "src/main.rs"
 
+[features]
+# `icmp` flips the new frtun-pair typed-frame + PING/PONG layer ON
+# across the entire CLI → wc_signer → frtun-pair stack. Default ON so
+# the released binary ships with fast-fail peer reachability checks;
+# requires the paired mobile peer (subfrost-mobile) to also be on a
+# build with the matching feature flipped — atomic flip in tick 2.
+default = ["icmp"]
+icmp = ["alkanes-cli-common/icmp"]
+
 [dependencies]
 sha2 = { workspace = true }
 reqwest = { workspace = true, features = ["json"] }

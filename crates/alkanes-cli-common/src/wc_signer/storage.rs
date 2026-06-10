@@ -1,82 +1,23 @@
-//! `SessionStorage` trait + native (~/.alkanes/wc-session.json, 0600)
-//! impl.
+//! Native file-backed `SessionStorage` impl —
+//! `~/.alkanes/wc-session.json`, mode 0600.
 //!
-//! What gets persisted per pair:
-//!   * our X25519 priv + pub (so we can re-derive symKey after restart)
-//!   * the phone's X25519 pub
-//!   * the symKey itself (cached so we don't ECDH every restart)
-//!   * the bridge URL, the CLI peer name, the phone peer name, the
-//!     pairing code, the wallet's address list, origin
-//!
-//! Format choice: plain JSON with restrictive file perms. The session
-//! is only useful when paired against the matching phone, so the
-//! security model is "don't leak the .json off the host".
+//! The trait + `PersistedSession` wire shape now live in
+//! `wc_signer_core::storage`; this file is the native-only impl on top.
+//! Re-export the core types here so existing
+//! `alkanes_cli_common::wc_signer::storage::{PersistedSession,
+//! SessionStorage, StorageError}` import paths keep compiling.
 
-use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
-use thiserror::Error;
-
-/// The persisted session — what `restore()` rehydrates from. The
-/// keystore-style envelope is intentionally minimal so `subfrost-app`
-/// and `alkanes-cli` agree on the disk shape.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PersistedSession {
-    /// Our CLI's identity (bech32-ish peer name + b64url-32B secret).
-    pub cli_peer_name: String,
-    /// The phone's peer name that dialed us during pair.
-    pub wallet_peer_name: String,
-    /// Bridge URL we paired against (e.g. wss://wss-tls.subfrost.io/v1/pair).
-    pub bridge_url: String,
-    /// Origin string the wallet showed the user at pair time.
-    pub origin: String,
-    /// 6-char pairing code the user typed.
-    pub pairing_code: String,
-    /// b64url-encoded 32-byte symKey (HKDF output of the ECDH).
-    pub sym_key_b64: String,
-    /// b64url X25519 own priv (32B), for re-deriving if needed.
-    pub own_priv_b64: String,
-    /// b64url X25519 own pub (32B).
-    pub own_pub_b64: String,
-    /// b64url X25519 wallet pub (32B).
-    pub peer_pub_b64: String,
-    /// Cached wallet address list — populated by `get_accounts()` after
-    /// pair so we don't have to round-trip on every sign.
-    #[serde(default)]
-    pub accounts: Vec<String>,
-    /// ISO 8601 paired-at timestamp.
-    pub paired_at: String,
-    /// ISO 8601 last-used-at timestamp.
-    pub last_used_at: String,
-}
-
-#[derive(Debug, Error)]
-pub enum StorageError {
-    #[error("io: {0}")]
-    Io(String),
-    #[error("parse: {0}")]
-    Parse(String),
-    #[error("not found")]
-    NotFound,
-}
-
-#[async_trait]
-pub trait SessionStorage: Send + Sync {
-    async fn save(&self, session: &PersistedSession) -> Result<(), StorageError>;
-    async fn load(&self) -> Result<Option<PersistedSession>, StorageError>;
-    async fn delete(&self) -> Result<(), StorageError>;
-}
-
-// =====================================================================
-// Native file-backed impl — ~/.alkanes/wc-session.json, mode 0600.
-// =====================================================================
+#[cfg(feature = "wc-signer")]
+pub use wc_signer_core::storage::{PersistedSession, SessionStorage, StorageError};
 
 #[cfg(all(feature = "wc-signer-native", not(target_arch = "wasm32")))]
 pub use native::NativeFileStorage;
 
 #[cfg(all(feature = "wc-signer-native", not(target_arch = "wasm32")))]
 mod native {
-    use super::*;
+    use async_trait::async_trait;
     use std::path::PathBuf;
+    use wc_signer_core::storage::{PersistedSession, SessionStorage, StorageError};
 
     pub struct NativeFileStorage {
         path: PathBuf,

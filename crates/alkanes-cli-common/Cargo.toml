@@ -130,12 +130,29 @@ tonic = { version = "0.12", default-features = false, features = ["codegen", "pr
 prost-types = { version = "0.13", optional = true }
 
 # Optional: new-protocol WalletConnect signer (wc-signer + wc-signer-native).
-# Pure-codec layer compiles to wasm; the native transport (frtun-pair WSS
-# dial + reqwest pair-wake POST) is its own feature. See src/wc_signer/.
-hkdf             = { version = "0.12", optional = true }
-chacha20poly1305 = { version = "0.10", optional = true }
-x25519-dalek     = { version = "2", features = ["static_secrets"], optional = true }
+# Codec + signer state machine now lives in the sibling `wc-signer-core`
+# crate (post-tick-#618 carve-out) so subfrost-wallet-web-sys can reuse
+# the same Rust state machine in the browser. This crate keeps the
+# native transport (tlsfetch-ws WSS dial + in-tree http_async POST
+# for /v1/pair-wake — kept off reqwest by design) and the native
+# file-backed SessionStorage on top.
+wc-signer-core   = { path = "../wc-signer-core", default-features = false, optional = true }
 frtun-pair       = { path = "../../vendor/frtun-pair", optional = true }
+# Native WSS dial uses tlsfetch-ws (vendor/tlsfetch-ws), tick 2 of the
+# TLSFETCH-WS migration. The crate is TLS-engine-agnostic — gets us
+# off the frtun-pair `native` feature (formerly `client-native`) and
+# onto a shared, tested WSS client we can grow across mobile + extension.
+tlsfetch-ws      = { workspace = true, optional = true }
+bytes            = { workspace = true, optional = true }
+
+# Bare-async H1/H1S helper that drives the `/v1/pair-wake` POST in the
+# WC signer's native transport. Replaces the reqwest dependency that
+# used to live there. Engine-agnostic — only public rustls 0.23 API, no
+# `[patch.crates-io]` shenanigans. Was an inline module
+# (src/wc_signer/http_async.rs) pre-2026-06-10; now lives in the
+# vendored `frtun-http-async` crate to share with frtun-push-proxy +
+# frtun-pair-bridge upstream.
+frtun-http-async = { workspace = true, optional = true }
 
 [features]
 default = ["std", "wasm-inspection", "native-deps", "cache-sqlite"]
@@ -152,20 +169,40 @@ cache-sqlite = ["std", "sqlx"]
 # gRPC-backed AlkanesCache shim for subfrost-mobile. Requires `std`.
 cache-grpc = ["std", "tonic", "prost-types"]
 
-# Codec-only WC signer (wire + crypto + pairing + storage trait + transport
-# trait). Wasm-safe; no I/O deps.
-wc-signer = ["hkdf", "chacha20poly1305", "x25519-dalek", "async-trait"]
+# Codec-only WC signer (re-exports the carved `wc-signer-core` crate).
+# Wasm-safe; no I/O deps. The actual codec + signer state machine lives
+# in `wc-signer-core`; consumers who want only that should depend on
+# `wc-signer-core` directly.
+wc-signer = ["dep:wc-signer-core", "async-trait"]
+# Typed-frame + PING/PONG reachability probe support. Mirrored on the
+# canonical frtun-pair crate (~/subfrost-mobile/crates/frtun-pair); the
+# wire shape changes when enabled, so both peers must flip the flag
+# together. The wc_signer adds a fast-fail `ping` gate at the front of
+# `send_request`; native transport's PairStreamAdapter implements
+# WalletPairStream::ping by delegating to frtun_pair::PairStream::ping.
+icmp = ["frtun-pair/icmp", "wc-signer-core/icmp"]
 # Native transport + file storage implementations of the WC signer.
-# Pulls in tokio + reqwest + frtun-pair (with WSS dial enabled) + dirs.
+# Pulls in tokio + frtun-pair (codec only — no `native` feature) +
+# tlsfetch-ws + dirs. The pair-wake POST goes through the in-tree
+# `src/wc_signer/http_async.rs` helper (tokio + tokio-rustls + rustls
+# + webpki-roots + httparse) — NOT reqwest — to keep this subgraph off
+# a second HTTP stack and off any rustls fork.
+#
+# (reqwest is still transitively present via `std` for other modules
+# in this crate, but the wc_signer subgraph itself no longer reaches
+# for it.)
 wc-signer-native = [
     "wc-signer",
+    "wc-signer-core/native-time",
     "std",
     "tokio",
-    "reqwest",
     "futures",
     "dirs",
-    "frtun-pair/client-native",
+    "frtun-pair",
+    "tlsfetch-ws",
+    "bytes",
     "url",
+    "dep:frtun-http-async",
 ]
 
 test-utils = []
@@ -182,6 +219,10 @@ mockall = { workspace = true }
 bech32 = { workspace = true }
 tempfile = { workspace = true }
 anyhow = { workspace = true }
+# Tick-#618 — wc_signer_e2e.rs uses these directly; they used to be
+# transitive deps via the un-carved `wc_signer` module.
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+async-trait = { workspace = true }
 
 # WASM-specific configuration
 [target.'cfg(target_arch = "wasm32")'.dependencies]

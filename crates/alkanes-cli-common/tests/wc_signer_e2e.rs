@@ -55,6 +55,18 @@ impl WalletPairStream for ChanStream {
     fn remote_peer(&self) -> &str {
         &self.remote
     }
+
+    /// Mock peer: pretend the ping always succeeds with ~zero RTT. The
+    /// e2e harness has no real PING/PONG actor — the wc_signer's ping
+    /// gate is just calling through the trait, so for the in-process
+    /// channel-pair we return Ok immediately.
+    #[cfg(feature = "icmp")]
+    async fn ping(
+        &mut self,
+        _timeout: std::time::Duration,
+    ) -> Result<std::time::Duration, TransportError> {
+        Ok(std::time::Duration::from_micros(0))
+    }
 }
 
 struct CleanMockTransport {
