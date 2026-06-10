@@ -1,91 +1,67 @@
 //! Run the dial/listen handshake over an already-connected
-//! [`BinaryDuplex`].
+//! [`BinaryDuplex`], returning a tokio-actor backed [`PairStream`].
 //!
-//! This module is intentionally transport-agnostic — it takes any
-//! object that implements `BinaryDuplex` and drives the JSON control
-//! protocol from `protocol.rs`. The transport-specific wiring
-//! (tokio-tungstenite native, web-sys wasm, in-process mock for tests)
-//! lives in sibling modules.
+//! Codec-only entry points (spawn-free, wasm-clean) live in the
+//! sibling crate [`frtun_pair_codec::handshake`]. This module wraps
+//! them with the local tokio-actor `PairStream::spawn(...)` so native
+//! callers get the same AsyncRead+AsyncWrite handle they had before
+//! the codec carve.
 
-use crate::protocol::{ClientFrame, ServerFrame};
-use crate::stream::{BinaryDuplex, PairStream};
-use std::io;
-use thiserror::Error;
+use crate::stream::PairStream;
+use frtun_pair_codec::{
+    handshake::{
+        handshake_dial as codec_dial, handshake_listen as codec_listen,
+        handshake_listen_with_token as codec_listen_with_token,
+    },
+    BinaryDuplex,
+};
 
-#[derive(Debug, Error)]
-pub enum HandshakeError {
-    #[error("transport: {0}")]
-    Transport(#[from] io::Error),
-    #[error("bridge closed before handshake completed")]
-    BridgeClosed,
-    #[error("bridge sent malformed json: {0}")]
-    BadJson(String),
-    #[error("bridge sent unexpected frame: {0:?}")]
-    UnexpectedFrame(ServerFrame),
-    #[error("bridge error: [{code}] {msg}")]
-    BridgeRejected { code: String, msg: String },
-}
+pub use frtun_pair_codec::handshake::HandshakeError;
 
 /// Run the **dial** handshake. Sends `Dial { peer, self_peer }`,
-/// expects `Dialed { peer }` back, and returns the raw byte stream.
+/// expects `Dialed { peer }` back, and returns the raw byte stream
+/// driven by the tokio actor.
 pub async fn handshake_dial<D>(
-    mut inner: D,
-    self_peer:   &str,
+    inner: D,
+    self_peer: &str,
     remote_peer: &str,
 ) -> Result<PairStream, HandshakeError>
 where
     D: BinaryDuplex,
 {
-    let frame = ClientFrame::Dial {
-        peer:      remote_peer.to_string(),
-        self_peer: self_peer.to_string(),
-    };
-    inner.send_text(frame.to_json()).await?;
-
-    let resp = inner.recv_text().await?.ok_or(HandshakeError::BridgeClosed)?;
-    let resp = ServerFrame::from_json(&resp)
-        .map_err(|e| HandshakeError::BadJson(e.to_string()))?;
-    match resp {
-        ServerFrame::Dialed { peer } => {
-            Ok(PairStream::spawn(inner, peer))
-        }
-        ServerFrame::Error { code, msg } => Err(HandshakeError::BridgeRejected { code, msg }),
-        other => Err(HandshakeError::UnexpectedFrame(other)),
-    }
+    let (inner, peer) = codec_dial(inner, self_peer, remote_peer).await?;
+    Ok(PairStream::spawn(inner, peer))
 }
 
 /// Run the **listen** handshake. Sends `Listen { peer }`, expects
 /// `Ready` then later `Incoming { peer }`, and returns the raw byte
 /// stream + the dialing peer's name.
 pub async fn handshake_listen<D>(
-    mut inner: D,
+    inner: D,
     self_peer: &str,
 ) -> Result<PairStream, HandshakeError>
 where
     D: BinaryDuplex,
 {
-    inner.send_text(ClientFrame::Listen { peer: self_peer.to_string() }.to_json()).await?;
+    let (inner, peer) = codec_listen(inner, self_peer).await?;
+    Ok(PairStream::spawn(inner, peer))
+}
 
-    let resp = inner.recv_text().await?.ok_or(HandshakeError::BridgeClosed)?;
-    match ServerFrame::from_json(&resp)
-        .map_err(|e| HandshakeError::BadJson(e.to_string()))?
-    {
-        ServerFrame::Ready => {}
-        ServerFrame::Error { code, msg } => {
-            return Err(HandshakeError::BridgeRejected { code, msg });
-        }
-        other => return Err(HandshakeError::UnexpectedFrame(other)),
-    }
-
-    // Now wait for an Incoming.
-    let resp = inner.recv_text().await?.ok_or(HandshakeError::BridgeClosed)?;
-    match ServerFrame::from_json(&resp)
-        .map_err(|e| HandshakeError::BadJson(e.to_string()))?
-    {
-        ServerFrame::Incoming { peer } => Ok(PairStream::spawn(inner, peer)),
-        ServerFrame::Error { code, msg } => Err(HandshakeError::BridgeRejected { code, msg }),
-        other => Err(HandshakeError::UnexpectedFrame(other)),
-    }
+/// Variant of [`handshake_listen`] that ALSO registers an FCM device
+/// token with the bridge in the same `Listen` frame, so a future Dial
+/// for this peer name CAN wake the device via `fcm-wake` if it isn't
+/// listening at that moment. Pass `None` for the plain pre-FCM shape
+/// — byte-identical to the legacy wire form.
+pub async fn handshake_listen_with_token<D>(
+    inner: D,
+    self_peer: &str,
+    fcm_token: Option<String>,
+) -> Result<PairStream, HandshakeError>
+where
+    D: BinaryDuplex,
+{
+    let (inner, peer) = codec_listen_with_token(inner, self_peer, fcm_token).await?;
+    Ok(PairStream::spawn(inner, peer))
 }
 
 #[cfg(test)]
@@ -93,6 +69,7 @@ mod tests {
     use super::*;
     use crate::stream::mock::{pair, MockDuplex, MockFrame};
     use bytes::Bytes;
+    use frtun_pair_codec::{ClientFrame, ServerFrame};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     /// Spawn a tiny in-process "bridge" that:
@@ -103,11 +80,11 @@ mod tests {
     ///
     /// Returns the two PairStreams (alice = dialer, bob = listener).
     async fn run_bridge_through(
-        dialer_self:    &'static str,
-        listener_self:  &'static str,
+        dialer_self: &'static str,
+        listener_self: &'static str,
     ) -> (PairStream, PairStream) {
-        let (alice_side, bridge_a) = pair();  // alice ↔ bridge
-        let (bob_side,   bridge_b) = pair();  // bob   ↔ bridge
+        let (alice_side, bridge_a) = pair(); // alice ↔ bridge
+        let (bob_side, bridge_b) = pair();   // bob   ↔ bridge
 
         // Bridge task: drain control frames + bridge binary.
         let bridge_handle = tokio::spawn(async move {
@@ -121,7 +98,9 @@ mod tests {
         // Tiny pause so the Listen frame is parked before Dial arrives.
         tokio::task::yield_now().await;
         tokio::task::yield_now().await;
-        let dialer = handshake_dial(alice_side, dialer_self, listener_self).await.unwrap();
+        let dialer = handshake_dial(alice_side, dialer_self, listener_self)
+            .await
+            .unwrap();
         let listener = listener_fut.await.unwrap();
         // bridge_handle is leaked intentionally — it'll drain when both
         // pair-stream actors close.
@@ -140,11 +119,16 @@ mod tests {
                     Ok(Some(json)) => {
                         let cf: ClientFrame = ClientFrame::from_json(&json).unwrap();
                         match cf {
-                            ClientFrame::Listen { peer } => { a_self = Some(peer); }
+                            ClientFrame::Listen { peer, .. } => { a_self = Some(peer); }
                             ClientFrame::Dial   { peer, self_peer } => {
                                 a_self = Some(self_peer);
                                 a_target_b = peer == b_self.clone().unwrap_or_default();
                                 let _ = a.send_text(ServerFrame::Dialed { peer }.to_json()).await;
+                            }
+                            ClientFrame::Register { peer, .. } => {
+                                let _ = a.send_text(
+                                    ServerFrame::Registered { peer }.to_json()
+                                ).await;
                             }
                         }
                     }
@@ -154,13 +138,18 @@ mod tests {
                     Ok(Some(json)) => {
                         let cf: ClientFrame = ClientFrame::from_json(&json).unwrap();
                         match cf {
-                            ClientFrame::Listen { peer } => {
+                            ClientFrame::Listen { peer, .. } => {
                                 b_self = Some(peer);
                                 let _ = b.send_text(ServerFrame::Ready.to_json()).await;
                             }
                             ClientFrame::Dial { peer, self_peer } => {
                                 b_self = Some(self_peer);
                                 let _ = b.send_text(ServerFrame::Dialed { peer }.to_json()).await;
+                            }
+                            ClientFrame::Register { peer, .. } => {
+                                let _ = b.send_text(
+                                    ServerFrame::Registered { peer }.to_json()
+                                ).await;
                             }
                         }
                     }
@@ -213,26 +202,31 @@ mod tests {
 
         // Remote-peer names propagated through the bridge response.
         assert_eq!(alice.remote_peer(), "frtun1bob.peer");
-        assert_eq!(bob.remote_peer(),   "frtun1alice.peer");
+        assert_eq!(bob.remote_peer(), "frtun1alice.peer");
     }
 
     #[tokio::test]
     async fn dial_bridge_error_surfaces() {
         // Use a hand-crafted duplex that returns Error to the dial.
-        let (mut sock, mut bridge) = pair();
+        let (sock, mut bridge) = pair();
         tokio::spawn(async move {
             let _ = bridge.recv_text().await; // consume the Dial
-            let _ = bridge.send_text(
-                ServerFrame::Error {
-                    code: crate::protocol::codes::PEER_NOT_FOUND.into(),
-                    msg:  "peer offline".into(),
-                }.to_json()
-            ).await;
+            let _ = bridge
+                .send_text(
+                    ServerFrame::Error {
+                        code: frtun_pair_codec::codes::PEER_NOT_FOUND.into(),
+                        msg: "peer offline".into(),
+                    }
+                    .to_json(),
+                )
+                .await;
         });
-        let err = handshake_dial(sock, "frtun1alice.peer", "frtun1bob.peer").await.unwrap_err();
+        let err = handshake_dial(sock, "frtun1alice.peer", "frtun1bob.peer")
+            .await
+            .unwrap_err();
         match err {
             HandshakeError::BridgeRejected { code, msg } => {
-                assert_eq!(code, crate::protocol::codes::PEER_NOT_FOUND);
+                assert_eq!(code, frtun_pair_codec::codes::PEER_NOT_FOUND);
                 assert_eq!(msg, "peer offline");
             }
             _ => panic!("expected BridgeRejected, got {err:?}"),
