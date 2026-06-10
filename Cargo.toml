@@ -17,7 +17,12 @@ members = [
     "alkanes/alkanes-std-test",
     "alkanes/alkanes-std-test-2",
     "vendor/frtun-pair",
+    "vendor/frtun-pair-codec",
+    "vendor/frtun-http-async",
     "vendor/subfrost-wc",
+    "vendor/tlsfetch-events",
+    "vendor/tlsfetch-transport",
+    "vendor/tlsfetch-ws",
     "vendor/qubitcoin-crypto",
     "vendor/qubitcoin-primitives",
     "vendor/qubitcoin-serialize",
@@ -133,6 +138,24 @@ leptos = "0.6"
 leptos_router = "0.6"
 getrandom = "0.2"
 env_logger = "0.11"
+
+# Vendored tlsfetch stack (2026-06-09, TLSFETCH-WS-2 tick). The native
+# WSS client used by wc_signer; backend-agnostic Stream / Connection /
+# Listener traits + the event/profiler primitives those depend on.
+tlsfetch-events = { path = "vendor/tlsfetch-events", default-features = false }
+tlsfetch-transport = { path = "vendor/tlsfetch-transport", default-features = false }
+tlsfetch-ws = { path = "vendor/tlsfetch-ws", default-features = false, features = ["native"] }
+
+# Vendored 2026-06-10 — consolidates three byte-identical inline copies
+# of the async H1/H1S helper that had grown across frtun-push-proxy,
+# frtun-pair-bridge, and alkanes-cli-common::wc_signer. Engine-agnostic
+# (no `[patch.crates-io] rustls = …`). Used only by wc-signer-native.
+frtun-http-async = { path = "vendor/frtun-http-async" }
+
+# Pinned for tlsfetch-ws + frtun-pair `client-native`. The rustls-tls-
+# webpki-roots feature wires tokio-tungstenite's built-in cert
+# verification — no patch-rustls surgery needed downstream.
+tokio-tungstenite = { version = "0.23", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
 
 # EVM assembler for bytecode generation
 emasm = { git = "https://github.com/kungfuflex/emasm-rs", branch = "master" }
