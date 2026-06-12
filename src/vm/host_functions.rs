@@ -643,7 +643,26 @@ impl AlkanesHostFunctionsImpl {
         let mut counter: u128 = 0;
         for tx in &block.txdata {
             if let Some(Artifact::Runestone(ref runestone)) = Runestone::decipher(tx) {
-                let protostones = Protostone::from_runestone(runestone)?;
+                // A malformed runestone whose protostone-field bytes can't be
+                // re-decoded as LEB128 varints (e.g. ≥19 consecutive
+                // continuation bytes → `varint::decode` returns
+                // `Error::Overlong` formatted as `"too long"`) used to
+                // abort the entire precompile call via `?`, wedging every
+                // DIESEL mint in the block. A malformed protostone clearly
+                // isn't a diesel mint — skip it.
+                //
+                // Observed in the wild at mainnet h=953281 (multiple txs
+                // with crafted protostone messages), where the wedge
+                // surfaced as "ALKANES: revert: all fuel consumed by
+                // WebAssembly" on every mint tx because the precompile
+                // never returned a count, leaving each DIESEL-mint
+                // wasm to spin on a failed extcall until its per-tx
+                // fuel ran out. Pool-i stuck at tip 953280 for the
+                // duration.
+                let protostones = match Protostone::from_runestone(runestone) {
+                    Ok(p) => p,
+                    Err(_) => continue,
+                };
                 for protostone in protostones {
                     if protostone.protocol_tag != 1 {
                         continue;
@@ -656,7 +675,10 @@ impl AlkanesHostFunctionsImpl {
                     if calldata.is_empty() {
                         continue;
                     }
-                    let varint_list = decode_varint_list(&mut Cursor::new(calldata))?;
+                    let varint_list = match decode_varint_list(&mut Cursor::new(calldata)) {
+                        Ok(v) => v,
+                        Err(_) => continue,
+                    };
                     if varint_list.len() < 2 {
                         continue;
                     }
