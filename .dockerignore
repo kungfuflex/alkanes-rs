@@ -1,6 +1,7 @@
 # Build artifacts
 target/
 **/target/
+dist/
 
 # Git
 .git/
@@ -42,3 +43,5 @@ docker-compose.yaml
 *.log
 *.tmp
 .DS_Store
+.verify-a/
+.verify-b/

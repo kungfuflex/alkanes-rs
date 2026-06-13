@@ -1,3 +1,21 @@
+//! # protorune
+//!
+//! Indexer primitives for rune-balance tracking and protorune (alkane-style)
+//! state transitions.
+//!
+//! ## `runes` feature flag
+//!
+//! Tracking actual rune balances (canonical-ord semantics) is gated behind
+//! the **`runes`** Cargo feature. The canonical alkanes indexer wasm builds
+//! without `runes` — alkanes ignores runes and protoburns at the application
+//! layer, so emitting rune balances would be dead weight in that surface.
+//! The feature exists for downstream protorune consumers that actually need
+//! rune-balance views (cf. the `tests/ord_runes_parity.rs` parity suite,
+//! which is similarly gated).
+//!
+//! Enable with `--features runes` to compile the canonical-ord parity tests
+//! ported from kungfuflex/v2.1.8 (commit 47bd86b3) into your build.
+
 use crate::balance_sheet::{load_sheet, PersistentRecord};
 use crate::message::MessageContext;
 use crate::protorune_init::index_unique_protorunes;
@@ -1106,7 +1124,55 @@ impl Protorune {
 
     #[cfg(feature = "mainnet")]
     fn freeze_storage(height: u64) {
-        if height > 913300 {
+        // OYL_DISBAND_HEIGHT — at this block the OYL AMM is permanently
+        // placed in admin-disabled / codefreeze state. Background:
+        //
+        //   OYL has disbanded as an organization. The original admin
+        //   alkane that controlled the AMM was lost and previously
+        //   re-pegged here to AlkaneId(2, 69805) (see pre-fork branch
+        //   below). After 2026-05-22 we are formalizing the post-OYL
+        //   state of the deployment: administrative privilege on
+        //   `4:65522` (factory) and `4:65523` (proxy) is permanently
+        //   disabled. There is no owner. Protocol fees that the AMM
+        //   would otherwise have routed to the admin via `collect_fees`
+        //   now stay accrued inside each pool's reserves, accruing as
+        //   pro-rata value to existing LP holders (the project owners,
+        //   in OYL's place). This freeze line is the AMM's codefreeze
+        //   marker — fee structure, pool factory template, and admin
+        //   ID are locked at the values they held at this height and
+        //   cannot be changed thereafter.
+        //
+        // Mechanism: at the fork we (1) overwrite the on-storage /auth
+        // pointer with AlkaneId(0, 0), the runtime's "non-contract"
+        // sentinel, so `only_owner()`'s `incoming.contains(auth_token)`
+        // check can never pass — every admin-gated opcode reverts.
+        // We then (2) zero out the factory + proxy's accumulated
+        // balance of `2:69805`. That backlog accumulated because
+        // `alkanes-std-auth-token::authenticate()` did
+        // `CallResponse::forward(incoming) + push(transfer)`, returning
+        // the auth token twice; combined with the runtime's
+        // intentional self-mint rule in `checked_debit_with_minting`
+        // (alkanes/src/utils.rs:88), every owner-only call quietly
+        // net-deposited +1 auth token in the factory's contract
+        // balance. `CreateNewPool` is public and lets any caller pass
+        // `token_a = 2:69805`, so without (2) an attacker could still
+        // fund a fresh AUTH/X pool from the factory's accumulated
+        // stash and redeem via `WithdrawAndBurn`. A security
+        // researcher demonstrated this on 2026-05-22 with a
+        // `metashrew_view simulate` at h=950504 draining 3 auth
+        // tokens through this path. Zeroing closes both the backlog
+        // and any future micro-windows.
+        //
+        // Drift note: external indexers (unisat, alkanode, fairmints)
+        // that don't pick up this patch will continue to report the
+        // pre-fork /auth value and any residual `2:69805` balance on
+        // 4:65522 / 4:65523 — that is acceptable. The only
+        // observable divergence is on a now-permanently-disabled
+        // surface; canonical AMM trading state (reserves, LP supply,
+        // swap pricing) is unaffected.
+        const OYL_DISBAND_HEIGHT: u64 = 950_564;
+
+        if height > 913300 && height < OYL_DISBAND_HEIGHT {
             IndexPointer::from_keyword("/alkanes/")
                 .select(&ProtoruneRuneId::new(4, 65523).into())
                 .keyword("/storage//auth")
@@ -1115,7 +1181,27 @@ impl Protorune {
                 .select(&ProtoruneRuneId::new(4, 65522).into())
                 .keyword("/storage//auth")
                 .set(Arc::new(ProtoruneRuneId::new(2, 69805).into()));
-        };
+        }
+
+        if height >= OYL_DISBAND_HEIGHT {
+            let zero_id: Vec<u8> = ProtoruneRuneId::new(0, 0).into();
+            let auth_id: Vec<u8> = ProtoruneRuneId::new(2, 69805).into();
+            for who in [ProtoruneRuneId::new(4, 65522), ProtoruneRuneId::new(4, 65523)] {
+                let who_id: Vec<u8> = who.into();
+                // (1) /auth pointer → AlkaneId(0,0) → only_owner always reverts
+                IndexPointer::from_keyword("/alkanes/")
+                    .select(&who_id)
+                    .keyword("/storage//auth")
+                    .set(Arc::new(zero_id.clone()));
+                // (2) drain accumulated 2:69805 balance so CreateNewPool
+                //     debit underflows on `checked_debit_with_minting`
+                IndexPointer::from_keyword("/alkanes/")
+                    .select(&auth_id)
+                    .keyword("/balances/")
+                    .select(&who_id)
+                    .set(Arc::new(0u128.to_le_bytes().to_vec()));
+            }
+        }
     }
 
     #[cfg(not(feature = "mainnet"))]

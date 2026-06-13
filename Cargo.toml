@@ -84,9 +84,9 @@ alkanes-web-sys = { path = "./crates/alkanes-web-sys" }
 alkanes-web-leptos = { path = "./crates/alkanes-web-leptos" }
 alkanes-pretty-print-macro = { path = "./crates/alkanes-pretty-print-macro" }
 ruint = "1.12.3"
-wasm-bindgen = "0.2.114"
+wasm-bindgen = "0.2.121"
 byteorder = "1.5"
-wasm-bindgen-test = "0.3.50"
+wasm-bindgen-test = "0.3.71"
 wasmi = "0.37.2"
 serde = "1.0.210"
 serde_json = "1.0.128"
@@ -100,7 +100,7 @@ sha3 = "0.10"
 tokio = { version = "1.43.0", default-features = false }
 futures = "0.3.30"
 log = "0.4.22"
-wasm-bindgen-futures = "0.4.45"
+wasm-bindgen-futures = "0.4.71"
 web-sys = { version = "0.3.72", features = ["Response", "Window"] }
 js-sys = "0.3.72"
 hex_lit = "0.1.1"
@@ -166,3 +166,14 @@ pbkdf2 = "0.12"
 # Huff-rs for EVM bytecode generation (experimental features)
 huff_utils = { git = "https://github.com/huff-language/huff-rs", branch = "main" }
 huff_codegen = { git = "https://github.com/huff-language/huff-rs", branch = "main" }
+
+# Reproducible-build profile for the mainnet alkanes.wasm shipped to
+# subkube. codegen-units=1 + lto="fat" eliminate the parallelism-driven
+# nondeterminism in the default release profile; strip="debuginfo"
+# removes path-dependent debug records. Compile time goes up substantially
+# but the wasm bytes are byte-identical across machines given the same
+# rustc + Cargo.lock + source tree (see scripts/build.sh --verify).
+[profile.release]
+codegen-units = 1
+lto = "fat"
+strip = "debuginfo"

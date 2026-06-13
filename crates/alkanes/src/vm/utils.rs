@@ -261,12 +261,105 @@ pub fn run_after_special(
         );
     }
 
-    let mut instance = AlkanesInstance::from_alkane(context.clone(), binary.clone(), start_fuel)?;
-    let response = instance.execute()?;
+    // DIESEL precompile: bypass wasmi for the hot-path mint and view
+    // opcodes when the tx is a single-mint-protostone (the common case).
+    //
+    // v2.2.0-rc.4: activation is **feature-gated only**. The precompile
+    // code still compiles into every build (so `run_diesel_eoa` is
+    // callable from `tests::diesel_sidebyside` / `tests::diesel_shadow`
+    // for the shadow-compare path), but the dispatcher only routes
+    // through it when `--features fastpath` is enabled. With the default
+    // feature set (`--features mainnet`) the precompile is **never**
+    // dispatched and every DIESEL call walks the wasm path —
+    // byte-equivalent to v2.1.7 / pre-V220 behaviour. There is no
+    // height gate any more: production mainnet stays on wasm
+    // indefinitely until we explicitly cut a `fastpath`-enabled release.
+    //
+    // The prior height-gated activation (`height >= V220_FORK_HEIGHT`)
+    // was removed after meta verify-pod observations on 2026-05-18
+    // showed the precompile path diverging from canonical (Unisat /
+    // Fairmints / Alkanode / wasmi production pods) by ~25 DIESEL of
+    // pool reserves and ~0.3 DIESEL of total supply at h=949960 with
+    // fastpath active. The single-tx enumerated paths in
+    // `diesel_sidebyside` / `diesel_shadow` still pass byte-equivalent;
+    // the divergence is therefore in a multi-tx / cross-contract
+    // interaction not yet covered by the test suite. Until that gap is
+    // closed and a `tests::diesel_shadow` invocation actually
+    // reproduces the production divergence in CI, the default build
+    // must not ship the precompile as the dispatch path.
+    //
+    // Multi-mint-protostone txs (matched-out by
+    // `matches_precompile_for_ctx`) still fall through to the wasm path
+    // unconditionally because their gas accounting is tx-size
+    // dependent and the constant gas table doesn't fit them.
+    let should_precompile = {
+        #[cfg(feature = "fastpath")]
+        {
+            let ctx = context.lock().unwrap();
+            // In test/test-utils builds, shadow_compare needs to observe
+            // the wasm path's gas/response to validate equivalence. When
+            // shadow mode is enabled, force the wasm path to run instead
+            // of routing through the precompile — the precompile will be
+            // invoked by shadow_compare itself for comparison.
+            #[cfg(any(test, feature = "test-utils"))]
+            {
+                !crate::precompile_diesel::shadow_is_enabled()
+                    && crate::precompile_diesel::matches_precompile_for_ctx(&ctx)
+            }
+            #[cfg(not(any(test, feature = "test-utils")))]
+            {
+                crate::precompile_diesel::matches_precompile_for_ctx(&ctx)
+            }
+        }
+        #[cfg(not(feature = "fastpath"))]
+        {
+            false
+        }
+    };
+    if should_precompile {
+        let (resp, gas, _path) = crate::precompile_diesel::run_diesel_eoa(
+            context.clone(),
+            &crate::precompile_diesel::CHAIN_GAS,
+        )?;
+        return Ok((resp, gas));
+    }
 
-    let remaining_fuel = instance.store.get_fuel()?;
-    let storage_len = response.storage.serialize().len() as u64;
+    let mut instance = AlkanesInstance::from_alkane(context.clone(), binary.clone(), start_fuel)?;
+    let exec_result = instance.execute();
+
+    // Capture fuel consumption for ALL paths (success and revert) so the
+    // fuel_probe can observe revert-path gas costs too. We read store fuel
+    // before propagating any error.
+    let remaining_fuel = instance.store.get_fuel().unwrap_or(0);
     let height = context.lock().unwrap().message.height as u32;
+
+    #[cfg(any(test, feature = "test-utils"))]
+    {
+        let ctx = context.lock().unwrap();
+        let target = ctx.myself.clone();
+        let opcode = ctx.inputs.first().copied().unwrap_or(0);
+        drop(ctx);
+        // Probe records the wasmi-internal fuel consumed regardless of
+        // success/revert. Storage-byte fuel only applies on success and is
+        // added below for the success path.
+        let probe_gas = start_fuel.saturating_sub(remaining_fuel);
+        crate::fuel_probe::record(target, opcode, height, probe_gas);
+    }
+
+    let response = match exec_result {
+        Ok(r) => r,
+        Err(e) => {
+            // Shadow-compare the revert path before propagating.
+            #[cfg(any(test, feature = "test-utils"))]
+            {
+                let failed: Result<(ExtendedCallResponse, u64), anyhow::Error> =
+                    Err(anyhow!(e.to_string()));
+                crate::precompile_diesel::shadow_compare(context.clone(), &failed);
+            }
+            return Err(e);
+        }
+    };
+    let storage_len = response.storage.serialize().len() as u64;
 
     #[cfg(feature = "debug-log")]
     {
@@ -300,6 +393,13 @@ pub fn run_after_special(
             opt
         },
     ))?;
+
+    #[cfg(any(test, feature = "test-utils"))]
+    {
+        let success_outcome: Result<(ExtendedCallResponse, u64), anyhow::Error> =
+            Ok((response.clone(), fuel_used));
+        crate::precompile_diesel::shadow_compare(context.clone(), &success_outcome);
+    }
 
     Ok((response, fuel_used))
 }

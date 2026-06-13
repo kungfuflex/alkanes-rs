@@ -63,7 +63,6 @@ pub fn handle_message(
         println!("All inputs: {:?}", cellpack.inputs);
     }
     println!("================================");
-
     let target = cellpack.target.clone();
     let context = Arc::new(Mutex::new(AlkanesRuntimeContext::from_parcel_and_cellpack(
         parcel, &cellpack,

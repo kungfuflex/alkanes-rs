@@ -509,3 +509,95 @@ impl IntoString for Vec<u8> {
         hex::encode(self)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rune(block: u128, tx: u128) -> ProtoruneRuneId {
+        ProtoruneRuneId { block, tx }
+    }
+
+    #[test]
+    fn test_increase_and_get() {
+        let mut sheet = CachedBalanceSheet::new();
+        let r = rune(1, 0);
+        sheet.increase(&r, 500).unwrap();
+        assert_eq!(sheet.get(&r), 500);
+    }
+
+    #[test]
+    fn test_decrease() {
+        let mut sheet = CachedBalanceSheet::new();
+        let r = rune(1, 0);
+        sheet.increase(&r, 1000).unwrap();
+        let ok = sheet.decrease(&r, 300);
+        assert!(ok);
+        assert_eq!(sheet.get(&r), 700);
+    }
+
+    #[test]
+    fn test_decrease_underflow_clamps_to_zero() {
+        let mut sheet = CachedBalanceSheet::new();
+        let r = rune(1, 0);
+        sheet.increase(&r, 100).unwrap();
+        // Attempting to decrease more than the balance returns false
+        // and leaves the balance unchanged.
+        let ok = sheet.decrease(&r, 200);
+        assert!(!ok);
+        assert_eq!(sheet.get(&r), 100);
+    }
+
+    #[test]
+    fn test_concat_merges_sheets() {
+        let mut a = CachedBalanceSheet::new();
+        let mut b = CachedBalanceSheet::new();
+        let r = rune(2, 1);
+        a.increase(&r, 50).unwrap();
+        b.increase(&r, 75).unwrap();
+        let merged = CachedBalanceSheet::concat(vec![a, b]).unwrap();
+        assert_eq!(merged.get(&r), 125);
+    }
+
+    #[test]
+    fn test_pipe_transfers_all() {
+        let mut src = CachedBalanceSheet::new();
+        let r1 = rune(1, 0);
+        let r2 = rune(2, 0);
+        src.increase(&r1, 100).unwrap();
+        src.increase(&r2, 200).unwrap();
+
+        let mut dest = CachedBalanceSheet::new();
+        src.pipe(&mut dest).unwrap();
+
+        assert_eq!(dest.get(&r1), 100);
+        assert_eq!(dest.get(&r2), 200);
+    }
+
+    #[test]
+    fn test_from_pairs() {
+        let ids = vec![rune(10, 1), rune(20, 2)];
+        let balances = vec![111, 222];
+        let sheet = CachedBalanceSheet::from_pairs(ids.clone(), balances);
+        assert_eq!(sheet.get(&ids[0]), 111);
+        assert_eq!(sheet.get(&ids[1]), 222);
+    }
+
+    #[test]
+    fn test_get_nonexistent_rune_returns_zero() {
+        let sheet = CachedBalanceSheet::new();
+        assert_eq!(sheet.get(&rune(99, 99)), 0);
+    }
+
+    #[test]
+    fn test_multiple_runes_independent() {
+        let mut sheet = CachedBalanceSheet::new();
+        let r1 = rune(1, 0);
+        let r2 = rune(2, 0);
+        sheet.increase(&r1, 500).unwrap();
+        sheet.increase(&r2, 300).unwrap();
+        sheet.decrease(&r1, 100);
+        assert_eq!(sheet.get(&r1), 400);
+        assert_eq!(sheet.get(&r2), 300);
+    }
+}

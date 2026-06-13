@@ -27,7 +27,15 @@ pub mod etl;
 pub mod indexer;
 pub mod message;
 pub mod network;
+// precompile_diesel is always compiled into production builds (the
+// `tests::diesel_shadow` and `tests::diesel_sidebyside` paths need
+// `run_diesel_eoa` callable directly to compare against the wasm
+// dispatch). Whether the live indexer dispatcher routes DIESEL calls
+// through the precompile depends on the `fastpath` Cargo feature.
+pub mod precompile_diesel;
 pub mod precompiled;
+#[cfg(any(test, feature = "test-utils"))]
+pub mod fuel_probe;
 pub mod tables;
 #[cfg(any(test, feature = "test-utils"))]
 pub mod tests;
