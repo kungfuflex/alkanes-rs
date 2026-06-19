@@ -51,12 +51,13 @@
 //! ```
 
 use alkanes_cli_common::LogProvider;
-use web_sys::console;
+use crate::platform;
 
 #[cfg(target_arch = "wasm32")]
 extern crate alloc;
 #[cfg(target_arch = "wasm32")]
 use alloc::{format, string::String};
+
 /// Web logging implementation using console API
 #[derive(Clone)]
 pub struct WebLogger {
@@ -87,23 +88,23 @@ impl LogProvider for WebLogger {
     fn debug(&self, message: &str) {
         if self.debug_enabled {
             let formatted = self.format_message("DEBUG", message);
-            console::debug_1(&formatted.into());
+            platform::console_log("debug", &formatted);
         }
     }
 
     fn info(&self, message: &str) {
         let formatted = self.format_message("INFO", message);
-        console::info_1(&formatted.into());
+        platform::console_log("info", &formatted);
     }
 
     fn warn(&self, message: &str) {
         let formatted = self.format_message("WARN", message);
-        console::warn_1(&formatted.into());
+        platform::console_log("warn", &formatted);
     }
 
     fn error(&self, message: &str) {
         let formatted = self.format_message("ERROR", message);
-        console::error_1(&formatted.into());
+        platform::console_log("error", &formatted);
     }
 
     fn is_debug_enabled(&self) -> bool {
@@ -123,27 +124,27 @@ pub mod console_log {
 
     /// Log a debug message directly to console
     pub fn debug(message: &str) {
-        console::debug_1(&message.into());
+        platform::console_log("debug", message);
     }
 
     /// Log an info message directly to console
     pub fn info(message: &str) {
-        console::info_1(&message.into());
+        platform::console_log("info", message);
     }
 
     /// Log a warning message directly to console
     pub fn warn(message: &str) {
-        console::warn_1(&message.into());
+        platform::console_log("warn", message);
     }
 
     /// Log an error message directly to console
     pub fn error(message: &str) {
-        console::error_1(&message.into());
+        platform::console_log("error", message);
     }
 
     /// Log a general message to console
     pub fn log(message: &str) {
-        console::log_1(&message.into());
+        platform::console_log("log", message);
     }
 }
 

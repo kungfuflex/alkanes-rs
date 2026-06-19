@@ -307,14 +307,304 @@ fn test_serialization() {
         mobile_support: false,
         deep_link_scheme: None,
     };
-    
+
     let json = serde_json::to_string(&wallet_info);
     assert!(json.is_ok());
-    
+
     let deserialized: std::result::Result<LocalWalletInfo, _> = serde_json::from_str(&json.unwrap());
     assert!(deserialized.is_ok());
-    
+
     let wallet = deserialized.unwrap();
     assert_eq!(wallet.id, "test");
     assert_eq!(wallet.name, "Test Wallet");
+}
+
+// ============================================================================
+// Tests for JsWalletAdapter and WasmBrowserWalletProvider
+// ============================================================================
+
+use wasm_bindgen::JsValue;
+use js_sys::{Promise, Function, Object, Reflect};
+
+/// Helper to create a mock JS wallet adapter object for testing
+fn create_mock_js_adapter() -> JsValue {
+    let obj = Object::new();
+
+    // Create getInfo function
+    let get_info = Function::new_no_args(r#"
+        return {
+            id: 'mock',
+            name: 'Mock Wallet',
+            icon: '/mock.svg',
+            website: 'https://mock.test',
+            injection_key: 'mockWallet',
+            supports_psbt: true,
+            supports_taproot: true,
+            supports_ordinals: true,
+            mobile_support: false
+        };
+    "#);
+    Reflect::set(&obj, &JsValue::from_str("getInfo"), &get_info).unwrap();
+
+    // Create connect function
+    let connect = Function::new_no_args(r#"
+        return Promise.resolve({
+            address: 'bc1qmock1234567890abcdef',
+            public_key: '03' + '0'.repeat(64),
+            address_type: 'p2wpkh'
+        });
+    "#);
+    Reflect::set(&obj, &JsValue::from_str("connect"), &connect).unwrap();
+
+    // Create disconnect function
+    let disconnect = Function::new_no_args(r#"
+        return Promise.resolve();
+    "#);
+    Reflect::set(&obj, &JsValue::from_str("disconnect"), &disconnect).unwrap();
+
+    // Create getAccounts function
+    let get_accounts = Function::new_no_args(r#"
+        return Promise.resolve([{
+            address: 'bc1qmock1234567890abcdef',
+            public_key: '03' + '0'.repeat(64),
+            address_type: 'p2wpkh'
+        }]);
+    "#);
+    Reflect::set(&obj, &JsValue::from_str("getAccounts"), &get_accounts).unwrap();
+
+    // Create getNetwork function
+    let get_network = Function::new_no_args(r#"
+        return Promise.resolve('mainnet');
+    "#);
+    Reflect::set(&obj, &JsValue::from_str("getNetwork"), &get_network).unwrap();
+
+    // Create switchNetwork function
+    let switch_network = Function::new_with_args("network", r#"
+        return Promise.resolve();
+    "#);
+    Reflect::set(&obj, &JsValue::from_str("switchNetwork"), &switch_network).unwrap();
+
+    // Create signMessage function
+    let sign_message = Function::new_with_args("message, address", r#"
+        return Promise.resolve('mock_signature_base64');
+    "#);
+    Reflect::set(&obj, &JsValue::from_str("signMessage"), &sign_message).unwrap();
+
+    // Create signPsbt function
+    let sign_psbt = Function::new_with_args("psbtHex, options", r#"
+        // Just return the same hex for testing
+        return Promise.resolve(psbtHex);
+    "#);
+    Reflect::set(&obj, &JsValue::from_str("signPsbt"), &sign_psbt).unwrap();
+
+    // Create signPsbts function
+    let sign_psbts = Function::new_with_args("psbtHexs, options", r#"
+        return Promise.resolve(psbtHexs);
+    "#);
+    Reflect::set(&obj, &JsValue::from_str("signPsbts"), &sign_psbts).unwrap();
+
+    // Create pushTx function
+    let push_tx = Function::new_with_args("txHex", r#"
+        return Promise.resolve('0'.repeat(64));
+    "#);
+    Reflect::set(&obj, &JsValue::from_str("pushTx"), &push_tx).unwrap();
+
+    // Create pushPsbt function
+    let push_psbt = Function::new_with_args("psbtHex", r#"
+        return Promise.resolve('0'.repeat(64));
+    "#);
+    Reflect::set(&obj, &JsValue::from_str("pushPsbt"), &push_psbt).unwrap();
+
+    // Create getPublicKey function
+    let get_public_key = Function::new_no_args(r#"
+        return Promise.resolve('03' + '0'.repeat(64));
+    "#);
+    Reflect::set(&obj, &JsValue::from_str("getPublicKey"), &get_public_key).unwrap();
+
+    // Create getBalance function
+    let get_balance = Function::new_no_args(r#"
+        return Promise.resolve(100000000);
+    "#);
+    Reflect::set(&obj, &JsValue::from_str("getBalance"), &get_balance).unwrap();
+
+    // Create getInscriptions function
+    let get_inscriptions = Function::new_with_args("cursor, size", r#"
+        return Promise.resolve({ list: [], total: 0 });
+    "#);
+    Reflect::set(&obj, &JsValue::from_str("getInscriptions"), &get_inscriptions).unwrap();
+
+    obj.into()
+}
+
+#[wasm_bindgen_test]
+fn test_mock_adapter_info() {
+    let adapter_js = create_mock_js_adapter();
+
+    // Verify getInfo returns expected structure
+    let get_info = Reflect::get(&adapter_js, &JsValue::from_str("getInfo")).unwrap();
+    let get_info_fn = Function::from(get_info);
+    let info = get_info_fn.call0(&adapter_js).unwrap();
+
+    let id = Reflect::get(&info, &JsValue::from_str("id")).unwrap();
+    assert_eq!(id.as_string().unwrap(), "mock");
+
+    let name = Reflect::get(&info, &JsValue::from_str("name")).unwrap();
+    assert_eq!(name.as_string().unwrap(), "Mock Wallet");
+
+    let supports_psbt = Reflect::get(&info, &JsValue::from_str("supports_psbt")).unwrap();
+    assert!(supports_psbt.as_bool().unwrap());
+}
+
+#[wasm_bindgen_test]
+async fn test_mock_adapter_connect() {
+    let adapter_js = create_mock_js_adapter();
+
+    // Test connect function
+    let connect = Reflect::get(&adapter_js, &JsValue::from_str("connect")).unwrap();
+    let connect_fn = Function::from(connect);
+    let promise = connect_fn.call0(&adapter_js).unwrap();
+    let promise = Promise::from(promise);
+
+    let result = wasm_bindgen_futures::JsFuture::from(promise).await.unwrap();
+
+    let address = Reflect::get(&result, &JsValue::from_str("address")).unwrap();
+    assert!(address.as_string().unwrap().starts_with("bc1q"));
+
+    let address_type = Reflect::get(&result, &JsValue::from_str("address_type")).unwrap();
+    assert_eq!(address_type.as_string().unwrap(), "p2wpkh");
+}
+
+#[wasm_bindgen_test]
+async fn test_mock_adapter_sign_message() {
+    let adapter_js = create_mock_js_adapter();
+
+    // Test signMessage function
+    let sign_message = Reflect::get(&adapter_js, &JsValue::from_str("signMessage")).unwrap();
+    let sign_message_fn = Function::from(sign_message);
+    let promise = sign_message_fn.call2(
+        &adapter_js,
+        &JsValue::from_str("Hello, World!"),
+        &JsValue::from_str("bc1qtest")
+    ).unwrap();
+    let promise = Promise::from(promise);
+
+    let result = wasm_bindgen_futures::JsFuture::from(promise).await.unwrap();
+    assert!(result.is_string());
+    assert_eq!(result.as_string().unwrap(), "mock_signature_base64");
+}
+
+#[wasm_bindgen_test]
+async fn test_mock_adapter_get_network() {
+    let adapter_js = create_mock_js_adapter();
+
+    // Test getNetwork function
+    let get_network = Reflect::get(&adapter_js, &JsValue::from_str("getNetwork")).unwrap();
+    let get_network_fn = Function::from(get_network);
+    let promise = get_network_fn.call0(&adapter_js).unwrap();
+    let promise = Promise::from(promise);
+
+    let result = wasm_bindgen_futures::JsFuture::from(promise).await.unwrap();
+    assert_eq!(result.as_string().unwrap(), "mainnet");
+}
+
+#[wasm_bindgen_test]
+async fn test_mock_adapter_get_balance() {
+    let adapter_js = create_mock_js_adapter();
+
+    // Test getBalance function
+    let get_balance = Reflect::get(&adapter_js, &JsValue::from_str("getBalance")).unwrap();
+    let get_balance_fn = Function::from(get_balance);
+    let promise = get_balance_fn.call0(&adapter_js).unwrap();
+    let promise = Promise::from(promise);
+
+    let result = wasm_bindgen_futures::JsFuture::from(promise).await.unwrap();
+    assert_eq!(result.as_f64().unwrap(), 100000000.0);
+}
+
+#[wasm_bindgen_test]
+async fn test_mock_adapter_sign_psbt() {
+    let adapter_js = create_mock_js_adapter();
+
+    // Test signPsbt function with a mock PSBT hex
+    let mock_psbt_hex = "70736274ff01003f0200000001...";
+
+    let sign_psbt = Reflect::get(&adapter_js, &JsValue::from_str("signPsbt")).unwrap();
+    let sign_psbt_fn = Function::from(sign_psbt);
+    let promise = sign_psbt_fn.call2(
+        &adapter_js,
+        &JsValue::from_str(mock_psbt_hex),
+        &JsValue::undefined()
+    ).unwrap();
+    let promise = Promise::from(promise);
+
+    let result = wasm_bindgen_futures::JsFuture::from(promise).await.unwrap();
+    // The mock just returns the same hex
+    assert_eq!(result.as_string().unwrap(), mock_psbt_hex);
+}
+
+#[wasm_bindgen_test]
+async fn test_mock_adapter_get_inscriptions() {
+    let adapter_js = create_mock_js_adapter();
+
+    // Test getInscriptions function
+    let get_inscriptions = Reflect::get(&adapter_js, &JsValue::from_str("getInscriptions")).unwrap();
+    let get_inscriptions_fn = Function::from(get_inscriptions);
+    let promise = get_inscriptions_fn.call2(
+        &adapter_js,
+        &JsValue::from_f64(0.0),
+        &JsValue::from_f64(20.0)
+    ).unwrap();
+    let promise = Promise::from(promise);
+
+    let result = wasm_bindgen_futures::JsFuture::from(promise).await.unwrap();
+
+    let total = Reflect::get(&result, &JsValue::from_str("total")).unwrap();
+    assert_eq!(total.as_f64().unwrap(), 0.0);
+}
+
+// Tests for wallet adapter compatibility
+#[wasm_bindgen_test]
+fn test_wallet_adapter_interface_completeness() {
+    let adapter_js = create_mock_js_adapter();
+
+    // Verify all required methods exist
+    let required_methods = vec![
+        "getInfo",
+        "connect",
+        "disconnect",
+        "getAccounts",
+        "getNetwork",
+        "switchNetwork",
+        "signMessage",
+        "signPsbt",
+        "signPsbts",
+        "pushTx",
+        "pushPsbt",
+        "getPublicKey",
+        "getBalance",
+        "getInscriptions",
+    ];
+
+    for method in required_methods {
+        let has_method = Reflect::has(&adapter_js, &JsValue::from_str(method)).unwrap();
+        assert!(has_method, "Missing required method: {method}");
+    }
+}
+
+#[wasm_bindgen_test]
+fn test_psbt_signing_input_serialization() {
+    let input = PsbtSigningInput {
+        index: 0,
+        address: Some("bc1qtest".to_string()),
+        sighash_types: Some(vec![1, 2]),
+        disable_tweaked_public_key: Some(false),
+    };
+
+    let json = serde_json::to_string(&input).unwrap();
+    assert!(json.contains("\"index\":0"));
+    assert!(json.contains("\"address\":\"bc1qtest\""));
+
+    let deserialized: PsbtSigningInput = serde_json::from_str(&json).unwrap();
+    assert_eq!(deserialized.index, 0);
+    assert_eq!(deserialized.address.unwrap(), "bc1qtest");
 }

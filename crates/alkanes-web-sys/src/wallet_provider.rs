@@ -69,6 +69,7 @@ use serde_json::Value as JsonValue;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{window, js_sys};
+use wasm_bindgen::JsCast;
 use hex;
 use core::str::FromStr;
 use base64::{engine::general_purpose::STANDARD, Engine as _};
@@ -603,6 +604,18 @@ impl WalletConnector {
                 deep_link_scheme: None,
             },
             WalletInfo {
+                id: "oyl".to_string(),
+                name: "Oyl Wallet".to_string(),
+                icon: "/assets/wallets/oyl.svg".to_string(),
+                website: "https://oyl.app/".to_string(),
+                injection_key: "oyl".to_string(),
+                supports_psbt: true,
+                supports_taproot: true,
+                supports_ordinals: true,
+                mobile_support: false,
+                deep_link_scheme: None,
+            },
+            WalletInfo {
                 id: "orange".to_string(),
                 name: "Orange Wallet".to_string(),
                 icon: "/assets/wallets/orange.svg".to_string(),
@@ -1124,7 +1137,12 @@ impl WalletProvider for BrowserWalletProvider {
         // Browser wallets do not expose derivation paths, so this method cannot be fully implemented.
         Err(AlkanesError::NotImplemented("get_internal_key is not supported for browser wallets as they do not expose derivation paths.".to_string()))
     }
-    
+
+    async fn get_internal_key_with_secret(&self) -> Result<(XOnlyPublicKey, bitcoin::secp256k1::SecretKey, (bitcoin::bip32::Fingerprint, bitcoin::bip32::DerivationPath))> {
+        Err(AlkanesError::NotImplemented("get_internal_key_with_secret is not supported for browser wallets.".to_string()))
+    }
+
+
     async fn sign_psbt(&mut self, psbt: &Psbt) -> Result<Psbt> {
         // Convert PSBT to hex and use wallet to sign
         let psbt_hex = hex::encode(psbt.serialize());
@@ -1240,7 +1258,11 @@ impl BitcoinRpcProvider for BrowserWalletProvider {
     async fn generate_future(&self, address: &str) -> Result<JsonValue> {
         <WebProvider as BitcoinRpcProvider>::generate_future(&self.web_provider, address).await
     }
-    
+
+    async fn subfrost_thieve(&self, address: &str, amount: u64) -> Result<JsonValue> {
+        <WebProvider as BitcoinRpcProvider>::subfrost_thieve(&self.web_provider, address, amount).await
+    }
+
     async fn get_new_address(&self) -> Result<JsonValue> {
         self.web_provider.get_new_address().await
     }
@@ -1260,7 +1282,11 @@ impl BitcoinRpcProvider for BrowserWalletProvider {
     async fn send_raw_transaction(&self, tx_hex: &str) -> Result<String> {
         <WebProvider as BitcoinRpcProvider>::send_raw_transaction(&self.web_provider, tx_hex).await
     }
-    
+
+    async fn send_raw_transactions(&self, tx_hexes: &[String]) -> Result<Vec<String>> {
+        <WebProvider as BitcoinRpcProvider>::send_raw_transactions(&self.web_provider, tx_hexes).await
+    }
+
     async fn get_mempool_info(&self) -> Result<JsonValue> {
         <WebProvider as BitcoinRpcProvider>::get_mempool_info(&self.web_provider).await
     }
@@ -1307,6 +1333,14 @@ impl BitcoinRpcProvider for BrowserWalletProvider {
 
     async fn get_tx_out(&self, txid: &str, vout: u32, include_mempool: bool) -> Result<JsonValue> {
         self.web_provider.get_tx_out(txid, vout, include_mempool).await
+    }
+
+    async fn decode_raw_transaction(&self, hex: &str) -> Result<JsonValue> {
+        self.web_provider.decode_raw_transaction(hex).await
+    }
+
+    async fn decode_psbt(&self, psbt: &str) -> Result<JsonValue> {
+        self.web_provider.decode_psbt(psbt).await
     }
 }
 
@@ -1562,6 +1596,10 @@ impl AlkanesProvider for BrowserWalletProvider {
         self.web_provider.execute(params).await
     }
 
+    async fn execute_full(&mut self, params: alkanes_cli_common::alkanes::types::EnhancedExecuteParams) -> Result<alkanes_cli_common::alkanes::types::EnhancedExecuteResult> {
+        self.web_provider.execute_full(params).await
+    }
+
     async fn resume_execution(
         &mut self,
         state: alkanes_cli_common::alkanes::types::ReadyToSignTx,
@@ -1616,12 +1654,16 @@ impl AlkanesProvider for BrowserWalletProvider {
         self.web_provider.spendables_by_address(address).await
     }
 
-    async fn trace_block(&self, height: u64) -> Result<alkanes_cli_common::proto::alkanes::Trace> {
+    async fn trace_block(&self, height: u64) -> Result<alkanes_cli_common::proto::alkanes::AlkanesBlockTraceEvent> {
         self.web_provider.trace_block(height).await
     }
 
     async fn get_bytecode(&self, alkane_id: &str, block_tag: Option<String>) -> Result<String> {
         AlkanesProvider::get_bytecode(&self.web_provider, alkane_id, block_tag).await
+    }
+
+    async fn meta(&self, alkane_id: &str, block_tag: Option<String>) -> Result<Vec<u8>> {
+        AlkanesProvider::meta(&self.web_provider, alkane_id, block_tag).await
     }
 
     async fn inspect(&self, target: &str, config: AlkanesInspectConfig) -> Result<AlkanesInspectResult> {
@@ -1703,6 +1745,218 @@ impl KeystoreProvider for BrowserWalletProvider {
    }
 
 #[async_trait(?Send)]
+impl EspoProvider for BrowserWalletProvider {
+    async fn get_espo_height(&self) -> Result<u64> {
+        self.web_provider.get_espo_height().await
+    }
+
+    async fn get_address_balances(&self, address: &str, include_outpoints: bool) -> Result<serde_json::Value> {
+        self.web_provider.get_address_balances(address, include_outpoints).await
+    }
+
+    async fn get_address_outpoints(&self, address: &str) -> Result<serde_json::Value> {
+        self.web_provider.get_address_outpoints(address).await
+    }
+
+    async fn get_address_spendable_outpoints(&self, address: &str) -> Result<serde_json::Value> {
+        self.web_provider.get_address_spendable_outpoints(address).await
+    }
+
+    async fn get_outpoint_balances(&self, outpoint: &str) -> Result<serde_json::Value> {
+        self.web_provider.get_outpoint_balances(outpoint).await
+    }
+
+    async fn get_holders(&self, alkane_id: &str, page: u64, limit: u64) -> Result<serde_json::Value> {
+        self.web_provider.get_holders(alkane_id, page, limit).await
+    }
+
+    async fn get_holders_count(&self, alkane_id: &str) -> Result<serde_json::Value> {
+        self.web_provider.get_holders_count(alkane_id).await
+    }
+
+    async fn get_keys(&self, alkane_id: &str, page: u64, limit: u64) -> Result<serde_json::Value> {
+        self.web_provider.get_keys(alkane_id, page, limit).await
+    }
+
+    async fn ping(&self) -> Result<String> {
+        self.web_provider.ping().await
+    }
+
+    async fn ammdata_ping(&self) -> Result<String> {
+        self.web_provider.ammdata_ping().await
+    }
+
+    async fn get_candles(
+        &self,
+        pool: &str,
+        timeframe: Option<&str>,
+        side: Option<&str>,
+        limit: Option<u64>,
+        page: Option<u64>,
+    ) -> Result<serde_json::Value> {
+        self.web_provider.get_candles(pool, timeframe, side, limit, page).await
+    }
+
+    async fn get_trades(
+        &self,
+        pool: &str,
+        limit: Option<u64>,
+        page: Option<u64>,
+        side: Option<&str>,
+        filter_side: Option<&str>,
+        sort: Option<&str>,
+        dir: Option<&str>,
+    ) -> Result<serde_json::Value> {
+        self.web_provider.get_trades(pool, limit, page, side, filter_side, sort, dir).await
+    }
+
+    async fn get_pools(
+        &self,
+        limit: Option<u64>,
+        page: Option<u64>,
+    ) -> Result<serde_json::Value> {
+        self.web_provider.get_pools(limit, page).await
+    }
+
+    async fn find_best_swap_path(
+        &self,
+        token_in: &str,
+        token_out: &str,
+        mode: Option<&str>,
+        amount_in: Option<&str>,
+        amount_out: Option<&str>,
+        amount_out_min: Option<&str>,
+        amount_in_max: Option<&str>,
+        available_in: Option<&str>,
+        fee_bps: Option<u64>,
+        max_hops: Option<u64>,
+    ) -> Result<serde_json::Value> {
+        self.web_provider.find_best_swap_path(token_in, token_out, mode, amount_in, amount_out, amount_out_min, amount_in_max, available_in, fee_bps, max_hops).await
+    }
+
+    async fn get_best_mev_swap(
+        &self,
+        token: &str,
+        fee_bps: Option<u64>,
+        max_hops: Option<u64>,
+    ) -> Result<serde_json::Value> {
+        self.web_provider.get_best_mev_swap(token, fee_bps, max_hops).await
+    }
+
+    async fn get_amm_factories(
+        &self,
+        page: Option<u64>,
+        limit: Option<u64>,
+    ) -> Result<serde_json::Value> {
+        self.web_provider.get_amm_factories(page, limit).await
+    }
+
+    async fn get_all_alkanes(&self, page: Option<u64>, limit: Option<u64>) -> Result<serde_json::Value> {
+        self.web_provider.get_all_alkanes(page, limit).await
+    }
+
+    async fn get_alkane_info(&self, alkane_id: &str) -> Result<serde_json::Value> {
+        self.web_provider.get_alkane_info(alkane_id).await
+    }
+
+    async fn get_block_summary(&self, height: u64) -> Result<serde_json::Value> {
+        self.web_provider.get_block_summary(height).await
+    }
+
+    async fn get_circulating_supply(&self, alkane_id: &str, height: Option<u64>) -> Result<serde_json::Value> {
+        self.web_provider.get_circulating_supply(alkane_id, height).await
+    }
+
+    async fn get_transfer_volume(&self, alkane_id: &str, page: Option<u64>, limit: Option<u64>) -> Result<serde_json::Value> {
+        self.web_provider.get_transfer_volume(alkane_id, page, limit).await
+    }
+
+    async fn get_total_received(&self, alkane_id: &str, page: Option<u64>, limit: Option<u64>) -> Result<serde_json::Value> {
+        self.web_provider.get_total_received(alkane_id, page, limit).await
+    }
+
+    async fn get_address_activity(&self, address: &str) -> Result<serde_json::Value> {
+        self.web_provider.get_address_activity(address).await
+    }
+
+    async fn get_alkane_balances(&self, alkane_id: &str) -> Result<serde_json::Value> {
+        self.web_provider.get_alkane_balances(alkane_id).await
+    }
+
+    async fn get_alkane_balance_metashrew(&self, owner: &str, target: &str, height: Option<u64>) -> Result<serde_json::Value> {
+        self.web_provider.get_alkane_balance_metashrew(owner, target, height).await
+    }
+
+    async fn get_alkane_balance_txs(&self, alkane_id: &str, page: Option<u64>, limit: Option<u64>) -> Result<serde_json::Value> {
+        self.web_provider.get_alkane_balance_txs(alkane_id, page, limit).await
+    }
+
+    async fn get_alkane_balance_txs_by_token(&self, owner: &str, token: &str, page: Option<u64>, limit: Option<u64>) -> Result<serde_json::Value> {
+        self.web_provider.get_alkane_balance_txs_by_token(owner, token, page, limit).await
+    }
+
+    async fn get_block_traces(&self, height: u64) -> Result<serde_json::Value> {
+        self.web_provider.get_block_traces(height).await
+    }
+
+    async fn get_alkane_tx_summary(&self, txid: &str) -> Result<serde_json::Value> {
+        self.web_provider.get_alkane_tx_summary(txid).await
+    }
+
+    async fn get_alkane_block_txs(&self, height: u64, page: Option<u64>, limit: Option<u64>) -> Result<serde_json::Value> {
+        self.web_provider.get_alkane_block_txs(height, page, limit).await
+    }
+
+    async fn get_alkane_address_txs(&self, address: &str, page: Option<u64>, limit: Option<u64>) -> Result<serde_json::Value> {
+        self.web_provider.get_alkane_address_txs(address, page, limit).await
+    }
+
+    async fn get_address_transactions(&self, address: &str, page: Option<u64>, limit: Option<u64>, only_alkane_txs: Option<bool>) -> Result<serde_json::Value> {
+        self.web_provider.get_address_transactions(address, page, limit, only_alkane_txs).await
+    }
+
+    async fn get_alkane_latest_traces(&self) -> Result<serde_json::Value> {
+        self.web_provider.get_alkane_latest_traces().await
+    }
+
+    async fn get_mempool_traces(&self, page: Option<u64>, limit: Option<u64>, address: Option<&str>) -> Result<serde_json::Value> {
+        self.web_provider.get_mempool_traces(page, limit, address).await
+    }
+
+    async fn get_wrap_events_all(&self, count: Option<u64>, offset: Option<u64>, successful: Option<bool>) -> Result<serde_json::Value> {
+        self.web_provider.get_wrap_events_all(count, offset, successful).await
+    }
+
+    async fn get_wrap_events_by_address(&self, address: &str, count: Option<u64>, offset: Option<u64>, successful: Option<bool>) -> Result<serde_json::Value> {
+        self.web_provider.get_wrap_events_by_address(address, count, offset, successful).await
+    }
+
+    async fn get_unwrap_events_all(&self, count: Option<u64>, offset: Option<u64>, successful: Option<bool>) -> Result<serde_json::Value> {
+        self.web_provider.get_unwrap_events_all(count, offset, successful).await
+    }
+
+    async fn get_unwrap_events_by_address(&self, address: &str, count: Option<u64>, offset: Option<u64>, successful: Option<bool>) -> Result<serde_json::Value> {
+        self.web_provider.get_unwrap_events_by_address(address, count, offset, successful).await
+    }
+
+    async fn get_series_id_from_alkane_id(&self, alkane_id: &str) -> Result<serde_json::Value> {
+        self.web_provider.get_series_id_from_alkane_id(alkane_id).await
+    }
+
+    async fn get_series_ids_from_alkane_ids(&self, alkane_ids: &[&str]) -> Result<serde_json::Value> {
+        self.web_provider.get_series_ids_from_alkane_ids(alkane_ids).await
+    }
+
+    async fn get_alkane_id_from_series_id(&self, series_id: &str) -> Result<serde_json::Value> {
+        self.web_provider.get_alkane_id_from_series_id(series_id).await
+    }
+
+    async fn get_alkane_ids_from_series_ids(&self, series_ids: &[&str]) -> Result<serde_json::Value> {
+        self.web_provider.get_alkane_ids_from_series_ids(series_ids).await
+    }
+}
+
+#[async_trait(?Send)]
 impl DeezelProvider for BrowserWalletProvider {
     fn provider_name(&self) -> &str {
         "browser_wallet"
@@ -1751,6 +2005,14 @@ impl DeezelProvider for BrowserWalletProvider {
             trace_enabled: false,
             mine_enabled: is_regtest,
             auto_confirm: false,
+            ordinals_strategy: Default::default(),
+            mempool_indexer: false,
+
+            split_transactions: false,
+                known_pending_tx_hexes: Vec::new(),
+                prefetched_utxos: Vec::new(),
+        max_indexed_height: None,
+        utxo_source: Default::default(),
         };
 
         match executor.execute(params).await? {
@@ -1789,6 +2051,14 @@ impl DeezelProvider for BrowserWalletProvider {
             trace_enabled: false,
             mine_enabled: is_regtest,
             auto_confirm: false,
+            ordinals_strategy: Default::default(),
+            mempool_indexer: false,
+
+            split_transactions: false,
+                known_pending_tx_hexes: Vec::new(),
+                prefetched_utxos: Vec::new(),
+        max_indexed_height: None,
+        utxo_source: Default::default(),
         };
 
         match executor.execute(params).await? {
@@ -1814,8 +2084,8 @@ impl DeezelProvider for BrowserWalletProvider {
         self.web_provider.get_utxo(outpoint).await
     }
 
-    async fn sign_taproot_script_spend(&self, msg: Message) -> Result<Signature> {
-        self.web_provider.sign_taproot_script_spend(msg).await
+    async fn sign_taproot_script_spend(&self, msg: Message, ephemeral_secret: Option<bitcoin::secp256k1::SecretKey>) -> Result<Signature> {
+        self.web_provider.sign_taproot_script_spend(msg, ephemeral_secret).await
     }
     fn get_bitcoin_rpc_url(&self) -> Option<String> {
         self.web_provider.get_bitcoin_rpc_url()
@@ -1858,5 +2128,467 @@ impl alkanes_cli_common::lua_script::LuaScriptExecutor for BrowserWalletProvider
         args: Vec<alkanes_cli_common::JsonValue>,
     ) -> alkanes_cli_common::Result<alkanes_cli_common::JsonValue> {
         self.web_provider.lua_evalscript(script_content, args).await
+    }
+}
+
+// ============================================================================
+// JavaScript Wallet Adapter Interface
+// ============================================================================
+// This section provides wasm-bindgen bindings that allow JavaScript to supply
+// wallet adapter objects that implement the required interface for alkanes-rs.
+
+/// JavaScript wallet adapter interface.
+///
+/// This extern type defines the interface that JavaScript wallet adapters must implement.
+/// It allows the TypeScript SDK to supply wallet implementations that can be used
+/// with the BrowserWalletProvider.
+#[wasm_bindgen]
+extern "C" {
+    /// A JavaScript object that implements the wallet adapter interface.
+    ///
+    /// Required methods:
+    /// - `connect(): Promise<{ address: string, publicKey?: string, addressType?: string }>`
+    /// - `disconnect(): Promise<void>`
+    /// - `getAccounts(): Promise<{ address: string, publicKey?: string }[]>`
+    /// - `getNetwork(): Promise<string>`
+    /// - `switchNetwork(network: string): Promise<void>`
+    /// - `signMessage(message: string, address: string): Promise<string>`
+    /// - `signPsbt(psbtHex: string, options?: object): Promise<string>`
+    /// - `signPsbts(psbtHexs: string[], options?: object): Promise<string[]>`
+    /// - `pushTx(txHex: string): Promise<string>`
+    /// - `pushPsbt(psbtHex: string): Promise<string>`
+    /// - `getPublicKey(): Promise<string>`
+    /// - `getBalance(): Promise<number | null>`
+    /// - `getInscriptions(cursor?: number, size?: number): Promise<object>`
+    /// - `getInfo(): { id: string, name: string, ... }`
+    #[wasm_bindgen(typescript_type = "JsWalletAdapter")]
+    pub type JsWalletAdapter;
+
+    // Synchronous getter for wallet info
+    #[wasm_bindgen(method, js_name = "getInfo")]
+    fn get_info_js(this: &JsWalletAdapter) -> JsValue;
+
+    // Async methods return Promises
+    #[wasm_bindgen(method, js_name = "connect")]
+    fn connect_js(this: &JsWalletAdapter) -> js_sys::Promise;
+
+    #[wasm_bindgen(method, js_name = "disconnect")]
+    fn disconnect_js(this: &JsWalletAdapter) -> js_sys::Promise;
+
+    #[wasm_bindgen(method, js_name = "getAccounts")]
+    fn get_accounts_js(this: &JsWalletAdapter) -> js_sys::Promise;
+
+    #[wasm_bindgen(method, js_name = "getNetwork")]
+    fn get_network_js(this: &JsWalletAdapter) -> js_sys::Promise;
+
+    #[wasm_bindgen(method, js_name = "switchNetwork")]
+    fn switch_network_js(this: &JsWalletAdapter, network: &str) -> js_sys::Promise;
+
+    #[wasm_bindgen(method, js_name = "signMessage")]
+    fn sign_message_js(this: &JsWalletAdapter, message: &str, address: &str) -> js_sys::Promise;
+
+    #[wasm_bindgen(method, js_name = "signPsbt")]
+    fn sign_psbt_js(this: &JsWalletAdapter, psbt_hex: &str, options: JsValue) -> js_sys::Promise;
+
+    #[wasm_bindgen(method, js_name = "signPsbts")]
+    fn sign_psbts_js(this: &JsWalletAdapter, psbt_hexs: js_sys::Array, options: JsValue) -> js_sys::Promise;
+
+    #[wasm_bindgen(method, js_name = "pushTx")]
+    fn push_tx_js(this: &JsWalletAdapter, tx_hex: &str) -> js_sys::Promise;
+
+    #[wasm_bindgen(method, js_name = "pushPsbt")]
+    fn push_psbt_js(this: &JsWalletAdapter, psbt_hex: &str) -> js_sys::Promise;
+
+    #[wasm_bindgen(method, js_name = "getPublicKey")]
+    fn get_public_key_js(this: &JsWalletAdapter) -> js_sys::Promise;
+
+    #[wasm_bindgen(method, js_name = "getBalance")]
+    fn get_balance_js(this: &JsWalletAdapter) -> js_sys::Promise;
+
+    #[wasm_bindgen(method, js_name = "getInscriptions")]
+    fn get_inscriptions_js(this: &JsWalletAdapter, cursor: JsValue, size: JsValue) -> js_sys::Promise;
+}
+
+/// Wrapper for JavaScript wallet adapters that implements WalletBackend
+pub struct JsWalletBackend {
+    adapter: JsWalletAdapter,
+    info: WalletInfo,
+}
+
+impl JsWalletBackend {
+    /// Create a new JsWalletBackend from a JavaScript adapter
+    pub fn new(adapter: JsWalletAdapter) -> Result<Self> {
+        // Get wallet info from the adapter
+        let info_js = adapter.get_info_js();
+        let info: WalletInfo = serde_wasm_bindgen::from_value(info_js)
+            .map_err(|e| AlkanesError::Wallet(format!("Invalid wallet info: {e:?}")))?;
+
+        Ok(Self { adapter, info })
+    }
+}
+
+#[async_trait(?Send)]
+impl WalletBackend for JsWalletBackend {
+    fn get_info(&self) -> &WalletInfo {
+        &self.info
+    }
+
+    async fn is_available(&self) -> bool {
+        // If we have the adapter, it's available
+        true
+    }
+
+    async fn connect(&self) -> Result<WalletAccount> {
+        let promise = self.adapter.connect_js();
+        let result = JsFuture::from(promise)
+            .await
+            .map_err(|e| AlkanesError::Wallet(format!("Connect failed: {e:?}")))?;
+
+        // Parse the account info from JS
+        let account: WalletAccount = serde_wasm_bindgen::from_value(result)
+            .map_err(|e| AlkanesError::Wallet(format!("Invalid account response: {e:?}")))?;
+
+        Ok(account)
+    }
+
+    async fn disconnect(&self) -> Result<()> {
+        let promise = self.adapter.disconnect_js();
+        JsFuture::from(promise)
+            .await
+            .map_err(|e| AlkanesError::Wallet(format!("Disconnect failed: {e:?}")))?;
+        Ok(())
+    }
+
+    async fn get_accounts(&self) -> Result<Vec<WalletAccount>> {
+        let promise = self.adapter.get_accounts_js();
+        let result = JsFuture::from(promise)
+            .await
+            .map_err(|e| AlkanesError::Wallet(format!("Get accounts failed: {e:?}")))?;
+
+        let accounts: Vec<WalletAccount> = serde_wasm_bindgen::from_value(result)
+            .map_err(|e| AlkanesError::Wallet(format!("Invalid accounts response: {e:?}")))?;
+
+        Ok(accounts)
+    }
+
+    async fn get_network(&self) -> Result<WalletNetworkInfo> {
+        let promise = self.adapter.get_network_js();
+        let result = JsFuture::from(promise)
+            .await
+            .map_err(|e| AlkanesError::Wallet(format!("Get network failed: {e:?}")))?;
+
+        let network = result.as_string().unwrap_or_else(|| "mainnet".to_string());
+
+        Ok(WalletNetworkInfo {
+            network,
+            chain_id: None,
+        })
+    }
+
+    async fn switch_network(&self, network: &str) -> Result<()> {
+        let promise = self.adapter.switch_network_js(network);
+        JsFuture::from(promise)
+            .await
+            .map_err(|e| AlkanesError::Wallet(format!("Switch network failed: {e:?}")))?;
+        Ok(())
+    }
+
+    async fn sign_message(&self, message: &str, address: &str) -> Result<String> {
+        let promise = self.adapter.sign_message_js(message, address);
+        let result = JsFuture::from(promise)
+            .await
+            .map_err(|e| AlkanesError::Wallet(format!("Sign message failed: {e:?}")))?;
+
+        result.as_string()
+            .ok_or_else(|| AlkanesError::Wallet("Invalid signature response".to_string()))
+    }
+
+    async fn sign_psbt(&self, psbt_hex: &str, options: Option<PsbtSigningOptions>) -> Result<String> {
+        let options_js = match options {
+            Some(opts) => serde_wasm_bindgen::to_value(&opts)
+                .map_err(|e| AlkanesError::Wallet(format!("Failed to serialize options: {e:?}")))?,
+            None => JsValue::undefined(),
+        };
+
+        let promise = self.adapter.sign_psbt_js(psbt_hex, options_js);
+        let result = JsFuture::from(promise)
+            .await
+            .map_err(|e| AlkanesError::Wallet(format!("Sign PSBT failed: {e:?}")))?;
+
+        result.as_string()
+            .ok_or_else(|| AlkanesError::Wallet("Invalid signed PSBT response".to_string()))
+    }
+
+    async fn sign_psbts(&self, psbt_hexs: Vec<String>, options: Option<PsbtSigningOptions>) -> Result<Vec<String>> {
+        let psbts_array = js_sys::Array::new();
+        for psbt_hex in psbt_hexs {
+            psbts_array.push(&JsValue::from_str(&psbt_hex));
+        }
+
+        let options_js = match options {
+            Some(opts) => serde_wasm_bindgen::to_value(&opts)
+                .map_err(|e| AlkanesError::Wallet(format!("Failed to serialize options: {e:?}")))?,
+            None => JsValue::undefined(),
+        };
+
+        let promise = self.adapter.sign_psbts_js(psbts_array, options_js);
+        let result = JsFuture::from(promise)
+            .await
+            .map_err(|e| AlkanesError::Wallet(format!("Sign PSBTs failed: {e:?}")))?;
+
+        let result_array = result.dyn_into::<js_sys::Array>()
+            .map_err(|e| AlkanesError::Wallet(format!("Invalid PSBTs signature response: {e:?}")))?;
+
+        let mut signed_psbts = Vec::new();
+        for i in 0..result_array.length() {
+            let psbt = result_array.get(i);
+            if let Some(psbt_hex) = psbt.as_string() {
+                signed_psbts.push(psbt_hex);
+            }
+        }
+
+        Ok(signed_psbts)
+    }
+
+    async fn push_tx(&self, tx_hex: &str) -> Result<String> {
+        let promise = self.adapter.push_tx_js(tx_hex);
+        let result = JsFuture::from(promise)
+            .await
+            .map_err(|e| AlkanesError::Wallet(format!("Push TX failed: {e:?}")))?;
+
+        result.as_string()
+            .ok_or_else(|| AlkanesError::Wallet("Invalid push TX response".to_string()))
+    }
+
+    async fn push_psbt(&self, psbt_hex: &str) -> Result<String> {
+        let promise = self.adapter.push_psbt_js(psbt_hex);
+        let result = JsFuture::from(promise)
+            .await
+            .map_err(|e| AlkanesError::Wallet(format!("Push PSBT failed: {e:?}")))?;
+
+        result.as_string()
+            .ok_or_else(|| AlkanesError::Wallet("Invalid push PSBT response".to_string()))
+    }
+
+    async fn get_public_key(&self) -> Result<String> {
+        let promise = self.adapter.get_public_key_js();
+        let result = JsFuture::from(promise)
+            .await
+            .map_err(|e| AlkanesError::Wallet(format!("Get public key failed: {e:?}")))?;
+
+        result.as_string()
+            .ok_or_else(|| AlkanesError::Wallet("Invalid public key response".to_string()))
+    }
+
+    async fn get_balance(&self) -> Result<Option<u64>> {
+        let promise = self.adapter.get_balance_js();
+        match JsFuture::from(promise).await {
+            Ok(result) => {
+                if result.is_null() || result.is_undefined() {
+                    Ok(None)
+                } else if let Some(balance) = result.as_f64() {
+                    Ok(Some(balance as u64))
+                } else {
+                    Ok(None)
+                }
+            },
+            Err(_) => Ok(None), // Balance not supported
+        }
+    }
+
+    async fn get_inscriptions(&self, cursor: Option<u32>, size: Option<u32>) -> Result<JsonValue> {
+        let cursor_js = match cursor {
+            Some(c) => JsValue::from_f64(c as f64),
+            None => JsValue::undefined(),
+        };
+        let size_js = match size {
+            Some(s) => JsValue::from_f64(s as f64),
+            None => JsValue::undefined(),
+        };
+
+        let promise = self.adapter.get_inscriptions_js(cursor_js, size_js);
+        let result = JsFuture::from(promise)
+            .await
+            .map_err(|e| AlkanesError::Wallet(format!("Get inscriptions failed: {e:?}")))?;
+
+        // Convert JsValue to JsonValue
+        let result_str = js_sys::JSON::stringify(&result)
+            .map_err(|e| AlkanesError::Wallet(format!("Failed to stringify inscriptions: {e:?}")))?
+            .as_string()
+            .ok_or_else(|| AlkanesError::Wallet("Invalid inscriptions response".to_string()))?;
+
+        serde_json::from_str(&result_str)
+            .map_err(|e| AlkanesError::Wallet(format!("Failed to parse inscriptions JSON: {e}")))
+    }
+}
+
+// ============================================================================
+// WASM-Bindgen Exports for BrowserWalletProvider
+// ============================================================================
+
+/// WASM-exported BrowserWalletProvider that can be created from JavaScript
+#[wasm_bindgen]
+pub struct WasmBrowserWalletProvider {
+    inner: BrowserWalletProvider,
+}
+
+#[wasm_bindgen]
+impl WasmBrowserWalletProvider {
+    /// Create a new BrowserWalletProvider from a JavaScript wallet adapter
+    ///
+    /// @param adapter - A JavaScript object implementing the JsWalletAdapter interface
+    /// @param network - Network string ("mainnet", "testnet", "signet", "regtest")
+    /// @returns Promise<WasmBrowserWalletProvider>
+    #[wasm_bindgen(constructor)]
+    pub async fn new(adapter: JsWalletAdapter, network: String) -> std::result::Result<WasmBrowserWalletProvider, JsValue> {
+        let backend = JsWalletBackend::new(adapter)
+            .map_err(|e| JsValue::from_str(&format!("Failed to create wallet backend: {e}")))?;
+
+        let provider = BrowserWalletProvider::connect_local(Box::new(backend), network)
+            .await
+            .map_err(|e| JsValue::from_str(&format!("Failed to connect wallet: {e}")))?;
+
+        Ok(WasmBrowserWalletProvider { inner: provider })
+    }
+
+    /// Get the connected wallet address
+    #[wasm_bindgen(js_name = "getAddress")]
+    pub fn get_address(&self) -> Option<String> {
+        self.inner.current_account().map(|a| a.address.clone())
+    }
+
+    /// Get the wallet public key
+    #[wasm_bindgen(js_name = "getPublicKey")]
+    pub async fn get_public_key(&self) -> std::result::Result<String, JsValue> {
+        self.inner.wallet.get_public_key()
+            .await
+            .map_err(|e| JsValue::from_str(&format!("{e}")))
+    }
+
+    /// Sign a PSBT (hex encoded)
+    #[wasm_bindgen(js_name = "signPsbt")]
+    pub async fn sign_psbt(&self, psbt_hex: String, options: JsValue) -> std::result::Result<String, JsValue> {
+        let signing_options: Option<PsbtSigningOptions> = if options.is_undefined() || options.is_null() {
+            None
+        } else {
+            Some(serde_wasm_bindgen::from_value(options)
+                .map_err(|e| JsValue::from_str(&format!("Invalid signing options: {e}")))?)
+        };
+
+        self.inner.wallet.sign_psbt(&psbt_hex, signing_options)
+            .await
+            .map_err(|e| JsValue::from_str(&format!("{e}")))
+    }
+
+    /// Sign a message
+    #[wasm_bindgen(js_name = "signMessage")]
+    pub async fn sign_message(&self, message: String, address: Option<String>) -> std::result::Result<String, JsValue> {
+        let addr = address.or_else(|| self.inner.current_account().map(|a| a.address.clone()))
+            .ok_or_else(|| JsValue::from_str("No address available"))?;
+
+        self.inner.wallet.sign_message(&message, &addr)
+            .await
+            .map_err(|e| JsValue::from_str(&format!("{e}")))
+    }
+
+    /// Broadcast a transaction
+    #[wasm_bindgen(js_name = "broadcastTransaction")]
+    pub async fn broadcast_transaction(&self, tx_hex: String) -> std::result::Result<String, JsValue> {
+        WalletProvider::broadcast_transaction(&self.inner, tx_hex)
+            .await
+            .map_err(|e| JsValue::from_str(&format!("{e}")))
+    }
+
+    /// Get balance
+    #[wasm_bindgen(js_name = "getBalance")]
+    pub async fn get_balance(&self) -> std::result::Result<JsValue, JsValue> {
+        let balance = WalletProvider::get_balance(&self.inner, None)
+            .await
+            .map_err(|e| JsValue::from_str(&format!("{e}")))?;
+
+        serde_wasm_bindgen::to_value(&balance)
+            .map_err(|e| JsValue::from_str(&format!("Serialization error: {e}")))
+    }
+
+    /// Get UTXOs
+    #[wasm_bindgen(js_name = "getUtxos")]
+    pub async fn get_utxos(&self, include_frozen: bool) -> std::result::Result<JsValue, JsValue> {
+        let utxos = self.inner.get_utxos(include_frozen, None)
+            .await
+            .map_err(|e| JsValue::from_str(&format!("{e}")))?;
+
+        // Convert to a simpler format for JS
+        let utxo_list: Vec<serde_json::Value> = utxos.iter().map(|(outpoint, info)| {
+            serde_json::json!({
+                "txid": outpoint.txid.to_string(),
+                "vout": outpoint.vout,
+                "amount": info.amount,
+                "script_pubkey": info.script_pubkey.as_ref().map(|s| s.to_hex_string()),
+                "address": &info.address,
+            })
+        }).collect();
+
+        serde_wasm_bindgen::to_value(&utxo_list)
+            .map_err(|e| JsValue::from_str(&format!("Serialization error: {e}")))
+    }
+
+    /// Get enriched UTXOs with asset information
+    #[wasm_bindgen(js_name = "getEnrichedUtxos")]
+    pub async fn get_enriched_utxos(&self) -> std::result::Result<JsValue, JsValue> {
+        let utxos = WalletProvider::get_enriched_utxos(&self.inner, None)
+            .await
+            .map_err(|e| JsValue::from_str(&format!("{e}")))?;
+
+        serde_wasm_bindgen::to_value(&utxos)
+            .map_err(|e| JsValue::from_str(&format!("Serialization error: {e}")))
+    }
+
+    /// Get all balances (BTC + alkanes)
+    #[wasm_bindgen(js_name = "getAllBalances")]
+    pub async fn get_all_balances(&self) -> std::result::Result<JsValue, JsValue> {
+        let balances = WalletProvider::get_all_balances(&self.inner, None)
+            .await
+            .map_err(|e| JsValue::from_str(&format!("{e}")))?;
+
+        serde_wasm_bindgen::to_value(&balances)
+            .map_err(|e| JsValue::from_str(&format!("Serialization error: {e}")))
+    }
+
+    /// Get wallet info
+    #[wasm_bindgen(js_name = "getWalletInfo")]
+    pub fn get_wallet_info(&self) -> JsValue {
+        serde_wasm_bindgen::to_value(self.inner.wallet_info())
+            .unwrap_or(JsValue::undefined())
+    }
+
+    /// Get connection status
+    #[wasm_bindgen(js_name = "getConnectionStatus")]
+    pub fn get_connection_status(&self) -> String {
+        match self.inner.connection_status() {
+            WalletConnectionStatus::Disconnected => "disconnected".to_string(),
+            WalletConnectionStatus::Connecting => "connecting".to_string(),
+            WalletConnectionStatus::Connected => "connected".to_string(),
+            WalletConnectionStatus::Error(e) => format!("error: {e}"),
+        }
+    }
+
+    /// Get current network
+    #[wasm_bindgen(js_name = "getNetwork")]
+    pub fn get_network(&self) -> String {
+        match self.inner.get_network() {
+            Network::Bitcoin => "mainnet".to_string(),
+            Network::Testnet => "testnet".to_string(),
+            Network::Signet => "signet".to_string(),
+            Network::Regtest => "regtest".to_string(),
+            _ => "unknown".to_string(),
+        }
+    }
+
+    /// Disconnect from the wallet
+    #[wasm_bindgen(js_name = "disconnect")]
+    pub async fn disconnect(&mut self) -> std::result::Result<(), JsValue> {
+        self.inner.disconnect()
+            .await
+            .map_err(|e| JsValue::from_str(&format!("{e}")))
     }
 }

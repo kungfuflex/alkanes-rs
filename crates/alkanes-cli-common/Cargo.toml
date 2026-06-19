@@ -84,6 +84,7 @@ leb128 = { version = "0.2.5", default-features = false }
 # Alloy for Ethereum ABI encoding/decoding
 alloy-sol-types = { version = "0.7", default-features = false }
 alloy-primitives = { version = "0.7", default-features = false }
+alloy-dyn-abi = { version = "0.7", default-features = false }
 
 # emasm-rs for EVM bytecode generation
 emasm = { workspace = true }
@@ -120,8 +121,16 @@ clap = { workspace = true, features = ["derive"], default-features = false }
 bitcoincore-rpc = { workspace = true, optional = true }
 bech32.workspace = true
 
+# Optional: persistent sqlite cache backend (cache-sqlite feature).
+# Uses sqlx-sqlite to share libsqlite3-sys version with alkanes-contract-indexer.
+sqlx = { version = "0.7", default-features = false, features = ["runtime-tokio-rustls", "sqlite", "macros"], optional = true }
+
+# Optional: gRPC cache shim (cache-grpc feature) for subfrost-mobile integration
+tonic = { version = "0.12", default-features = false, features = ["codegen", "prost", "transport"], optional = true }
+prost-types = { version = "0.13", optional = true }
+
 [features]
-default = ["std", "wasm-inspection", "native-deps"]
+default = ["std", "wasm-inspection", "native-deps", "cache-sqlite"]
 std = ["tokio", "reqwest", "url", "bitcoincore-rpc", "dirs", "tempfile", "futures", "async-trait"]
 wasm-inspection = ["wasmi", "wasmprinter", "wat", "spin", "wasmparser", "web-sys", "js-sys", "wasm-bindgen-futures"]
 native-deps = []
@@ -129,6 +138,11 @@ web-compat = ["spin", "std"]
 worker = []
 frost = ["frost-secp256k1-tr", "frost-core", "elliptic-curve", "ff"]
 wasip2 = []  # No std, no tokio, no reqwest, no futures, no async-trait - only core types and logic
+
+# Sqlite-backed AlkanesCache (~/.alkanes/cache.sqlite3). Requires `std`.
+cache-sqlite = ["std", "sqlx"]
+# gRPC-backed AlkanesCache shim for subfrost-mobile. Requires `std`.
+cache-grpc = ["std", "tonic", "prost-types"]
 
 test-utils = []
 

@@ -1,10 +1,16 @@
+#[allow(unused_imports, dead_code, clippy::all)]
+mod generated {
+    include!(concat!(env!("OUT_DIR"), "/generated.rs"));
+}
+
 pub mod utils;
 use crate::utils::{
-    calc_merkle_root, decode_from_vec, extract_witness_payload, SchemaMerkleLeaf, SchemaMerkleProof,
+    calc_merkle_root, decode_from_vec, extract_witness_payload, SchemaMerkleLeaf,
+    SchemaMerkleProof,
 };
 use alkanes_runtime::auth::AuthenticatedResponder;
+use alkanes_runtime::runtime::AlkaneResponder;
 use alkanes_runtime::storage::StoragePointer;
-use alkanes_runtime::{declare_alkane, message::MessageDispatch, runtime::AlkaneResponder};
 #[allow(unused_imports)]
 use alkanes_runtime::{
     println,
@@ -15,39 +21,16 @@ use alkanes_support::{id::AlkaneId, parcel::AlkaneTransfer, response::CallRespon
 use anyhow::{anyhow, ensure, Context, Result};
 use bitcoin::{Address, Transaction};
 use borsh::BorshDeserialize;
-use metashrew_support::compat::{to_arraybuffer_layout, to_passback_ptr};
 use metashrew_support::index_pointer::KeyValuePointer;
 use ordinals::{Artifact, Runestone};
 use protorune_support::{protostone::Protostone, utils::consensus_decode};
 use std::io::Cursor;
 use std::sync::Arc;
 
+use generated::MerkleDistributorInterface;
+
 #[derive(Default)]
 pub struct MerkleDistributor(());
-
-#[derive(MessageDispatch)]
-enum MerkleDistributorMessage {
-    #[opcode(0)]
-    Initialize {
-        input_alkane: AlkaneId,
-        input_amount: u128,
-        end_height: u128,
-        root_first_half: u128,
-        root_second_half: u128,
-    },
-
-    #[opcode(1)]
-    Claim,
-
-    #[opcode(2)]
-    AuthCleanup { alkane: AlkaneId },
-
-    #[opcode(50)]
-    ForwardIncoming,
-
-    #[opcode(51)]
-    Donate,
-}
 
 pub fn overflow_error(v: Option<u128>) -> Result<u128> {
     v.ok_or("").map_err(|_| anyhow!("overflow error"))
@@ -235,7 +218,9 @@ impl MerkleDistributor {
         }
         Ok(response)
     }
+}
 
+impl MerkleDistributorInterface for MerkleDistributor {
     fn initialize(
         &self,
         input_alkane: AlkaneId,
@@ -306,10 +291,3 @@ impl MerkleDistributor {
 
 impl AlkaneResponder for MerkleDistributor {}
 impl AuthenticatedResponder for MerkleDistributor {}
-
-// Use the new macro format
-declare_alkane! {
-    impl AlkaneResponder for MerkleDistributor {
-        type Message = MerkleDistributorMessage;
-    }
-}

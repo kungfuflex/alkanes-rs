@@ -24,14 +24,17 @@ enum Commands {
     /// Set progress so the next run starts at a given block height
     ///
     /// Usage:
-    ///   dbctl reset-progress --height <H>
+    ///   dbctl reset-progress --height <H> [--block-hash <HASH>]
     /// Behavior:
-    ///   - H > 0: sets kv_store.last_processed_height to H-1 so the next run starts at H
-    ///   - H = 0: clears the progress key; to start from 0, run the indexer without START_HEIGHT
+    ///   - H > 0: sets position to H-1 so the next run starts at H
+    ///   - H = 0: clears the position; to start from 0, run the indexer without START_HEIGHT
     ResetProgress {
         /// Height to start from on the next run (H>0 starts at H; H=0 clears progress)
         #[arg(long, default_value_t = 0)]
         height: u64,
+        /// Block hash of the block at height-1 (optional, defaults to empty if not provided)
+        #[arg(long, default_value = "")]
+        block_hash: String,
     },
     /// Delete all indexed data for a specific block height
     PurgeBlock {
@@ -68,21 +71,21 @@ async fn main() -> Result<()> {
             sqlx::migrate!().run(&pool).await?;
             info!("Migrations applied successfully");
         }
-        Commands::ResetProgress { height } => {
-            // Ensure kv_store exists then set or clear the progress key based on requested height
-            alkanes_contract_indexer::progress::ensure_kv_table(&pool).await?;
+        Commands::ResetProgress { height, block_hash } => {
+            // Ensure position table exists
+            alkanes_contract_indexer::progress::ensure_position_table(&pool).await?;
             if height == 0 {
-                // Clearing the key means: if START_HEIGHT is unset, next run starts at 0; if START_HEIGHT is set, it will start from that value.
-                sqlx::query("delete from kv_store where key = 'last_processed_height'")
+                // Clearing the position means: if START_HEIGHT is unset, next run starts at 0; if START_HEIGHT is set, it will start from that value.
+                sqlx::query("DELETE FROM indexer_position WHERE id = 1")
                     .execute(&pool)
                     .await?;
-                info!("Cleared last_processed_height (next run depends on START_HEIGHT; unset it to begin at 0)");
+                info!("Cleared position (next run depends on START_HEIGHT; unset it to begin at 0)");
             } else {
                 let progress = alkanes_contract_indexer::progress::ProgressStore::new(pool.clone());
-                // Set last_processed_height to height-1, so coordinator starts from height regardless of START_HEIGHT
+                // Set position to height-1, so coordinator starts from height regardless of START_HEIGHT
                 let last = height - 1;
-                progress.set_last_processed_height(last).await?;
-                info!(target_height = height, last_processed_height = last, "Configured next run to start from height {}", height);
+                progress.set_position(last, &block_hash).await?;
+                info!(target_height = height, last_position = last, block_hash = %block_hash, "Configured next run to start from height {}", height);
             }
         }
         Commands::PurgeBlock { height } => {

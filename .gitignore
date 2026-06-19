@@ -7,3 +7,5 @@ src/tests/std/**/*.rs
 memory-bank/activeContext.md
 memory-bank/progress.md
 scripts/.addresses.json
+.pkgenv
+pkg-sa-key.json

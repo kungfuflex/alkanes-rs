@@ -1,0 +1,10 @@
+[package]
+name = "alkanes-llvm"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+inkwell = { version = "0.5", features = ["llvm18-0-prefer-dynamic"] }
+llvm-sys = { version = "180.0.0", package = "llvm-sys", features = ["prefer-dynamic"] }
+either = "1.13"

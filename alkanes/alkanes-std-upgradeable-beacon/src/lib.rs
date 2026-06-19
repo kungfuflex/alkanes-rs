@@ -1,6 +1,9 @@
+#[allow(unused_imports, dead_code, clippy::all)]
+mod generated {
+    include!(concat!(env!("OUT_DIR"), "/generated.rs"));
+}
+
 use alkanes_runtime::auth::AuthenticatedResponder;
-use alkanes_runtime::declare_alkane;
-use alkanes_runtime::message::MessageDispatch;
 #[allow(unused_imports)]
 use alkanes_runtime::{
     println,
@@ -13,32 +16,12 @@ use metashrew_support::compat::{to_arraybuffer_layout, to_passback_ptr};
 use metashrew_support::index_pointer::KeyValuePointer;
 use std::sync::Arc;
 
+use generated::UpgradeableBeaconInterface;
+
 #[derive(Default)]
 pub struct UpgradeableBeacon(());
 
-#[derive(MessageDispatch)]
-enum UpgradeableBeaconMessage {
-    #[opcode(0x7fff)]
-    Initialize {
-        implementation: AlkaneId,
-        auth_token_units: u128,
-    },
-
-    #[opcode(0x7ffd)]
-    Implementation {},
-
-    #[opcode(0x7ffe)]
-    UpgradeTo { implementation: AlkaneId },
-    #[opcode(0x8fff)]
-    Forward {},
-}
-
 impl UpgradeableBeacon {
-    fn forward(&self) -> Result<CallResponse> {
-        let context = self.context()?;
-        let response = CallResponse::forward(&context.incoming_alkanes);
-        Ok(response)
-    }
     pub fn implementation_pointer() -> StoragePointer {
         StoragePointer::from_keyword("/implementation")
     }
@@ -54,7 +37,13 @@ impl UpgradeableBeacon {
     pub fn set_implementation(v: AlkaneId) {
         Self::implementation_pointer().set(Arc::new(<AlkaneId as Into<Vec<u8>>>::into(v)));
     }
+}
 
+impl AuthenticatedResponder for UpgradeableBeacon {}
+
+impl AlkaneResponder for UpgradeableBeacon {}
+
+impl UpgradeableBeaconInterface for UpgradeableBeacon {
     fn initialize(&self, implementation: AlkaneId, auth_token_units: u128) -> Result<CallResponse> {
         self.observe_initialization()?;
         let context = self.context()?;
@@ -84,15 +73,10 @@ impl UpgradeableBeacon {
         Self::set_implementation(implementation);
         Ok(CallResponse::forward(&context.incoming_alkanes))
     }
-}
 
-impl AuthenticatedResponder for UpgradeableBeacon {}
-
-impl AlkaneResponder for UpgradeableBeacon {}
-
-// Use the new macro format
-declare_alkane! {
-    impl AlkaneResponder for UpgradeableBeacon {
-        type Message = UpgradeableBeaconMessage;
+    fn forward(&self) -> Result<CallResponse> {
+        let context = self.context()?;
+        let response = CallResponse::forward(&context.incoming_alkanes);
+        Ok(response)
     }
 }

@@ -54,8 +54,10 @@ async fn main() -> Result<()> {
     .await?;
 
     // Pipeline and poller
-    // Bootstrap kv storage used for progress tracking
-    progress::ensure_kv_table(&pool).await?;
+    // Bootstrap position table used for progress tracking
+    progress::ensure_position_table(&pool).await?;
+    // Migrate from old kv_store if needed
+    progress::migrate_from_kv_store(&pool).await?;
 
     let pipeline = pipeline::Pipeline::new(
         pool.clone(),
@@ -63,31 +65,33 @@ async fn main() -> Result<()> {
         cfg.factory_tx_id.clone(),
     );
     let progress_store = progress::ProgressStore::new(pool.clone());
-    let _last_processed = progress_store.get_last_processed_height().await?;
+    let position = progress_store.get_position().await?;
+    if let Some(ref pos) = position {
+        info!(height = pos.height, block_hash = %pos.block_hash, "resuming from position");
+    } else {
+        info!("no position found, starting fresh");
+    }
 
     // Spawn tip poller (always triggers pools fetch; also processes blocks when following tip)
     let tip_provider = provider;
     let poller_pipeline = pipeline.clone();
-    // If we have a configured start height, coordinate catch-up to start only after
-    // the poller has initialized metashrew height and refreshed pools.
-    let (poller_init_tx, maybe_init_rx) = if cfg.start_height.is_some() {
-        let (tx, rx) = oneshot::channel::<()>();
-        (Some(tx), Some(rx))
-    } else {
-        (None, None)
-    };
+    let poller_progress = progress::ProgressStore::new(pool.clone());
+    // Always coordinate catch-up - wait for poller to initialize pools before starting
+    let (poller_init_tx, poller_init_rx) = oneshot::channel::<()>();
     let poller_fut = async move {
         let poller = poller::BlockPoller::new(
             tip_provider,
             poller_pipeline,
+            poller_progress,
             cfg.poll_interval_ms,
-            poller_init_tx,
+            Some(poller_init_tx),
             cfg.start_height,
         );
         poller.run().await;
     };
 
     // Spawn catch-up coordinator (sequential processing until tip)
+    // This always runs - when no position exists, it starts from start_height or 0
     let coord_provider = provider::build_provider(
         cfg.bitcoin_rpc_url.clone(),
         cfg.jsonrpc_url.clone(),
@@ -97,9 +101,8 @@ async fn main() -> Result<()> {
     .await?;
     let coordinator = coordinator::CatchUpCoordinator::new(coord_provider, pipeline, progress_store, cfg.start_height);
     let coordinator_fut = async move {
-        if let Some(rx) = maybe_init_rx {
-            let _ = rx.await; // wait for initial pools refresh + height init
-        }
+        // Wait for initial pools refresh + height init before starting catch-up
+        let _ = poller_init_rx.await;
         loop {
             let _ = coordinator.run_once().await;
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;

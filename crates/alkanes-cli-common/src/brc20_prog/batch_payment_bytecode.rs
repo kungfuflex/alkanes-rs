@@ -63,8 +63,8 @@ pub fn generate_batch_payment_fetcher_bytecode(
     // 0x1000: payment count
     // 0x1020: write pointer (where next payment struct will be written)
     // 0x1040: offsets write pointer (where next offset entry will be written)
-    // 0x2000: start of offsets array
-    // 0x3000: start of payment data
+    // 0x2000: start of offsets array (supports up to 12,032 offsets = ~385KB)
+    // 0x60000: start of payment data (must not overlap with offsets array at 0x2000)
 
     let builder = evm_asm_interpolator!([
         // ============================================
@@ -74,7 +74,7 @@ pub fn generate_batch_payment_fetcher_bytecode(
         0x1000,              // Memory location for count
         "mstore",
 
-        0x3000,              // Initial data write pointer (payment structs start here)
+        0x60000,             // Initial data write pointer (payment structs start here)
         0x1020,              // Memory location for data pointer
         "mstore",
 
@@ -217,11 +217,11 @@ pub fn generate_batch_payment_fetcher_bytecode(
             0x1020,
             "mload",             // [write_ptr, struct_size, actual_index]
 
-            // Calculate offset for this payment relative to data start (0x3000)
-            // offset = write_ptr - 0x3000
+            // Calculate offset for this payment relative to data start (0x60000)
+            // offset = write_ptr - 0x60000
             "dup1",              // [write_ptr, write_ptr, struct_size, actual_index]
-            0x3000,
-            "swap1",             // [write_ptr, 0x3000, write_ptr, struct_size, actual_index]
+            0x60000,
+            "swap1",             // [write_ptr, 0x60000, write_ptr, struct_size, actual_index]
             "sub",               // [offset, write_ptr, struct_size, actual_index]
 
             // Store offset in offsets array
@@ -313,7 +313,8 @@ pub fn generate_batch_payment_fetcher_bytecode(
         // SKIP_PAYMENT: Continue loop without copying
         // ============================================
         ["skip_payment", [
-            // Stack: [actual_index]
+            // Stack: [height, actual_index]
+            "pop",               // Pop height; Stack: [actual_index]
             "loop_start",
             "jump"
         ]],
@@ -335,11 +336,11 @@ pub fn generate_batch_payment_fetcher_bytecode(
             "jumpi",
 
             // Build ABI-encoded array:
-            // The offsets are at 0x2000, data starts at 0x3000
+            // The offsets are at 0x2000, data starts at 0x60000
             // Final format: [array_offset=0x20][length][offset0][offset1]...[data0][data1]...
             //
             // We need to adjust offsets to be relative to the start of the offsets section
-            // Current offsets are relative to 0x3000
+            // Current offsets are relative to 0x60000
             // We need them relative to the start of the array content
             //
             // Array content layout after length:
@@ -350,6 +351,9 @@ pub fn generate_batch_payment_fetcher_bytecode(
             // Stack: [count]
 
             // Calculate offset adjustment: count * 32
+            // Offsets in ABI encoding are relative to the start of the offsets array (after length)
+            // We need to add count*32 (size of all offsets) to each raw offset
+            // Raw offsets are (write_ptr - 0x60000), and in final output data starts at (0x40 + count*32)
             "dup1",              // [count, count]
             0x20,
             "mul",               // [count*32, count]
@@ -402,18 +406,24 @@ pub fn generate_batch_payment_fetcher_bytecode(
                 "pop",           // [adjustment, count]
                 "pop",           // [count]
 
+                // NOTE: Payments are stored in reverse order (newest first) because we iterate
+                // backwards through the payments array. The Rust parsing code will reverse
+                // the resulting Vec to get chronological order.
+                //
+                // Stack: [count]
+
                 // Now build the final output
                 // We need to return: [0x20][count][offsets...][data...]
                 //
                 // Currently:
                 // - Offsets are at 0x2000 (count * 32 bytes)
-                // - Data is at 0x3000 to write_ptr
+                // - Data is at 0x60000 to write_ptr
                 //
                 // We'll build output at 0x1800:
                 // 0x1800: 0x20 (offset to array data)
                 // 0x1820: count
                 // 0x1840: offsets (copied from 0x2000)
-                // 0x1840 + count*32: data (copied from 0x3000)
+                // 0x1840 + count*32: data (copied from 0x60000)
 
                 // Stack: [count]
 
@@ -476,8 +486,8 @@ pub fn generate_batch_payment_fetcher_bytecode(
                     "pop",       // [remaining, offsets_size, count]
                     "pop",       // [offsets_size, count]
 
-                    // Now copy data from 0x3000 to 0x1840 + offsets_size
-                    // Data size = write_ptr - 0x3000
+                    // Now copy data from 0x60000 to 0x1840 + offsets_size
+                    // Data size = write_ptr - 0x60000
 
                     // Calculate data destination
                     0x1840,
@@ -486,14 +496,14 @@ pub fn generate_batch_payment_fetcher_bytecode(
                     // Get data size
                     0x1020,
                     "mload",     // [write_ptr, data_dest, count]
-                    0x3000,
+                    0x60000,
                     "swap1",
                     "sub",       // [data_size, data_dest, count]
 
                     // Stack: [data_size, data_dest, count]
                     "dup1",      // [data_size, data_size, data_dest, count]
-                    0x3000,      // [0x3000, data_size, data_size, data_dest, count]
-                    "dup4",      // [data_dest, 0x3000, data_size, data_size, data_dest, count]
+                    0x60000,     // [0x60000, data_size, data_size, data_dest, count]
+                    "dup4",      // [data_dest, 0x60000, data_size, data_size, data_dest, count]
 
                     "data_copy_loop",
                     "jump",
@@ -545,7 +555,7 @@ pub fn generate_batch_payment_fetcher_bytecode(
                         "pop",   // [offsets_size, data_size]
                         "add",   // [offsets_size + data_size]
                         0x40,
-                        "add",   // [total_size]
+                        "add",   // [total_size = 0x40 + offsets_size + data_size]
 
                         // Return from 0x1800
                         // RETURN opcode pops: offset (top), then size

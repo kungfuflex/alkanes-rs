@@ -22,9 +22,8 @@ import {
   ImportOptions,
 } from '../types';
 
-// Re-export the WASM keystore functions
-// @ts-ignore - WASM types are available at runtime
-import type * as AlkanesWasm from '../../build/wasm/alkanes_web_sys';
+// WASM module type - loaded dynamically at runtime
+type AlkanesWasm = any;
 
 /**
  * Default PBKDF2 parameters (matching ethers.js defaults)
@@ -50,9 +49,9 @@ export const DERIVATION_PATHS = {
  * Can be used standalone or integrated with WASM backend.
  */
 export class KeystoreManager {
-  private wasm?: typeof AlkanesWasm;
+  private wasm?: AlkanesWasm;
 
-  constructor(wasmModule?: typeof AlkanesWasm) {
+  constructor(wasmModule?: AlkanesWasm) {
     this.wasm = wasmModule;
   }
 
@@ -355,7 +354,7 @@ export class KeystoreManager {
     const key = await crypto.subtle.deriveKey(
       {
         name: 'PBKDF2',
-        salt,
+        salt: salt as BufferSource,
         iterations: encrypted.pbkdf2_params.iterations,
         hash: 'SHA-256',
       },
@@ -364,14 +363,14 @@ export class KeystoreManager {
       false,
       ['decrypt']
     );
-    
+
     // Decrypt mnemonic
     try {
       const encryptedBuffer = this.hexToBuffer(encrypted.encrypted_mnemonic);
       const decryptedBuffer = await crypto.subtle.decrypt(
-        { name: 'AES-GCM', iv: nonce },
+        { name: 'AES-GCM', iv: nonce as BufferSource },
         key,
-        encryptedBuffer
+        encryptedBuffer as BufferSource
       );
       
       const mnemonic = decoder.decode(decryptedBuffer);
@@ -445,7 +444,7 @@ export class KeystoreManager {
     );
   }
 
-  private async getCrypto(): Promise<SubtleCrypto & { getRandomValues: (arr: Uint8Array) => Uint8Array }> {
+  private async getCrypto(): Promise<Crypto> {
     // Always use browser crypto API
     if (typeof window !== 'undefined' && window.crypto) {
       return window.crypto as any;

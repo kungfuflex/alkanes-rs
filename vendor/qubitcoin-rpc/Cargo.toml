@@ -1,0 +1,22 @@
+[package]
+name = "qubitcoin-rpc"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "JSON-RPC server for Qubitcoin"
+
+[dependencies]
+qubitcoin-node = { path = "../qubitcoin-node", features = ["filesystem", "parallel"] }
+qubitcoin-common = { path = "../qubitcoin-common", features = ["native"] }
+qubitcoin-util = { path = "../qubitcoin-util", features = ["native"] }
+qubitcoin-primitives = { path = "../qubitcoin-primitives" }
+qubitcoin-consensus = { path = "../qubitcoin-consensus" }
+thiserror = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+tokio = { version = "1", features = ["full"] }
+parking_lot = "0.12"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }

@@ -1,5 +1,9 @@
-use alkanes_runtime::declare_alkane;
-use alkanes_runtime::message::MessageDispatch;
+// Include the generated code from WIT codegen
+#[allow(unused_imports, dead_code, clippy::all)]
+mod generated {
+    include!(concat!(env!("OUT_DIR"), "/generated.rs"));
+}
+
 #[allow(unused_imports)]
 use alkanes_runtime::{
     println,
@@ -9,33 +13,13 @@ use alkanes_runtime::{runtime::AlkaneResponder, storage::StoragePointer, token::
 use alkanes_support::{
     context::Context, id::AlkaneId, parcel::AlkaneTransfer, response::CallResponse,
 };
-use anyhow::{anyhow, Result};
-use metashrew_support::compat::{to_arraybuffer_layout, to_passback_ptr};
+use anyhow::Result;
 use metashrew_support::index_pointer::KeyValuePointer;
+
+use generated::GenesisProtoruneInterface;
 
 #[derive(Default)]
 pub struct GenesisProtorune(());
-
-#[derive(MessageDispatch)]
-enum GenesisProtoruneMessage {
-    #[opcode(0)]
-    Initialize,
-
-    #[opcode(77)]
-    Mint,
-
-    #[opcode(99)]
-    #[returns(String)]
-    GetName,
-
-    #[opcode(100)]
-    #[returns(String)]
-    GetSymbol,
-
-    #[opcode(101)]
-    #[returns(u128)]
-    GetTotalSupply,
-}
 
 impl Token for GenesisProtorune {
     fn name(&self) -> String {
@@ -68,7 +52,7 @@ impl GenesisProtorune {
                     tx: 298,
                 })
         {
-            panic!("can only mint in response to incoming QUORUM•GENESIS•PROTORUNE");
+            panic!("can only mint in response to incoming QUORUM\u{2022}GENESIS\u{2022}PROTORUNE");
         }
         let value = context.incoming_alkanes.0[0].value;
         let mut total_supply_pointer = self.total_supply_pointer();
@@ -78,7 +62,11 @@ impl GenesisProtorune {
             value,
         })
     }
+}
 
+impl AlkaneResponder for GenesisProtorune {}
+
+impl GenesisProtoruneInterface for GenesisProtorune {
     fn initialize(&self) -> Result<CallResponse> {
         self.observe_initialization()?;
         let context = self.context()?;
@@ -89,7 +77,6 @@ impl GenesisProtorune {
         Ok(response)
     }
 
-    // Method that matches the MessageDispatch enum
     fn mint(&self) -> Result<CallResponse> {
         let context = self.context()?;
         let mut response = CallResponse::forward(&context.incoming_alkanes);
@@ -127,14 +114,5 @@ impl GenesisProtorune {
         response.data = (&self.total_supply().to_le_bytes()).to_vec();
 
         Ok(response)
-    }
-}
-
-impl AlkaneResponder for GenesisProtorune {}
-
-// Use the new macro format
-declare_alkane! {
-    impl AlkaneResponder for GenesisProtorune {
-        type Message = GenesisProtoruneMessage;
     }
 }

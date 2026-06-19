@@ -7,6 +7,7 @@ pub mod context;
 pub mod helpers;
 pub mod key_utils;
 pub mod proto;
+pub mod rollback;
 pub mod runtime;
 pub mod smt;
 pub mod traits;

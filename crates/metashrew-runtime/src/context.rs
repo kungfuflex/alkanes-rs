@@ -98,13 +98,17 @@ pub struct MetashrewRuntimeContext<T: KeyValueStoreLike> {
     /// indexer requirements.
     pub block: Vec<u8>,
     
-    /// WASM execution state tracking
+    /// WASM execution state tracking (atomic for lock-free access)
     ///
     /// Tracks the progress of WASM module execution:
     /// - `0`: Execution starting or in progress
     /// - `1`: Execution completed successfully
     /// - Other values may indicate error conditions
-    pub state: u32,
+    ///
+    /// Uses AtomicU32 so that setting state=1 after __flush does not
+    /// require a write lock on the entire context, which would block
+    /// concurrent view function read locks.
+    pub state: std::sync::atomic::AtomicU32,
 }
 
 impl<T: KeyValueStoreLike> Clone for MetashrewRuntimeContext<T>
@@ -116,7 +120,7 @@ where
             db: self.db.clone(),
             height: self.height,
             block: self.block.clone(),
-            state: self.state,
+            state: std::sync::atomic::AtomicU32::new(self.state.load(std::sync::atomic::Ordering::SeqCst)),
         }
     }
 }
@@ -171,7 +175,7 @@ impl<T: KeyValueStoreLike> MetashrewRuntimeContext<T> {
             db,
             height,
             block,
-            state: 0,
+            state: std::sync::atomic::AtomicU32::new(0),
         }
     }
 }

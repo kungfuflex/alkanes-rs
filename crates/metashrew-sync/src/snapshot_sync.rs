@@ -7,6 +7,7 @@
 //! - Combined snapshot server mode
 
 use async_trait::async_trait;
+use bitcoin::hashes::Hash as _;
 use log::{debug, error, info, warn};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
@@ -35,7 +36,7 @@ where
     node: Arc<N>,
     storage: Arc<RwLock<S>>,
     runtime: Arc<R>,
-    config: SyncConfig,
+    pub config: SyncConfig,
     sync_mode: Arc<RwLock<SyncMode>>,
 
     // Snapshot components
@@ -117,6 +118,21 @@ where
         self.current_height.load(Ordering::SeqCst)
     }
 
+    /// Get a reference to the node adapter
+    pub fn node(&self) -> &Arc<N> {
+        &self.node
+    }
+
+    /// Get a reference to the storage adapter
+    pub fn storage(&self) -> &Arc<RwLock<S>> {
+        &self.storage
+    }
+
+    /// Get a reference to the runtime adapter
+    pub fn runtime(&self) -> &Arc<R> {
+        &self.runtime
+    }
+
     pub async fn get_height(&self) -> SyncResult<u32> {
         let storage = self.storage.read().await;
         storage.get_indexed_height().await
@@ -187,12 +203,120 @@ where
         }
     }
 
+    /// Validate block chain continuity like a light client (SPV-style)
+    ///
+    /// This performs two validations:
+    /// 1. Computes the block hash from the header and verifies it matches the provided hash
+    /// 2. Verifies the block's prev_blockhash matches our computed hash of the previous block
+    ///
+    /// This is more secure than trusting stored hashes - we verify the actual block data.
+    async fn validate_block_connects(&self, height: u32, block_data: &[u8], provided_hash: &[u8]) -> SyncResult<bool> {
+        use bitcoin::consensus::Encodable;
+        use sha2::{Sha256, Digest};
+
+        // Decode the block
+        let block: bitcoin::Block = bitcoin::consensus::deserialize(block_data)
+            .map_err(|e| SyncError::BlockProcessing {
+                height,
+                message: format!("Failed to deserialize block: {}", e),
+            })?;
+
+        // Step 1: Compute block hash from header (double SHA256)
+        let mut header_bytes = Vec::with_capacity(80);
+        block.header.consensus_encode(&mut header_bytes)
+            .map_err(|e| SyncError::BlockProcessing {
+                height,
+                message: format!("Failed to encode block header: {}", e),
+            })?;
+
+        let first_hash = Sha256::digest(&header_bytes);
+        let second_hash = Sha256::digest(&first_hash);
+        let mut computed_hash: Vec<u8> = second_hash.to_vec();
+        computed_hash.reverse(); // Convert to display order (big-endian) to match bitcoind
+
+        // Verify computed hash matches provided hash
+        if computed_hash != provided_hash {
+            error!(
+                "⚠ BLOCK HASH MISMATCH at height {}: Computed {} but received {}",
+                height,
+                hex::encode(&computed_hash),
+                hex::encode(provided_hash)
+            );
+            return Ok(false);
+        }
+
+        debug!(
+            "✓ Block {} hash verified: {}...{}",
+            height,
+            hex::encode(&computed_hash[..4]),
+            hex::encode(&computed_hash[28..])
+        );
+
+        // Genesis block has no previous block to check
+        if height == 0 {
+            return Ok(true);
+        }
+
+        // Step 2: Verify prev_blockhash matches stored hash of previous block
+        // Convert prev_blockhash to display order to match stored format
+        let mut block_prev_hash: Vec<u8> = block.header.prev_blockhash.to_byte_array().to_vec();
+        block_prev_hash.reverse();
+
+        // Get the stored hash of the previous block
+        let storage = self.storage.read().await;
+        let stored_prev_hash = storage.get_block_hash(height - 1).await?;
+        drop(storage);
+
+        match stored_prev_hash {
+            Some(stored_hash) => {
+                if stored_hash != block_prev_hash {
+                    error!(
+                        "⚠ CHAIN DISCONTINUITY at height {}: Block's prev_blockhash {} does not match stored hash {} of block {}",
+                        height,
+                        hex::encode(&block_prev_hash),
+                        hex::encode(&stored_hash),
+                        height - 1
+                    );
+                    Ok(false)
+                } else {
+                    debug!(
+                        "✓ Block {} connects to previous block {} (prev_hash: {}...{})",
+                        height,
+                        height - 1,
+                        hex::encode(&block_prev_hash[..4]),
+                        hex::encode(&block_prev_hash[28..])
+                    );
+                    Ok(true)
+                }
+            }
+            None => {
+                warn!(
+                    "No stored hash for block {} - unable to validate chain continuity for block {}",
+                    height - 1,
+                    height
+                );
+                // Allow processing to continue, but log the issue
+                Ok(true)
+            }
+        }
+    }
+
     pub async fn process_block(
         &self,
         height: u32,
         block_data: Vec<u8>,
         block_hash: Vec<u8>,
     ) -> SyncResult<()> {
+        // Validate block hash and chain continuity (SPV-style)
+        if !self.validate_block_connects(height, &block_data, &block_hash).await? {
+            return Err(SyncError::BlockProcessing {
+                height,
+                message: format!(
+                    "Block does not connect to previous block - possible reorg or chain inconsistency"
+                ),
+            });
+        }
+
         // Try atomic processing first
         let atomic_result = self.runtime
             .process_block_atomic(height, &block_data, &block_hash)

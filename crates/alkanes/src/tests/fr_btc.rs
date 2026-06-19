@@ -73,7 +73,6 @@ pub fn simulate_cellpack(height: u64, cellpack: Cellpack) -> Result<(ExtendedCal
         txindex: 0,
         vout: 0,
         runtime_balances: Box::<BalanceSheet<AtomicPointer>>::new(BalanceSheet::default()),
-        trace: alkanes_support::trace::Trace::default(),
     };
     simulate_parcel(&parcel, u64::MAX)
 }

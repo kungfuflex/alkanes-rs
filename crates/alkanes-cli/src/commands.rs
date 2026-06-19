@@ -42,9 +42,22 @@ pub struct DeezelCommands {
     /// Wallet private key file path (for signing with a single key)
     #[arg(long, conflicts_with_all = ["wallet_file", "wallet_address", "wallet_key"])]
     pub wallet_key_file: Option<String>,
+    /// Sign every PSBT through WalletConnect instead of the local
+    /// keystore. Requires a prior `alkanes-cli wc pair` to have stashed
+    /// a session at `~/.alkanes/wc-session.json`. Mutually exclusive
+    /// with the local-key flags.
+    #[arg(
+        long,
+        conflicts_with_all = ["wallet_file", "wallet_key", "wallet_key_file"]
+    )]
+    pub use_walletconnect: bool,
     /// JSON-RPC URL (defaults based on provider: subfrost-regtest, signet, mainnet)
     #[arg(long)]
     pub jsonrpc_url: Option<String>,
+    /// Custom headers for JSON-RPC requests (can be specified multiple times)
+    /// Format: "Header-Name: Header-Value" (e.g., "Host: signet.subfrost.io")
+    #[arg(long = "jsonrpc-header", value_name = "HEADER")]
+    pub jsonrpc_headers: Vec<String>,
     /// Titan API URL (alternative to jsonrpc-url)
     #[arg(long)]
     pub titan_api_url: Option<String>,
@@ -66,12 +79,25 @@ pub struct DeezelCommands {
     /// BRC20-Prog RPC URL (for querying brc20-programmable-module)
     #[arg(long)]
     pub brc20_prog_rpc_url: Option<String>,
+    /// Qubitcoin RPC URL — single-process mode (overrides all other RPC URLs)
+    #[arg(long)]
+    pub qubitcoin_rpc_url: Option<String>,
     /// FrBTC contract address (for testing with custom deployments)
     #[arg(long)]
     pub frbtc_address: Option<String>,
     /// Data API URL (defaults to http://localhost:4000 for regtest, https://mainnet-api.oyl.gg for mainnet)
     #[arg(long)]
     pub data_api: Option<String>,
+    /// OPI (Open Protocol Indexer) URL (defaults based on network)
+    #[arg(long)]
+    pub opi_url: Option<String>,
+    /// Custom headers for OPI requests (can be specified multiple times)
+    /// Format: "Header-Name: Header-Value" (e.g., "Host: regtest.subfrost.io")
+    #[arg(long = "opi-header", value_name = "HEADER")]
+    pub opi_headers: Vec<String>,
+    /// ESPO RPC URL (for alkanes balance indexer, defaults to jsonrpc_url + /espo)
+    #[arg(long)]
+    pub espo_rpc_url: Option<String>,
     /// Network provider
     #[arg(short, long, default_value = "regtest")]
     pub provider: String,
@@ -116,9 +142,27 @@ pub enum Commands {
     /// DataAPI subcommands - Query data from alkanes-data-api
     #[command(subcommand)]
     Dataapi(DataApiCommand),
+    /// OPI (Open Protocol Indexer) subcommands - BRC-20 indexer queries
+    #[command(subcommand)]
+    Opi(OpiCommands),
     /// Subfrost operations (frBTC unwrap utilities)
     #[command(subcommand)]
     Subfrost(SubfrostCommands),
+    /// ESPO subcommands (alkanes balance indexer with PostgreSQL backend)
+    #[command(subcommand)]
+    Espo(EspoCommands),
+    /// WalletConnect signer integration — pair with subfrost-mobile and sign
+    /// PSBTs over the relay.
+    #[command(subcommand)]
+    Wc(WcCommands),
+    /// Decode a PSBT (Partially Signed Bitcoin Transaction) without calling bitcoind
+    Decodepsbt {
+        /// PSBT as base64 string
+        psbt: String,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
 }
 
 /// Lua script subcommands
@@ -214,6 +258,12 @@ pub enum BitcoindCommands {
     Decoderawtransaction {
         /// Raw transaction hex
         hex: String,
+        #[arg(long)]
+        raw: bool,
+    },
+    Decodepsbt {
+        /// PSBT as base64 string
+        psbt: String,
         #[arg(long)]
         raw: bool,
     },
@@ -548,6 +598,27 @@ pub enum Brc20Prog {
         /// Automatically confirm the transaction preview
         #[arg(long, short = 'y')]
         auto_confirm: bool,
+        /// Skip activation transaction and use 2-transaction pattern (commit-reveal with OP_RETURN)
+        #[arg(long)]
+        no_activation: bool,
+        /// Use MARA Slipstream service for broadcasting (bypasses standard mempool, accepts large/non-standard txs)
+        #[arg(long)]
+        use_slipstream: bool,
+        /// Use Rebar Shield for private transaction relay (requires payment output in tx)
+        #[arg(long)]
+        use_rebar: bool,
+        /// Rebar fee tier (1 or 2, default: 1). Tier 1: ~8% hashrate, Tier 2: ~16% hashrate
+        #[arg(long)]
+        rebar_tier: Option<u8>,
+        /// Anti-frontrunning strategy: checklocktimeverify, cpfp, presign, or rbf
+        #[arg(long, value_name = "STRATEGY")]
+        strategy: Option<String>,
+        /// Resume from existing commit transaction (provide commit txid)
+        #[arg(long, value_name = "TXID")]
+        resume: Option<String>,
+        /// Mint DIESEL tokens in commit and reveal transactions
+        #[arg(long)]
+        mint_diesel: bool,
     },
     /// Call a BRC20-prog contract function
     Transact {
@@ -582,9 +653,163 @@ pub enum Brc20Prog {
         /// Automatically confirm the transaction preview
         #[arg(long, short = 'y')]
         auto_confirm: bool,
+        /// Use MARA Slipstream service for broadcasting (bypasses standard mempool, accepts large/non-standard txs)
+        #[arg(long)]
+        use_slipstream: bool,
+        /// Use Rebar Shield for private transaction relay (requires payment output in tx)
+        #[arg(long)]
+        use_rebar: bool,
+        /// Rebar fee tier (1 or 2, default: 1). Tier 1: ~8% hashrate, Tier 2: ~16% hashrate
+        #[arg(long)]
+        rebar_tier: Option<u8>,
+        /// Anti-frontrunning strategy: checklocktimeverify, cpfp, presign, or rbf
+        #[arg(long, value_name = "STRATEGY")]
+        strategy: Option<String>,
+        /// Resume from existing commit transaction (provide commit txid)
+        #[arg(long, value_name = "TXID")]
+        resume: Option<String>,
+        /// Mint DIESEL tokens in commit and reveal transactions
+        #[arg(long)]
+        mint_diesel: bool,
     },
-    /// Wrap BTC to frBTC and execute in brc20-prog (wrapAndExecute2)
+    /// Wrap BTC to frBTC (simple wrap without execution)
+    #[command(name = "wrap-btc")]
     WrapBtc {
+        /// Amount of BTC to wrap (in satoshis)
+        amount: u64,
+        /// Addresses to source UTXOs from
+        #[arg(long, num_args = 1..)]
+        from: Option<Vec<String>>,
+        /// Change address
+        #[arg(long)]
+        change: Option<String>,
+        /// Fee rate in sat/vB
+        #[arg(long)]
+        fee_rate: Option<f32>,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+        /// Enable transaction tracing
+        #[arg(long)]
+        trace: bool,
+        /// Mine a block after broadcasting (regtest only)
+        #[arg(long)]
+        mine: bool,
+        /// Automatically confirm the transaction preview
+        #[arg(long, short = 'y')]
+        auto_confirm: bool,
+        /// Use MARA Slipstream service for broadcasting
+        #[arg(long)]
+        use_slipstream: bool,
+        /// Use Rebar Shield for private transaction relay
+        #[arg(long)]
+        use_rebar: bool,
+        /// Rebar fee tier (1 or 2)
+        #[arg(long)]
+        rebar_tier: Option<u8>,
+        /// Resume from existing commit transaction
+        #[arg(long, value_name = "TXID")]
+        resume: Option<String>,
+        /// Mint DIESEL tokens in commit and reveal transactions
+        #[arg(long)]
+        mint_diesel: bool,
+    },
+    /// Unwrap frBTC to BTC (burns frBTC and queues BTC payment)
+    #[command(name = "unwrap-btc")]
+    UnwrapBtc {
+        /// Amount of frBTC to unwrap (in satoshis)
+        amount: u64,
+        /// Vout index for the inscription output (default: 0)
+        #[arg(long, default_value = "0")]
+        vout: u64,
+        /// Recipient address for the unwrapped BTC
+        #[arg(long)]
+        to: String,
+        /// Addresses to source UTXOs from
+        #[arg(long, num_args = 1..)]
+        from: Option<Vec<String>>,
+        /// Change address
+        #[arg(long)]
+        change: Option<String>,
+        /// Fee rate in sat/vB
+        #[arg(long)]
+        fee_rate: Option<f32>,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+        /// Enable transaction tracing
+        #[arg(long)]
+        trace: bool,
+        /// Mine a block after broadcasting (regtest only)
+        #[arg(long)]
+        mine: bool,
+        /// Automatically confirm the transaction preview
+        #[arg(long, short = 'y')]
+        auto_confirm: bool,
+        /// Use MARA Slipstream service for broadcasting
+        #[arg(long)]
+        use_slipstream: bool,
+        /// Use Rebar Shield for private transaction relay
+        #[arg(long)]
+        use_rebar: bool,
+        /// Rebar fee tier (1 or 2)
+        #[arg(long)]
+        rebar_tier: Option<u8>,
+        /// Resume from existing commit transaction
+        #[arg(long, value_name = "TXID")]
+        resume: Option<String>,
+        /// Mint DIESEL tokens in commit and reveal transactions
+        #[arg(long)]
+        mint_diesel: bool,
+    },
+    /// Wrap BTC and deploy+execute a script (wrapAndExecute)
+    #[command(name = "wrap-and-execute")]
+    WrapAndExecute {
+        /// Amount of BTC to wrap (in satoshis)
+        amount: u64,
+        /// Script bytecode to deploy and execute (hex-encoded)
+        #[arg(long)]
+        script: String,
+        /// Addresses to source UTXOs from
+        #[arg(long, num_args = 1..)]
+        from: Option<Vec<String>>,
+        /// Change address
+        #[arg(long)]
+        change: Option<String>,
+        /// Fee rate in sat/vB
+        #[arg(long)]
+        fee_rate: Option<f32>,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+        /// Enable transaction tracing
+        #[arg(long)]
+        trace: bool,
+        /// Mine a block after broadcasting (regtest only)
+        #[arg(long)]
+        mine: bool,
+        /// Automatically confirm the transaction preview
+        #[arg(long, short = 'y')]
+        auto_confirm: bool,
+        /// Use MARA Slipstream service for broadcasting
+        #[arg(long)]
+        use_slipstream: bool,
+        /// Use Rebar Shield for private transaction relay
+        #[arg(long)]
+        use_rebar: bool,
+        /// Rebar fee tier (1 or 2)
+        #[arg(long)]
+        rebar_tier: Option<u8>,
+        /// Resume from existing commit transaction
+        #[arg(long, value_name = "TXID")]
+        resume: Option<String>,
+        /// Mint DIESEL tokens in commit and reveal transactions
+        #[arg(long)]
+        mint_diesel: bool,
+    },
+    /// Wrap BTC and call an existing contract (wrapAndExecute2)
+    #[command(name = "wrap-and-execute2")]
+    WrapAndExecute2 {
         /// Amount of BTC to wrap (in satoshis)
         amount: u64,
         /// Target contract address for wrapAndExecute2
@@ -594,7 +819,7 @@ pub enum Brc20Prog {
         #[arg(long)]
         signature: String,
         /// Calldata arguments as comma-separated values
-        #[arg(long)]
+        #[arg(long, default_value = "")]
         calldata: String,
         /// Addresses to source UTXOs from
         #[arg(long, num_args = 1..)]
@@ -617,6 +842,28 @@ pub enum Brc20Prog {
         /// Automatically confirm the transaction preview
         #[arg(long, short = 'y')]
         auto_confirm: bool,
+        /// Use MARA Slipstream service for broadcasting
+        #[arg(long)]
+        use_slipstream: bool,
+        /// Use Rebar Shield for private transaction relay
+        #[arg(long)]
+        use_rebar: bool,
+        /// Rebar fee tier (1 or 2)
+        #[arg(long)]
+        rebar_tier: Option<u8>,
+        /// Resume from existing commit transaction
+        #[arg(long, value_name = "TXID")]
+        resume: Option<String>,
+        /// Mint DIESEL tokens in commit and reveal transactions
+        #[arg(long)]
+        mint_diesel: bool,
+    },
+    /// Get FrBTC signer address for the current network
+    #[command(name = "signer-address")]
+    SignerAddress {
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
     },
     /// Get contract deployments made by an address
     GetContractDeploys {
@@ -851,6 +1098,9 @@ pub enum Brc20Prog {
         /// Use experimental EVM bytecode assembler for batch fetching (100x faster!)
         #[arg(long)]
         experimental_asm: bool,
+        /// Use experimental Solidity-compiled bytecode for batch fetching (for comparison)
+        #[arg(long)]
+        experimental_sol: bool,
     },
 }
 
@@ -892,7 +1142,7 @@ pub enum Alkanes {
     },
     /// Simulate an alkanes transaction
     Simulate {
-        /// The alkane ID to simulate (format: block:tx:calldata_opcode, e.g., 4:65522:3)
+        /// The alkane ID to simulate (format: block:tx:arg1:arg2:..., e.g., 4:20013:2:1717855594)
         alkane_id: String,
         /// Input alkanes as comma-separated triplets (e.g., 2:1:1,2:2:100)
         #[arg(long)]
@@ -922,8 +1172,11 @@ pub enum Alkanes {
         #[arg(long)]
         block_tag: Option<String>,
         /// Show raw JSON output
-        #[arg(long)]
+        #[arg(long, conflicts_with = "format")]
         raw: bool,
+        /// Format the output data as a specific type (number, u128be, u64be, u32be, u16be, u8be, string)
+        #[arg(long, conflicts_with = "raw")]
+        format: Option<String>,
     },
     /// Execute a tx-script with WASM bytecode
     TxScript {
@@ -978,6 +1231,17 @@ pub enum Alkanes {
         #[arg(long)]
         raw: bool,
     },
+    /// Get the metadata (ABI) for an alkane
+    Meta {
+        /// The alkane ID to get the metadata for
+        alkane_id: String,
+        /// Block tag to query (e.g., "latest" or a block height)
+        #[arg(long)]
+        block_tag: Option<String>,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
     /// Get the balance of an address
     #[command(name = "getbalance")]
     GetBalance {
@@ -1016,6 +1280,33 @@ pub enum Alkanes {
         /// Automatically confirm the transaction preview
         #[arg(long, short = 'y')]
         auto_confirm: bool,
+    },
+    /// Deposit stablecoins (USDT/USDC) into the subfrost vault on EVM.
+    /// Triggers frUSD minting on Bitcoin via the signal engine.
+    BridgeDeposit {
+        /// Amount to deposit (in stablecoin's native decimals, e.g., 1000000 = 1 USDC)
+        amount: u64,
+        /// Stablecoin: "usdc" or "usdt"
+        #[arg(long, default_value = "usdt")]
+        stablecoin: String,
+        /// EVM RPC URL
+        #[arg(long, default_value = "http://127.0.0.1:8545")]
+        evm_rpc: String,
+        /// EVM private key (hex, 0x-prefixed)
+        #[arg(long)]
+        evm_key: String,
+        /// Vault contract address (overrides default)
+        #[arg(long)]
+        vault_address: Option<String>,
+        /// Token contract address (overrides default)
+        #[arg(long)]
+        token_address: Option<String>,
+        /// Raw protostones hex for the mint TX (optional — for advanced swap paths)
+        #[arg(long)]
+        protostones: Option<String>,
+        /// Chain ID (default: 31337 for regtest)
+        #[arg(long)]
+        chain_id: Option<u64>,
     },
     /// Get pending unwraps
     Unwrap {
@@ -1363,6 +1654,714 @@ pub enum DataApiCommand {
         #[arg(long)]
         raw_http: bool,
     },
+    /// Get the latest block height processed by the indexer
+    GetBlockHeight {
+        /// Output raw JSON instead of pretty print
+        #[arg(long)]
+        raw: bool,
+        /// Output raw HTTP response text (for debugging decode errors)
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get the latest block hash processed by the indexer
+    GetBlockHash {
+        /// Output raw JSON instead of pretty print
+        #[arg(long)]
+        raw: bool,
+        /// Output raw HTTP response text (for debugging decode errors)
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get the indexer position (height and hash of latest processed block)
+    GetIndexerPosition {
+        /// Output raw JSON instead of pretty print
+        #[arg(long)]
+        raw: bool,
+        /// Output raw HTTP response text (for debugging decode errors)
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get 52-week Bitcoin market data
+    GetBitcoinMarketWeekly {
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get Bitcoin markets data
+    GetBitcoinMarkets {
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get alkanes UTXOs for an address
+    GetAlkanesUtxo {
+        address: String,
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get AMM UTXOs for an address
+    GetAmmUtxos {
+        address: String,
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Search alkanes and pools globally
+    GlobalSearch {
+        query: String,
+        #[arg(long)]
+        limit: Option<i32>,
+        #[arg(long)]
+        offset: Option<i32>,
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get outpoints for an address
+    GetAddressOutpoints {
+        address: String,
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Find optimal swap path between tokens
+    Pathfind {
+        /// Input token in format BLOCK:TX
+        token_in: String,
+        /// Output token in format BLOCK:TX
+        token_out: String,
+        /// Amount to swap
+        amount_in: String,
+        #[arg(long, default_value = "3")]
+        max_hops: i32,
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get detailed pool information
+    GetPoolDetails {
+        /// Pool ID in format BLOCK:TX
+        pool_id: String,
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get all pools with details
+    GetAllPoolsDetails {
+        #[arg(long, default_value = "4:65522")]
+        factory: String,
+        #[arg(long)]
+        limit: Option<i32>,
+        #[arg(long)]
+        offset: Option<i32>,
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get LP positions for an address
+    GetAddressPositions {
+        address: String,
+        #[arg(long, default_value = "4:65522")]
+        factory: String,
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get token pairs for a factory
+    GetTokenPairs {
+        #[arg(long, default_value = "4:65522")]
+        factory: String,
+        #[arg(long)]
+        alkane: Option<String>,
+        #[arg(long)]
+        limit: Option<i32>,
+        #[arg(long)]
+        offset: Option<i32>,
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get all token pairs for a factory
+    GetAllTokenPairs {
+        #[arg(long, default_value = "4:65522")]
+        factory: String,
+        #[arg(long)]
+        limit: Option<i32>,
+        #[arg(long)]
+        offset: Option<i32>,
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get swap pair details between two tokens
+    GetSwapPairDetails {
+        #[arg(long, default_value = "4:65522")]
+        factory: String,
+        /// Token A ID in format BLOCK:TX
+        token_a: String,
+        /// Token B ID in format BLOCK:TX
+        token_b: String,
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get pool swap history
+    GetPoolSwapHistory {
+        #[arg(long)]
+        pool_id: Option<String>,
+        #[arg(long)]
+        limit: Option<i32>,
+        #[arg(long)]
+        offset: Option<i32>,
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get token swap history
+    GetTokenSwapHistory {
+        /// Alkane ID in format BLOCK:TX
+        alkane: String,
+        #[arg(long)]
+        limit: Option<i32>,
+        #[arg(long)]
+        offset: Option<i32>,
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get pool mint history
+    GetPoolMintHistory {
+        #[arg(long)]
+        pool_id: Option<String>,
+        #[arg(long)]
+        limit: Option<i32>,
+        #[arg(long)]
+        offset: Option<i32>,
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get pool burn history
+    GetPoolBurnHistory {
+        #[arg(long)]
+        pool_id: Option<String>,
+        #[arg(long)]
+        limit: Option<i32>,
+        #[arg(long)]
+        offset: Option<i32>,
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get address swap history for a specific pool
+    GetAddressSwapHistoryForPool {
+        address: String,
+        /// Pool ID in format BLOCK:TX
+        pool_id: String,
+        #[arg(long)]
+        limit: Option<i32>,
+        #[arg(long)]
+        offset: Option<i32>,
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get address swap history for a specific token
+    GetAddressSwapHistoryForToken {
+        address: String,
+        /// Alkane ID in format BLOCK:TX
+        alkane: String,
+        #[arg(long)]
+        limit: Option<i32>,
+        #[arg(long)]
+        offset: Option<i32>,
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get address wrap history
+    GetAddressWrapHistory {
+        address: String,
+        #[arg(long)]
+        limit: Option<i32>,
+        #[arg(long)]
+        offset: Option<i32>,
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get address unwrap history
+    GetAddressUnwrapHistory {
+        address: String,
+        #[arg(long)]
+        limit: Option<i32>,
+        #[arg(long)]
+        offset: Option<i32>,
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get all wrap history
+    GetAllWrapHistory {
+        #[arg(long)]
+        limit: Option<i32>,
+        #[arg(long)]
+        offset: Option<i32>,
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get all unwrap history
+    GetAllUnwrapHistory {
+        #[arg(long)]
+        limit: Option<i32>,
+        #[arg(long)]
+        offset: Option<i32>,
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get total unwrap amount
+    GetTotalUnwrapAmount {
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get address pool creation history
+    GetAddressPoolCreationHistory {
+        address: String,
+        #[arg(long)]
+        limit: Option<i32>,
+        #[arg(long)]
+        offset: Option<i32>,
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get address pool mint history
+    GetAddressPoolMintHistory {
+        address: String,
+        #[arg(long)]
+        limit: Option<i32>,
+        #[arg(long)]
+        offset: Option<i32>,
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get address pool burn history
+    GetAddressPoolBurnHistory {
+        address: String,
+        #[arg(long)]
+        limit: Option<i32>,
+        #[arg(long)]
+        offset: Option<i32>,
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get all AMM transaction history for an address
+    GetAllAddressAmmTxHistory {
+        address: String,
+        #[arg(long)]
+        limit: Option<i32>,
+        #[arg(long)]
+        offset: Option<i32>,
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get all AMM transaction history
+    GetAllAmmTxHistory {
+        #[arg(long)]
+        limit: Option<i32>,
+        #[arg(long)]
+        offset: Option<i32>,
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get Bitcoin balance for an address
+    GetAddressBalance {
+        address: String,
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get taproot balance for an address
+    GetTaprootBalance {
+        address: String,
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get UTXOs for an address
+    GetAddressUtxos {
+        address: String,
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get UTXOs for an account
+    GetAccountUtxos {
+        account: String,
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get balance for an account
+    GetAccountBalance {
+        account: String,
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get taproot transaction history
+    GetTaprootHistory {
+        taproot_address: String,
+        #[arg(long, default_value = "100")]
+        total_txs: i32,
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+    /// Get intent history for an address
+    GetIntentHistory {
+        address: String,
+        #[arg(long)]
+        total_txs: Option<i32>,
+        #[arg(long)]
+        last_seen_tx_id: Option<String>,
+        #[arg(long)]
+        raw: bool,
+        #[arg(long)]
+        raw_http: bool,
+    },
+}
+
+/// OPI (Open Protocol Indexer) subcommands
+/// Query BRC-20 indexer for balances, events, and holders
+#[derive(Subcommand, Debug, Clone, Serialize, Deserialize)]
+pub enum OpiCommands {
+    /// Get current indexed block height (BRC-20)
+    BlockHeight,
+    /// Get extras indexed block height (BRC-20)
+    ExtrasBlockHeight,
+    /// Get database version (BRC-20)
+    DbVersion,
+    /// Get event hash version (BRC-20)
+    EventHashVersion,
+    /// Get balance at a specific block height (BRC-20)
+    BalanceOnBlock {
+        /// Block height to query
+        #[arg(long)]
+        block_height: u64,
+        /// Pkscript of the wallet
+        #[arg(long)]
+        pkscript: String,
+        /// BRC-20 ticker
+        #[arg(long)]
+        ticker: String,
+    },
+    /// Get all BRC-20 activity for a block
+    ActivityOnBlock {
+        /// Block height to query
+        #[arg(long)]
+        block_height: u64,
+    },
+    /// Get Bitcoin RPC results cached for a block
+    BitcoinRpcResultsOnBlock {
+        /// Block height to query
+        #[arg(long)]
+        block_height: u64,
+    },
+    /// Get current balance of a wallet (BRC-20)
+    CurrentBalance {
+        /// BRC-20 ticker
+        #[arg(long)]
+        ticker: String,
+        /// Bitcoin address
+        #[arg(long)]
+        address: Option<String>,
+        /// Pkscript of the wallet
+        #[arg(long)]
+        pkscript: Option<String>,
+    },
+    /// Get valid TX notes for a wallet (BRC-20)
+    ValidTxNotesOfWallet {
+        /// Bitcoin address
+        #[arg(long)]
+        address: Option<String>,
+        /// Pkscript of the wallet
+        #[arg(long)]
+        pkscript: Option<String>,
+    },
+    /// Get valid TX notes for a ticker (BRC-20)
+    ValidTxNotesOfTicker {
+        /// BRC-20 ticker
+        #[arg(long)]
+        ticker: String,
+    },
+    /// Get holders of a BRC-20 ticker
+    Holders {
+        /// BRC-20 ticker
+        #[arg(long)]
+        ticker: String,
+    },
+    /// Get hash of all activity at a block height (BRC-20)
+    HashOfAllActivity {
+        /// Block height to query
+        #[arg(long)]
+        block_height: u64,
+    },
+    /// Get hash of all current balances (BRC-20)
+    HashOfAllCurrentBalances,
+    /// Get events for an inscription (BRC-20)
+    Event {
+        /// Inscription ID
+        #[arg(long)]
+        inscription_id: String,
+    },
+    /// Get client IP (for debugging)
+    Ip,
+    /// Make a raw request to OPI endpoint
+    Raw {
+        /// Endpoint path (e.g., "v1/brc20/block_height")
+        endpoint: String,
+    },
+
+    // ==================== RUNES ====================
+    /// Runes indexer subcommands
+    #[command(subcommand)]
+    Runes(OpiRunesCommands),
+
+    // ==================== BITMAP ====================
+    /// Bitmap indexer subcommands
+    #[command(subcommand)]
+    Bitmap(OpiBitmapCommands),
+
+    // ==================== POW20 ====================
+    /// POW20 indexer subcommands
+    #[command(subcommand)]
+    Pow20(OpiPow20Commands),
+
+    // ==================== SNS ====================
+    /// SNS (Sats Names Service) indexer subcommands
+    #[command(subcommand)]
+    Sns(OpiSnsCommands),
+}
+
+/// OPI Runes subcommands
+#[derive(Subcommand, Debug, Clone, Serialize, Deserialize)]
+pub enum OpiRunesCommands {
+    /// Get current indexed block height
+    BlockHeight,
+    /// Get Runes balance at a specific block height
+    BalanceOnBlock {
+        /// Block height to query
+        #[arg(long)]
+        block_height: u64,
+        /// Pkscript of the wallet
+        #[arg(long)]
+        pkscript: String,
+        /// Rune ID
+        #[arg(long)]
+        rune_id: String,
+    },
+    /// Get all Runes activity for a block
+    ActivityOnBlock {
+        /// Block height to query
+        #[arg(long)]
+        block_height: u64,
+    },
+    /// Get current Runes balance of a wallet
+    CurrentBalance {
+        /// Bitcoin address
+        #[arg(long)]
+        address: Option<String>,
+        /// Pkscript of the wallet
+        #[arg(long)]
+        pkscript: Option<String>,
+    },
+    /// Get unspent rune outpoints of a wallet
+    UnspentOutpoints {
+        /// Bitcoin address
+        #[arg(long)]
+        address: Option<String>,
+        /// Pkscript of the wallet
+        #[arg(long)]
+        pkscript: Option<String>,
+    },
+    /// Get holders of a Rune
+    Holders {
+        /// Rune ID
+        #[arg(long)]
+        rune_id: String,
+    },
+    /// Get hash of all activity at a block height
+    HashOfAllActivity {
+        /// Block height to query
+        #[arg(long)]
+        block_height: u64,
+    },
+    /// Get events for a transaction
+    Event {
+        /// Transaction ID
+        #[arg(long)]
+        txid: String,
+    },
+}
+
+/// OPI Bitmap subcommands
+#[derive(Subcommand, Debug, Clone, Serialize, Deserialize)]
+pub enum OpiBitmapCommands {
+    /// Get current indexed block height
+    BlockHeight,
+    /// Get hash of all activity at a block height
+    HashOfAllActivity {
+        /// Block height to query
+        #[arg(long)]
+        block_height: u64,
+    },
+    /// Get hash of all bitmaps
+    HashOfAllBitmaps,
+    /// Get inscription ID of a bitmap
+    InscriptionId {
+        /// Bitmap number
+        #[arg(long)]
+        bitmap: String,
+    },
+}
+
+/// OPI POW20 subcommands
+#[derive(Subcommand, Debug, Clone, Serialize, Deserialize)]
+pub enum OpiPow20Commands {
+    /// Get current indexed block height
+    BlockHeight,
+    /// Get POW20 balance at a specific block height
+    BalanceOnBlock {
+        /// Block height to query
+        #[arg(long)]
+        block_height: u64,
+        /// Pkscript of the wallet
+        #[arg(long)]
+        pkscript: String,
+        /// POW20 ticker
+        #[arg(long)]
+        ticker: String,
+    },
+    /// Get all POW20 activity for a block
+    ActivityOnBlock {
+        /// Block height to query
+        #[arg(long)]
+        block_height: u64,
+    },
+    /// Get current POW20 balance of a wallet
+    CurrentBalance {
+        /// POW20 ticker
+        #[arg(long)]
+        ticker: String,
+        /// Bitcoin address
+        #[arg(long)]
+        address: Option<String>,
+        /// Pkscript of the wallet
+        #[arg(long)]
+        pkscript: Option<String>,
+    },
+    /// Get valid TX notes for a wallet
+    ValidTxNotesOfWallet {
+        /// Bitcoin address
+        #[arg(long)]
+        address: Option<String>,
+        /// Pkscript of the wallet
+        #[arg(long)]
+        pkscript: Option<String>,
+    },
+    /// Get valid TX notes for a ticker
+    ValidTxNotesOfTicker {
+        /// POW20 ticker
+        #[arg(long)]
+        ticker: String,
+    },
+    /// Get holders of a POW20 ticker
+    Holders {
+        /// POW20 ticker
+        #[arg(long)]
+        ticker: String,
+    },
+    /// Get hash of all activity at a block height
+    HashOfAllActivity {
+        /// Block height to query
+        #[arg(long)]
+        block_height: u64,
+    },
+    /// Get hash of all current balances
+    HashOfAllCurrentBalances,
+}
+
+/// OPI SNS (Sats Names Service) subcommands
+#[derive(Subcommand, Debug, Clone, Serialize, Deserialize)]
+pub enum OpiSnsCommands {
+    /// Get current indexed block height
+    BlockHeight,
+    /// Get hash of all activity at a block height
+    HashOfAllActivity {
+        /// Block height to query
+        #[arg(long)]
+        block_height: u64,
+    },
+    /// Get hash of all registered names
+    HashOfAllRegisteredNames,
+    /// Get info about an SNS name
+    Info {
+        /// SNS name to query
+        #[arg(long)]
+        name: String,
+    },
+    /// Get inscriptions of a domain
+    InscriptionsOfDomain {
+        /// Domain to query
+        #[arg(long)]
+        domain: String,
+    },
+    /// Get registered namespaces
+    RegisteredNamespaces,
 }
 
 /// Runestone subcommands
@@ -1704,6 +2703,498 @@ pub enum SubfrostCommands {
         #[arg(long)]
         raw: bool,
     },
+    /// Request test BTC from subfrost regtest faucet (regtest only)
+    ///
+    /// Uses the subfrost_thieve JSON-RPC method to fund an address with test Bitcoin.
+    /// Only works with subfrost regtest instances (subfrost-regtest profile).
+    Thieve {
+        /// Address or address spec (e.g., "p2tr:0", "bcrt1p...")
+        address: String,
+        /// Amount in satoshis to request
+        amount: u64,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Check subfrost vault solvency against pending unwraps
+    ///
+    /// Derives the subfrost signer (vault) address, queries its BTC balance,
+    /// and compares it against the total pending unwrap obligations to determine
+    /// if the vault is solvent.
+    SolvencyCheck {
+        /// Block tag to query (e.g., "latest" or a block height)
+        #[arg(long)]
+        block_tag: Option<String>,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+}
+
+/// WalletConnect subcommands. Pair with subfrost-mobile (or any compatible
+/// wallet implementing the subfrost custom WalletConnect protocol) and
+/// delegate signing to the mobile device over the relay.
+///
+/// Typical CLI flow:
+///   1. `alkanes-cli wc pair`                  → prints the pairing URI + code
+///   2. user types the code into subfrost-mobile and accepts
+///   3. session is stashed under `~/.alkanes/wc-session.json`
+///   4. subsequent `alkanes-cli alkanes execute … --use-walletconnect`
+///      will route PSBT signing through the relay instead of the local
+///      keystore.
+#[derive(Subcommand, Debug, Clone, Serialize, Deserialize)]
+pub enum WcCommands {
+    /// Print a fresh pairing URI + code; block until the mobile wallet
+    /// pairs. Stashes the session for later signing.
+    Pair {
+        /// Relay endpoint. Defaults to `wss://wc.subfrost.io/`.
+        #[arg(long)]
+        relay_url: Option<String>,
+        /// Origin string shown to the wallet. Defaults to "alkanes-cli".
+        #[arg(long, default_value = "alkanes-cli")]
+        origin: String,
+        /// How long to wait (seconds) for the wallet to accept.
+        #[arg(long, default_value_t = 300)]
+        timeout_secs: u64,
+    },
+    /// Fetch the wallet's account list (uses an existing paired session).
+    Accounts {},
+    /// Sign a PSBT (hex-encoded) using the paired mobile wallet. Useful
+    /// for testing the signer surface in isolation; normally you'd let
+    /// `alkanes execute --use-walletconnect` do this transparently.
+    SignPsbt {
+        /// PSBT as hex string (un-base64-d).
+        psbt_hex: String,
+        /// Comma-separated addresses the wallet should sign inputs for.
+        #[arg(long, value_delimiter = ',')]
+        addresses: Vec<String>,
+    },
+    /// Forget the stashed session (the wallet retains its own copy
+    /// until the user revokes it from the mobile UI).
+    Revoke {},
+}
+
+/// ESPO subcommands (alkanes balance indexer with PostgreSQL backend)
+#[derive(Subcommand, Debug, Clone, Serialize, Deserialize)]
+pub enum EspoCommands {
+    /// Get current ESPO indexer height
+    Height {
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get alkanes balances for an address
+    Balances {
+        /// Address to query balances for
+        address: String,
+        /// Include outpoint details in response
+        #[arg(long)]
+        include_outpoints: bool,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get outpoints containing alkanes for an address
+    Outpoints {
+        /// Address to query outpoints for
+        address: String,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get alkanes balances at a specific outpoint
+    Outpoint {
+        /// Outpoint (format: txid:vout)
+        outpoint: String,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get holders of an alkane token
+    Holders {
+        /// Alkane ID (format: block:tx)
+        alkane_id: String,
+        /// Page number (default: 1)
+        #[arg(long, default_value = "1")]
+        page: u64,
+        /// Items per page (default: 100)
+        #[arg(long, default_value = "100")]
+        limit: u64,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get holder count for an alkane
+    HoldersCount {
+        /// Alkane ID (format: block:tx)
+        alkane_id: String,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get storage keys for an alkane contract
+    Keys {
+        /// Alkane ID (format: block:tx)
+        alkane_id: String,
+        /// Page number (default: 1)
+        #[arg(long, default_value = "1")]
+        page: u64,
+        /// Items per page (default: 100)
+        #[arg(long, default_value = "100")]
+        limit: u64,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Ping the ESPO server
+    Ping,
+    /// Ping the AMM Data module
+    AmmdataPing,
+    /// Get OHLCV candlestick data for a pool
+    Candles {
+        /// Pool ID (format: block:tx)
+        pool: String,
+        /// Timeframe (e.g., "10m", "1h", "1d", "1w", "1M")
+        #[arg(long)]
+        timeframe: Option<String>,
+        /// Side ("base" or "quote")
+        #[arg(long)]
+        side: Option<String>,
+        /// Items per page
+        #[arg(long)]
+        limit: Option<u64>,
+        /// Page number
+        #[arg(long)]
+        page: Option<u64>,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get trade history for a pool
+    Trades {
+        /// Pool ID (format: block:tx)
+        pool: String,
+        /// Items per page
+        #[arg(long)]
+        limit: Option<u64>,
+        /// Page number
+        #[arg(long)]
+        page: Option<u64>,
+        /// Side ("base" or "quote")
+        #[arg(long)]
+        side: Option<String>,
+        /// Filter side ("buy", "sell", or "all")
+        #[arg(long)]
+        filter_side: Option<String>,
+        /// Sort field
+        #[arg(long)]
+        sort: Option<String>,
+        /// Direction ("asc" or "desc")
+        #[arg(long)]
+        dir: Option<String>,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get all pools with pagination
+    Pools {
+        /// Items per page
+        #[arg(long)]
+        limit: Option<u64>,
+        /// Page number
+        #[arg(long)]
+        page: Option<u64>,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Find the best swap path between two tokens
+    FindBestSwapPath {
+        /// Input token (format: block:tx)
+        token_in: String,
+        /// Output token (format: block:tx)
+        token_out: String,
+        /// Mode ("exact_in", "exact_out", or "implicit")
+        #[arg(long)]
+        mode: Option<String>,
+        /// Amount in (as string to preserve precision)
+        #[arg(long)]
+        amount_in: Option<String>,
+        /// Amount out (as string to preserve precision)
+        #[arg(long)]
+        amount_out: Option<String>,
+        /// Minimum amount out (as string to preserve precision)
+        #[arg(long)]
+        amount_out_min: Option<String>,
+        /// Maximum amount in (as string to preserve precision)
+        #[arg(long)]
+        amount_in_max: Option<String>,
+        /// Available amount in (as string to preserve precision)
+        #[arg(long)]
+        available_in: Option<String>,
+        /// Fee in basis points
+        #[arg(long)]
+        fee_bps: Option<u64>,
+        /// Maximum number of hops
+        #[arg(long)]
+        max_hops: Option<u64>,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Find the best MEV swap opportunity for a token
+    GetBestMevSwap {
+        /// Token (format: block:tx)
+        token: String,
+        /// Fee in basis points
+        #[arg(long)]
+        fee_bps: Option<u64>,
+        /// Maximum number of hops
+        #[arg(long)]
+        max_hops: Option<u64>,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get all known AMM factories
+    AmmFactories {
+        #[arg(long)]
+        limit: Option<u64>,
+        #[arg(long)]
+        page: Option<u64>,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// List all alkanes with pagination
+    AllAlkanes {
+        #[arg(long)]
+        limit: Option<u64>,
+        #[arg(long)]
+        page: Option<u64>,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get detailed info for a specific alkane
+    AlkaneInfo {
+        /// Alkane ID (format: block:tx)
+        alkane_id: String,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get block summary (header, trace count)
+    BlockSummary {
+        /// Block height
+        height: u64,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get circulating supply for an alkane
+    CirculatingSupply {
+        /// Alkane ID (format: block:tx)
+        alkane_id: String,
+        #[arg(long)]
+        height: Option<u64>,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get transfer volume rankings for an alkane
+    TransferVolume {
+        alkane_id: String,
+        #[arg(long)]
+        limit: Option<u64>,
+        #[arg(long)]
+        page: Option<u64>,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get total received rankings for an alkane
+    TotalReceived {
+        alkane_id: String,
+        #[arg(long)]
+        limit: Option<u64>,
+        #[arg(long)]
+        page: Option<u64>,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get activity summary for an address
+    AddressActivity {
+        address: String,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get all balance holders for an alkane
+    AlkaneBalances {
+        alkane_id: String,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get alkane balance via metashrew (raw indexer query)
+    AlkaneBalanceMetashrew {
+        owner: String,
+        target: String,
+        #[arg(long)]
+        height: Option<u64>,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get transactions that changed balances for an alkane
+    AlkaneBalanceTxs {
+        alkane_id: String,
+        #[arg(long)]
+        limit: Option<u64>,
+        #[arg(long)]
+        page: Option<u64>,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get transactions that changed a specific token balance for an owner
+    AlkaneBalanceTxsByToken {
+        owner: String,
+        token: String,
+        #[arg(long)]
+        limit: Option<u64>,
+        #[arg(long)]
+        page: Option<u64>,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get alkane traces for a specific block
+    BlockTraces {
+        height: u64,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get alkane trace summary for a transaction
+    TxSummary {
+        txid: String,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get alkane transaction IDs in a block
+    BlockTxs {
+        height: u64,
+        #[arg(long)]
+        limit: Option<u64>,
+        #[arg(long)]
+        page: Option<u64>,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get alkane transaction IDs for an address
+    AddressTxs {
+        address: String,
+        #[arg(long)]
+        limit: Option<u64>,
+        #[arg(long)]
+        page: Option<u64>,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get full transaction details for an address
+    AddressTransactions {
+        address: String,
+        #[arg(long)]
+        limit: Option<u64>,
+        #[arg(long)]
+        page: Option<u64>,
+        #[arg(long)]
+        only_alkane_txs: bool,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get the most recent alkane traces
+    LatestTraces {
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get mempool traces (unconfirmed alkane transactions)
+    MempoolTraces {
+        #[arg(long)]
+        limit: Option<u64>,
+        #[arg(long)]
+        page: Option<u64>,
+        #[arg(long)]
+        address: Option<String>,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get all frBTC wrap events
+    WrapEvents {
+        #[arg(long)]
+        count: Option<u64>,
+        #[arg(long)]
+        offset: Option<u64>,
+        #[arg(long)]
+        successful: Option<bool>,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get frBTC wrap events for an address
+    WrapEventsByAddress {
+        address: String,
+        #[arg(long)]
+        count: Option<u64>,
+        #[arg(long)]
+        offset: Option<u64>,
+        #[arg(long)]
+        successful: Option<bool>,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get all frBTC unwrap events
+    UnwrapEvents {
+        #[arg(long)]
+        count: Option<u64>,
+        #[arg(long)]
+        offset: Option<u64>,
+        #[arg(long)]
+        successful: Option<bool>,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get frBTC unwrap events for an address
+    UnwrapEventsByAddress {
+        address: String,
+        #[arg(long)]
+        count: Option<u64>,
+        #[arg(long)]
+        offset: Option<u64>,
+        #[arg(long)]
+        successful: Option<bool>,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Look up series ID from an AlkaneId
+    SeriesIdFromAlkane {
+        alkane_id: String,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Look up series IDs from multiple AlkaneIds
+    SeriesIdsFromAlkanes {
+        alkane_ids: String,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Look up AlkaneId from a series ID
+    AlkaneFromSeriesId {
+        series_id: String,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Look up AlkaneIds from multiple series IDs
+    AlkanesFromSeriesIds {
+        series_ids: String,
+        #[arg(long)]
+        raw: bool,
+    },
+}
+
+impl From<EspoCommands> for alkanes_cli_common::commands::EspoCommands {
+    fn from(cmd: EspoCommands) -> Self {
+        serde_json::from_value(serde_json::to_value(cmd).unwrap()).unwrap()
+    }
 }
 
 impl From<&DeezelCommands> for alkanes_cli_common::commands::Args {
@@ -1727,7 +3218,11 @@ impl From<&DeezelCommands> for alkanes_cli_common::commands::Args {
                 brc20_prog_rpc_url: args.brc20_prog_rpc_url.clone(),
                 subfrost_api_key: args.subfrost_api_key.clone(),
                 data_api_url: None,  // Not used in deezel commands
+                espo_rpc_url: args.espo_rpc_url.clone(),
+                qubitcoin_rpc_url: args.qubitcoin_rpc_url.clone(),
+                quzec_rpc_url: None,
                 timeout_seconds: 600,
+                jsonrpc_headers: args.jsonrpc_headers.clone(),
             },
             magic: None,
             log_level: "info".to_string(),
@@ -1735,6 +3230,109 @@ impl From<&DeezelCommands> for alkanes_cli_common::commands::Args {
                 command: alkanes_cli_common::commands::BitcoindCommands::Getblockchaininfo { raw: false },
             },
         }
+    }
+}
+
+// Wallet requirement checks for commands
+
+impl Commands {
+    /// Check if the command requires wallet access (reading the keystore)
+    /// Read-only query commands don't need the wallet at all
+    pub fn requires_wallet(&self) -> bool {
+        match self {
+            // Bitcoin RPC queries don't need wallet
+            Commands::Bitcoind(_) => false,
+            // Esplora queries don't need wallet
+            Commands::Esplora(_) => false,
+            // Ord queries don't need wallet
+            Commands::Ord(_) => false,
+            // Alkanes commands - only some need wallet
+            Commands::Alkanes(cmd) => cmd.requires_wallet(),
+            // BRC20-Prog commands - only some need wallet
+            Commands::Brc20Prog(cmd) => cmd.requires_wallet(),
+            // Runestone decoding doesn't need wallet
+            Commands::Runestone(_) => false,
+            // Protorunes queries don't need wallet
+            Commands::Protorunes(_) => false,
+            // Wallet commands need the wallet
+            Commands::Wallet(cmd) => cmd.requires_wallet(),
+            // Metashrew queries don't need wallet
+            Commands::Metashrew(_) => false,
+            // Lua script execution doesn't need wallet
+            Commands::Lua(_) => false,
+            // DataAPI queries don't need wallet
+            Commands::Dataapi(_) => false,
+            // OPI queries don't need wallet
+            Commands::Opi(_) => false,
+            // Subfrost queries don't need wallet
+            Commands::Subfrost(_) => false,
+            // ESPO queries don't need wallet
+            Commands::Espo(_) => false,
+            // WalletConnect operates against the remote signer, not the
+            // local keystore — never needs the local wallet.
+            Commands::Wc(_) => false,
+            // PSBT decoding doesn't need wallet
+            Commands::Decodepsbt { .. } => false,
+        }
+    }
+}
+
+impl Alkanes {
+    /// Check if the command requires wallet access
+    pub fn requires_wallet(&self) -> bool {
+        // Only signing commands need the wallet
+        matches!(
+            self,
+            Alkanes::Execute(_)
+                | Alkanes::WrapBtc { .. }
+                | Alkanes::BridgeDeposit { .. }
+                | Alkanes::InitPool { .. }
+                | Alkanes::Swap { .. }
+        )
+    }
+}
+
+impl Brc20Prog {
+    /// Check if the command requires wallet access
+    pub fn requires_wallet(&self) -> bool {
+        match self {
+            // Query commands don't require wallet
+            Brc20Prog::Unwrap { .. } => false,
+            Brc20Prog::SignerAddress { .. } => false,
+            Brc20Prog::GetContractDeploys { .. } => false,
+            Brc20Prog::GetCode { .. } => false,
+            Brc20Prog::Call { .. } => false,
+            Brc20Prog::GetBalance { .. } => false,
+            Brc20Prog::EstimateGas { .. } => false,
+            Brc20Prog::BlockNumber { .. } => false,
+            Brc20Prog::GetBlockByNumber { .. } => false,
+            Brc20Prog::GetBlockByHash { .. } => false,
+            Brc20Prog::GetTransactionCount { .. } => false,
+            Brc20Prog::GetTransaction { .. } => false,
+            Brc20Prog::GetTransactionReceipt { .. } => false,
+            Brc20Prog::GetStorageAt { .. } => false,
+            Brc20Prog::GetLogs { .. } => false,
+            Brc20Prog::ChainId { .. } => false,
+            Brc20Prog::GasPrice { .. } => false,
+            Brc20Prog::Version { .. } => false,
+            Brc20Prog::GetReceiptByInscription { .. } => false,
+            Brc20Prog::GetInscriptionByTx { .. } => false,
+            Brc20Prog::GetInscriptionByContract { .. } => false,
+            Brc20Prog::Brc20Balance { .. } => false,
+            Brc20Prog::TraceTransaction { .. } => false,
+            Brc20Prog::TxpoolContent { .. } => false,
+            Brc20Prog::ClientVersion { .. } => false,
+            // All other commands (deploy, transact, wrap, unwrap-btc) require wallet
+            _ => true,
+        }
+    }
+}
+
+impl WalletCommands {
+    /// Check if this wallet command requires wallet access
+    pub fn requires_wallet(&self) -> bool {
+        // All wallet commands need the wallet except Create (which creates a new one)
+        !matches!(self, WalletCommands::Create { .. })
     }
 }
 

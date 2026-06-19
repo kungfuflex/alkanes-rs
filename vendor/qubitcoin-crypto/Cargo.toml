@@ -1,0 +1,23 @@
+[package]
+name = "qubitcoin-crypto"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Cryptographic primitives for Qubitcoin: SHA256d, RIPEMD160, SipHash, secp256k1"
+
+[features]
+default = ["native"]
+native = ["secp256k1/global-context", "secp256k1/rand-std"]
+wasm = []
+
+[dependencies]
+secp256k1 = "0.29"
+bitcoin_hashes = "0.14"
+hex = "0.4"
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "crypto_bench"
+harness = false

@@ -23,9 +23,11 @@ use bitcoin::{
 use core::str::FromStr;
 use wasm_bindgen::JsValue;
 
-const SALT_SIZE: usize = 16;
+// Canonical keystore parameters — must match ts-sdk/src/keystore/index.ts so
+// keystores created in WASM and via the TS SDK are byte-for-byte interchangeable.
+const SALT_SIZE: usize = 32;
 const NONCE_SIZE: usize = 12;
-const PBKDF_ITERATIONS: u32 = 600;
+const PBKDF_ITERATIONS: u32 = 131072;
 
 /// Represents the entire JSON keystore, compatible with wasm-bindgen.
 #[wasm_bindgen]
@@ -120,12 +122,25 @@ impl Keystore {
                     Some(n) => hex::decode(n).map_err(|e| AlkanesError::Crypto(e.to_string()))?,
                     None => return Err(AlkanesError::Crypto("Nonce is missing".to_string())),
                 };
-    
-                let key = crypto.pbkdf2_derive(passphrase.as_bytes(), &salt, PBKDF_ITERATIONS, 32).await?;
-                
-                let (_, _, encrypted_bytes) = alkanes_asc::armor::reader::decode(keystore.encrypted_mnemonic.as_bytes())
-                    .map_err(|e| AlkanesError::Armor(format!("Failed to dearmor mnemonic: {e}")))?;
-    
+
+                // Honour the iteration count recorded in the keystore — ts-sdk
+                // writes 131072, older Rust paths wrote 600. Falling back to a
+                // hardcoded value would silently fail on the wrong format.
+                let iterations = keystore.pbkdf2_params.iterations;
+                let key = crypto.pbkdf2_derive(passphrase.as_bytes(), &salt, iterations, 32).await?;
+
+                // Canonical (ts-sdk) format stores ciphertext as raw hex; the
+                // legacy Rust path stored it PGP-armored. Try armor first, then
+                // fall back to hex so both formats round-trip.
+                let encrypted_bytes = match alkanes_asc::armor::reader::decode(keystore.encrypted_mnemonic.as_bytes()) {
+                    Ok((_, _, bytes)) => bytes,
+                    Err(_) => hex::decode(keystore.encrypted_mnemonic.trim()).map_err(|e| {
+                        AlkanesError::Armor(format!(
+                            "Failed to decode encrypted_mnemonic as armored or hex: {e}"
+                        ))
+                    })?,
+                };
+
                 let decrypted_bytes = crypto.decrypt_aes_gcm(&encrypted_bytes, &key, &nonce).await?;
                 
                 let mnemonic_str = String::from_utf8(decrypted_bytes)
@@ -220,17 +235,8 @@ pub fn encrypt_mnemonic(mnemonic: &str, passphrase: &str) -> Promise {
             let nonce = crypto.random_bytes(NONCE_SIZE)?;
     
             let key = crypto.pbkdf2_derive(passphrase.as_bytes(), &salt, PBKDF_ITERATIONS, 32).await?;
-            
+
             let encrypted_data = crypto.encrypt_aes_gcm(mnemonic_str.as_bytes(), &key, &nonce).await?;
-    
-            let mut armored_mnemonic = Vec::new();
-            alkanes_asc::armor::writer::write(
-                &encrypted_data,
-                alkanes_asc::armor::reader::BlockType::EncryptedMnemonic,
-                &mut armored_mnemonic,
-                None,
-                true,
-            ).map_err(|e| AlkanesError::Armor(e.to_string()))?;
 
             let mnemonic = Mnemonic::parse_in(bip39::Language::English, mnemonic_str)?;
             let seed = mnemonic.to_seed("");
@@ -246,10 +252,11 @@ pub fn encrypt_mnemonic(mnemonic: &str, passphrase: &str) -> Promise {
             hd_paths.insert("p2pkh".to_string(), "m/44'/0'/0'".to_string());
     
             let keystore = Keystore {
-                encrypted_mnemonic: String::from_utf8(armored_mnemonic).unwrap(),
+                // Canonical web/ts-sdk format stores the ciphertext as raw hex.
+                encrypted_mnemonic: hex::encode(&encrypted_data),
                 master_fingerprint: root.fingerprint(&secp).to_string(),
                 created_at: web_sys::js_sys::Date::now() as u64 / 1000,
-                version: "alkanes-web-0.1.0".to_string(),
+                version: "1.0".to_string(),
                 pbkdf2_params: PbkdfParams {
                     salt: hex::encode(&salt),
                     nonce: Some(hex::encode(&nonce)),

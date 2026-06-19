@@ -76,6 +76,23 @@ impl fmt::Display for AlkaneId {
     }
 }
 
+/// Strategy for handling UTXOs that contain ordinal inscriptions
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum OrdinalsStrategy {
+    /// Exclude inscribed UTXOs from selection (default)
+    /// Fails if no clean UTXOs are available to satisfy requirements
+    #[default]
+    Exclude,
+    /// Preserve inscriptions by splitting UTXOs before spending
+    /// Creates a split transaction that sends inscribed sats to a safe output
+    /// Uses sendrawtransactions to atomically broadcast split + main transaction
+    Preserve,
+    /// Allow spending inscribed UTXOs without protection (burns the inscription)
+    /// Use with caution - this will destroy any inscriptions on spent UTXOs
+    Burn,
+}
+
 /// Input requirement specification
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum InputRequirement {
@@ -300,11 +317,163 @@ pub struct EnhancedExecuteParams {
     pub trace_enabled: bool,
     pub mine_enabled: bool,
     pub auto_confirm: bool,
+    /// Strategy for handling UTXOs that contain ordinal inscriptions
+    /// - exclude: Fail if we must spend inscribed UTXOs (default)
+    /// - preserve: Split UTXOs to protect inscriptions, use sendrawtransactions
+    /// - burn: Allow spending inscribed UTXOs without protection
+    #[serde(default)]
+    pub ordinals_strategy: OrdinalsStrategy,
+    /// Enable mempool indexer for tracing inscription state of pending UTXOs
+    /// When enabled, if we must use pending (unconfirmed) UTXOs, we'll trace back
+    /// through parent transactions to determine inscription state from settled UTXOs
+    #[serde(default)]
+    pub mempool_indexer: bool,
+    /// When true and `protostones[0]` is a wrap (target=(32,N) opcode=77), the
+    /// builder splits the request into a parent wrap-only tx (Tx A) and a
+    /// child execute tx (Tx B) that spends Tx A's outputs (alkane carrier at
+    /// v1 + BTC change at v2 — CPFP chain). Each tx then sees its own per-tx
+    /// fuel budget instead of sharing the atomic single-tx budget. Use this
+    /// when the combined wrap + execute exceeds `MINIMUM_FUEL_CHANGE1`
+    /// (3,500,000 fuel) and risks OOG when the per-tx fuel allocation falls
+    /// to the floor (e.g., late-in-block landings on busy mainnet).
+    #[serde(default)]
+    pub split_transactions: bool,
+    /// Synthetic mempool transactions to feed into UTXO selection alongside
+    /// whatever the indexer's mempool view returns. Used by `execute_split`
+    /// to hand the freshly-broadcast Tx A's hex to Tx B's `select_utxos`,
+    /// closing the indexer-propagation timing window where Tx A's outputs
+    /// aren't yet visible via `address/{addr}/txs/mempool` (observed ~325ms
+    /// indexer lag on mainnet, longer than the gap between Tx A's broadcast
+    /// and Tx B's coin selection).
+    ///
+    /// Each entry is the raw transaction hex (same format as the
+    /// `sendrawtransaction` argument). The selector parses each one and
+    /// uses it the same way it would use a real mempool entry: strip its
+    /// prevouts from the candidate set, add its pay-to-us outputs as
+    /// candidates.
+    #[serde(default)]
+    pub known_pending_tx_hexes: Vec<String>,
+    /// Caller-provided per-outpoint TxOut metadata used to short-circuit
+    /// `provider.get_utxo()` calls inside `validate_transaction` and
+    /// `build_psbt_and_fee`. Each call to `get_utxo` otherwise fetches the
+    /// full prev-tx hex via `getrawtransaction` and slices to one vout —
+    /// for a 32-UTXO selected set that's ~64 sequential RPCs in the swap
+    /// critical path between click and signing modal.
+    ///
+    /// When a wallet UI already maintains a UTXO cache (e.g. subfrost-app's
+    /// HeightPoller-invalidated `useWalletUtxoCache`), it can pass the same
+    /// data here and the SDK skips the redundant fetch. Outpoints not present
+    /// in this list fall back to the slow path, so partial coverage is safe.
+    ///
+    /// Trust contract (mirrors `OrdinalsStrategy::Burn`): the SDK trusts
+    /// the caller-provided `value` and `script_pubkey_hex` and does not
+    /// re-verify against chain state. A stale or malformed entry will cause
+    /// PSBT signing to fail downstream with a sighash mismatch — loud, but
+    /// after the wallet popup appears. Callers should invalidate this cache
+    /// on every block-tip change.
+    #[serde(default)]
+    pub prefetched_utxos: Vec<PrefetchedUtxo>,
+    /// Maximum block height the alkanes indexer (metashrew) has finished
+    /// indexing. When set, `select_utxos` skips any confirmed UTXO mined
+    /// into a block whose height is greater than `max_indexed_height` —
+    /// metashrew can't yet read the alkane balance sheet on those outpoints,
+    /// so spending them risks underspending alkanes (the indexer hasn't
+    /// caught up to know the protorune contents).
+    ///
+    /// Why this matters: esplora indexes new blocks faster than metashrew
+    /// (esplora is just BIP125/UTXO bookkeeping; metashrew runs the alkanes
+    /// WASM runtime over every indexed block). The steady-state on mainnet
+    /// has esplora 1+ blocks ahead. Without this filter the SDK would pull
+    /// fresh UTXOs from esplora that metashrew can't yet introspect; safer
+    /// to wait until they're indexed.
+    ///
+    /// Alkane balance sheets are *immutable* per-outpoint once written, so
+    /// any UTXO whose creating block is `<= max_indexed_height` is safe to
+    /// query and spend.
+    ///
+    /// Caller is responsible for fetching `metashrew_height` and passing it.
+    /// `None` (default) disables the filter — back-compat for environments
+    /// without a synced indexer notion (devnet/regtest).
+    #[serde(default)]
+    pub max_indexed_height: Option<u64>,
+    /// Data source used by the PSBT builder for spendable UTXO discovery and
+    /// alkane-carrier annotations. Defaults to the historical metashrew/Lua
+    /// path. `espo` uses `essentials.get_address_spendable_outpoints`.
+    #[serde(default, alias = "utxoSource")]
+    pub utxo_source: UtxoDataSource,
+}
+
+/// UTXO data source for EnhancedExecuteParams.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UtxoDataSource {
+    Metashrew,
+    Espo,
+}
+
+impl Default for UtxoDataSource {
+    fn default() -> Self {
+        Self::Metashrew
+    }
+}
+
+/// Caller-supplied per-outpoint TxOut data for `EnhancedExecuteParams::prefetched_utxos`.
+/// Mirrors the shape `provider.get_utxo()` would otherwise fetch via RPC.
+///
+/// The `alkanes` field is the second-pass extension (added after the initial
+/// `getrawtransaction` short-circuit shipped). When present, it short-circuits
+/// the per-outpoint `protorunesbyoutpoint` fanout in alkane-aware coin
+/// selection (~40s on a 30+ dust-UTXO wallet, observed mainnet 2026-05-09).
+/// Same trust contract as `value` / `script_pubkey_hex`: the SDK does not
+/// re-verify chain state.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrefetchedUtxo {
+    /// Outpoint as `txid:vout` (e.g. `"abc...:0"`). Parsed via `OutPoint::from_str`.
+    pub outpoint: String,
+    /// Output value in sats.
+    pub value: u64,
+    /// `scriptPubKey` as lowercase hex (no `0x` prefix). Decoded into `bitcoin::ScriptBuf`.
+    pub script_pubkey_hex: String,
+    /// Caller-asserted alkane balances on this outpoint.
+    ///
+    /// `Some(vec)` = authoritative; an empty Vec means "no alkanes here, do not
+    /// query." `None` (the default) = caller has no assertion and the SDK should
+    /// fall back to `get_protorunes_by_outpoint` for this outpoint.
+    ///
+    /// The Option discriminates "not provided" from "empty / clean," which is
+    /// load-bearing: if a stale cache hasn't yet seen a freshly-confirmed alkane
+    /// UTXO, returning `Some(vec![])` would mislead the selector into burning
+    /// it as a fee input. Callers should pass `None` whenever the cache hasn't
+    /// covered an outpoint (e.g., the cache index is keyed and this outpoint
+    /// is missing from the index).
+    #[serde(default)]
+    pub alkanes: Option<Vec<PrefetchedAlkane>>,
+}
+
+/// One alkane-balance entry on a `PrefetchedUtxo`. Wire shape mirrors the
+/// JSON the existing `protorunesbyoutpoint` consumer at
+/// `execute.rs::cached.balances` produces — `(block, tx, amount)` triples,
+/// `amount` as a decimal string to round-trip u128 cleanly through JSON.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrefetchedAlkane {
+    /// AlkaneId block component.
+    pub block: u128,
+    /// AlkaneId tx component.
+    pub tx: u128,
+    /// Amount in sub-units, as a decimal string (u128 doesn't round-trip
+    /// safely through JSON numbers above 2^53).
+    pub amount: String,
 }
 
 /// Enhanced execute result for commit/reveal pattern
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnhancedExecuteResult {
+    /// Split transaction ID (if inscribed UTXOs were split to protect inscriptions)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub split_txid: Option<String>,
+    /// Split transaction fee (if split was needed)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub split_fee: Option<u64>,
     pub commit_txid: Option<String>,
     pub reveal_txid: String,
     pub commit_fee: Option<u64>,
@@ -312,6 +481,24 @@ pub struct EnhancedExecuteResult {
     pub inputs_used: Vec<String>,
     pub outputs_created: Vec<String>,
     pub traces: Option<Vec<JsonValue>>,
+    /// Wrap-only tx id (Tx A) when split_transactions=true. Tx A wraps BTC →
+    /// frBTC; the alkane carrier at A:1 is then spent by `reveal_txid` (Tx B)
+    /// which executes the remaining protostones. Set when the split path was
+    /// taken; None for normal atomic flows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wrap_txid: Option<String>,
+    /// Wrap tx fee (Tx A) when split_transactions=true.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wrap_fee: Option<u64>,
+    /// Raw signed transaction hex for the broadcast tx (`reveal_txid`).
+    /// Populated for the simple-execute path; used by `execute_split` to
+    /// hand Tx A's hex into Tx B's `select_utxos` so the indexer-
+    /// propagation timing window can't drop the strip pass on Tx A's
+    /// just-broadcast prevouts. None for paths that don't construct a
+    /// reveal tx directly (e.g. commit/reveal envelope deploys at the
+    /// commit phase).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reveal_tx_hex: Option<String>,
 }
 
 /// Represents the state of a pausable transaction execution.
@@ -335,7 +522,16 @@ pub struct ReadyToSignTx {
     pub psbt: bitcoin::psbt::Psbt,
     pub analysis: crate::transaction::TransactionAnalysis,
     pub fee: u64,
+    /// Estimated virtual size in vbytes (includes witness data)
+    pub estimated_vsize: usize,
     pub inspection_result: Option<AlkanesInspectResult>,
+    /// Optional split transaction PSBT for protecting inscribed UTXOs
+    /// When present, this should be signed and broadcast atomically with the main tx
+    #[serde(default, skip_serializing_if = "Option::is_none", with = "serde_psbt_option")]
+    pub split_psbt: Option<bitcoin::psbt::Psbt>,
+    /// Fee for the split transaction (if any)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub split_fee: Option<u64>,
 }
 
 /// Contains the necessary information for signing a commit transaction.
@@ -362,6 +558,8 @@ pub struct ReadyToSignRevealTx {
     #[serde(with = "serde_psbt")]
     pub psbt: bitcoin::psbt::Psbt,
     pub fee: u64,
+    /// Estimated virtual size in vbytes (includes witness data)
+    pub estimated_vsize: usize,
     pub analysis: crate::transaction::TransactionAnalysis,
     pub commit_txid: String,
     pub commit_fee: u64,
@@ -393,6 +591,33 @@ mod serde_psbt {
     {
         let bytes: Vec<u8> = serde::de::Deserialize::deserialize(deserializer)?;
         Psbt::deserialize(&bytes).map_err(Error::custom)
+    }
+}
+
+mod serde_psbt_option {
+    use bitcoin::psbt::Psbt;
+    use serde::{self, Deserializer, Serializer, de::Error};
+    use alloc::vec::Vec;
+
+    pub fn serialize<S>(psbt_opt: &Option<Psbt>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match psbt_opt {
+            Some(psbt) => serializer.serialize_some(&psbt.serialize()),
+            None => serializer.serialize_none(),
+        }
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<Psbt>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let opt: Option<Vec<u8>> = serde::de::Deserialize::deserialize(deserializer)?;
+        match opt {
+            Some(bytes) => Ok(Some(Psbt::deserialize(&bytes).map_err(Error::custom)?)),
+            None => Ok(None),
+        }
     }
 }
 

@@ -36,10 +36,12 @@ pub struct Brc20ProgWrapBtcParams {
     pub mine_enabled: bool,
     /// Automatically confirm the transaction preview
     pub auto_confirm: bool,
+    /// Mint DIESEL tokens in commit and reveal transactions
+    pub mint_diesel: bool,
 }
 
 /// Default FrBTC contract addresses for different networks
-pub const DEFAULT_FRBTC_ADDRESS_MAINNET: &str = "0x0000000000000000000000000000000000000000";
+pub const DEFAULT_FRBTC_ADDRESS_MAINNET: &str = "0xdBB5b6A1D422fca2813cF486e5F986ADB09D8337";
 pub const DEFAULT_FRBTC_ADDRESS_SIGNET: &str = "0x8A3d3eB978c754D3Abf2b293D67848af4041106f";
 pub const DEFAULT_FRBTC_ADDRESS_REGTEST: &str = "0x0000000000000000000000000000000000000000";
 
@@ -104,6 +106,18 @@ impl<'a> Brc20ProgWrapBtcExecutor<'a> {
             trace_enabled: params.trace_enabled,
             mine_enabled: params.mine_enabled,
             auto_confirm: params.auto_confirm,
+            use_activation: false, // Use 2-tx pattern for wrap-btc
+            use_slipstream: false,
+            use_rebar: false,
+            rebar_tier: None,
+            strategy: None,
+            resume_from_commit: None,
+            additional_outputs: None,
+            ordinals_strategy: Default::default(),
+            mempool_indexer: false,
+            mint_diesel: false,
+            return_unsigned: false,
+                deployer_nonce: None,
         };
 
         let mut brc20_executor = Brc20ProgExecutor::new(self.provider);

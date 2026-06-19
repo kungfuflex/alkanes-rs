@@ -1,5 +1,5 @@
 //! Enhanced logging utilities with colored/treeview/emoji support
-//! 
+//!
 //! This module provides consistent, visually-enhanced logging throughout the alkanes indexer.
 //! It uses metashrew_core::println! which works in both WASM and native contexts.
 

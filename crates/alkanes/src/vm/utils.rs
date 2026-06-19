@@ -3,7 +3,7 @@ use crate::utils::{pipe_storagemap_to, transfer_from};
 use crate::vm::fuel::fuel_per_store_byte;
 use alkanes_support::trace::TraceEvent;
 use alkanes_support::{
-    cellpack::Cellpack, gz::{compress, decompress}, id::AlkaneId, parcel::AlkaneTransferParcel,
+    cellpack::Cellpack, gz::decompress, id::AlkaneId, parcel::AlkaneTransferParcel,
     response::ExtendedCallResponse, storage::StorageMap, utils::overflow_error,
     witness::find_witness_payload,
 };
@@ -104,15 +104,11 @@ pub fn run_special_cellpacks(
     } else if cellpack.target.is_create() {
         // contract not created, create it by first loading the wasm from the witness
         // then storing it in the index.
-        let tx = context.lock().unwrap().message.transaction.clone();
-        let wasm_payload_raw = find_witness_payload(&tx, 0)
-            .ok_or("finding witness payload failed for creation of alkane")
-            .map_err(|_| anyhow!("used CREATE cellpack but no binary found in witness"))?;
-        
-        // The payload extracted from witness/scriptSig is already compressed by to_witness/to_scriptsig
-        // So we use it directly without compressing again
-        let wasm_payload = Arc::new(wasm_payload_raw.clone());
-        
+        let wasm_payload = Arc::new(
+            find_witness_payload(&context.lock().unwrap().message.transaction.clone(), 0)
+                .ok_or("finding witness payload failed for creation of alkane")
+                .map_err(|_| anyhow!("used CREATE cellpack but no binary found in witness"))?,
+        );
         payload.target = AlkaneId {
             block: 2,
             tx: next_sequence,
@@ -125,23 +121,20 @@ pub fn run_special_cellpacks(
             .keyword("/alkanes/")
             .select(&payload.target.clone().into());
         pointer.set(wasm_payload.clone());
-        // Decompress the binary for execution (the wasm_payload_raw is compressed)
-        binary = Arc::new(decompress(wasm_payload_raw)?);
+        binary = Arc::new(decompress(wasm_payload.as_ref().clone())?);
         next_sequence_pointer.set_value(next_sequence + 1);
 
         set_alkane_id_to_tx_id(context.clone(), &payload.target)?;
     } else if let Some(number) = cellpack.target.reserved() {
         // we have already reserved an alkane id, find the binary and
         // set it in the index
-        let wasm_payload_raw = find_witness_payload(&context.lock().unwrap().message.transaction.clone(), 0)
-            .ok_or("finding witness payload failed for creation of alkane")
-            .map_err(|_| {
-                anyhow!("used CREATERESERVED cellpack but no binary found in witness")
-            })?;
-        
-        // The payload extracted from witness/scriptSig is already compressed
-        let wasm_payload = Arc::new(wasm_payload_raw.clone());
-        
+        let wasm_payload = Arc::new(
+            find_witness_payload(&context.lock().unwrap().message.transaction.clone(), 0)
+                .ok_or("finding witness payload failed for creation of alkane")
+                .map_err(|_| {
+                    anyhow!("used CREATERESERVED cellpack but no binary found in witness")
+                })?,
+        );
         payload.target = AlkaneId {
             block: 4,
             tx: number,
@@ -162,9 +155,7 @@ pub fn run_special_cellpacks(
                 number
             )));
         }
-        // Decompress the binary for execution (the wasm_payload_raw is compressed)
-        binary = Arc::new(decompress(wasm_payload_raw)?);
-
+        binary = Arc::new(decompress(wasm_payload.clone().as_ref().clone())?);
     } else if let Some(factory) = cellpack.target.factory() {
         // we find the factory alkane wasm and set the current alkane to the factory wasm
         payload.target = AlkaneId::new(2, next_sequence);
@@ -180,76 +171,11 @@ pub fn run_special_cellpacks(
             .set(Arc::new(factory_payload));
         set_alkane_id_to_tx_id(context.clone(), &payload.target)?;
         binary = get_alkane_binary_from_context(context.clone(), &factory)?;
-    } else if cellpack.target.is_precompiled() {
-        // Handle precompiled operations
-        use alkanes_support::id::PrecompiledOp;
-        match cellpack.target.precompiled_op() {
-            Some(PrecompiledOp::CloneFuture) => {
-                // CLONE_FUTURE: Clone [31, 0] to [31, block_height]
-                // Cellpack format: [800_000_000, 31, ...inputs]
-                // Only callable by [32, 0] (frBTC contract)
-                // Similar to factory [6, n, ...] but clones [31, 0] -> [31, height]
-                // and passes ...inputs to the cloned contract
-                
-                let caller = context.lock().unwrap().myself.clone();
-                if caller.block != 32 || caller.tx != 0 {
-                    return Err(anyhow!(
-                        "CLONE_FUTURE precompile can only be called by frBTC contract [32, 0]"
-                    ));
-                }
-                
-                // Clone [31, 0] template to [31, current_height]
-                let current_height = context.lock().unwrap().message.height;
-                let future_id = AlkaneId {
-                    block: 31,
-                    tx: current_height as u128,
-                };
-                
-                // Only allow one future to be minted per block (fr-btc rule)
-                // Check if this future already exists
-                let existing_binary = context
-                    .lock()
-                    .unwrap()
-                    .message
-                    .atomic
-                    .keyword("/alkanes/")
-                    .select(&future_id.clone().into())
-                    .get();
-                
-                if existing_binary.as_ref().len() > 0 {
-                    return Err(anyhow!(
-                        "future [31, {}] already exists - only one future can be minted per block",
-                        current_height
-                    ));
-                }
-                
-                // Set the payload target to the new future contract
-                payload.target = future_id.clone();
-                
-                // Get the template binary from [31, 0]
-                let template_id = AlkaneId { block: 31, tx: 0 };
-                binary = get_alkane_binary_from_context(context.clone(), &template_id)?;
-                
-                // Store reference to template (32 bytes, not full binary) to save space
-                let template_ref: Vec<u8> = template_id.into();
-                context
-                    .lock()
-                    .unwrap()
-                    .message
-                    .atomic
-                    .keyword("/alkanes/")
-                    .select(&payload.target.clone().into())
-                    .set(Arc::new(template_ref));
-                    
-                set_alkane_id_to_tx_id(context.clone(), &payload.target)?;
-                
-                // Note: The remaining inputs in cellpack.inputs will be passed
-                // to the cloned contract automatically since payload.inputs = cellpack.inputs
-            }
-            None => {
-                return Err(anyhow!("unknown precompiled operation"));
-            }
-        }
+    } else if cellpack.target.block == 8 {
+        // 8:* — precompiled "life WASM" namespace. The binary is embedded in the
+        // indexer (not deployed from a witness payload, which is the 1:* space).
+        // 8:dead is the recycle bin (alkanes-std-recycle). Target is unchanged.
+        binary = crate::precompiled::precompiled_life_wasm(&cellpack.target)?;
     }
     if &original_target != &payload.target {
         context
@@ -340,12 +266,105 @@ pub fn run_after_special(
         );
     }
 
-    let mut instance = AlkanesInstance::from_alkane(context.clone(), binary.clone(), start_fuel)?;
-    let response = instance.execute()?;
+    // DIESEL precompile: bypass wasmi for the hot-path mint and view
+    // opcodes when the tx is a single-mint-protostone (the common case).
+    //
+    // v2.2.0-rc.4: activation is **feature-gated only**. The precompile
+    // code still compiles into every build (so `run_diesel_eoa` is
+    // callable from `tests::diesel_sidebyside` / `tests::diesel_shadow`
+    // for the shadow-compare path), but the dispatcher only routes
+    // through it when `--features fastpath` is enabled. With the default
+    // feature set (`--features mainnet`) the precompile is **never**
+    // dispatched and every DIESEL call walks the wasm path —
+    // byte-equivalent to v2.1.7 / pre-V220 behaviour. There is no
+    // height gate any more: production mainnet stays on wasm
+    // indefinitely until we explicitly cut a `fastpath`-enabled release.
+    //
+    // The prior height-gated activation (`height >= V220_FORK_HEIGHT`)
+    // was removed after meta verify-pod observations on 2026-05-18
+    // showed the precompile path diverging from canonical (Unisat /
+    // Fairmints / Alkanode / wasmi production pods) by ~25 DIESEL of
+    // pool reserves and ~0.3 DIESEL of total supply at h=949960 with
+    // fastpath active. The single-tx enumerated paths in
+    // `diesel_sidebyside` / `diesel_shadow` still pass byte-equivalent;
+    // the divergence is therefore in a multi-tx / cross-contract
+    // interaction not yet covered by the test suite. Until that gap is
+    // closed and a `tests::diesel_shadow` invocation actually
+    // reproduces the production divergence in CI, the default build
+    // must not ship the precompile as the dispatch path.
+    //
+    // Multi-mint-protostone txs (matched-out by
+    // `matches_precompile_for_ctx`) still fall through to the wasm path
+    // unconditionally because their gas accounting is tx-size
+    // dependent and the constant gas table doesn't fit them.
+    let should_precompile = {
+        #[cfg(feature = "fastpath")]
+        {
+            let ctx = context.lock().unwrap();
+            // In test/test-utils builds, shadow_compare needs to observe
+            // the wasm path's gas/response to validate equivalence. When
+            // shadow mode is enabled, force the wasm path to run instead
+            // of routing through the precompile — the precompile will be
+            // invoked by shadow_compare itself for comparison.
+            #[cfg(any(test, feature = "test-utils"))]
+            {
+                !crate::precompile_diesel::shadow_is_enabled()
+                    && crate::precompile_diesel::matches_precompile_for_ctx(&ctx)
+            }
+            #[cfg(not(any(test, feature = "test-utils")))]
+            {
+                crate::precompile_diesel::matches_precompile_for_ctx(&ctx)
+            }
+        }
+        #[cfg(not(feature = "fastpath"))]
+        {
+            false
+        }
+    };
+    if should_precompile {
+        let (resp, gas, _path) = crate::precompile_diesel::run_diesel_eoa(
+            context.clone(),
+            &crate::precompile_diesel::CHAIN_GAS,
+        )?;
+        return Ok((resp, gas));
+    }
 
-    let remaining_fuel = instance.store.get_fuel()?;
-    let storage_len = response.storage.serialize().len() as u64;
+    let mut instance = AlkanesInstance::from_alkane(context.clone(), binary.clone(), start_fuel)?;
+    let exec_result = instance.execute();
+
+    // Capture fuel consumption for ALL paths (success and revert) so the
+    // fuel_probe can observe revert-path gas costs too. We read store fuel
+    // before propagating any error.
+    let remaining_fuel = instance.store.get_fuel().unwrap_or(0);
     let height = context.lock().unwrap().message.height as u32;
+
+    #[cfg(any(test, feature = "test-utils"))]
+    {
+        let ctx = context.lock().unwrap();
+        let target = ctx.myself.clone();
+        let opcode = ctx.inputs.first().copied().unwrap_or(0);
+        drop(ctx);
+        // Probe records the wasmi-internal fuel consumed regardless of
+        // success/revert. Storage-byte fuel only applies on success and is
+        // added below for the success path.
+        let probe_gas = start_fuel.saturating_sub(remaining_fuel);
+        crate::fuel_probe::record(target, opcode, height, probe_gas);
+    }
+
+    let response = match exec_result {
+        Ok(r) => r,
+        Err(e) => {
+            // Shadow-compare the revert path before propagating.
+            #[cfg(any(test, feature = "test-utils"))]
+            {
+                let failed: Result<(ExtendedCallResponse, u64), anyhow::Error> =
+                    Err(anyhow!(e.to_string()));
+                crate::precompile_diesel::shadow_compare(context.clone(), &failed);
+            }
+            return Err(e);
+        }
+    };
+    let storage_len = response.storage.serialize().len() as u64;
 
     #[cfg(feature = "debug-log")]
     {
@@ -379,6 +398,13 @@ pub fn run_after_special(
             opt
         },
     ))?;
+
+    #[cfg(any(test, feature = "test-utils"))]
+    {
+        let success_outcome: Result<(ExtendedCallResponse, u64), anyhow::Error> =
+            Ok((response.clone(), fuel_used));
+        crate::precompile_diesel::shadow_compare(context.clone(), &success_outcome);
+    }
 
     Ok((response, fuel_used))
 }

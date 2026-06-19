@@ -15,6 +15,40 @@ test-utils = []
 mainnet = []
 cache = []
 zcash = []
+# Forward to metashrew-core/debug-log. Default OFF — when off, the
+# `metashrew_core::println!` host call is compiled to `()`, which
+# eliminates the per-cellpack log spam dominating throughput on
+# mass-mint blocks.
+debug-log = ["metashrew-core/debug-log"]
+# Opt-in rune-balance tracking. The canonical alkanes indexer does NOT enable
+# this — alkanes ignores runes/protoburns at the application layer, so its
+# wasm build skips the rune-tracking surface (and the canonical-ord parity
+# tests in `tests/ord_runes_parity.rs`). The feature exists for downstream
+# protorune consumers that actually surface rune balances; the
+# `fix(protorune): canonical ord runes indexing parity` patch (commit
+# 47bd86b3, ported from kungfuflex/v2.1.8) lives here so those consumers can
+# pick it up by enabling `--features runes`.
+runes = []
+# Opt-in operator feature: restores the v2-style address-keyed views
+# (`protorunesbyaddress` / `runesbyaddress` / `spendablesbyaddress`) on
+# top of the v3 chunked storage model. When OFF (the default), the
+# indexer writes ZERO per-address state and the address-keyed view
+# functions return a "feature not enabled" error.
+#
+# When ON, `index_spendables` rewrites one chunked
+# `AddressOutpoints` record per address-touching block per address —
+# O(1) chain entries per address per block instead of the v2
+# multi-pointer O(outputs-for-this-address-in-this-block) growth.
+#
+# Operators opt in via:
+#   cargo build --release --target wasm32-unknown-unknown \
+#     --features mainnet,address-indexing -p alkanes
+#
+# This feature is alkanes-side only — it does NOT require any
+# metashrew-side changes. It uses `set_chunk` / `get_chunk` which are
+# already shipped in the pinned v10 metashrew. The default mainnet
+# build pipeline does NOT enable this feature.
+address-indexing = []
 
 [dependencies]
 alkanes-support = { workspace = true }

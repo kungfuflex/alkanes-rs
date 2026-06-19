@@ -13,11 +13,12 @@ pub async fn get_pools(
     state: web::Data<AppState>,
     req: web::Json<TokenPairsRequest>,
 ) -> impl Responder {
+    // Create pool service with RPC client for alkanes-cli-sys style pool fetching
     let pool_service = PoolService::new(
         state.db_pool.clone(),
         state.redis_client.clone(),
         state.config.network_env.clone(),
-    );
+    ).with_rpc(state.alkanes_rpc.clone());
 
     match pool_service.get_pools_by_factory(&(&req.factory_id).into()).await {
         Ok(pools) => {
@@ -71,11 +72,12 @@ pub async fn get_all_pools_details(
     state: web::Data<AppState>,
     req: web::Json<TokenPairsRequest>,
 ) -> impl Responder {
+    // Create pool service with RPC client for alkanes-cli-sys style pool fetching
     let pool_service = PoolService::new(
         state.db_pool.clone(),
         state.redis_client.clone(),
         state.config.network_env.clone(),
-    );
+    ).with_rpc(state.alkanes_rpc.clone());
 
     match pool_service.get_pools_by_factory(&(&req.factory_id).into()).await {
         Ok(pools) => {

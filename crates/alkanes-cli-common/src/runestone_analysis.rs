@@ -33,9 +33,9 @@ use std::str::FromStr;
 /// A `Result` containing a `serde_json::Value` with the detailed analysis.
 pub fn analyze_transaction_with_runestone(
     tx: &Transaction,
-    _network: Network,
+    network: Network,
 ) -> Result<JsonValue> {
-    Ok(analyze_runestone(tx)?)
+    Ok(analyze_runestone(tx, network)?)
 }
 
 /// Formats the detailed transaction analysis into a human-readable string.
@@ -46,11 +46,12 @@ pub fn analyze_transaction_with_runestone(
 /// # Arguments
 ///
 /// * `analysis` - A `serde_json::Value` containing the detailed transaction analysis.
+/// * `network` - The Bitcoin network (used for address encoding)
 ///
 /// # Returns
 ///
 /// A `Result` containing the formatted `String`.
-pub fn pretty_print_transaction_analysis(analysis: &JsonValue) -> Result<String> {
+pub fn pretty_print_transaction_analysis(analysis: &JsonValue, network: Network) -> Result<String> {
     let output = String::new();
 
     // Reconstruct the transaction from the analysis JSON
@@ -98,7 +99,7 @@ pub fn pretty_print_transaction_analysis(analysis: &JsonValue) -> Result<String>
         output: outputs,
     };
 
-    runestone_enhanced::print_human_readable_runestone(&tx, analysis);
+    runestone_enhanced::print_human_readable_runestone(&tx, analysis, network);
 
     // The print function prints directly to stdout, so we capture it here if needed
     // For now, we assume it prints and we return an empty string.

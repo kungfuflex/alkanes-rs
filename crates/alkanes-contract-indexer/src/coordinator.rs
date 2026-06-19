@@ -16,31 +16,42 @@ impl<P: MetashrewRpcProvider + BitcoinRpcProvider + EsploraProvider + JsonRpcPro
         Self { provider, pipeline, progress, start_height }
     }
 
-    // Run a single pass: compute [next..=tip] to process sequentially and advance progress
+    /// Run a single pass: check our current position and process the next block
+    /// This is deterministic - we always check our position first before fetching the next block
     pub async fn run_once(&self) -> Result<()> {
-        // Only run catch-up when a start height is provided.
-        if self.start_height.is_none() {
-            return Ok(());
-        }
+        // First, check our current position
+        let position = self.progress.get_position().await?;
 
-        let tip = canonical_tip_height(&self.provider).await?;
-        let last = self.progress.get_last_processed_height().await?;
-
-        let next = match (last, self.start_height) {
-            (Some(l), _) => l.saturating_add(1),
-            (None, Some(s)) => s,
-            (None, None) => return Ok(()),
+        // Determine the next block to process
+        // If we have a position, continue from there
+        // If no position, use start_height or default to 0
+        let next = match &position {
+            Some(pos) => pos.height.saturating_add(1),
+            None => self.start_height.unwrap_or(0),
         };
 
-        if next > tip { return Ok(()); }
+        // Check the metashrew tip to see if there's a block to process
+        let tip = canonical_tip_height(&self.provider).await?;
+        if next > tip {
+            return Ok(()); // Nothing to process yet
+        }
 
+        // Process blocks one at a time
+        // Position is updated atomically inside process_block_sequential
         for h in next..=tip {
             info!(height = h, "catch-up: processing block sequentially");
-            if let Err(e) = self.pipeline.process_block_sequential(&self.provider, BlockContext { height: h, emit_publish: false }).await {
-                error!(height = h, error = %e, "catch-up block processing failed");
-                break;
+
+            // Process the block - position is updated atomically inside
+            match self.pipeline.process_block_sequential(&self.provider, BlockContext { height: h, emit_publish: false }).await {
+                Ok(block_hash) => {
+                    info!(height = h, %block_hash, "catch-up: block processed");
+                }
+                Err(e) => {
+                    error!(height = h, error = %e, "catch-up block processing failed");
+                    // Stop here - position wasn't updated due to atomic transaction
+                    break;
+                }
             }
-            self.progress.set_last_processed_height(h).await?;
         }
         Ok(())
     }

@@ -27,32 +27,21 @@ use std::string::ToString;
 
 /// Core alkanes inspector that works with trait abstractions
 #[cfg(feature = "wasm-inspection")]
-pub struct AlkaneInspector<P: AlkanesProvider> {
-    rpc_provider: P,
-}
+pub struct AlkaneInspector;
 
 #[cfg(feature = "wasm-inspection")]
-impl<P: AlkanesProvider> AlkaneInspector<P> {
+impl AlkaneInspector{
     /// Create a new alkane inspector
-    pub fn new(rpc_provider: P) -> Self {
-        Self { rpc_provider }
+    pub fn new() -> Self {
+        AlkaneInspector {}
     }
 
-    /// Inspect an alkane with the specified configuration
-    pub async fn inspect_alkane(
+    pub async fn inspect_alkane_with_bytes(
         &self,
+        wasm_bytes: &Vec<u8>,
         alkane_id: &AlkaneId,
         config: &InspectionConfig,
     ) -> Result<InspectionResult> {
-        // Get the WASM bytecode for the alkane
-        let bytecode = self.get_alkane_bytecode(alkane_id).await?;
-        
-        // Remove 0x prefix if present
-        let hex_string = bytecode.strip_prefix("0x").unwrap_or(&bytecode);
-        
-        let wasm_bytes = hex::decode(hex_string)
-            .with_context(|| "Failed to decode WASM bytecode from hex".to_string())?;
-        
         let mut result = InspectionResult {
             alkane_id: alkane_id.clone(),
             bytecode_length: wasm_bytes.len(),
@@ -62,38 +51,69 @@ impl<P: AlkanesProvider> AlkaneInspector<P> {
             metadata_error: None,
             fuzzing_results: None,
         };
-        
+
         // Perform requested analysis
         if config.codehash {
             result.codehash = Some(analysis::compute_codehash(&wasm_bytes)?);
         }
-        
+
         if config.meta {
             match analysis::extract_metadata(&wasm_bytes).await {
                 Ok(meta) => result.metadata = Some(meta),
                 Err(e) => result.metadata_error = Some(e.to_string()),
             }
         }
-        
+
         if config.disasm {
             result.disassembly = analysis::disassemble_wasm(&wasm_bytes)?;
         }
-        
+
         if config.fuzz {
-            result.fuzzing_results = Some(analysis::perform_fuzzing_analysis(
-                alkane_id, 
-                &wasm_bytes, 
-                config.fuzz_ranges.as_deref()
-            ).await?);
+            result.fuzzing_results = Some(
+                analysis::perform_fuzzing_analysis(
+                    alkane_id,
+                    &wasm_bytes,
+                    config.fuzz_ranges.as_deref(),
+                )
+                .await?,
+            );
         }
-        
+
         Ok(result)
     }
 
+    /// Inspect an alkane with the specified configuration
+    pub async fn inspect_alkane<T: AlkanesProvider>(
+        &self,
+        alkane_id: &AlkaneId,
+        config: &InspectionConfig,
+        rpc_provider: &T,
+    ) -> Result<InspectionResult> {
+        // Get the WASM bytecode for the alkane
+        let bytecode = self
+            .get_alkane_bytecode_from_rpc(alkane_id, rpc_provider)
+            .await?;
+
+        // Remove 0x prefix if present
+        let hex_string = bytecode.strip_prefix("0x").unwrap_or(&bytecode);
+
+        let wasm_bytes = hex::decode(hex_string)
+            .with_context(|| "Failed to decode WASM bytecode from hex".to_string())?;
+
+        self.inspect_alkane_with_bytes(&wasm_bytes, alkane_id, config)
+            .await
+    }
+
     /// Get WASM bytecode for an alkane
-    async fn get_alkane_bytecode(&self, alkane_id: &AlkaneId) -> Result<String> {
-        self.rpc_provider.get_bytecode(&alkane_id.to_string(), None).await
-        .map_err(|e| anyhow::anyhow!("Failed to get bytecode: {}", e))
+    async fn get_alkane_bytecode_from_rpc<T: AlkanesProvider>(
+        &self,
+        alkane_id: &AlkaneId,
+        rpc_provider: &T,
+    ) -> Result<String> {
+        rpc_provider
+            .get_bytecode(&alkane_id.to_string(), None)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to get bytecode: {}", e))
     }
 }
 
@@ -121,6 +141,10 @@ mod tests {
             unimplemented!()
         }
 
+        async fn execute_full(&mut self, _params: EnhancedExecuteParams) -> Result<EnhancedExecuteResult, AlkanesError> {
+            unimplemented!()
+        }
+
         async fn resume_execution(
             &mut self,
             _state: ReadyToSignTx,
@@ -142,7 +166,7 @@ mod tests {
         ) -> Result<EnhancedExecuteResult, AlkanesError> {
             unimplemented!()
         }
-        
+
         async fn protorunes_by_address(
             &self,
             _address: &str,
@@ -160,22 +184,28 @@ mod tests {
         ) -> Result<ProtoruneOutpointResponse, AlkanesError> {
             unimplemented!()
         }
-        async fn view(&self, _contract_id: &str, _view_fn: &str, _params: Option<&[u8]>) -> Result<JsonValue, AlkanesError> {
+        async fn view(&self, _contract_id: &str, _view_fn: &str, _params: Option<&[u8]>, _block_tag: Option<String>) -> Result<JsonValue, AlkanesError> {
+            unimplemented!()
+        }
+        async fn simulate(&self, _contract_id: &str, _context: &crate::proto::alkanes::MessageContextParcel, _block_tag: Option<String>) -> Result<JsonValue, AlkanesError> {
             unimplemented!()
         }
         async fn trace(&self, _outpoint: &str) -> Result<alkanes_pb::Trace, AlkanesError> {
             unimplemented!()
         }
+        async fn trace_protostones(&self, _txid: &str) -> Result<Option<Vec<JsonValue>>, AlkanesError> {
+            unimplemented!()
+        }
         async fn get_block(&self, _height: u64) -> Result<alkanes_pb::BlockResponse, AlkanesError> {
             unimplemented!()
         }
-        async fn sequence(&self) -> Result<JsonValue, AlkanesError> {
+        async fn sequence(&self, _block_tag: Option<String>) -> Result<JsonValue, AlkanesError> {
             unimplemented!()
         }
         async fn spendables_by_address(&self, _address: &str) -> Result<JsonValue, AlkanesError> {
             unimplemented!()
         }
-        async fn trace_block(&self, _height: u64) -> Result<alkanes_pb::Trace, AlkanesError> {
+        async fn trace_block(&self, _height: u64) -> Result<alkanes_pb::AlkanesBlockTraceEvent, AlkanesError> {
             unimplemented!()
         }
         async fn get_bytecode(&self, _alkane_id: &str, _block_tag: Option<String>) -> Result<String, AlkanesError> {
@@ -184,10 +214,16 @@ mod tests {
         async fn inspect(&self, _target: &str, _config: AlkanesInspectConfig) -> Result<AlkanesInspectResult, AlkanesError> {
             unimplemented!()
         }
+        async fn meta(&self, _alkane_id: &str, _block_tag: Option<String>) -> Result<Vec<u8>, AlkanesError> {
+            unimplemented!()
+        }
         async fn get_balance(&self, _address: Option<&str>) -> Result<Vec<AlkaneBalance>, AlkanesError> {
             unimplemented!()
         }
         async fn pending_unwraps(&self, _block_tag: Option<String>) -> Result<Vec<crate::alkanes::PendingUnwrap>, AlkanesError> {
+            unimplemented!()
+        }
+        async fn tx_script(&self, _wasm_bytes: &[u8], _inputs: Vec<u128>, _block_tag: Option<String>) -> Result<Vec<u8>, AlkanesError> {
             unimplemented!()
         }
     }
@@ -195,8 +231,8 @@ mod tests {
     #[tokio::test]
     async fn test_alkane_inspector_creation() {
         let provider = MockRpcProvider;
-        let inspector = AlkaneInspector::new(provider);
-        
+        let inspector = AlkaneInspector::new();
+
         let alkane_id = AlkaneId { block: 1, tx: 100 };
         let config = InspectionConfig {
             disasm: false,
@@ -206,8 +242,8 @@ mod tests {
             codehash: true,
             raw: false,
         };
-        
-        let result = inspector.inspect_alkane(&alkane_id, &config).await;
+
+        let result = inspector.inspect_alkane(&alkane_id, &config, &provider).await;
         assert!(result.is_ok());
     }
 }

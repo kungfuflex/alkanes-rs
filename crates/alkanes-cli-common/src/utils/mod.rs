@@ -20,15 +20,22 @@ pub fn u128_from_slice(slice: &[u8]) -> u128 {
 // expensive operations like key derivation.
 // Source of truth for Web Crypto API usage: wasm-bindgen source for web-sys.
 
+#[cfg(target_arch = "wasm32")]
 use crate::{AlkanesError, Result};
+#[cfg(target_arch = "wasm32")]
 use alloc::vec::Vec;
+#[cfg(target_arch = "wasm32")]
 use js_sys::Object;
+#[cfg(target_arch = "wasm32")]
 use wasm_bindgen::{JsCast, JsValue};
+#[cfg(target_arch = "wasm32")]
 use wasm_bindgen_futures::JsFuture;
+#[cfg(target_arch = "wasm32")]
 use web_sys::CryptoKey;
 
 /// Derives a key from a passphrase using PBKDF2.
 /// This function is async and uses the Web Crypto API. It is intended to be run inside a Web Worker.
+#[cfg(target_arch = "wasm32")]
 pub async fn derive_key_from_passphrase(
     passphrase: &str,
     salt: &[u8],

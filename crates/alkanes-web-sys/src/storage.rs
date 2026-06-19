@@ -53,7 +53,7 @@
 
 use async_trait::async_trait;
 use alkanes_cli_common::{AlkanesError, Result};
-use web_sys::{window, Storage};
+use crate::platform::{self, PlatformStorage};
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 #[cfg(target_arch = "wasm32")]
 extern crate alloc;
@@ -65,11 +65,11 @@ use alloc::{
     vec::Vec,
 };
 
-/// Web storage implementation using browser localStorage
+/// Web storage implementation using platform-agnostic storage
 ///
-/// This struct provides a web-compatible storage backend that implements the
-/// [`alkanes_cli_common::StorageProvider`] trait. It uses the browser's localStorage
-/// API for persistent data storage across browser sessions.
+/// This struct provides a storage backend that implements the
+/// [`alkanes_cli_common::StorageProvider`] trait. It works in both browser
+/// (using localStorage) and Node.js (using in-memory storage) environments.
 ///
 /// # Storage Format
 ///
@@ -91,18 +91,15 @@ use alloc::{
 /// single-threaded web environments using `?Send` async traits.
 #[derive(Clone)]
 pub struct WebStorage {
-    /// Optional reference to the browser's localStorage object
-    /// None if localStorage is not available in the current environment
-    storage: Option<Storage>,
+    /// Platform-agnostic storage backend
+    storage: PlatformStorage,
 }
 
 impl WebStorage {
     /// Create a new WebStorage instance
     ///
-    /// Attempts to access the browser's localStorage API. If localStorage
-    /// is not available (e.g., in private browsing mode or non-browser
-    /// environments), the storage field will be None and operations will
-    /// return appropriate errors.
+    /// Creates a storage backend that works in both browser and Node.js environments.
+    /// In browser, it uses localStorage. In Node.js, it uses in-memory storage.
     ///
     /// # Examples
     ///
@@ -110,31 +107,18 @@ impl WebStorage {
     /// use deezel_web::storage::WebStorage;
     ///
     /// let storage = WebStorage::new();
-    /// // Storage is ready to use, operations will handle localStorage availability
+    /// // Storage is ready to use in any environment
     /// ```
     pub fn new() -> Self {
-        let storage = window()
-            .and_then(|w| w.local_storage().ok())
-            .flatten();
-        
-        Self { storage }
-    }
-
-    /// Get the localStorage object or return an error
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AlkanesError::Storage`] if localStorage is not available
-    /// in the current browser environment.
-    fn get_storage(&self) -> Result<&Storage> {
-        self.storage.as_ref()
-            .ok_or_else(|| AlkanesError::Storage("localStorage not available".to_string()))
+        Self {
+            storage: PlatformStorage::new()
+        }
     }
 
     /// Encode binary data as base64 for safe text storage
     ///
     /// Uses standard base64 encoding to convert binary data into a text
-    /// format suitable for localStorage, which only supports string values.
+    /// format suitable for storage, which only supports string values.
     ///
     /// # Arguments
     ///
@@ -166,41 +150,16 @@ impl WebStorage {
         BASE64.decode(encoded)
             .map_err(|e| AlkanesError::Storage(format!("Failed to decode base64 data: {e}")))
     }
-
-    /// Get the namespaced key for localStorage operations
-    ///
-    /// Prefixes the provided key with "alkanes:" to create a namespaced
-    /// key that avoids conflicts with other applications using localStorage.
-    ///
-    /// # Arguments
-    ///
-    /// * `key` - The original key to namespace
-    ///
-    /// # Returns
-    ///
-    /// A prefixed key in the format "alkanes:{key}"
-    ///
-    /// # Examples
-    ///
-    /// ```rust,no_run
-    /// # use deezel_web::storage::WebStorage;
-    /// let storage = WebStorage::new();
-    /// // This would return "alkanes:wallet_data"
-    /// // let prefixed = storage.get_prefixed_key("wallet_data");
-    /// ```
-    fn get_prefixed_key(&self, key: &str) -> String {
-        format!("alkanes:{key}")
-    }
 }
 
 /// Implementation of the [`alkanes_cli_common::StorageProvider`] trait for web environments
 ///
-/// This implementation provides all the standard storage operations using the
-/// browser's localStorage API. All operations are async-compatible and handle
-/// the web environment's constraints.
+/// This implementation provides all the standard storage operations using a
+/// platform-agnostic storage backend. All operations are async-compatible and handle
+/// different environments (browser and Node.js).
 #[async_trait(?Send)]
 impl alkanes_cli_common::StorageProvider for WebStorage {
-    /// Read data from localStorage by key
+    /// Read data from storage by key
     ///
     /// Retrieves the value associated with the given key, automatically
     /// decoding it from base64 format back to binary data.
@@ -215,22 +174,16 @@ impl alkanes_cli_common::StorageProvider for WebStorage {
     ///
     /// # Errors
     ///
-    /// * [`AlkanesError::Storage`] if localStorage is not available
     /// * [`AlkanesError::Storage`] if the key is not found
     /// * [`AlkanesError::Storage`] if the stored data is not valid base64
-    /// * [`AlkanesError::Storage`] if localStorage access fails
     async fn read(&self, key: &str) -> Result<Vec<u8>> {
-        let storage = self.get_storage()?;
-        let prefixed_key = self.get_prefixed_key(key);
-        
-        let value = storage.get_item(&prefixed_key)
-            .map_err(|e| AlkanesError::Storage(format!("Failed to read from localStorage: {e:?}")))?
+        let value = self.storage.get(key)
             .ok_or_else(|| AlkanesError::Storage(format!("Key not found: {key}")))?;
-        
+
         self.decode_data(&value)
     }
 
-    /// Write data to localStorage
+    /// Write data to storage
     ///
     /// Stores the given binary data under the specified key, automatically
     /// encoding it as base64 for safe text storage.
@@ -242,21 +195,14 @@ impl alkanes_cli_common::StorageProvider for WebStorage {
     ///
     /// # Errors
     ///
-    /// * [`AlkanesError::Storage`] if localStorage is not available
-    /// * [`AlkanesError::Storage`] if localStorage is full (quota exceeded)
-    /// * [`AlkanesError::Storage`] if localStorage access fails
+    /// * [`AlkanesError::Storage`] if storage is full (quota exceeded)
+    /// * [`AlkanesError::Storage`] if storage access fails
     async fn write(&self, key: &str, data: &[u8]) -> Result<()> {
-        let storage = self.get_storage()?;
-        let prefixed_key = self.get_prefixed_key(key);
         let encoded_data = self.encode_data(data);
-        
-        storage.set_item(&prefixed_key, &encoded_data)
-            .map_err(|e| AlkanesError::Storage(format!("Failed to write to localStorage: {e:?}")))?;
-        
-        Ok(())
+        self.storage.set(key, &encoded_data)
     }
 
-    /// Check if a key exists in localStorage
+    /// Check if a key exists in storage
     ///
     /// Determines whether the specified key has an associated value in storage.
     ///
@@ -267,23 +213,11 @@ impl alkanes_cli_common::StorageProvider for WebStorage {
     /// # Returns
     ///
     /// `true` if the key exists, `false` otherwise
-    ///
-    /// # Errors
-    ///
-    /// * [`AlkanesError::Storage`] if localStorage is not available
-    /// * [`AlkanesError::Storage`] if localStorage access fails
     async fn exists(&self, key: &str) -> Result<bool> {
-        let storage = self.get_storage()?;
-        let prefixed_key = self.get_prefixed_key(key);
-        
-        let exists = storage.get_item(&prefixed_key)
-            .map_err(|e| AlkanesError::Storage(format!("Failed to check localStorage: {e:?}")))?
-            .is_some();
-        
-        Ok(exists)
+        Ok(self.storage.exists(key))
     }
 
-    /// Delete a key from localStorage
+    /// Delete a key from storage
     ///
     /// Removes the specified key and its associated value from storage.
     ///
@@ -291,22 +225,11 @@ impl alkanes_cli_common::StorageProvider for WebStorage {
     ///
     /// * `key` - The key to delete (will be automatically prefixed with "alkanes:")
     ///
-    /// # Errors
-    ///
-    /// * [`AlkanesError::Storage`] if localStorage is not available
-    /// * [`AlkanesError::Storage`] if localStorage access fails
-    ///
     /// # Note
     ///
     /// This operation succeeds even if the key doesn't exist.
     async fn delete(&self, key: &str) -> Result<()> {
-        let storage = self.get_storage()?;
-        let prefixed_key = self.get_prefixed_key(key);
-        
-        storage.remove_item(&prefixed_key)
-            .map_err(|e| AlkanesError::Storage(format!("Failed to delete from localStorage: {e:?}")))?;
-        
-        Ok(())
+        self.storage.remove(key)
     }
 
     /// List all keys matching a prefix
@@ -316,43 +239,13 @@ impl alkanes_cli_common::StorageProvider for WebStorage {
     ///
     /// # Arguments
     ///
-    /// * `prefix` - The prefix to match against (will be automatically prefixed with "alkanes:")
+    /// * `prefix` - The prefix to match against
     ///
     /// # Returns
     ///
     /// A vector of keys (without the "alkanes:" prefix) that match the prefix
-    ///
-    /// # Errors
-    ///
-    /// * [`AlkanesError::Storage`] if localStorage is not available
-    /// * [`AlkanesError::Storage`] if localStorage access fails
-    ///
-    /// # Performance
-    ///
-    /// This operation iterates through all keys in localStorage, so performance
-    /// may degrade with large numbers of stored items.
     async fn list_keys(&self, prefix: &str) -> Result<Vec<String>> {
-        let storage = self.get_storage()?;
-        let full_prefix = self.get_prefixed_key(prefix);
-        let mut keys = Vec::new();
-        
-        // Get the length of localStorage
-        let length = storage.length()
-            .map_err(|e| AlkanesError::Storage(format!("Failed to get localStorage length: {e:?}")))?;
-        
-        // Iterate through all keys
-        for i in 0..length {
-            if let Ok(Some(key)) = storage.key(i) {
-                if key.starts_with(&full_prefix) {
-                    // Remove the "alkanes:" prefix to return the original key
-                    if let Some(original_key) = key.strip_prefix("alkanes:") {
-                        keys.push(original_key.to_string());
-                    }
-                }
-            }
-        }
-        
-        Ok(keys)
+        Ok(self.storage.list_keys(prefix))
     }
 
     /// Get the storage type identifier
@@ -361,9 +254,13 @@ impl alkanes_cli_common::StorageProvider for WebStorage {
     ///
     /// # Returns
     ///
-    /// Always returns "localStorage" for this implementation
+    /// "localStorage" in browser, "memory" in Node.js
     fn storage_type(&self) -> &'static str {
-        "localStorage"
+        if platform::is_browser() {
+            "localStorage"
+        } else {
+            "memory"
+        }
     }
 }
 

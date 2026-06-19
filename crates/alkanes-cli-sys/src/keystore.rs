@@ -96,13 +96,31 @@ impl KeystoreManager {
     /// Load and decrypt a keystore
     pub async fn load_keystore(&self, keystore_data: &str, passphrase: &str) -> AnyhowResult<(Keystore, String)> {
         // Parse the keystore JSON
-        let keystore: Keystore = serde_json::from_str(keystore_data)
+        let mut keystore: Keystore = serde_json::from_str(keystore_data)
             .map_err(|e| AlkanesError::Wallet(format!("{e}")))?;
 
         // Decrypt the mnemonic using the new crypto module
         let mnemonic = keystore.decrypt_mnemonic(passphrase)
             .map_err(|e| AlkanesError::Wallet(format!("{e}")))?;
-        
+
+        // Auto-upgrade legacy keystores (PGP-armored mnemonic / wrong
+        // version / non-canonical iteration count) to the canonical
+        // ts-sdk-compatible format. The in-memory upgrade is best-effort
+        // — we always return the working keystore even if the rewrite
+        // mutates it, since the decrypted mnemonic is already in hand.
+        if keystore.is_legacy() {
+            match keystore.upgrade_in_place(&mnemonic, passphrase) {
+                Ok(true) => log::info!(
+                    "auto-upgraded legacy keystore to canonical ts-sdk format \
+                     (encrypted_mnemonic→hex, version→1.0, iterations→131072)"
+                ),
+                Ok(false) => {}
+                Err(e) => log::warn!(
+                    "keystore in-memory upgrade failed (continuing with as-loaded data): {e}"
+                ),
+            }
+        }
+
         Ok((keystore, mnemonic))
     }
     
@@ -118,12 +136,40 @@ impl KeystoreManager {
         Ok(())
     }
 
-    /// Load keystore from file
+    /// Load keystore from file. If the on-disk file is in a legacy
+    /// format, this will rewrite it in-place to the canonical ts-sdk
+    /// format after a successful decryption. A `.bak` backup is created
+    /// alongside the original first; if anything goes wrong during the
+    /// write we leave the original untouched and just log.
     pub async fn load_keystore_from_file(&self, file_path: &str, passphrase: &str) -> AnyhowResult<(Keystore, String)> {
         let keystore_data = std::fs::read_to_string(file_path)
             .with_context(|| format!("Failed to read keystore file: {file_path}"))?;
 
-        self.load_keystore(&keystore_data, passphrase).await
+        // Was it legacy on disk? Detect BEFORE load_keystore mutates the
+        // in-memory copy — the on-disk file is what we'd be rewriting.
+        let pre_legacy = serde_json::from_str::<Keystore>(&keystore_data)
+            .map(|k| k.is_legacy())
+            .unwrap_or(false);
+
+        let (keystore, mnemonic) = self.load_keystore(&keystore_data, passphrase).await?;
+
+        if pre_legacy && !keystore.is_legacy() {
+            // Upgrade actually changed the in-memory shape. Persist it.
+            // Write atomically: file_path.tmp → rename to file_path,
+            // with a one-shot .bak copy of the original alongside in
+            // case the user wants to roll back.
+            if let Err(e) = atomic_rewrite_with_backup(file_path, &keystore) {
+                log::warn!(
+                    "auto-upgraded keystore couldn't be written back to {file_path}: {e}. \
+                     The in-memory keystore is still upgraded for this session."
+                );
+            } else {
+                log::info!(
+                    "rewrote {file_path} in canonical ts-sdk format (backup at {file_path}.bak)"
+                );
+            }
+        }
+        Ok((keystore, mnemonic))
     }
 
     /// Load keystore metadata (master public key, fingerprint, etc.) without decryption
@@ -140,19 +186,38 @@ impl KeystoreManager {
 
     /// Derive addresses dynamically from master public key
     pub fn derive_addresses(&self, keystore: &Keystore, network: Network, script_types: &[&str], start_index: u32, count: u32) -> AnyhowResult<Vec<KeystoreAddress>> {
-        let master_xpub = Xpub::from_str(&keystore.account_xpub)
-            .map_err(|e| AlkanesError::Wallet(format!("{e}")))?;
-        
+        let coin_type_suffix = match network {
+            Network::Bitcoin => "mainnet",
+            _ => "testnet",
+        };
+
         let secp = Secp256k1::new();
         let mut addresses = Vec::new();
-        
+
         for script_type in script_types {
+            // Map script_type to the address type used in account_xpubs
+            let address_type = match *script_type {
+                "p2tr" => "p2tr",
+                "p2wpkh" => "p2wpkh",
+                "p2sh" | "p2sh-p2wpkh" => "p2sh-p2wpkh",
+                "p2pkh" => "p2pkh",
+                "p2wsh" | "p2sh-p2wsh" => "p2tr", // p2wsh uses p2tr account xpub
+                _ => "p2tr", // Default fallback
+            };
+
+            // Select the correct xpub for this script type and network
+            let xpub_key = format!("{}:{}", address_type, coin_type_suffix);
+            let master_xpub = Xpub::from_str(
+                keystore.account_xpubs.get(&xpub_key)
+                    .unwrap_or(&keystore.account_xpub)
+            ).map_err(|e| AlkanesError::Wallet(format!("{e}")))?;
+
             for index in start_index..(start_index + count) {
                 let address = self.derive_single_address(&master_xpub, &secp, network, script_type, 0, index)?;
                 addresses.push(address);
             }
         }
-        
+
         Ok(addresses)
     }
     
@@ -288,25 +353,44 @@ impl KeystoreManager {
     
     /// Derive addresses from keystore metadata without requiring decryption
     pub fn derive_addresses_from_metadata(&self, keystore_metadata: &Keystore, network: Network, script_types: &[&str], start_index: u32, count: u32, custom_network_params: Option<&alkanes_cli_common::network::NetworkParams>) -> AnyhowResult<Vec<KeystoreAddress>> {
-        let master_xpub = Xpub::from_str(&keystore_metadata.account_xpub)
-            .map_err(|e| AlkanesError::Wallet(format!("{e}")))?;
-        
+        let coin_type_suffix = match network {
+            Network::Bitcoin => "mainnet",
+            _ => "testnet",
+        };
+
         let secp = Secp256k1::new();
         let mut addresses = Vec::new();
-        
+
         for script_type in script_types {
+            // Map script_type to the address type used in account_xpubs
+            let address_type = match *script_type {
+                "p2tr" => "p2tr",
+                "p2wpkh" => "p2wpkh",
+                "p2sh" | "p2sh-p2wpkh" => "p2sh-p2wpkh",
+                "p2pkh" => "p2pkh",
+                "p2wsh" | "p2sh-p2wsh" => "p2tr", // p2wsh uses p2tr account xpub
+                _ => "p2tr", // Default fallback
+            };
+
+            // Select the correct xpub for this script type and network
+            let xpub_key = format!("{}:{}", address_type, coin_type_suffix);
+            let master_xpub = Xpub::from_str(
+                keystore_metadata.account_xpubs.get(&xpub_key)
+                    .unwrap_or(&keystore_metadata.account_xpub)
+            ).map_err(|e| AlkanesError::Wallet(format!("{e}")))?;
+
             for index in start_index..(start_index + count) {
                 let mut address = self.derive_single_address(&master_xpub, &secp, network, script_type, 0, index)?;
-                
+
                 // Apply custom network parameters if provided
                 if let Some(network_params) = custom_network_params {
                     address = self.apply_custom_network_params(address, network_params)?;
                 }
-                
+
                 addresses.push(address);
             }
         }
-        
+
         Ok(addresses)
     }
     
@@ -413,4 +497,50 @@ pub async fn load_keystore_from_file(file_path: &str, passphrase: &str) -> Anyho
 pub async fn save_keystore_to_file(keystore: &Keystore, file_path: &str) -> AnyhowResult<()> {
     let manager = KeystoreManager::new();
     manager.save_keystore(keystore, file_path).await
+}
+
+/// Atomically replace `file_path` with the canonical-format serialization
+/// of `keystore`, creating a one-shot backup of the original at
+/// `file_path.bak`. Either every write succeeds and the original is
+/// preserved as .bak, or the original file is left untouched.
+///
+/// The atomic-write recipe: write to `file_path.tmp`, copy original to
+/// `file_path.bak`, rename tmp over the original. On Unix the rename is
+/// guaranteed atomic; on Windows it's best-effort.
+fn atomic_rewrite_with_backup(file_path: &str, keystore: &Keystore) -> AnyhowResult<()> {
+    let json = serde_json::to_string_pretty(keystore)
+        .with_context(|| "serialize upgraded keystore")?;
+    let tmp_path = format!("{file_path}.tmp");
+    let bak_path = format!("{file_path}.bak");
+
+    // 1. Write the new contents to the side first.
+    std::fs::write(&tmp_path, &json)
+        .with_context(|| format!("write {tmp_path}"))?;
+
+    // 2. Best-effort: preserve the previous bytes as a .bak. If the user
+    //    already has a .bak we don't clobber it; one rollback is enough.
+    if !std::path::Path::new(&bak_path).exists() {
+        if let Err(e) = std::fs::copy(file_path, &bak_path) {
+            log::warn!("could not save .bak alongside {file_path}: {e}");
+        }
+    }
+
+    // 3. Atomic swap.
+    std::fs::rename(&tmp_path, file_path)
+        .with_context(|| format!("rename {tmp_path} → {file_path}"))?;
+
+    // 4. Match the prior file's mode (best-effort, Unix only).
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(meta) = std::fs::metadata(&bak_path) {
+            let _ = std::fs::set_permissions(file_path, meta.permissions());
+        } else {
+            let _ = std::fs::set_permissions(
+                file_path,
+                std::fs::Permissions::from_mode(0o600),
+            );
+        }
+    }
+    Ok(())
 }

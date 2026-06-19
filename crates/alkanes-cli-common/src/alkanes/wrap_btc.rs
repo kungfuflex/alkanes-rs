@@ -14,7 +14,7 @@ use bitcoin::Address;
 use core::str::FromStr;
 
 /// Parameters for wrap-btc operation
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct WrapBtcParams {
     /// Amount of BTC (in satoshis) to wrap
     pub amount: u64,
@@ -80,6 +80,11 @@ impl<'a> WrapBtcExecutor<'a> {
         // Build the single protostone: [32,0,77]:v0:v0
         let protostones = self.build_wrap_protostone(params.amount)?;
 
+        // Indexer-lag filter: skip UTXOs above metashrew tip so we don't
+        // silently spend alkane-bearing UTXOs the indexer hasn't seen.
+        let max_indexed_height = crate::alkanes::indexer_lag::
+            fetch_max_indexed_height_or_none(self.provider).await;
+
         // Build execute params
         let execute_params = EnhancedExecuteParams {
             alkanes_change_address: None,
@@ -96,6 +101,13 @@ impl<'a> WrapBtcExecutor<'a> {
             trace_enabled: params.trace_enabled,
             mine_enabled: params.mine_enabled,
             auto_confirm: params.auto_confirm,
+            ordinals_strategy: crate::alkanes::types::OrdinalsStrategy::default(),
+            mempool_indexer: false,
+            split_transactions: false,
+            known_pending_tx_hexes: Vec::new(),
+            prefetched_utxos: Vec::new(),
+            max_indexed_height,
+            utxo_source: Default::default(),
         };
 
         // Execute using the enhanced alkanes executor
@@ -164,7 +176,7 @@ mod tests {
     #[test]
     fn test_wrap_protostones_structure() {
         use alkanes_support::id::AlkaneId as SupportAlkaneId;
-        
+
         // Mock provider not needed for this test
         let protostones = vec![
             ProtostoneSpec {
@@ -177,6 +189,8 @@ mod tests {
                 }),
                 edicts: vec![],
                 bitcoin_transfer: None,
+                pointer: None,
+                refund: None,
             },
             ProtostoneSpec {
                 cellpack: Some(alkanes_support::cellpack::Cellpack {
@@ -188,6 +202,8 @@ mod tests {
                 }),
                 edicts: vec![],
                 bitcoin_transfer: None,
+                pointer: None,
+                refund: None,
             },
         ];
 

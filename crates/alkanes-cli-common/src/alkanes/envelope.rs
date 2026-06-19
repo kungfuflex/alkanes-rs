@@ -63,35 +63,17 @@ impl AlkanesEnvelope {
         Ok(self.payload.clone())
     }
 
-    /// Build the reveal script following alkanes-rs reference EXACTLY
-    /// CRITICAL FIX: Match alkanes-rs reference implementation exactly
+    /// Build the reveal script using the REFERENCE implementation from alkanes-support.
+    /// This ensures the format EXACTLY matches what RawEnvelope::from_transaction() parses.
     pub fn build_reveal_script(&self) -> ScriptBuf {
-        let mut builder = ScriptBuilder::new()
-            .push_opcode(opcodes::OP_FALSE) // OP_FALSE (pushes empty bytes)
-            .push_opcode(opcodes::all::OP_IF)
-            .push_slice(ALKANES_PROTOCOL_ID); // BIN protocol ID
+        use alkanes_support::envelope::RawEnvelope;
 
-        // CRITICAL FIX: Add empty BODY_TAG before compressed payload (matching alkanes-rs reference)
-        builder = builder.push_slice(BODY_TAG);
+        // Convert to RawEnvelope (which uses Vec<Vec<u8>> payload)
+        let raw_envelope = RawEnvelope::from(self.payload.clone());
 
-        // CRITICAL FIX: Compress the payload using gzip (matching alkanes-rs reference)
-        if let Ok(compressed_payload) = self.compress_payload() {
-            // Chunk compressed data into script-safe pieces
-            for chunk in compressed_payload.chunks(MAX_SCRIPT_ELEMENT_SIZE) {
-                builder = builder.push_slice::<&bitcoin::script::PushBytes>(chunk.try_into().unwrap());
-            }
-        } else {
-            log::warn!("Failed to compress payload, using uncompressed data");
-            // Fallback to uncompressed data
-            for chunk in self.payload.chunks(MAX_SCRIPT_ELEMENT_SIZE) {
-                builder = builder.push_slice::<&bitcoin::script::PushBytes>(chunk.try_into().unwrap());
-            }
-        }
-
-        // End with OP_ENDIF
-        builder
-            .push_opcode(opcodes::all::OP_ENDIF)
-            .into_script()
+        // Use the reference implementation to build the script with compression
+        let builder = ScriptBuilder::new();
+        raw_envelope.append_reveal_script(builder, true)
     }
 
     /// Create complete witness for taproot script-path spending with signature

@@ -1,9 +1,8 @@
-use crate::logging::{LogTree, log_tree, LogStyle};
 use crate::network::{genesis::GENESIS_BLOCK, is_active};
 use crate::trace::save_trace;
 use crate::utils::{balance_pointer, credit_balances, debit_balances, pipe_storagemap_to};
 use crate::vm::{
-    fuel::{FuelTank, VirtualFuelBytes},
+    fuel::{is_gasless_alkane, FuelTank, VirtualFuelBytes, GASLESS_ALKANE_FUEL},
     runtime::AlkanesRuntimeContext,
     utils::{prepare_context, run_after_special, run_special_cellpacks},
 };
@@ -43,27 +42,40 @@ pub fn handle_message(
 ) -> Result<(Vec<RuneTransfer>, BalanceSheet<AtomicPointer>)> {
     let cellpack: Cellpack =
         decode_varint_list(&mut Cursor::new(parcel.calldata.clone()))?.try_into()?;
-    
     // Log cellpack information at the beginning of transaction processing
-    let mut tree = LogTree::new(format!("Transaction Cellpack"));
-    tree.add(format!("Txid: {}", parcel.transaction.compute_txid()));
-    tree.add(format!("Height: {} │ Index: {} │ Vout: {}", parcel.height, parcel.txindex, parcel.vout));
-    tree.add(format!("Target: [{}:{}]", cellpack.target.block, cellpack.target.tx));
-    
+    println!("=== TRANSACTION CELLPACK INFO ===");
+    println!(
+        "Transaction index: {}, Transaction height: {}, vout: {}, txid: {}",
+        parcel.txindex,
+        parcel.height,
+        parcel.vout,
+        parcel.transaction.compute_txid()
+    );
+    println!(
+        "Target contract: [block={}, tx={}]",
+        cellpack.target.block, cellpack.target.tx
+    );
+    println!("Input count: {}", cellpack.inputs.len());
     if !cellpack.inputs.is_empty() {
-        if cellpack.inputs.len() <= 20 {
-            tree.add_last(format!("Inputs ({}): {:?}", cellpack.inputs.len(), cellpack.inputs));
-        } else {
-            tree.add(format!("Inputs: {} total", cellpack.inputs.len()));
-            tree.add_last(format!("First opcode: {}", cellpack.inputs[0]));
-        }
-    } else {
-        tree.add_last(format!("Inputs: none"));
+        println!("First opcode: {}", cellpack.inputs[0]);
+
+        // Print all inputs for detailed debugging
+        println!("All inputs: {:?}", cellpack.inputs);
     }
-    
-    log_tree(LogStyle::TX, &tree);
+    println!("================================");
 
     let target = cellpack.target.clone();
+
+    // RECYCLE CLAIM (8:dead opcode 3) is handled natively here, NOT by the wasm.
+    // The wasm cannot see `parcel.pointer` (the protostone output the response is
+    // routed to), so a wasm claim can't bind the payout to the ledger key — the
+    // theft vector ksyao found (PR #266). The native handler keys the ledger off
+    // the payout output's spk, so a claim can only ever release the ledger of the
+    // address it actually pays.
+    if crate::recycle::is_recycle_claim(&cellpack.target, &cellpack.inputs) {
+        return crate::recycle::handle_claim(parcel);
+    }
+
     let context = Arc::new(Mutex::new(AlkanesRuntimeContext::from_parcel_and_cellpack(
         parcel, &cellpack,
     )));
@@ -90,7 +102,14 @@ pub fn handle_message(
         FuelTank::refuel_block();
         FuelTank::fuel_transaction(txsize, parcel.txindex, parcel.height as u32);
     }
-    let fuel = FuelTank::start_fuel();
+    // Gasless check: system contracts in GASLESS_ALKANES (e.g. frBTC at
+    // [32,0]) are exempt from tx-level fuel metering. Their heavy internal
+    // work (bitcoin tx parsing, txid computation) would otherwise eat the
+    // entire regtest tx budget of ~3.5M and starve subsequent protostones
+    // in the same tx (wrap → swap → burn chains).
+    let gasless = is_gasless_alkane(&myself);
+    let tx_fuel = FuelTank::start_fuel();
+    let fuel = if gasless { GASLESS_ALKANE_FUEL } else { tx_fuel };
     // NOTE: we  want to keep unwrap for cases where we lock a mutex guard,
     // it's better if it panics, so then metashrew will retry that block again
     // whereas if we do .map_err(|e| anyhow!("Mutex lock poisoned: {}", e))?
@@ -105,7 +124,13 @@ pub fn handle_message(
     }));
     run_after_special(context.clone(), binary, fuel)
         .and_then(|(response, gas_used)| {
-            FuelTank::consume_fuel(gas_used)?;
+            // Gasless alkanes don't charge their fuel against the tx budget —
+            // the next protostone in the same tx still sees the full
+            // remaining tx_fuel. Block-level metering is handled separately
+            // in FuelTank::consume_fuel / refuel_block.
+            if !gasless {
+                FuelTank::consume_fuel(gas_used)?;
+            }
             pipe_storagemap_to(
                 &response.storage,
                 &mut atomic.derive(
@@ -128,16 +153,14 @@ pub fn handle_message(
                 inner: response.into(),
                 fuel_used: gas_used,
             }));
-            if let Err(e) = save_trace(
+            save_trace(
                 &OutPoint {
                     txid: parcel.transaction.compute_txid(),
                     vout: parcel.vout,
                 },
                 parcel.height,
                 trace.clone(),
-            ) {
-                println!("Warning: Failed to save trace: {:?}", e);
-            }
+            )?;
 
             Ok((response_alkanes.into(), combined))
         })
@@ -184,16 +207,14 @@ pub fn handle_message(
                 inner: response,
                 fuel_used: u64::MAX,
             }));
-            if let Err(trace_err) = save_trace(
+            save_trace(
                 &OutPoint {
                     txid: parcel.transaction.compute_txid(),
                     vout: parcel.vout,
                 },
                 parcel.height,
                 cloned,
-            ) {
-                println!("Warning: Failed to save trace on revert: {:?}", trace_err);
-            }
+            )?;
             Err(e)
         })
 }

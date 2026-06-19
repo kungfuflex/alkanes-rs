@@ -105,9 +105,11 @@ pub async fn index_subfrost_wraps_for_block(
                 for a in &alks {
                     let id = a.get("id");
                     if let Some(id) = id {
-                        let b = id.get("block").and_then(|v| v.as_str());
-                        let t = id.get("tx").and_then(|v| v.as_str());
-                        if hex_to_u128(b.unwrap_or("")) == Some(0x20) && hex_to_u128(t.unwrap_or("")) == Some(0) {
+                        // Use value_u128_from_json to correctly parse both hex and decimal formats
+                        let b = id.get("block").and_then(value_u128_from_json).unwrap_or(0);
+                        let t = id.get("tx").and_then(value_u128_from_json).unwrap_or(0);
+                        // Subfrost token is 32:0 (decimal)
+                        if b == 32 && t == 0 {
                             if let Some(v) = a.get("value").and_then(value_u128_from_json) {
                                 amount_u128 = amount_u128.saturating_add(v);
                                 success = true;
@@ -193,9 +195,11 @@ pub async fn index_subfrost_unwraps_for_block(
             for a in &inv_alks {
                 let id = a.get("id");
                 if let Some(id) = id {
-                    let b = id.get("block").and_then(|v| v.as_str());
-                    let t = id.get("tx").and_then(|v| v.as_str());
-                    if hex_to_u128(b.unwrap_or("")) == Some(0x20) && hex_to_u128(t.unwrap_or("")) == Some(0) {
+                    // Use value_u128_from_json to correctly parse both hex and decimal formats
+                    let b = id.get("block").and_then(value_u128_from_json).unwrap_or(0);
+                    let t = id.get("tx").and_then(value_u128_from_json).unwrap_or(0);
+                    // Subfrost token is 32:0 (decimal)
+                    if b == 32 && t == 0 {
                         if let Some(v) = a.get("value").and_then(value_u128_from_json) {
                             incoming_u128 = incoming_u128.saturating_add(v);
                         }
@@ -220,9 +224,11 @@ pub async fn index_subfrost_unwraps_for_block(
                 for a in &alks {
                     let id = a.get("id");
                     if let Some(id) = id {
-                        let b = id.get("block").and_then(|v| v.as_str());
-                        let t = id.get("tx").and_then(|v| v.as_str());
-                        if hex_to_u128(b.unwrap_or("")) == Some(0x20) && hex_to_u128(t.unwrap_or("")) == Some(0) {
+                        // Use value_u128_from_json to correctly parse both hex and decimal formats
+                        let b = id.get("block").and_then(value_u128_from_json).unwrap_or(0);
+                        let t = id.get("tx").and_then(value_u128_from_json).unwrap_or(0);
+                        // Subfrost token is 32:0 (decimal)
+                        if b == 32 && t == 0 {
                             if let Some(v) = a.get("value").and_then(value_u128_from_json) {
                                 outgoing_u128 = outgoing_u128.saturating_add(v);
                             }

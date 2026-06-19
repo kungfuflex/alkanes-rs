@@ -1,15 +1,30 @@
-use crate::balance_sheet::{load_sheet, PersistentRecord};
+//! # protorune
+//!
+//! Indexer primitives for rune-balance tracking and protorune (alkane-style)
+//! state transitions.
+//!
+//! ## `runes` feature flag
+//!
+//! Tracking actual rune balances (canonical-ord semantics) is gated behind
+//! the **`runes`** Cargo feature. The canonical alkanes indexer wasm builds
+//! without `runes` — alkanes ignores runes and protoburns at the application
+//! layer, so emitting rune balances would be dead weight in that surface.
+//! The feature exists for downstream protorune consumers that actually need
+//! rune-balance views (cf. the `tests/ord_runes_parity.rs` parity suite,
+//! which is similarly gated).
+//!
+//! Enable with `--features runes` to compile the canonical-ord parity tests
+//! ported from kungfuflex/v2.1.8 (commit 47bd86b3) into your build.
+
+use crate::balance_sheet::{
+    clear_chunked_balances, load_sheet, load_sheet_chunked, save_chunked, PersistentRecord,
+};
 use crate::message::MessageContext;
 use crate::protorune_init::index_unique_protorunes;
 use crate::protostone::{
     add_to_indexable_protocols, initialized_protocol_index, MessageProcessor, Protostones,
 };
 use crate::tables::RuneTable;
-use alkanes_support::block_traits::{BlockLike, TransactionLike};
-use alkanes_support::{
-    parcel::AlkaneTransferParcel,
-    trace::{Trace, TraceEvent},
-};
 use anyhow::{anyhow, Ok, Result};
 use balance_sheet::clear_balances;
 use bitcoin::blockdata::block::Block;
@@ -24,7 +39,7 @@ use metashrew_core::{
 };
 use metashrew_support::address::Payload;
 use metashrew_support::index_pointer::KeyValuePointer;
-use ordinals::{Artifact, Runestone};
+use ordinals::{Artifact, RuneId, Runestone};
 use ordinals::{Etching, Rune};
 use prost::Message;
 use protorune_support::balance_sheet::BalanceSheetOperations;
@@ -34,7 +49,6 @@ use protorune_support::proto;
 use protorune_support::{
     balance_sheet::{BalanceSheet, ProtoruneRuneId},
     protostone::{into_protostone_edicts, Protostone, ProtostoneEdict},
-    rune_transfer::RuneTransfer,
     utils::{consensus_encode, field_to_name, outpoint_encode, tx_hex_to_txid},
 };
 use std::collections::{BTreeMap, BTreeSet};
@@ -48,19 +62,21 @@ const BLACKLISTED_TX_HASHES: [&str; 1] =
 // Logging module must be declared first so macros are available
 pub mod logging;
 
+#[cfg(feature = "address-indexing")]
+pub mod address_index;
 pub mod balance_sheet;
 pub mod message;
 pub mod protoburn;
 pub mod protorune_init;
 pub mod protostone;
 pub mod tables;
-#[cfg(feature = "zcash")]
-pub mod zcash;
 #[cfg(feature = "test-utils")]
 pub mod test_helpers;
 #[cfg(test)]
 pub mod tests;
 pub mod view;
+#[cfg(feature = "zcash")]
+pub mod zcash;
 
 pub struct Protorune(());
 
@@ -71,22 +87,6 @@ pub fn default_output(tx: &Transaction) -> u32 {
         }
     }
     0
-}
-
-pub fn save_trace(outpoint: &OutPoint, height: u64, trace: Trace) -> Result<()> {
-    use once_cell::sync::Lazy;
-    static TRACES: Lazy<IndexPointer> = Lazy::new(|| IndexPointer::from_keyword("/trace/"));
-    static TRACES_BY_HEIGHT: Lazy<IndexPointer> =
-        Lazy::new(|| IndexPointer::from_keyword("/trace/"));
-
-    let buffer: Vec<u8> = consensus_encode::<OutPoint>(outpoint)?;
-    TRACES.select(&buffer).set(Arc::<Vec<u8>>::new(
-        <Trace as Into<alkanes_support::proto::alkanes::AlkanesTrace>>::into(trace).encode_to_vec(),
-    ));
-    TRACES_BY_HEIGHT
-        .select_value(height)
-        .append(Arc::new(buffer));
-    Ok(())
 }
 
 pub fn num_op_return_outputs(tx: &Transaction) -> usize {
@@ -103,15 +103,22 @@ pub fn num_non_op_return_outputs(tx: &Transaction) -> usize {
         .count()
 }
 
+#[cfg(not(feature = "mainnet"))]
+pub const V217_FIX_HEIGHT: u64 = 0;
+#[cfg(feature = "mainnet")]
+pub const V217_FIX_HEIGHT: u64 = 943_500;
+
 /// vout : the vout to transfer runes to
 /// amount : the amount to transfer to the vout
 /// max_amount : max amount available to transfer
 /// tx : Transaction
+/// height : block height (used for activation gating)
 pub fn handle_transfer_runes_to_vout(
     vout: u128,
     amount: u128,
     max_amount: u128,
     tx: &Transaction,
+    height: u64,
 ) -> Result<BTreeMap<u32, u128>> {
     // pointer should not call this function if amount is 0
     let mut output: BTreeMap<u32, u128> = BTreeMap::<u32, u128>::new();
@@ -136,7 +143,21 @@ pub fn handle_transfer_runes_to_vout(
                     output.insert(i, max_amount / count + rem);
                 }
             }
+        } else if height >= V217_FIX_HEIGHT {
+            let count = num_non_op_return_outputs(tx) as u128;
+            let mut remaining = max_amount;
+            if count != 0 {
+                for i in 0..tx.output.len() as u32 {
+                    if tx.output[i as usize].script_pubkey.is_op_return() {
+                        continue;
+                    }
+                    let amount_outpoint = std::cmp::min(remaining, amount);
+                    remaining -= amount_outpoint;
+                    output.insert(i, amount_outpoint);
+                }
+            }
         } else {
+            // Pre-fix behavior: must match v2.1.6 exactly
             let count = num_non_op_return_outputs(tx) as u128;
             let mut remaining = max_amount;
             if count != 0 {
@@ -223,7 +244,8 @@ impl Protorune {
             .iter()
             .map(|input| {
                 let outpoint_bytes = consensus_encode(&input.previous_output)?;
-                Ok(load_sheet(&mut atomic.derive(
+                // v3 chunked-outpoint read: one chunk per outpoint.
+                Ok(load_sheet_chunked(&mut atomic.derive(
                     &tables::RUNES.OUTPOINT_TO_RUNES.select(&outpoint_bytes),
                 )))
             })
@@ -234,8 +256,8 @@ impl Protorune {
             Some(v) => v,
             None => default_output(tx),
         };
-        if let Some(etching) = runestone.etching.as_ref() {
-            Self::index_etching(
+        let etched = if let Some(etching) = runestone.etching.as_ref() {
+            let success = Self::index_etching(
                 atomic,
                 etching,
                 index,
@@ -244,27 +266,68 @@ impl Protorune {
                 unallocated_to,
                 tx,
             )?;
-        }
+            if success {
+                // Add premine to unallocated pool (balance_sheet) so edicts can consume it
+                // This matches canonical ord behavior where premine goes to `unallocated`
+                if let Some(premine) = etching.premine {
+                    if premine > 0 {
+                        let rune = ProtoruneRuneId {
+                            block: u128::from(height),
+                            tx: u128::from(index),
+                        };
+                        balance_sheet.increase(&rune, premine)?;
+                    }
+                }
+            }
+            success
+        } else {
+            false
+        };
         if let Some(mint) = runestone.mint {
             if !mint.to_string().is_empty() {
                 Self::index_mint(&mint.into(), height, &mut balance_sheet)?;
             }
         }
+        // Resolve RuneId(0,0) to the etched rune id in edicts
+        let resolved_edicts: Vec<ordinals::Edict> = runestone.edicts.iter().filter_map(|e| {
+            if e.id == RuneId::default() {
+                if etched {
+                    // RuneId(0,0) refers to the rune etched in this tx
+                    Some(ordinals::Edict {
+                        id: RuneId { block: height as u64, tx: index },
+                        amount: e.amount,
+                        output: e.output,
+                    })
+                } else {
+                    // No successful etching, skip this edict (canonical ord behavior)
+                    None
+                }
+            } else {
+                Some(e.clone())
+            }
+        }).collect();
         Self::process_edicts(
             tx,
-            &into_protostone_edicts(runestone.edicts.clone()),
+            &into_protostone_edicts(resolved_edicts),
             &mut balances_by_output,
             &mut balance_sheet,
             &tx.output,
+            height,
         )?;
         Self::handle_leftover_runes(&mut balance_sheet, &mut balances_by_output, unallocated_to)?;
         for (vout, sheet) in balances_by_output.clone() {
+            // Skip OP_RETURN outputs — runes sent to OP_RETURN are burned (canonical ord behavior)
+            if (vout as usize) < tx.output.len() && tx.output[vout as usize].script_pubkey.is_op_return() {
+                continue;
+            }
             let outpoint = OutPoint::new(tx.compute_txid(), vout);
             // println!(
             //     "Saving balance sheet {:?} to outpoint {:?}",
             //     sheet, outpoint
             // );
-            sheet.save(
+            // v3 chunked-outpoint write: one chunk per outpoint per block.
+            save_chunked(
+                &sheet,
                 &mut atomic.derive(
                     &tables::RUNES
                         .OUTPOINT_TO_RUNES
@@ -317,6 +380,7 @@ impl Protorune {
         balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer>>,
         balances: &mut BalanceSheet<AtomicPointer>,
         _outs: &Vec<TxOut>,
+        height: u64,
     ) -> Result<()> {
         if edict.id.block == 0 && edict.id.tx != 0 {
             Err(anyhow!("invalid edict"))
@@ -324,7 +388,7 @@ impl Protorune {
             let max = balances.get_and_update(&edict.id.into());
 
             let transfer_targets =
-                handle_transfer_runes_to_vout(edict.output, edict.amount, max, tx)?;
+                handle_transfer_runes_to_vout(edict.output, edict.amount, max, tx, height)?;
 
             transfer_targets.iter().try_for_each(|(vout, amount)| {
                 Self::update_balances_for_edict(
@@ -345,9 +409,10 @@ impl Protorune {
         balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer>>,
         balances: &mut BalanceSheet<AtomicPointer>,
         outs: &Vec<TxOut>,
+        height: u64,
     ) -> Result<()> {
         for edict in edicts {
-            Self::process_edict(tx, edict, balances_by_output, balances, outs)?;
+            Self::process_edict(tx, edict, balances_by_output, balances, outs, height)?;
         }
         Ok(())
     }
@@ -415,10 +480,28 @@ impl Protorune {
                 .RUNE_ID_TO_HEIGHT
                 .select(&mint.to_owned().into())
                 .get_value();
-            if (height_start == 0 || height >= height_start)
-                && (height_end == 0 || height < height_end)
-                && (offset_start == 0 || height >= offset_start + etching_height)
-                && (offset_end == 0 || height < etching_height + offset_end)
+            // Compute effective start: max of absolute and relative, if both exist
+            let absolute_start = if height_start != 0 { Some(height_start) } else { None };
+            let relative_start = if offset_start != 0 { Some(offset_start + etching_height) } else { None };
+            let effective_start = match (absolute_start, relative_start) {
+                (Some(a), Some(r)) => Some(std::cmp::max(a, r)),
+                (Some(a), None) => Some(a),
+                (None, Some(r)) => Some(r),
+                (None, None) => None,
+            };
+
+            // Compute effective end: min of absolute and relative, if both exist
+            let absolute_end = if height_end != 0 { Some(height_end) } else { None };
+            let relative_end = if offset_end != 0 { Some(offset_end + etching_height) } else { None };
+            let effective_end = match (absolute_end, relative_end) {
+                (Some(a), Some(r)) => Some(std::cmp::min(a, r)),
+                (Some(a), None) => Some(a),
+                (None, Some(r)) => Some(r),
+                (None, None) => None,
+            };
+
+            if effective_start.map_or(true, |s| height >= s)
+                && effective_end.map_or(true, |e| height < e)
             {
                 tables::RUNES
                     .MINTS_REMAINING
@@ -438,6 +521,7 @@ impl Protorune {
         Ok(())
     }
 
+    /// Returns Ok(true) if etching succeeded, Ok(false) if it was skipped (duplicate, invalid name, etc.)
     pub fn index_etching(
         atomic: &mut AtomicPointer,
         etching: &Etching,
@@ -446,7 +530,7 @@ impl Protorune {
         balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer>>,
         unallocated_to: u32,
         tx: &Transaction,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         let etching_rune = match etching.rune {
             Some(rune) => {
                 if Self::verify_non_reserved_name(height.try_into()?, &rune).is_ok()
@@ -455,7 +539,7 @@ impl Protorune {
                     rune
                 } else {
                     // if the non reserved name is incorrect, the etching is ignored
-                    return Ok(());
+                    return Ok(false);
                 }
             }
             None => Rune::reserved(height, index),
@@ -473,11 +557,11 @@ impl Protorune {
         .into();
         if !rune_id_bytes.is_empty() {
             let rune_id = ProtoruneRuneId::try_from(rune_id_bytes)?;
-            log_warning!(
-                "Duplicate rune name {} with rune id {:?} - skipping etching",
+            println!(
+                "Found duplicate rune name {} with rune id {:?}: . Skipping this etching.",
                 name, rune_id
             );
-            return Ok(());
+            return Ok(false);
         }
         let rune_id = ProtoruneRuneId::new(height.into(), index.into());
         atomic
@@ -499,13 +583,9 @@ impl Protorune {
             atomic
                 .derive(&tables::RUNES.PREMINE.select(&indexer_rune_name))
                 .set_value(premine);
-            let rune = ProtoruneRuneId {
-                block: u128::from(height),
-                tx: u128::from(index),
-            };
-            let sheet = BalanceSheet::from_pairs(vec![rune], vec![premine]);
-            //.pipe(balance_sheet);
-            balances_by_output.insert(unallocated_to, sheet);
+            // Note: premine is now added to the unallocated pool (balance_sheet)
+            // in index_runestone, matching canonical ord behavior where edicts
+            // can consume premine tokens before leftover goes to pointer.
         }
         if let Some(terms) = etching.terms {
             if let Some(amount) = terms.amount {
@@ -521,19 +601,22 @@ impl Protorune {
                     .derive(&tables::RUNES.MINTS_REMAINING.select(&indexer_rune_name))
                     .set_value(cap);
             }
-            if let (Some(height_start), Some(height_end)) = (terms.height.0, terms.height.1) {
+            if let Some(height_start) = terms.height.0 {
                 atomic
                     .derive(&tables::RUNES.HEIGHTSTART.select(&indexer_rune_name))
                     .set_value(height_start);
-
+            }
+            if let Some(height_end) = terms.height.1 {
                 atomic
                     .derive(&tables::RUNES.HEIGHTEND.select(&indexer_rune_name))
                     .set_value(height_end);
             }
-            if let (Some(offset_start), Some(offset_end)) = (terms.offset.0, terms.offset.1) {
+            if let Some(offset_start) = terms.offset.0 {
                 atomic
                     .derive(&tables::RUNES.OFFSETSTART.select(&indexer_rune_name))
                     .set_value(offset_start);
+            }
+            if let Some(offset_end) = terms.offset.1 {
                 atomic
                     .derive(&tables::RUNES.OFFSETEND.select(&indexer_rune_name))
                     .set_value(offset_end);
@@ -560,14 +643,14 @@ impl Protorune {
             .derive(&tables::HEIGHT_TO_RUNES.select_value(height))
             .append(Arc::new(indexer_rune_name.clone()));
 
-        Ok(())
+        Ok(true)
     }
 
     fn verify_non_reserved_name(block: u32, rune: &Rune) -> Result<()> {
         // TODO: chain name
         let minimum_name = Rune::minimum_at_height(Network::Bitcoin, ordinals::Height(block));
         if rune.n() < minimum_name.n() {
-            log_error!("Rune name not yet unlocked at block {}", block);
+            println!("error not unlocked");
             return Err(anyhow!("Given name is not unlocked yet"));
         }
         if rune.n() >= constants::RESERVED_NAME {
@@ -602,92 +685,141 @@ impl Protorune {
         Err(anyhow!("did not find a output index"))
     }
 
-    pub fn index_unspendables<B: BlockLike, T: MessageContext>(block: &B, height: u64) -> Result<()> {
-        // Create a Bitcoin block for Runestone processing
-        // This is needed because Runestone::decipher expects bitcoin::Transaction
-        let header = block.header();
-        let bitcoin_txs: Vec<Transaction> = block.transactions()
-            .iter()
-            .map(|tx| tx.to_bitcoin_tx())
-            .collect();
-        let bitcoin_block = Block {
-            header,
-            txdata: bitcoin_txs.clone(),
-        };
-        
-        for (index, tx) in bitcoin_txs.iter().enumerate() {
-            if let Some(Artifact::Runestone(ref runestone)) = Runestone::decipher(tx) {
-                let mut atomic = AtomicPointer::default();
-                let runestone_output_index: u32 = Self::get_runestone_output_index(tx)?;
-                match Self::index_runestone::<T>(
-                    &mut atomic,
-                    tx,
-                    runestone,
-                    height,
-                    index as u32,
-                    &bitcoin_block,
-                    runestone_output_index,
-                ) {
-                    Err(e) => {
-                        log_error!("Transaction processing failed: {:?}", e);
-                        atomic.rollback();
+    pub fn index_unspendables<T: MessageContext>(block: &Block, height: u64) -> Result<()> {
+        for (index, tx) in block.txdata.iter().enumerate() {
+            match Runestone::decipher(tx) {
+                Some(Artifact::Runestone(ref runestone)) => {
+                    let mut atomic = AtomicPointer::default();
+                    let runestone_output_index: u32 = Self::get_runestone_output_index(tx)?;
+                    match Self::index_runestone::<T>(
+                        &mut atomic,
+                        tx,
+                        runestone,
+                        height,
+                        index as u32,
+                        block,
+                        runestone_output_index,
+                    ) {
+                        Err(e) => {
+                            println!("err: {:?}", e);
+                            atomic.rollback();
+                        }
+                        _ => {
+                            atomic.commit();
+                        }
+                    };
+                }
+                Some(Artifact::Cenotaph(ref cenotaph)) => {
+                    if let Some(rune) = cenotaph.etching {
+                        // Cenotaph etchings create the rune but with zeroed metadata
+                        let mut atomic = AtomicPointer::default();
+                        let etching = Etching {
+                            divisibility: None,
+                            premine: None,
+                            rune: Some(rune),
+                            spacers: None,
+                            symbol: None,
+                            turbo: false,
+                            terms: None,
+                        };
+                        match Self::index_etching(
+                            &mut atomic,
+                            &etching,
+                            index as u32,
+                            height,
+                            &mut BTreeMap::new(),
+                            0,
+                            tx,
+                        ) {
+                            Err(_) => atomic.rollback(),
+                            _ => atomic.commit(),
+                        }
                     }
-                    _ => {
-                        atomic.commit();
-                    }
-                };
+                }
+                None => {}
             }
             for input in &tx.input {
                 //all inputs must be used up, even in cenotaphs
                 let key = consensus_encode(&input.previous_output)?;
-                clear_balances(&mut tables::RUNES.OUTPOINT_TO_RUNES.select(&key));
+                // v3 chunked-outpoint: mark the consumed input chunk as
+                // spent at this height (zero entries, spent_at_height set).
+                // Replaces the legacy multi-pointer clear_balances.
+                clear_chunked_balances(
+                    &mut tables::RUNES.OUTPOINT_TO_RUNES.select(&key),
+                    height as u32,
+                );
             }
         }
         Ok(())
     }
-    pub fn index_spendables<Tx: TransactionLike>(txdata: &[Tx]) -> Result<BTreeSet<Vec<u8>>> {
+    pub fn index_spendables(
+        txdata: &Vec<Transaction>,
+        height: u32,
+    ) -> Result<BTreeSet<Vec<u8>>> {
+        // `height` is consumed only when --features address-indexing is
+        // enabled. Default builds keep the parameter for API stability
+        // (cheaper than a feature-conditional signature).
+        #[cfg(not(feature = "address-indexing"))]
+        let _ = height;
         // Track unique addresses that have their spendable outpoints updated
-        #[cfg(feature = "cache")]
+        #[cfg(any(feature = "cache", feature = "address-indexing"))]
         let mut updated_addresses: BTreeSet<Vec<u8>> = BTreeSet::new();
 
-        #[cfg(not(feature = "cache"))]
+        #[cfg(not(any(feature = "cache", feature = "address-indexing")))]
         let updated_addresses: BTreeSet<Vec<u8>> = BTreeSet::new();
 
         for (txindex, transaction) in txdata.iter().enumerate() {
-            let tx_id = transaction.txid();
+            let tx_id = transaction.compute_txid();
             tables::RUNES
                 .TXID_TO_TXINDEX
                 .select(&tx_id.as_byte_array().to_vec())
                 .set_value(txindex as u32);
-            for (_index, input) in transaction.inputs().iter().enumerate() {
-                tables::OUTPOINT_SPENDABLE_BY
-                    .select(&consensus_encode(&input.previous_output)?)
-                    .nullify();
-            }
-            for (index, output) in transaction.outputs().iter().enumerate() {
-                let outpoint = OutPoint {
-                    txid: tx_id.clone(),
-                    vout: index as u32,
-                };
-                let output_script_pubkey: &ScriptBuf = &output.script_pubkey;
-                if Payload::from_script(output_script_pubkey).is_ok() {
-                    let outpoint_bytes: Vec<u8> = consensus_encode(&outpoint)?;
-                    let address_str = to_address_str(output_script_pubkey)?;
-                    let address = address_str.into_bytes();
 
-                    // Add address to the set of updated addresses
-                    #[cfg(feature = "cache")]
-                    updated_addresses.insert(address.to_vec());
-
-                    tables::OUTPOINTS_FOR_ADDRESS
-                        .select(&address.clone())
-                        .append(Arc::new(outpoint_bytes.clone()));
-                    tables::OUTPOINT_SPENDABLE_BY
-                        .select(&outpoint_bytes.clone())
-                        .set(Arc::new(address.clone()))
+            // v3: the OUTPOINT_SPENDABLE_BY / OUTPOINTS_FOR_ADDRESS
+            // address-index family is no longer canonical state. The
+            // unwrap.rs spentness probe migrated to the chunked
+            // OUTPOINT_TO_RUNES spent_at_height marker; address-keyed
+            // lookups (protorunesbyaddress / runesbyaddress /
+            // spendablesbyaddress) are handled by espo middleware via
+            // esplora's UTXO API. We keep the per-tx TXID_TO_TXINDEX
+            // write above (still load-bearing for txindex resolution in
+            // view.rs::*_outpoint_to_outpoint_response) but drop the
+            // per-input nullify + per-output address write pair —
+            // historically the dominant write source on
+            // address-rich mainnet blocks.
+            //
+            // When --features cache is enabled, populate
+            // updated_addresses from output script pubkeys directly so
+            // cache invalidation downstream still sees the right set.
+            #[cfg(all(feature = "cache", not(feature = "address-indexing")))]
+            for output in transaction.output.iter() {
+                if Payload::from_script(&output.script_pubkey).is_ok() {
+                    if let std::result::Result::Ok(address_str) =
+                        to_address_str(&output.script_pubkey)
+                    {
+                        updated_addresses.insert(address_str.into_bytes());
+                    }
                 }
             }
         }
+
+        // v3 `address-indexing` opt-in: rewrite one chunked
+        // AddressOutpoints record per affected address. This is the
+        // sole place where /v3/addr/* state is written. The accumulator
+        // pattern guarantees one chunk write per address per block,
+        // regardless of how many of that address's outpoints were
+        // touched. Determinism contract: outpoints are sorted by
+        // (txid_le, vout) ascending. See `crate::address_index` for the
+        // full design discussion.
+        //
+        // The address-indexing writer ALSO populates updated_addresses
+        // (with the same union-of-inputs-and-outputs set), so when
+        // --features cache,address-indexing are both on we don't
+        // double-walk the outputs in the loop above — the
+        // `not(feature = "address-indexing")` cfg-gate skips that
+        // walk.
+        #[cfg(feature = "address-indexing")]
+        crate::address_index::write_address_index(txdata, height, &mut updated_addresses)?;
 
         // Return the set of updated addresses
         Ok(updated_addresses)
@@ -770,23 +902,22 @@ impl Protorune {
         Ok(updated_addresses)
     }
 
-    pub fn index_transaction_ids<B: BlockLike>(block: &B, height: u64) -> Result<()> {
+    pub fn index_transaction_ids(block: &Block, height: u64) -> Result<()> {
         let ptr = tables::RUNES
             .HEIGHT_TO_TRANSACTION_IDS
             .select_value::<u64>(height);
-        for tx in block.transactions() {
-            ptr.append(Arc::new(tx.txid().as_byte_array().to_vec()));
+        for tx in &block.txdata {
+            ptr.append(Arc::new(tx.compute_txid().as_byte_array().to_vec()));
         }
         Ok(())
     }
-    pub fn index_outpoints<B: BlockLike>(block: &B, height: u64) -> Result<()> {
+    pub fn index_outpoints(block: &Block, height: u64) -> Result<()> {
         let mut atomic = AtomicPointer::default();
-        for tx in block.transactions() {
-            let tx_outputs = tx.outputs();
-            for i in 0..tx_outputs.len() {
+        for tx in &block.txdata {
+            for i in 0..tx.output.len() {
                 let outpoint_bytes = outpoint_encode(
                     &(OutPoint {
-                        txid: tx.txid(),
+                        txid: tx.compute_txid(),
                         vout: i as u32,
                     }),
                 )?;
@@ -797,8 +928,8 @@ impl Protorune {
                     .derive(&tables::OUTPOINT_TO_OUTPUT.select(&outpoint_bytes))
                     .set(Arc::new(
                         (proto::protorune::Output {
-                            script: tx_outputs[i].clone().script_pubkey.into_bytes(),
-                            value: tx_outputs[i].clone().value.to_sat(),
+                            script: tx.output[i].clone().script_pubkey.into_bytes(),
+                            value: tx.output[i].clone().value.to_sat(),
                         })
                         .encode_to_vec(),
                     ));
@@ -834,7 +965,9 @@ impl Protorune {
             //     "saving balancesheet: {:#?} to outpoint: {:#?}",
             //     sheet, outpoint
             // );
-            sheet.save(
+            // v3 chunked-outpoint write: one chunk per outpoint per block.
+            save_chunked(
+                &sheet,
                 &mut atomic.derive(
                     &table
                         .OUTPOINT_TO_RUNES
@@ -884,7 +1017,7 @@ impl Protorune {
             match tx_hex_to_txid(blacklisted_hash) {
                 std::result::Result::Ok(blacklisted_txid) => {
                     if tx_id == blacklisted_txid {
-                        log_warning!("Ignoring blacklisted transaction: {}", blacklisted_hash);
+                        println!("Ignoring blacklisted transaction: {}", blacklisted_hash);
                         return Ok(());
                     }
                 }
@@ -892,15 +1025,7 @@ impl Protorune {
             }
         }
 
-        let protostones = match Protostone::from_runestone(runestone) {
-            std::result::Result::Ok(ps) => ps,
-            std::result::Result::Err(e) => {
-                let tx_id = tx.compute_txid();
-                log_error!("Failed to decode protostones from runestone in tx {}: {:?}", tx_id, e);
-                log_debug!("Runestone: {:?}", runestone);
-                panic!("Protostone::from_runestone failed for tx {}: {:?}", tx_id, e);
-            }
-        };
+        let protostones = Protostone::from_runestone(runestone)?;
 
         if protostones.len() != 0 {
             let mut proto_balances_by_output = BTreeMap::<u32, BalanceSheet<AtomicPointer>>::new();
@@ -913,11 +1038,12 @@ impl Protorune {
             );
 
             // load the balance sheets
+            // v3 chunked-outpoint read: one chunk per outpoint.
             let sheets: Vec<BalanceSheet<AtomicPointer>> = tx
                 .input
                 .iter()
                 .map(|input| {
-                    Ok(load_sheet(
+                    Ok(load_sheet_chunked(
                         &mut atomic.derive(
                             &table
                                 .OUTPOINT_TO_RUNES
@@ -971,19 +1097,8 @@ impl Protorune {
                     // if there is no protomessage, all incoming runes will be available to be transferred by the edict
                     let mut prior_balance_sheet = BalanceSheet::default();
                     let mut did_message_fail_and_refund = false;
-                    let initial_sheet = proto_balances_by_output
-                        .get(&shadow_vout)
-                        .map(|v| v.clone())
-                        .unwrap_or_else(|| BalanceSheet::default());
-                    let mut trace = Trace::default();
-                    trace.clock(TraceEvent::ReceiveIntent {
-                        incoming_alkanes: AlkaneTransferParcel::from(RuneTransfer::from_balance_sheet(
-                            initial_sheet.clone(),
-                        )),
-                    });
                     if stone.is_message() && stone.protocol_tag == T::protocol_tag() {
-                        let success = stone.process_message_with_trace::<T>(
-                            trace.clone(),
+                        let success = stone.process_message::<T>(
                             &mut atomic.derive(&IndexPointer::default()),
                             tx,
                             txindex,
@@ -1018,6 +1133,7 @@ impl Protorune {
                             &mut proto_balances_by_output,
                             &mut prior_balance_sheet,
                             &tx.output,
+                            height,
                         )?;
 
                         // Handle any remaining balance
@@ -1027,29 +1143,6 @@ impl Protorune {
                             protostone_unallocated_to,
                         )?;
                     }
-
-                    // Add ValueTransfer events for this protostone's outputs
-                    for (vout, sheet) in &proto_balances_by_output {
-                        let transfers =
-                            AlkaneTransferParcel::from(RuneTransfer::from_balance_sheet(sheet.clone()))
-                                .0;
-                        if transfers.iter().any(|t| t.value > 0) {
-                            trace.clock(TraceEvent::ValueTransfer {
-                                transfers,
-                                redirect_to: *vout,
-                            });
-                        }
-                    }
-
-                    // Save the trace for this protostone
-                    save_trace(
-                        &OutPoint {
-                            txid: tx.compute_txid(),
-                            vout: shadow_vout,
-                        },
-                        height,
-                        trace,
-                    )?;
 
                     Ok(())
                 })
@@ -1064,7 +1157,12 @@ impl Protorune {
             for input in &tx.input {
                 //all inputs must be used up, even in cenotaphs
                 let key = consensus_encode(&input.previous_output)?;
-                clear_balances(&mut table.OUTPOINT_TO_RUNES.select(&key));
+                // v3 chunked-outpoint: mark the consumed input chunk as
+                // spent at this height (zero entries, spent_at_height set).
+                clear_chunked_balances(
+                    &mut table.OUTPOINT_TO_RUNES.select(&key),
+                    height as u32,
+                );
             }
         }
         Ok(())
@@ -1072,7 +1170,55 @@ impl Protorune {
 
     #[cfg(feature = "mainnet")]
     fn freeze_storage(height: u64) {
-        if height > 913300 {
+        // OYL_DISBAND_HEIGHT — at this block the OYL AMM is permanently
+        // placed in admin-disabled / codefreeze state. Background:
+        //
+        //   OYL has disbanded as an organization. The original admin
+        //   alkane that controlled the AMM was lost and previously
+        //   re-pegged here to AlkaneId(2, 69805) (see pre-fork branch
+        //   below). After 2026-05-22 we are formalizing the post-OYL
+        //   state of the deployment: administrative privilege on
+        //   `4:65522` (factory) and `4:65523` (proxy) is permanently
+        //   disabled. There is no owner. Protocol fees that the AMM
+        //   would otherwise have routed to the admin via `collect_fees`
+        //   now stay accrued inside each pool's reserves, accruing as
+        //   pro-rata value to existing LP holders (the project owners,
+        //   in OYL's place). This freeze line is the AMM's codefreeze
+        //   marker — fee structure, pool factory template, and admin
+        //   ID are locked at the values they held at this height and
+        //   cannot be changed thereafter.
+        //
+        // Mechanism: at the fork we (1) overwrite the on-storage /auth
+        // pointer with AlkaneId(0, 0), the runtime's "non-contract"
+        // sentinel, so `only_owner()`'s `incoming.contains(auth_token)`
+        // check can never pass — every admin-gated opcode reverts.
+        // We then (2) zero out the factory + proxy's accumulated
+        // balance of `2:69805`. That backlog accumulated because
+        // `alkanes-std-auth-token::authenticate()` did
+        // `CallResponse::forward(incoming) + push(transfer)`, returning
+        // the auth token twice; combined with the runtime's
+        // intentional self-mint rule in `checked_debit_with_minting`
+        // (alkanes/src/utils.rs:88), every owner-only call quietly
+        // net-deposited +1 auth token in the factory's contract
+        // balance. `CreateNewPool` is public and lets any caller pass
+        // `token_a = 2:69805`, so without (2) an attacker could still
+        // fund a fresh AUTH/X pool from the factory's accumulated
+        // stash and redeem via `WithdrawAndBurn`. A security
+        // researcher demonstrated this on 2026-05-22 with a
+        // `metashrew_view simulate` at h=950504 draining 3 auth
+        // tokens through this path. Zeroing closes both the backlog
+        // and any future micro-windows.
+        //
+        // Drift note: external indexers (unisat, alkanode, fairmints)
+        // that don't pick up this patch will continue to report the
+        // pre-fork /auth value and any residual `2:69805` balance on
+        // 4:65522 / 4:65523 — that is acceptable. The only
+        // observable divergence is on a now-permanently-disabled
+        // surface; canonical AMM trading state (reserves, LP supply,
+        // swap pricing) is unaffected.
+        const OYL_DISBAND_HEIGHT: u64 = 950_564;
+
+        if height > 913300 && height < OYL_DISBAND_HEIGHT {
             IndexPointer::from_keyword("/alkanes/")
                 .select(&ProtoruneRuneId::new(4, 65523).into())
                 .keyword("/storage//auth")
@@ -1081,36 +1227,54 @@ impl Protorune {
                 .select(&ProtoruneRuneId::new(4, 65522).into())
                 .keyword("/storage//auth")
                 .set(Arc::new(ProtoruneRuneId::new(2, 69805).into()));
-        };
+        }
+
+        if height >= OYL_DISBAND_HEIGHT {
+            let zero_id: Vec<u8> = ProtoruneRuneId::new(0, 0).into();
+            let auth_id: Vec<u8> = ProtoruneRuneId::new(2, 69805).into();
+            for who in [ProtoruneRuneId::new(4, 65522), ProtoruneRuneId::new(4, 65523)] {
+                let who_id: Vec<u8> = who.into();
+                // (1) /auth pointer → AlkaneId(0,0) → only_owner always reverts
+                IndexPointer::from_keyword("/alkanes/")
+                    .select(&who_id)
+                    .keyword("/storage//auth")
+                    .set(Arc::new(zero_id.clone()));
+                // (2) drain accumulated 2:69805 balance so CreateNewPool
+                //     debit underflows on `checked_debit_with_minting`
+                IndexPointer::from_keyword("/alkanes/")
+                    .select(&auth_id)
+                    .keyword("/balances/")
+                    .select(&who_id)
+                    .set(Arc::new(0u128.to_le_bytes().to_vec()));
+            }
+        }
     }
 
     #[cfg(not(feature = "mainnet"))]
     pub fn freeze_storage(height: u64) {}
 
-    pub fn index_block<B: BlockLike, T: MessageContext>(block: &B, height: u64) -> Result<BTreeSet<Vec<u8>>> {
+    pub fn index_block<T: MessageContext>(block: Block, height: u64) -> Result<BTreeSet<Vec<u8>>> {
         let init_result = initialized_protocol_index().map_err(|e| anyhow!(e.to_string()));
         let add_result =
             add_to_indexable_protocols(T::protocol_tag()).map_err(|e| anyhow!(e.to_string()));
         init_result?;
         add_result?;
-        
-        let block_hash = block.block_hash();
         tables::RUNES
             .HEIGHT_TO_BLOCKHASH
             .select_value::<u64>(height)
-            .set(Arc::new(consensus_encode(&block_hash)?));
+            .set(Arc::new(consensus_encode(&block.block_hash())?));
         tables::RUNES
             .BLOCKHASH_TO_HEIGHT
-            .select(&consensus_encode(&block_hash)?)
+            .select(&consensus_encode(&block.block_hash())?)
             .set_value::<u64>(height);
-        Self::index_transaction_ids(block, height)?;
-        Self::index_outpoints(block, height)?;
+        Self::index_transaction_ids(&block, height)?;
+        Self::index_outpoints(&block, height)?;
 
         // Get the set of updated addresses
-        let updated_addresses = Self::index_spendables(block.transactions())?;
+        let updated_addresses = Self::index_spendables(&block.txdata, height as u32)?;
 
         Self::freeze_storage(height);
-        Self::index_unspendables::<B, T>(block, height)?;
+        Self::index_unspendables::<T>(&block, height)?;
 
         // Return the set of updated addresses
         Ok(updated_addresses)

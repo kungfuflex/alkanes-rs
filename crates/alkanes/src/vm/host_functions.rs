@@ -728,9 +728,8 @@ impl AlkanesHostFunctionsImpl {
         storage_map_len: u64,
     ) -> Result<i32> {
         // Check for precompiled contract addresses
-        // Note: CloneFuture (31) needs full extcall context, so exclude it from special handling
-        if cellpack.target.block == 800000000 && cellpack.target.tx != 31 {
-            // 8e8 - simple precompiled operations
+        if cellpack.target.block == 800000000 {
+            // 8e8
             return Self::_handle_special_extcall(caller, cellpack);
         }
 
@@ -802,60 +801,81 @@ impl AlkanesHostFunctionsImpl {
         subcontext.trace.clock(event);
 
         // Run the call in a new context
-        let (response, gas_used) = run_after_special(
-            Arc::new(Mutex::new(subcontext.clone())),
+        let subcontext_arc = Arc::new(Mutex::new(subcontext.clone()));
+        match run_after_special(
+            subcontext_arc,
             binary_rc,
             start_fuel,
-        )?;
-        let serialized = CallResponse::from(response.clone().into()).serialize();
-        {
-            caller.set_fuel(overflow_error(start_fuel.checked_sub(gas_used))?)?;
-            let mut return_context: TraceResponse = response.clone().into();
-            return_context.fuel_used = gas_used;
+        ) {
+            Ok((response, gas_used)) => {
+                let serialized = CallResponse::from(response.clone().into()).serialize();
+                {
+                    caller.set_fuel(overflow_error(start_fuel.checked_sub(gas_used))?)?;
+                    let mut return_context: TraceResponse = response.clone().into();
+                    return_context.fuel_used = gas_used;
 
-            // Update trace and context state
-            let mut context_guard = caller.data_mut().context.lock().unwrap();
-            context_guard
-                .trace
-                .clock(TraceEvent::ReturnContext(return_context));
-            let mut saveable: SaveableExtendedCallResponse = response.clone().into();
-            saveable.associate(&subcontext);
-            saveable.save(&mut context_guard.message.atomic, T::isdelegate())?;
-            context_guard.returndata = serialized.clone();
-            T::handle_atomic(&mut context_guard.message.atomic);
+                    // Update trace and context state
+                    let mut context_guard = caller.data_mut().context.lock().unwrap();
+                    context_guard
+                        .trace
+                        .clock(TraceEvent::ReturnContext(return_context));
+                    let mut saveable: SaveableExtendedCallResponse = response.clone().into();
+                    saveable.associate(&subcontext);
+                    saveable.save(&mut context_guard.message.atomic, T::isdelegate())?;
+                    context_guard.returndata = serialized.clone();
+                    T::handle_atomic(&mut context_guard.message.atomic);
+                }
+                Ok(serialized.len() as i32)
+            }
+            Err(e) => {
+                // v2.2.0 fork gate: pre-fork blocks must preserve the original
+                // v2.1.7-beta.4 behaviour where a child revert propagates via `?`
+                // and unwinds the parent frame. Post-fork, we contain the revert.
+                if height < crate::network::genesis::V220_FORK_HEIGHT {
+                    return Err(e);
+                }
+                // Child call reverted — handle like EVM: rollback child state,
+                // deduct gas, store revert data, return negative value to caller
+                // WITHOUT aborting the parent frame.
+                let error_msg = e.to_string();
+                let mut data: Vec<u8> = vec![0x08, 0xc3, 0x79, 0xa0]; // EVM revert selector
+                data.extend(error_msg.as_bytes());
+
+                let mut revert_context: TraceResponse = TraceResponse::default();
+                revert_context.inner.data = data.clone();
+                // Consume all allocated fuel on revert (child used it all)
+                revert_context.fuel_used = start_fuel;
+
+                let mut response = CallResponse::default();
+                response.data = data;
+                let serialized = response.serialize();
+                let result = (serialized.len() as i32).checked_neg().unwrap_or(-1);
+
+                {
+                    // Deduct all fuel allocated to the child call
+                    let _ = caller.set_fuel(0);
+
+                    let mut context_guard = caller.data_mut().context.lock().unwrap();
+                    context_guard
+                        .trace
+                        .clock(TraceEvent::RevertContext(revert_context));
+                    // Rollback the child's state changes via checkpoint
+                    context_guard.message.atomic.rollback();
+                    context_guard.returndata = serialized;
+                }
+                // Do NOT call _abort() — the parent frame should continue
+                // and handle the negative return value from the WASM side
+                Ok(result)
+            }
         }
-        Ok(serialized.len() as i32)
     }
     pub(super) fn log<'a>(caller: &mut Caller<'_, AlkanesState>, v: i32) -> Result<()> {
-        use crate::logging::{LogTree, log_tree, LogStyle};
-        
         let mem = get_memory(caller)?;
-        let (alkane_id, message) = {
+        let message = {
             let data = mem.data(&caller);
-            let msg = read_arraybuffer(data, v)?;
-            let id = caller.data_mut().context.lock().unwrap().myself.clone();
-            (id, msg)
+            read_arraybuffer(data, v)?
         };
-        
-        let msg_str = String::from_utf8(message)?;
-        
-        // Check if message has multiple lines - if so, use tree format
-        let lines: Vec<&str> = msg_str.lines().collect();
-        if lines.len() > 1 {
-            let mut tree = LogTree::new(format!("[{}:{}]", alkane_id.block, alkane_id.tx));
-            for (i, line) in lines.iter().enumerate() {
-                if i == lines.len() - 1 {
-                    tree.add_last(line.to_string());
-                } else {
-                    tree.add(line.to_string());
-                }
-            }
-            log_tree(LogStyle::VM, &tree);
-        } else {
-            // Single line - simple format
-            println!("⚙️ [VM] [{}:{}] {}", alkane_id.block, alkane_id.tx, msg_str);
-        }
-        
+        print!("{}", String::from_utf8(message)?);
         Ok(())
     }
 }

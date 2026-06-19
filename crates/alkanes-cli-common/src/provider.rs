@@ -5,9 +5,16 @@
 
 use crate::traits::*;
 use crate::{
-    alkanes::types::{ExecutionState, ReadyToSignCommitTx, ReadyToSignRevealTx, ReadyToSignTx},
+    alkanes::types::{ExecutionState, ReadyToSignCommitTx, ReadyToSignRevealTx, ReadyToSignTx, OrdinalsStrategy},
+    ordinals::OrdinalsHandler,
     AlkanesError, JsonValue, Result,
 };
+#[cfg(feature = "std")]
+use crate::cache::{AlkanesCache, BlockHash};
+#[cfg(feature = "std")]
+use std::sync::Arc;
+#[cfg(feature = "std")]
+use tokio::sync::RwLock;
 use serde_json::json;
 use crate::alkanes::execute::EnhancedAlkanesExecutor;
 use crate::alkanes::balance_sheet::BalanceSheetOperations;
@@ -119,7 +126,7 @@ use crate::commands::Commands;
 
 #[derive(Clone)]
 pub struct ConcreteProvider {
-    rpc_config: RpcConfig,
+    pub rpc_config: RpcConfig,
     command: Commands,
     #[cfg(not(target_arch = "wasm32"))]
     wallet_path: Option<PathBuf>,
@@ -130,13 +137,30 @@ pub struct ConcreteProvider {
     #[cfg(feature = "native-deps")]
     http_client: reqwest::Client,
     secp: Secp256k1<All>,
+    /// Optional cache for metashrew_view results. When `Some`, immutable
+    /// methods (`getbytecode`, `meta`) are cached forever and tip-bound
+    /// methods are cached against the current tip hash (if known).
+    #[cfg(feature = "std")]
+    cache: Option<Arc<dyn AlkanesCache>>,
+    /// Current chain tip — populated by an optional background watcher
+    /// (see [`crate::cache::integration::scope_for_method`]). When `None`,
+    /// tip-bound methods bypass the cache.
+    #[cfg(feature = "std")]
+    current_tip: Arc<RwLock<Option<BlockHash>>>,
+    /// Optional remote signer. When `Some`, `WalletProvider::sign_psbt`
+    /// delegates to it instead of the local keystore. Powers the
+    /// `--use-walletconnect` flow.
+    #[cfg(feature = "std")]
+    pub(crate) remote_signer: Option<Arc<dyn crate::traits::RemoteSigner>>,
     }
 
 
 impl ConcreteProvider {
-    /// Helper method to add X-Subfrost-Api-Key header if URL is a subfrost.io domain
+    /// Helper method to add custom headers to requests
+    /// Adds X-Subfrost-Api-Key header if URL is a subfrost.io domain, plus any --jsonrpc-header values
     #[cfg(feature = "native-deps")]
-    fn add_subfrost_header(&self, url: &str, mut builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+    fn add_custom_headers(&self, url: &str, mut builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        // Add X-Subfrost-Api-Key header if URL is a subfrost.io domain
         if let Ok(parsed_url) = Url::parse(url) {
             if let Some(host) = parsed_url.host_str() {
                 if host.ends_with(".subfrost.io") || host == "subfrost.io" {
@@ -147,7 +171,21 @@ impl ConcreteProvider {
                 }
             }
         }
+
+        // Add custom JSON-RPC headers from --jsonrpc-header flags
+        for (header_name, header_value) in self.rpc_config.get_jsonrpc_headers() {
+            log::debug!("Adding custom header: {}: {}", header_name, header_value);
+            builder = builder.header(&header_name, &header_value);
+        }
+
         builder
+    }
+
+    /// Helper method to add X-Subfrost-Api-Key header if URL is a subfrost.io domain
+    /// @deprecated Use add_custom_headers instead
+    #[cfg(feature = "native-deps")]
+    fn add_subfrost_header(&self, url: &str, builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        self.add_custom_headers(url, builder)
     }
 
     #[cfg(feature = "std")]
@@ -162,6 +200,32 @@ impl ConcreteProvider {
         provider: String,
         wallet_path: Option<std::path::PathBuf>,
     ) -> Result<Self> {
+        Self::new_with_headers(
+            bitcoin_rpc_url,
+            metashrew_rpc_url,
+            jsonrpc_url,
+            titan_api_url,
+            esplora_url,
+            brc20_prog_rpc_url,
+            provider,
+            wallet_path,
+            Vec::new(),
+        ).await
+    }
+
+    #[cfg(feature = "std")]
+    #[cfg(not(target_arch = "wasm32"))]
+    pub async fn new_with_headers(
+        bitcoin_rpc_url: Option<String>,
+        metashrew_rpc_url: String,
+        jsonrpc_url: Option<String>,
+        titan_api_url: Option<String>,
+        esplora_url: Option<String>,
+        brc20_prog_rpc_url: Option<String>,
+        provider: String,
+        wallet_path: Option<std::path::PathBuf>,
+        jsonrpc_headers: Vec<String>,
+    ) -> Result<Self> {
         let rpc_config = RpcConfig {
             provider,
             bitcoin_rpc_url,
@@ -172,8 +236,12 @@ impl ConcreteProvider {
             metashrew_rpc_url: Some(metashrew_rpc_url),
             brc20_prog_rpc_url,
             data_api_url: None,
+            espo_rpc_url: None,
+            qubitcoin_rpc_url: None,
+            quzec_rpc_url: None,
             subfrost_api_key: None,
             timeout_seconds: 600,
+            jsonrpc_headers,
         };
 
         Ok(Self {
@@ -187,6 +255,12 @@ impl ConcreteProvider {
             #[cfg(feature = "native-deps")]
             http_client: reqwest::Client::new(),
             secp: Secp256k1::new(),
+            #[cfg(feature = "std")]
+            cache: None,
+            #[cfg(feature = "std")]
+            current_tip: Arc::new(RwLock::new(None)),
+            #[cfg(feature = "std")]
+            remote_signer: None,
         })
     }
 
@@ -202,6 +276,32 @@ impl ConcreteProvider {
         provider: String,
         wallet_path: Option<std::path::PathBuf>,
     ) -> Result<Self> {
+        Self::new_with_headers(
+            bitcoin_rpc_url,
+            metashrew_rpc_url,
+            jsonrpc_url,
+            titan_api_url,
+            esplora_url,
+            brc20_prog_rpc_url,
+            provider,
+            wallet_path,
+            Vec::new(),
+        ).await
+    }
+
+    #[cfg(feature = "std")]
+    #[cfg(target_arch = "wasm32")]
+    pub async fn new_with_headers(
+        bitcoin_rpc_url: Option<String>,
+        metashrew_rpc_url: String,
+        jsonrpc_url: Option<String>,
+        titan_api_url: Option<String>,
+        esplora_url: Option<String>,
+        brc20_prog_rpc_url: Option<String>,
+        provider: String,
+        wallet_path: Option<std::path::PathBuf>,
+        jsonrpc_headers: Vec<String>,
+    ) -> Result<Self> {
         let rpc_config = RpcConfig {
             provider,
             bitcoin_rpc_url,
@@ -212,8 +312,12 @@ impl ConcreteProvider {
             metashrew_rpc_url: Some(metashrew_rpc_url),
             brc20_prog_rpc_url,
             data_api_url: None,
+            espo_rpc_url: None,
+            qubitcoin_rpc_url: None,
+            quzec_rpc_url: None,
             subfrost_api_key: None,
             timeout_seconds: 600,
+            jsonrpc_headers,
         };
 
         let wallet_path_str = wallet_path.and_then(|p| p.to_str().map(|s| s.to_string()));
@@ -229,6 +333,12 @@ impl ConcreteProvider {
             #[cfg(feature = "native-deps")]
             http_client: reqwest::Client::new(),
             secp: Secp256k1::new(),
+            #[cfg(feature = "std")]
+            cache: None,
+            #[cfg(feature = "std")]
+            current_tip: Arc::new(RwLock::new(None)),
+            #[cfg(feature = "std")]
+            remote_signer: None,
         })
     }
 
@@ -243,6 +353,12 @@ impl ConcreteProvider {
             #[cfg(feature = "native-deps")]
             http_client: reqwest::Client::new(),
             secp: Secp256k1::new(),
+            #[cfg(feature = "std")]
+            cache: None,
+            #[cfg(feature = "std")]
+            current_tip: Arc::new(RwLock::new(None)),
+            #[cfg(feature = "std")]
+            remote_signer: None,
         }
     }
 
@@ -250,26 +366,174 @@ impl ConcreteProvider {
         match self.rpc_config.provider.as_str() { "mainnet" => bitcoin::Network::Bitcoin, "testnet" => bitcoin::Network::Testnet, "signet" => bitcoin::Network::Signet, _ => bitcoin::Network::Regtest }
     }
 
+    /// Attach a cache backend. Callers in `alkanes-cli` typically pass a
+    /// [`crate::cache::sqlite::SqliteCache`] opened at `~/.alkanes/cache.sqlite3`;
+    /// callers in `subfrost-mobile` pass a [`crate::cache::grpc::GrpcCache`].
+    /// Tests use [`crate::cache::in_memory::InMemoryCache`].
+    #[cfg(feature = "std")]
+    pub fn with_cache(mut self, cache: Arc<dyn AlkanesCache>) -> Self {
+        self.cache = Some(cache);
+        self
+    }
+
+    /// Attach a remote signer. When present, `sign_psbt` delegates here
+    /// instead of consulting the local keystore — powers
+    /// `--use-walletconnect`. Pass `None` to clear.
+    #[cfg(feature = "std")]
+    pub fn with_remote_signer(
+        mut self,
+        signer: Option<Arc<dyn crate::traits::RemoteSigner>>,
+    ) -> Self {
+        self.remote_signer = signer;
+        self
+    }
+
+    /// True if a remote signer is configured. Useful for hint logging.
+    #[cfg(feature = "std")]
+    pub fn has_remote_signer(&self) -> bool {
+        self.remote_signer.is_some()
+    }
+
+    /// Manually record the current chain tip. Used by external callers
+    /// that already track height/hash, or by the optional tip-watcher
+    /// background task in [`crate::cache::tip_watcher`].
+    #[cfg(feature = "std")]
+    pub async fn set_current_tip(&self, tip: BlockHash) {
+        let prior = {
+            let mut guard = self.current_tip.write().await;
+            let prev = *guard;
+            *guard = Some(tip);
+            prev
+        };
+        // On real reorg (tip changed but wasn't None before), notify cache.
+        if let (Some(cache), Some(prev)) = (self.cache.as_ref(), prior) {
+            if prev != tip {
+                if let Err(e) = cache.on_reorg(tip).await {
+                    log::warn!("cache.on_reorg failed (ignored): {e}");
+                }
+            }
+        }
+    }
+
+    #[cfg(feature = "std")]
+    async fn current_tip_value(&self) -> Option<BlockHash> {
+        *self.current_tip.read().await
+    }
+
     pub async fn metashrew_view_call(&self, method: &str, params: &str, height: &str) -> Result<Vec<u8>> {
         // Use the centralized RPC target resolution
         let target = self.rpc_config.get_metashrew_rpc_target();
-        
-        // metashrew_view always uses JSON-RPC (even when called through sandshrew)
-        let rpc_params = serde_json::json!([method, params, height]);
-        let result = self.call(&target.url, "metashrew_view", rpc_params, 1).await?;
-        
+        let target_url = target.url.clone();
+
+        // In qubitcoin mode, translate metashrew_view → secondaryview
+        let (rpc_method, rpc_params) = if self.rpc_config.is_qubitcoin_mode() {
+            ("secondaryview", serde_json::json!(["alkanes", method, params]))
+        } else {
+            ("metashrew_view", serde_json::json!([method, params, height]))
+        };
+
+        // Cache-aware path: only when cache is configured AND we're not
+        // peeking at a non-`latest` height (historical-height queries are
+        // rare and not worth the extra key complexity yet).
+        #[cfg(feature = "std")]
+        {
+            if self.cache.is_some() && height == "latest" {
+                let tip = self.current_tip_value().await;
+                let network = self.rpc_config.provider.clone();
+                // Re-borrow to satisfy lifetime: extract the static label
+                let static_method: &'static str = match method {
+                    "getbytecode" => "getbytecode",
+                    "meta" => "meta",
+                    "simulate" => "simulate",
+                    "trace" => "trace",
+                    "traceblock" => "traceblock",
+                    "protorunesbyaddress" => "protorunesbyaddress",
+                    "protorunesbyoutpoint" => "protorunesbyoutpoint",
+                    "getbalance" => "getbalance",
+                    "getinventory" => "getinventory",
+                    "getstorageat" => "getstorageat",
+                    "txscript" => "txscript",
+                    "unwrap" => "unwrap",
+                    _ => "",
+                };
+                if !static_method.is_empty() {
+                    let cache = self.cache.clone();
+                    let rpc_method_owned = rpc_method.to_string();
+                    let rpc_params_clone = rpc_params.clone();
+                    let url_clone = target_url.clone();
+                    let result_bytes = crate::cache::integration::cached_view_call(
+                        cache.as_ref(),
+                        &network,
+                        tip,
+                        static_method,
+                        params,
+                        move || {
+                            let url = url_clone.clone();
+                            let rpc_method = rpc_method_owned.clone();
+                            let rpc_params = rpc_params_clone.clone();
+                            async move {
+                                let v = self.call(&url, &rpc_method, rpc_params, 1).await?;
+                                let s = v.as_str().ok_or_else(|| {
+                                    AlkanesError::RpcError(
+                                        "metashrew_view result is not a string".to_string(),
+                                    )
+                                })?;
+                                let s = s.strip_prefix("0x").unwrap_or(s);
+                                hex::decode(s).map_err(|e| {
+                                    AlkanesError::RpcError(format!(
+                                        "Failed to decode metashrew_view hex: {e}"
+                                    ))
+                                })
+                            }
+                        },
+                    )
+                    .await?;
+                    return Ok(result_bytes);
+                }
+            }
+        }
+
+        // Uncached / wasm / qubitcoin path: original behaviour.
+        let result = self.call(&target_url, rpc_method, rpc_params, 1).await?;
+
         // The result should be a hex string starting with "0x"
         let hex_str = result.as_str()
             .ok_or_else(|| AlkanesError::RpcError("metashrew_view result is not a string".to_string()))?;
-        
+
         // Remove "0x" prefix if present
         let hex_str = hex_str.strip_prefix("0x").unwrap_or(hex_str);
-        
+
         // Decode hex to bytes
         let bytes = hex::decode(hex_str)
             .map_err(|e| AlkanesError::RpcError(format!("Failed to decode metashrew_view hex response: {}", e)))?;
-        
+
         Ok(bytes)
+    }
+
+    /// Get storage value at a specific path for an alkane
+    pub async fn get_storage_at(&self, block: u64, tx: u64, path: &[u8]) -> Result<Vec<u8>> {
+        // Build the protobuf request
+        let request = crate::proto::alkanes::AlkaneStorageRequest {
+            id: Some(crate::proto::alkanes::AlkaneId {
+                block: Some(crate::proto::alkanes::Uint128 { lo: block, hi: 0 }),
+                tx: Some(crate::proto::alkanes::Uint128 { lo: tx, hi: 0 }),
+            }),
+            path: path.to_vec(),
+        };
+
+        // Encode to protobuf bytes
+        use prost::Message;
+        let encoded = request.encode_to_vec();
+        let hex_params = hex::encode(&encoded);
+
+        // Call metashrew_view with getstorageat method
+        let response_bytes = self.metashrew_view_call("getstorageat", &hex_params, "latest").await?;
+
+        // Decode the response protobuf
+        let response = crate::proto::alkanes::AlkaneStorageResponse::decode(response_bytes.as_slice())
+            .map_err(|e| AlkanesError::RpcError(format!("Failed to decode AlkaneStorageResponse: {}", e)))?;
+
+        Ok(response.value)
     }
 
     // Low-level Lua script execution methods (prefer using LuaScriptExecutor trait)
@@ -508,19 +772,23 @@ impl ConcreteProvider {
 
     /// A helper function to find address info from the keystore.
     fn find_address_info(keystore: &Keystore, address: &Address, network: Network) -> Result<AddressInfo> {
-        // This is a placeholder. In a real wallet, you'd efficiently search
-        // the keystore's derived addresses. 
-        for i in 0..1000 { // A reasonable search limit
-            for chain in 0..=1 {
-                if let Ok(addrs) = keystore.get_addresses(network, "p2tr", chain, i, 1) {
-                    if let Some(info) = addrs.first() {
-                        if info.address == address.to_string() {
-                            return Ok(info.clone());
+        // Search across all address types since UTXOs can come from any address type
+        let script_types = ["p2tr", "p2wpkh", "p2sh", "p2pkh"];
+
+        for script_type in script_types {
+            for i in 0..1000 { // A reasonable search limit
+                for chain in 0..=1 { // Receive (0) and change (1) chains
+                    if let Ok(addrs) = keystore.get_addresses(network, script_type, chain, i, 1) {
+                        if let Some(info) = addrs.first() {
+                            if info.address == address.to_string() {
+                                return Ok(info.clone());
+                            }
                         }
                     }
                 }
             }
         }
+
         Err(AlkanesError::Wallet(format!("Address {} not found in keystore", address)))
     }
 
@@ -598,13 +866,308 @@ impl ConcreteProvider {
     }
 }
 
-#[async_trait(?Send)]
+/// Translate a BRC20-Prog eth_* method to a qubitcoin secondaryview call for brc20shrew.
+///
+/// In qubitcoin mode (no explicit --brc20-prog-rpc-url), BRC20-prog queries are routed
+/// through the brc20shrew tertiary indexer's view functions:
+///   eth_call → secondaryview ["brc20shrew", "call", hex_encoded_json]
+///   eth_blockNumber → secondaryview ["brc20shrew", "getblockheight", ""]
+///   eth_chainId → returns hardcoded chain ID
+fn translate_brc20_prog_for_qubitcoin(method: &str, params: &serde_json::Value) -> Option<(String, serde_json::Value)> {
+    if !method.starts_with("eth_") {
+        return None;
+    }
 
+    match method {
+        "eth_call" => {
+            // Extract the call object from params[0]
+            let call_obj = params.get(0)?;
+            let to_hex = call_obj.get("to").and_then(|v| v.as_str()).unwrap_or("");
+            let data_hex = call_obj.get("data").and_then(|v| v.as_str()).unwrap_or("");
 
+            // Convert 0x-prefixed hex address to raw bytes for CallRequest
+            let to_bytes: Vec<u8> = hex::decode(to_hex.strip_prefix("0x").unwrap_or(to_hex)).unwrap_or_default();
+            let data_bytes: Vec<u8> = hex::decode(data_hex.strip_prefix("0x").unwrap_or(data_hex)).unwrap_or_default();
+
+            // Build the JSON CallRequest that brc20shrew expects
+            let call_request = serde_json::json!({
+                "to": to_bytes,
+                "data": data_bytes,
+            });
+            let request_json = serde_json::to_string(&call_request).unwrap_or_default();
+            let hex_input = hex::encode(request_json.as_bytes());
+
+            Some(("secondaryview".to_string(), serde_json::json!(["brc20shrew", "call", hex_input])))
+        }
+        "eth_blockNumber" => {
+            let hex_input = hex::encode("{}".as_bytes());
+            Some(("secondaryview".to_string(), serde_json::json!(["brc20shrew", "getblockheight", hex_input])))
+        }
+        "eth_chainId" => {
+            // BRC20-prog chain ID: 0x4252433230 ("BRC20" in ASCII)
+            Some(("secondaryview".to_string(), serde_json::json!(["brc20shrew", "getblockheight", ""])))
+        }
+        "eth_getBalance" => {
+            let address = params.get(0).and_then(|v| v.as_str()).unwrap_or("");
+            let request = serde_json::json!({ "address": address });
+            let hex_input = hex::encode(serde_json::to_string(&request).unwrap_or_default().as_bytes());
+            Some(("secondaryview".to_string(), serde_json::json!(["brc20shrew", "getbalance", hex_input])))
+        }
+        "eth_getCode" | "eth_getTransactionCount" | "eth_getTransactionReceipt"
+        | "eth_getTransactionByHash" | "eth_getBlockByNumber" | "eth_estimateGas" => {
+            // These methods are less critical for initial integration.
+            // Return None to let them fall through to the external RPC (if configured)
+            // or fail with a clear error.
+            None
+        }
+        _ => None,
+    }
+}
+
+/// Translate an ord JSON-RPC method to a qubitcoin secondaryview call for brc20shrew.
+/// Returns (method, params, is_json_response) if translation applies.
+fn translate_ord_for_qubitcoin(method: &str, params: &serde_json::Value) -> Option<(String, serde_json::Value)> {
+    if !method.starts_with("ord_") {
+        return None;
+    }
+    let view_fn = match method {
+        "ord_output" => "getutxo",
+        "ord_inscription" => "getinscription",
+        "ord_inscriptions" => "getinscriptions",
+        "ord_children" => "getchildren",
+        "ord_parents" => "getparents",
+        "ord_content" => "getcontent",
+        "ord_sat" => "getsat",
+        "ord_tx" => "gettransaction",
+        "ord_block" => "getblockinfo",
+        "ord_blockcount" => "getblockheight",
+        _ => return None,
+    };
+
+    // Build the JSON request that brc20shrew expects
+    let first_param = params.as_array()
+        .and_then(|a| a.first())
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    let json_request = match method {
+        "ord_output" => {
+            // Input: "txid:vout" → {"outpoint": {"txid": "<hex>", "vout": N}}
+            let parts: Vec<&str> = first_param.splitn(2, ':').collect();
+            if parts.len() == 2 {
+                let txid = parts[0];
+                let vout: u32 = parts[1].parse().unwrap_or(0);
+                // brc20shrew expects txid as bytes (vec), but serde_json serializes as array
+                let txid_bytes: Vec<u8> = (0..txid.len()).step_by(2)
+                    .filter_map(|i| u8::from_str_radix(&txid[i..i+2], 16).ok())
+                    .collect();
+                serde_json::json!({"outpoint": {"txid": txid_bytes, "vout": vout}})
+            } else {
+                serde_json::json!({})
+            }
+        }
+        "ord_inscription" | "ord_content" => {
+            // Input: inscription_id → {"id": "<inscription_id>"}
+            serde_json::json!({"id": first_param})
+        }
+        "ord_inscriptions" => {
+            // Input: could be various filters
+            serde_json::json!({"query": first_param})
+        }
+        "ord_sat" => {
+            serde_json::json!({"sat": first_param})
+        }
+        "ord_tx" => {
+            serde_json::json!({"txid": first_param})
+        }
+        "ord_block" | "ord_blockcount" => {
+            serde_json::json!({"height": first_param})
+        }
+        _ => serde_json::json!({}),
+    };
+
+    let input_hex = hex::encode(serde_json::to_vec(&json_request).unwrap_or_default());
+    Some(("secondaryview".to_string(), serde_json::json!(["brc20-prog", view_fn, input_hex])))
+}
+
+/// Translate an esplora JSON-RPC method to a qubitcoin secondaryview call.
+/// Returns (method, params) if translation applies, None otherwise.
+fn translate_esplora_for_qubitcoin(method: &str, params: &serde_json::Value) -> Option<(String, serde_json::Value)> {
+        if !method.starts_with("esplora_") {
+            return None;
+        }
+        // Map esplora JSON-RPC method names to esplorashrew view function names
+        let view_fn = match method {
+            "esplora_tx" => "tx",
+            "esplora_tx::hex" => "txhex",
+            "esplora_tx::raw" => "txraw",
+            "esplora_tx::status" => "txstatus",
+            "esplora_tx::outspend" => "txoutspend",
+            "esplora_tx::outspends" => "txoutspend",
+            "esplora_block" => "block",
+            "esplora_block::status" => "blockstatus",
+            "esplora_block::txids" => "blocktxids",
+            "esplora_block::header" => "blockheader",
+            "esplora_block::txid" => "blocktxids",
+            "esplora_block-height" => "blockheight",
+            "esplora_blocks:tip:height" => "tipheight",
+            "esplora_blocks:tip:hash" => "tiphash",
+            "esplora_address::utxo" => "utxosbyscripthash",
+            "esplora_broadcast" => return None, // broadcast goes to bitcoind
+            _ => return None,
+        };
+
+        // Build the input string from params (esplorashrew expects a plain string input)
+        let input_str = if let Some(arr) = params.as_array() {
+            arr.iter()
+                .filter_map(|v| v.as_str().or_else(|| v.as_u64().map(|_| "")).or(Some("")))
+                .map(|s| {
+                    if let Some(v) = params.as_array().and_then(|a| a.iter().find(|x| x.is_number())) {
+                        if s.is_empty() { return v.to_string(); }
+                    }
+                    s.to_string()
+                })
+                .collect::<Vec<_>>()
+                .join("/")
+        } else {
+            String::new()
+        };
+
+        let first_param = params.as_array()
+            .and_then(|a| a.first())
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        // For address::utxo, convert bech32 address to script hash
+        let input_hex = if view_fn == "utxosbyscripthash" {
+            // Decode bech32 address → scriptPubKey → SHA256 hash
+            if let Ok((_, witness_version, program)) = bech32::segwit::decode(first_param) {
+                use sha2::{Sha256, Digest};
+                let ver_op: u8 = match witness_version.to_u8() { 0 => 0x00, n => 0x50 + n };
+                let mut script = Vec::with_capacity(2 + program.len());
+                script.push(ver_op);
+                script.push(program.len() as u8);
+                script.extend_from_slice(&program);
+                let hash = Sha256::digest(&script);
+                // esplorashrew expects the script hash in reversed (display) hex order
+                let reversed: Vec<u8> = hash.iter().rev().cloned().collect();
+                hex::encode(hex::encode(reversed).as_bytes())
+            } else {
+                hex::encode(first_param.as_bytes())
+            }
+        } else {
+            // For other views, pass the first param as-is (hex-encoded string)
+            hex::encode(first_param.as_bytes())
+        };
+
+    Some(("secondaryview".to_string(), serde_json::json!(["esplora", view_fn, input_hex])))
+}
 
 #[async_trait(?Send)]
 impl JsonRpcProvider for ConcreteProvider {
     async fn call(
+        &self,
+        url: &str,
+        method: &str,
+        params: serde_json::Value,
+        id: u64,
+    ) -> Result<serde_json::Value> {
+        // In qubitcoin mode, translate methods to qubitcoind's secondary indexer interface
+        #[allow(unused_mut)]
+        let mut is_esplora_view = false;
+        #[allow(unused_mut)]
+        let mut is_brc20_prog_view = false;
+        let (url, method, params) = if self.rpc_config.is_qubitcoin_mode() {
+            let qbc_url = self.rpc_config.qubitcoin_rpc_url.as_deref().unwrap();
+            if let Some((new_method, new_params)) = translate_esplora_for_qubitcoin(method, &params) {
+                log::info!("Qubitcoin translate: {} -> {}", method, new_method);
+                is_esplora_view = true;
+                (qbc_url, new_method, new_params)
+            } else if let Some((new_method, new_params)) = translate_ord_for_qubitcoin(method, &params) {
+                log::info!("Qubitcoin translate ord: {} -> {}", method, new_method);
+                is_esplora_view = true; // reuse the hex-decode path
+                (qbc_url, new_method, new_params)
+            } else if self.rpc_config.brc20_prog_rpc_url.is_none()
+                && method.starts_with("eth_")
+            {
+                if let Some((new_method, new_params)) = translate_brc20_prog_for_qubitcoin(method, &params) {
+                    log::info!("Qubitcoin translate brc20-prog: {} -> {}", method, new_method);
+                    is_brc20_prog_view = true;
+                    (qbc_url, new_method, new_params)
+                } else {
+                    (url, method.to_string(), params)
+                }
+            } else if method.starts_with("sandshrew_") || method.starts_with("btc_")
+                || matches!(method, "sendrawtransaction" | "sendrawtransactions"
+                    | "getblockcount" | "getblockhash" | "getblock" | "getrawtransaction"
+                    | "getbestblockhash" | "generatetoaddress" | "getblockchaininfo"
+                    | "gettxout" | "getmempoolinfo" | "getrawmempool") {
+                let btc_method = method
+                    .strip_prefix("sandshrew_").or_else(|| method.strip_prefix("btc_"))
+                    .unwrap_or(method);
+                log::info!("Qubitcoin bitcoind proxy: {} -> {}", method, btc_method);
+                (qbc_url, btc_method.to_string(), params)
+            } else {
+                (url, method.to_string(), params)
+            }
+        } else {
+            (url, method.to_string(), params)
+        };
+        let method = method.as_str();
+
+        // For esplora views in qubitcoin mode, secondaryview returns "0x<hex>"
+        // which contains JSON. We need to decode it before returning.
+        let result = self._call_inner(url, method, params, id).await;
+        if is_esplora_view {
+            return result.map(|v| {
+                if let Some(hex_str) = v.as_str().and_then(|s| s.strip_prefix("0x")) {
+                    match hex::decode(hex_str) {
+                        Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or(v),
+                        Err(_) => v,
+                    }
+                } else {
+                    v
+                }
+            });
+        }
+        if is_brc20_prog_view {
+            // secondaryview returns "0x<hex>" where hex decodes to JSON CallResponse:
+            // {"result": [byte_array], "success": bool, "error": "..."}
+            // eth_call callers expect "0x<hex_return_data>" so we extract result bytes.
+            return result.map(|v| {
+                if let Some(hex_str) = v.as_str().and_then(|s| s.strip_prefix("0x")) {
+                    match hex::decode(hex_str) {
+                        Ok(bytes) => {
+                            if let Ok(call_resp) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+                                // Extract "result" field (byte array) and re-encode as hex
+                                if let Some(result_arr) = call_resp.get("result").and_then(|v| v.as_array()) {
+                                    let result_bytes: Vec<u8> = result_arr.iter()
+                                        .filter_map(|b| b.as_u64().map(|n| n as u8))
+                                        .collect();
+                                    return serde_json::json!(format!("0x{}", hex::encode(&result_bytes)));
+                                }
+                                // If result is a string, pass through
+                                if let Some(s) = call_resp.get("result").and_then(|v| v.as_str()) {
+                                    return serde_json::json!(s);
+                                }
+                            }
+                            v
+                        }
+                        Err(_) => v,
+                    }
+                } else {
+                    v
+                }
+            });
+        }
+        result
+    }
+
+    // _call_inner is defined on ConcreteProvider (below the trait impl)
+}
+
+impl ConcreteProvider {
+    async fn _call_inner(
         &self,
         url: &str,
         method: &str,
@@ -647,6 +1210,12 @@ impl JsonRpcProvider for ConcreteProvider {
                         request_builder = request_builder.header("X-Subfrost-Api-Key", api_key);
                     }
                 }
+            }
+
+            // Add custom JSON-RPC headers from --jsonrpc-header flags
+            for (header_name, header_value) in self.rpc_config.get_jsonrpc_headers() {
+                log::debug!("Adding custom header: {}: {}", header_name, header_value);
+                request_builder = request_builder.header(&header_name, &header_value);
             }
 
             log::debug!("Request builder: {:?}", request_builder);
@@ -903,44 +1472,26 @@ impl WalletProvider for ConcreteProvider {
     
     async fn get_balance(&self, addresses: Option<Vec<String>>) -> Result<WalletBalance> {
         log::info!("[WalletProvider] Calling get_balance for addresses: {:?}", addresses);
-        let addrs_to_check = if let Some(provided_addresses) = addresses {
-            provided_addresses
-        } else {
-            // If no addresses are provided, derive the first 20 from the public key.
-            let derived_infos = self.get_addresses(20).await?;
-            derived_infos.into_iter().map(|info| info.address).collect()
-        };
 
-        if addrs_to_check.is_empty() {
-            return Ok(WalletBalance { confirmed: 0, pending: 0 });
+        // Use the same UTXO scanning approach as get_utxos to compute balance
+        let utxos = self.get_utxos(false, addresses).await?;
+
+        let mut confirmed: u64 = 0;
+        let mut pending: u64 = 0;
+
+        for (_outpoint, info) in &utxos {
+            if info.confirmations > 0 {
+                confirmed += info.amount;
+            } else {
+                pending += info.amount;
+            }
         }
 
-        let _total_confirmed_balance = 0_u64;
-        let _total_pending_balance = 0_i64;
-
-        // TODO: This is a placeholder implementation after removing the direct esplora calls.
-        // The correct balance calculation will happen in the frontend after fetching enriched UTXOs.
-        for _address in addrs_to_check {
-            // let info = self.get_address_info(&address).await?;
-            //
-            // // Confirmed balance
-            // if let Some(chain_stats) = info.get("chain_stats") {
-            //     let funded = chain_stats.get("funded_txo_sum").and_then(|v| v.as_u64()).unwrap_or(0);
-            //     let spent = chain_stats.get("spent_txo_sum").and_then(|v| v.as_u64()).unwrap_or(0);
-            //     total_confirmed_balance += funded.saturating_sub(spent);
-            // }
-            //
-            // // Pending balance (can be negative)
-            // if let Some(mempool_stats) = info.get("mempool_stats") {
-            //     let funded = mempool_stats.get("funded_txo_sum").and_then(|v| v.as_i64()).unwrap_or(0);
-            //     let spent = mempool_stats.get("spent_txo_sum").and_then(|v| v.as_i64()).unwrap_or(0);
-            //     total_pending_balance += funded - spent;
-            // }
-        }
+        log::info!("[WalletProvider] Balance from {} UTXOs: confirmed={}, pending={}", utxos.len(), confirmed, pending);
 
         Ok(WalletBalance {
-            confirmed: 0,
-            pending: 0,
+            confirmed,
+            pending: pending as i64,
         })
     }
     
@@ -991,6 +1542,9 @@ impl WalletProvider for ConcreteProvider {
     
     async fn send(&mut self, params: SendParams) -> Result<String> {
         log::info!("[WalletProvider] Calling send with params: {:?}", params);
+        let use_rebar = params.use_rebar;
+        let rebar_tier = params.rebar_tier;
+
         // 1. Create the transaction
         let tx_hex = self.create_transaction(params).await?;
 
@@ -1004,19 +1558,56 @@ impl WalletProvider for ConcreteProvider {
         let signed_tx_hex = self.sign_transaction(tx_hex).await?;
 
         // 3. Broadcast the transaction
-        self.broadcast_transaction(signed_tx_hex).await
+        // Only use Rebar Shield if explicitly requested AND on mainnet
+        let network = crate::network::get_network().network;
+        if use_rebar && network == bitcoin::Network::Bitcoin {
+            log::info!("[WalletProvider] Using Rebar Shield for broadcast (explicitly requested, tier {})", rebar_tier);
+            rebar::submit_transaction(&signed_tx_hex).await
+                .map_err(|e| AlkanesError::Other(format!("Rebar Shield error: {}", e)))
+        } else {
+            self.broadcast_transaction(signed_tx_hex).await
+        }
     }
     
     async fn get_utxos(&self, _include_frozen: bool, addresses: Option<Vec<String>>) -> Result<Vec<(OutPoint, UtxoInfo)>> {
         log::info!("[WalletProvider] Calling get_utxos for addresses: {:?}", addresses);
-        
-        // If no addresses provided, use the address from AddressOnly or ExternalKey mode
+
+        // If no addresses provided, get addresses from wallet state or keystore
         let addresses_to_check = if addresses.is_none() || addresses.as_ref().unwrap().is_empty() {
             match &self.wallet_state {
                 WalletState::AddressOnly { address, .. } | WalletState::ExternalKey { address, .. } => {
                     vec![address.clone()]
                 }
-                _ => return Ok(Vec::new()),
+                _ => {
+                    // For keystore wallets, query addresses from the keystore
+                    // Get addresses for multiple script types that the wallet supports
+                    let mut all_addresses = Vec::new();
+
+                    if let Ok(keystore) = self.get_keystore() {
+                        let network = self.get_network();
+                        // Get p2tr addresses (most common for alkanes)
+                        if let Ok(addrs) = keystore.get_addresses(network, "p2tr", 0, 0, 20) {
+                            for addr_info in addrs {
+                                all_addresses.push(addr_info.address);
+                            }
+                        }
+                        // Also get p2wpkh addresses
+                        if let Ok(addrs) = keystore.get_addresses(network, "p2wpkh", 0, 0, 20) {
+                            for addr_info in addrs {
+                                all_addresses.push(addr_info.address);
+                            }
+                        }
+                        // Note: p2wsh is not supported by the keystore, so we skip it
+                    }
+
+                    if all_addresses.is_empty() {
+                        log::warn!("[WalletProvider] No addresses found in wallet");
+                        return Ok(Vec::new());
+                    }
+
+                    log::info!("[WalletProvider] Found {} addresses from keystore", all_addresses.len());
+                    all_addresses
+                }
             }
         } else {
             addresses.unwrap()
@@ -1028,11 +1619,16 @@ impl WalletProvider for ConcreteProvider {
         for address in addresses_to_check {
             log::info!("[WalletProvider] Batching UTXO+transaction fetch for address: {}", address);
             
-            // Try batched approach first using Lua script
-            match self.execute_lua_script(
-                &crate::lua_script::scripts::ADDRESS_UTXOS_WITH_TXS,
-                vec![json!(address)]
-            ).await {
+            // Try batched approach first using Lua script (skip in qubitcoin mode)
+            let lua_result = if self.rpc_config.is_qubitcoin_mode() {
+                Err(AlkanesError::NotImplemented("Lua scripts not available in qubitcoin mode".into()))
+            } else {
+                self.execute_lua_script(
+                    &crate::lua_script::scripts::ADDRESS_UTXOS_WITH_TXS,
+                    vec![json!(address)]
+                ).await
+            };
+            match lua_result {
                 Ok(result) => {
                     log::info!("[WalletProvider] Successfully fetched UTXOs with transactions in batch");
                     log::debug!("[WalletProvider] Lua script result: {:?}", result);
@@ -1042,7 +1638,17 @@ impl WalletProvider for ConcreteProvider {
                     let script_result = result.get("returns").unwrap_or(&result);
                     
                     // Parse the batched result
-                    if let Some(utxos_array) = script_result.get("utxos").and_then(|u| u.as_array()) {
+                    // Note: In Lua, an empty table `{}` serializes as an object {}, not an array []
+                    // So we need to handle both cases: array with items, or empty object (no UTXOs)
+                    let utxos_value = script_result.get("utxos");
+                    let utxos_array: Option<&Vec<serde_json::Value>> = utxos_value.and_then(|u| u.as_array());
+                    let is_empty_object = utxos_value.map(|u| u.is_object() && u.as_object().map(|o| o.is_empty()).unwrap_or(false)).unwrap_or(false);
+
+                    if is_empty_object {
+                        // Empty object {} from Lua means no UTXOs - this is valid, continue to next address
+                        log::info!("[WalletProvider] Found 0 UTXOs in batched result (empty object)");
+                        continue;
+                    } else if let Some(utxos_array) = utxos_array {
                         log::info!("[WalletProvider] Found {} UTXOs in batched result", utxos_array.len());
                         for utxo_entry in utxos_array {
                             let txid = utxo_entry.get("txid").and_then(|t| t.as_str()).unwrap_or("");
@@ -1064,15 +1670,30 @@ impl WalletProvider for ConcreteProvider {
                                 0
                             };
                             
-                            // Check if coinbase from the included transaction data
+                            // Check if coinbase from the included transaction data.
+                            // Detect via: explicit is_coinbase flag, OR null prevout (all-zero txid).
                             let is_coinbase = if let Some(tx) = utxo_entry.get("tx") {
                                 if let Some(vin) = tx.get("vin").and_then(|v| v.as_array()) {
-                                    vin.len() == 1 && vin[0].get("is_coinbase").and_then(|c| c.as_bool()).unwrap_or(false)
+                                    vin.len() == 1 && {
+                                        let input = &vin[0];
+                                        // Check explicit flag
+                                        input.get("is_coinbase").and_then(|c| c.as_bool()).unwrap_or(false)
+                                        // Also check for null prevout (universal coinbase indicator)
+                                        || input.get("txid").and_then(|t| t.as_str())
+                                            .map(|t| t.chars().all(|c| c == '0'))
+                                            .unwrap_or(false)
+                                        || input.get("prevout").is_none()
+                                            && input.get("scriptsig").map(|s| s.as_str().unwrap_or("").is_empty()).unwrap_or(false)
+                                    }
                                 } else {
                                     false
                                 }
                             } else {
-                                false
+                                // No tx data included — can't determine coinbase status.
+                                // Only flag as potentially-coinbase if we have a real tip height
+                                // AND the UTXO has < 100 confirmations.
+                                // When tip height is 0 (chain syncing), don't filter anything.
+                                current_height > 0 && confirmations > 0 && confirmations < 100 && block_height.is_some()
                             };
                             
                             let utxo_info = UtxoInfo {
@@ -1105,7 +1726,16 @@ impl WalletProvider for ConcreteProvider {
             
             // Fallback to original implementation if batched approach fails
             log::debug!("Fetching UTXOs for address (fallback): {}", address);
-            let utxos_json = self.get_address_utxo(&address).await?;
+            let utxos_raw = self.get_address_utxo(&address).await?;
+            // In qubitcoin mode, secondaryview returns "0x<hex>" — decode to JSON
+            let utxos_json = if let Some(hex_str) = utxos_raw.as_str().and_then(|s| s.strip_prefix("0x")) {
+                match hex::decode(hex_str) {
+                    Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or(utxos_raw),
+                    Err(_) => utxos_raw,
+                }
+            } else {
+                utxos_raw
+            };
             if let Ok(esplora_utxos) = serde_json::from_value::<Vec<crate::esplora::EsploraUtxo>>(utxos_json) {
                 for utxo in esplora_utxos {
                     let outpoint = OutPoint::from_str(&format!("{}:{}", utxo.txid, utxo.vout))?;
@@ -1119,17 +1749,26 @@ impl WalletProvider for ConcreteProvider {
                         0
                     };
                     
-                    // Check if this UTXO is from a coinbase transaction
+                    // Check if this UTXO is from a coinbase transaction.
+                    // Detect via: is_coinbase flag, null prevout txid, or no prevout.
                     let is_coinbase = match self.get_tx(&utxo.txid).await {
                         Ok(tx_json) => {
                             if let Ok(tx) = serde_json::from_value::<crate::esplora::EsploraTransaction>(tx_json) {
-                                // A transaction is coinbase if it has exactly 1 input with a null previous output
-                                tx.vin.len() == 1 && tx.vin[0].is_coinbase
+                                tx.vin.len() == 1 && {
+                                    let vin = &tx.vin[0];
+                                    vin.is_coinbase
+                                    || vin.txid.chars().all(|c| c == '0')
+                                    || vin.prevout.is_none()
+                                }
                             } else {
                                 false
                             }
                         }
-                        Err(_) => false, // If we can't fetch the tx, assume it's not coinbase
+                        Err(_) => {
+                            // Can't fetch tx — be conservative: treat recent UTXOs as possibly coinbase
+                            // But only when we have a real chain height (avoid filtering everything during sync)
+                            current_height > 0 && confirmations > 0 && confirmations < 100
+                        }
                     };
                     
                     let utxo_info = UtxoInfo {
@@ -1150,6 +1789,9 @@ impl WalletProvider for ConcreteProvider {
                     all_utxos.push((outpoint, utxo_info));
                 }
             }
+
+            // Note: alkane balance per-UTXO data is fetched in select_utxos via protorunesbyaddress.
+            // This fallback path only provides the UTXO list; balances are resolved later.
         }
 
         Ok(all_utxos)
@@ -1276,7 +1918,7 @@ impl WalletProvider for ConcreteProvider {
 
         // 5. Perform coin selection
         let fee_rate = params.fee_rate.unwrap_or(1.0); // Default to 1 sat/vbyte
-        
+
         let (selected_utxos, total_input_amount) = if params.send_all {
             // For --send-all, use ALL available clean UTXOs
             log::info!("--send-all mode: selecting all {} clean UTXOs", clean_utxos.len());
@@ -1288,7 +1930,60 @@ impl WalletProvider for ConcreteProvider {
             self.select_coins(clean_utxos, target_amount)?
         };
 
-        // 5. Build the transaction skeleton
+        // 5a. Check selected UTXOs for ordinal inscriptions using the ordinals handler
+        if params.ordinals_strategy != OrdinalsStrategy::Burn {
+            let ordinals_handler = OrdinalsHandler::new(self);
+
+            // Convert selected UTXOs to (OutPoint, TxOut) format for checking
+            let mut funding_utxos: Vec<(OutPoint, TxOut)> = Vec::new();
+            for utxo in &selected_utxos {
+                let outpoint = OutPoint {
+                    txid: bitcoin::Txid::from_str(&utxo.txid)?,
+                    vout: utxo.vout,
+                };
+                // Get the script pubkey for this UTXO
+                let script_pubkey = if let Some(ref sp) = utxo.script_pubkey {
+                    sp.clone()
+                } else {
+                    // Derive from address
+                    let network = self.get_network();
+                    let addr = Address::from_str(&utxo.address)?.require_network(network)?;
+                    addr.script_pubkey()
+                };
+                let txout = TxOut {
+                    value: Amount::from_sat(utxo.amount),
+                    script_pubkey,
+                };
+                funding_utxos.push((outpoint, txout));
+            }
+
+            // Check for inscriptions
+            let check_result = ordinals_handler.check_utxos_for_inscriptions(
+                &funding_utxos,
+                params.ordinals_strategy.clone(),
+                fee_rate,
+                params.mempool_indexer,
+            ).await?;
+
+            // If Preserve strategy detected inscriptions, we need to error for wallet send
+            // (split transaction support for wallet send is not yet implemented)
+            if let Some(split_plans) = check_result {
+                if !split_plans.is_empty() {
+                    return Err(AlkanesError::Wallet(format!(
+                        "Cannot proceed: {} UTXO(s) contain inscriptions and require splitting.\n\
+                        Wallet send does not yet support split transactions for inscription protection.\n\
+                        Options:\n\
+                        1. Use --ordinals-strategy exclude and specify --from with clean UTXOs\n\
+                        2. Use --ordinals-strategy burn to allow spending (destroys inscriptions)\n\
+                        3. Use 'alkanes execute' for complex operations with split transaction support",
+                        split_plans.len()
+                    )));
+                }
+            }
+            // If check_result is None or empty, no inscriptions found, proceed normally
+        }
+
+        // 6. Build the transaction skeleton
         let mut tx = Transaction {
             version: bitcoin::transaction::Version(2),
             lock_time: bitcoin::absolute::LockTime::ZERO,
@@ -1381,18 +2076,59 @@ impl WalletProvider for ConcreteProvider {
         let secp: Secp256k1<All> = Secp256k1::new();
 
         // 3. Fetch the previous transaction outputs (prevouts) for signing.
+        //    Try get_tx first, fall back to gettxout for qubitcoin mode (no txindex).
         let mut prevouts = Vec::new();
         for input in &tx.input {
-            let tx_info = self.get_tx(&input.previous_output.txid.to_string()).await?;
-            let vout_info = tx_info["vout"].get(input.previous_output.vout as usize)
-                .ok_or_else(|| AlkanesError::Wallet(format!("Vout {} not found for tx {}", input.previous_output.vout, input.previous_output.txid)))?;
-            
-            let amount = vout_info["value"].as_u64()
-                .ok_or_else(|| AlkanesError::Wallet("UTXO value not found".to_string()))?;
-            let script_pubkey_hex = vout_info["scriptpubkey"].as_str()
-                .ok_or_else(|| AlkanesError::Wallet("UTXO script pubkey not found".to_string()))?;
-            
-            let script_pubkey = ScriptBuf::from(Vec::from_hex(script_pubkey_hex)?);
+            let txid_str = input.previous_output.txid.to_string();
+            let vout = input.previous_output.vout;
+
+            // Try get_tx first (works with txindex)
+            let (amount, script_pubkey_hex_str) = match self.get_tx(&txid_str).await {
+                Ok(tx_info) if tx_info.get("error").is_none() && tx_info.get("vout").is_some() => {
+                    let vout_info = tx_info["vout"].get(vout as usize)
+                        .ok_or_else(|| AlkanesError::Wallet(format!("Vout {} not found for tx {}", vout, txid_str)))?;
+                    let amount = vout_info["value"].as_u64()
+                        .ok_or_else(|| AlkanesError::Wallet("UTXO value not found".to_string()))?;
+                    let script = vout_info["scriptpubkey"].as_str()
+                        .ok_or_else(|| AlkanesError::Wallet("UTXO script pubkey not found".to_string()))?
+                        .to_string();
+                    (amount, script)
+                }
+                Ok(_) | Err(_) => {
+                    let e = "tx not found or missing vout";
+                    // Fallback: use gettxout via RPC (works without txindex, for unspent outputs)
+                    log::info!("get_tx failed for {} ({}), trying gettxout", &txid_str[..16.min(txid_str.len())], e);
+                    let gettxout_resp: serde_json::Value = serde_json::from_value(
+                        <Self as crate::traits::JsonRpcProvider>::call(
+                            self, "", "gettxout",
+                            serde_json::json!([txid_str, vout]), 1,
+                        ).await.unwrap_or(serde_json::Value::Null)
+                    ).unwrap_or(serde_json::Value::Null);
+
+                    let result = gettxout_resp.get("result").unwrap_or(&gettxout_resp);
+                    if result.is_null() {
+                        // UTXO not found — derive script from wallet address
+                        log::warn!("gettxout returned null for {}:{}, using wallet address for script", &txid_str[..16.min(txid_str.len())], vout);
+                        let wallet_addr = WalletProvider::get_address(self).await.unwrap_or_default();
+                        let script_hex = bitcoin::Address::from_str(&wallet_addr).ok()
+                            .and_then(|a| a.require_network(network).ok())
+                            .map(|a| hex::encode(a.script_pubkey().as_bytes()))
+                            .unwrap_or_default();
+                        (546u64, script_hex)  // assume dust
+                    } else {
+                        let value_btc = result["value"].as_f64().unwrap_or(0.0);
+                        let amount = (value_btc * 100_000_000.0) as u64;
+                        let script = result.get("scriptPubKey").and_then(|s| s.get("hex")).and_then(|h| h.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        if script.is_empty() {
+                            return Err(AlkanesError::Wallet(format!("Cannot get scriptPubKey for {}:{}", txid_str, vout)));
+                        }
+                        (amount, script)
+                    }
+                }
+            };
+            let script_pubkey = ScriptBuf::from(Vec::from_hex(&script_pubkey_hex_str)?);
             prevouts.push(TxOut { value: Amount::from_sat(amount), script_pubkey });
         }
 
@@ -1480,11 +2216,11 @@ impl WalletProvider for ConcreteProvider {
         let mut sighash_cache = SighashCache::new(&mut tx);
         for i in 0..prevouts.len() {
             let prev_txout = &prevouts[i];
-            
+
             // Find the address and its derivation path from our keystore
             let address = Address::from_script(&prev_txout.script_pubkey, network)
                 .map_err(|e| AlkanesError::Wallet(format!("Failed to parse address from script: {e}")))?;
-            
+
             // This call now takes a mutable keystore and may cache the derived address info.
             let addr_info = Self::find_address_info(&keystore, &address, network)?;
             let path = DerivationPath::from_str(&addr_info.derivation_path)?;
@@ -1495,30 +2231,124 @@ impl WalletProvider for ConcreteProvider {
             let root_key = Xpriv::new_master(network, &seed)?;
             let derived_xpriv = root_key.derive_priv(&secp, &path)?;
             let keypair = derived_xpriv.to_keypair(&secp);
-            let untweaked_keypair = UntweakedKeypair::from(keypair);
-            let tweaked_keypair = untweaked_keypair.tap_tweak(&secp, None);
 
-            // Create the sighash
-            let sighash = sighash_cache.taproot_key_spend_signature_hash(
-                i,
-                &Prevouts::All(&prevouts),
-                TapSighashType::Default,
-            )?;
+            // Route to appropriate signing algorithm based on script type
+            match addr_info.script_type.as_str() {
+                "p2wpkh" => {
+                    // P2WPKH: Use ECDSA signature with segwit v0 sighash
+                    let public_key = bitcoin::PublicKey::from_private_key(&secp, &bitcoin::PrivateKey {
+                        compressed: true,
+                        network: network.into(),
+                        inner: keypair.secret_key(),
+                    });
 
-            // Sign the sighash
-            let msg = bitcoin::secp256k1::Message::from(sighash);
-            #[cfg(not(target_arch = "wasm32"))]
-            let signature = secp.sign_schnorr_with_rng(&msg, &tweaked_keypair.to_keypair(), &mut thread_rng());
-            #[cfg(target_arch = "wasm32")]
-            let signature = secp.sign_schnorr_with_rng(&msg, &tweaked_keypair.to_keypair(), &mut OsRng);
-            
-            let taproot_signature = taproot::Signature {
-                signature,
-                sighash_type: TapSighashType::Default,
-            };
+                    let sighash = sighash_cache.p2wpkh_signature_hash(
+                        i,
+                        &prev_txout.script_pubkey,
+                        prev_txout.value,
+                        EcdsaSighashType::All,
+                    )?;
 
-            // Add the signature to the witness
-            sighash_cache.witness_mut(i).unwrap().clone_from(&Witness::p2tr_key_spend(&taproot_signature));
+                    let msg = bitcoin::secp256k1::Message::from(sighash);
+                    let signature = secp.sign_ecdsa(&msg, &keypair.secret_key());
+                    let ecdsa_signature = bitcoin::ecdsa::Signature {
+                        signature,
+                        sighash_type: EcdsaSighashType::All,
+                    };
+
+                    // P2WPKH witness: [signature, pubkey]
+                    let mut witness = Witness::new();
+                    witness.push(ecdsa_signature.serialize());
+                    witness.push(public_key.to_bytes());
+                    *sighash_cache.witness_mut(i).unwrap() = witness;
+                }
+                "p2pkh" => {
+                    // P2PKH: Use ECDSA signature with legacy sighash
+                    let public_key = bitcoin::PublicKey::from_private_key(&secp, &bitcoin::PrivateKey {
+                        compressed: true,
+                        network: network.into(),
+                        inner: keypair.secret_key(),
+                    });
+
+                    let sighash = sighash_cache.legacy_signature_hash(
+                        i,
+                        &prev_txout.script_pubkey,
+                        EcdsaSighashType::All.to_u32(),
+                    ).map_err(|e| AlkanesError::Wallet(format!("Failed to compute P2PKH sighash: {e}")))?;
+
+                    let msg = bitcoin::secp256k1::Message::from(sighash);
+                    let signature = secp.sign_ecdsa(&msg, &keypair.secret_key());
+                    let ecdsa_signature = bitcoin::ecdsa::Signature {
+                        signature,
+                        sighash_type: EcdsaSighashType::All,
+                    };
+
+                    // P2PKH doesn't use witness, it uses scriptSig (handled by finalization)
+                    // For now, we set witness for compatibility
+                    let mut witness = Witness::new();
+                    witness.push(ecdsa_signature.serialize());
+                    witness.push(public_key.to_bytes());
+                    *sighash_cache.witness_mut(i).unwrap() = witness;
+                }
+                "p2sh" | "p2sh-p2wpkh" => {
+                    // P2SH wrapping P2WPKH
+                    let public_key = bitcoin::PublicKey::from_private_key(&secp, &bitcoin::PrivateKey {
+                        compressed: true,
+                        network: network.into(),
+                        inner: keypair.secret_key(),
+                    });
+
+                    let sighash = sighash_cache.p2wpkh_signature_hash(
+                        i,
+                        &prev_txout.script_pubkey,
+                        prev_txout.value,
+                        EcdsaSighashType::All,
+                    )?;
+
+                    let msg = bitcoin::secp256k1::Message::from(sighash);
+                    let signature = secp.sign_ecdsa(&msg, &keypair.secret_key());
+                    let ecdsa_signature = bitcoin::ecdsa::Signature {
+                        signature,
+                        sighash_type: EcdsaSighashType::All,
+                    };
+
+                    // P2SH-P2WPKH witness: [signature, pubkey]
+                    let mut witness = Witness::new();
+                    witness.push(ecdsa_signature.serialize());
+                    witness.push(public_key.to_bytes());
+                    *sighash_cache.witness_mut(i).unwrap() = witness;
+                }
+                "p2tr" => {
+                    // P2TR: Use Schnorr signature with tap_tweak
+                    let untweaked_keypair = UntweakedKeypair::from(keypair);
+                    let tweaked_keypair = untweaked_keypair.tap_tweak(&secp, None);
+
+                    let sighash = sighash_cache.taproot_key_spend_signature_hash(
+                        i,
+                        &Prevouts::All(&prevouts),
+                        TapSighashType::Default,
+                    )?;
+
+                    let msg = bitcoin::secp256k1::Message::from(sighash);
+                    #[cfg(not(target_arch = "wasm32"))]
+                    let signature = secp.sign_schnorr_with_rng(&msg, &tweaked_keypair.to_keypair(), &mut thread_rng());
+                    #[cfg(target_arch = "wasm32")]
+                    let signature = secp.sign_schnorr_with_rng(&msg, &tweaked_keypair.to_keypair(), &mut OsRng);
+
+                    let taproot_signature = taproot::Signature {
+                        signature,
+                        sighash_type: TapSighashType::Default,
+                    };
+
+                    sighash_cache.witness_mut(i).unwrap().clone_from(&Witness::p2tr_key_spend(&taproot_signature));
+                }
+                _ => {
+                    return Err(AlkanesError::Wallet(format!(
+                        "Unsupported script type for input {}: {}",
+                        i, addr_info.script_type
+                    )));
+                }
+            }
         }
 
         // 6. Serialize the signed transaction
@@ -1584,7 +2414,12 @@ impl WalletProvider for ConcreteProvider {
             // All services should be at least at the same height as bitcoind.
             let metashrew_synced = metashrew_height_res.as_ref().is_ok_and(|&h| h >= bitcoind_height);
             let esplora_synced = esplora_height_res.as_ref().is_ok_and(|&h| h >= bitcoind_height);
-            let ord_synced = ord_height_res.as_ref().is_ok_and(|&h| h >= bitcoind_height);
+            // If no ord URL is configured, skip ord sync check
+            let ord_synced = if self.get_ord_server_url().is_none() {
+                true
+            } else {
+                ord_height_res.as_ref().is_ok_and(|&h| h >= bitcoind_height)
+            };
 
             log::info!(
                 "Sync attempt {}/{}: bitcoind: {}, metashrew: {} (synced: {}), esplora: {} (synced: {}), ord: {} (synced: {})",
@@ -1638,39 +2473,191 @@ impl WalletProvider for ConcreteProvider {
     }
     
     async fn get_internal_key(&self) -> Result<(bitcoin::XOnlyPublicKey, (Fingerprint, DerivationPath))> {
+        // Use the wallet's deterministic key for the internal key
+        // This enables proper signing of reveal transactions
+        // NOTE: For production mainnet with high-value transactions, consider implementing
+        // ephemeral key support with proper secret key storage for anti-frontrunning protection
+
+        let network = self.get_network();
         let (keystore, mnemonic) = match &self.wallet_state {
             WalletState::Unlocked { keystore, mnemonic } => (keystore, mnemonic),
             _ => return Err(AlkanesError::Wallet("Wallet must be unlocked to get internal key".to_string())),
         };
 
-        let mnemonic_obj = bip39::Mnemonic::parse_in(bip39::Language::English, mnemonic.as_str())?;
+        // Use the first taproot address's derivation path for the internal key
+        // Standard BIP86 path: m/86'/0'/0'/0/0 for mainnet, m/86'/1'/0'/0/0 for testnet/regtest
+        let coin_type = match network {
+            bitcoin::Network::Bitcoin => 0,
+            _ => 1, // testnet/regtest/signet all use coin type 1
+        };
+        let path = DerivationPath::from_str(&format!("m/86'/{}'/{}'/{}/{}", coin_type, 0, 0, 0))?;
+
+        let mnemonic_obj = Mnemonic::parse_in(bip39::Language::English, mnemonic.as_str())?;
         let seed = mnemonic_obj.to_seed("");
-        let network = self.get_network();
         let root_key = Xpriv::new_master(network, &seed)?;
-        
-        // Standard path for Taproot internal key. This should be configurable in a real wallet.
-        let path = DerivationPath::from_str("m/86'/1'/0'")?;
-        
         let derived_xpriv = root_key.derive_priv(&self.secp, &path)?;
         let keypair = derived_xpriv.to_keypair(&self.secp);
         let (internal_key, _) = keypair.x_only_public_key();
 
-        let master_fingerprint = Fingerprint::from_str(&keystore.master_fingerprint)?;
+        let fingerprint = Fingerprint::from_str(&keystore.master_fingerprint)?;
 
-        Ok((internal_key, (master_fingerprint, path)))
+        Ok((internal_key, (fingerprint, path)))
+    }
+
+    /// Get an ephemeral internal key with the secret key for signing
+    /// ANTI-FRONTRUNNING: Returns fresh random keypair for each inscription
+    async fn get_internal_key_with_secret(&self) -> Result<(bitcoin::XOnlyPublicKey, bitcoin::secp256k1::SecretKey, (Fingerprint, DerivationPath))> {
+        use bitcoin::secp256k1::rand::RngCore;
+
+        let mut secret_bytes = [0u8; 32];
+        #[cfg(not(target_arch = "wasm32"))]
+        rand::thread_rng().fill_bytes(&mut secret_bytes);
+        #[cfg(target_arch = "wasm32")]
+        {
+            use bitcoin::secp256k1::rand::rngs::OsRng;
+            OsRng.fill_bytes(&mut secret_bytes);
+        }
+
+        let secret_key = bitcoin::secp256k1::SecretKey::from_slice(&secret_bytes)?;
+        let keypair = bitcoin::secp256k1::Keypair::from_secret_key(&self.secp, &secret_key);
+        let (internal_key, _) = keypair.x_only_public_key();
+
+        let dummy_fingerprint = Fingerprint::from_str("00000000")?;
+        let dummy_path = DerivationPath::from_str("m/0")?;
+
+        Ok((internal_key, secret_key, (dummy_fingerprint, dummy_path)))
     }
     
     async fn sign_psbt(&mut self, psbt: &bitcoin::psbt::Psbt) -> Result<bitcoin::psbt::Psbt> {
+        // Remote signer takes precedence — when --use-walletconnect is
+        // active, the local keystore path is never consulted.
+        if let Some(signer) = self.remote_signer.clone() {
+            log::info!("sign_psbt: delegating to remote signer [{}]", signer.backend_name());
+            let addresses = signer.get_addresses().await.unwrap_or_default();
+            return signer.sign_psbt(psbt, &addresses).await;
+        }
         let mut psbt = psbt.clone();
         let mut tx = psbt.clone().extract_tx().map_err(|e| AlkanesError::Other(e.to_string()))?;
         let network = self.get_network();
         let secp = Secp256k1::<All>::new();
 
         let mut prevouts = Vec::new();
-        for input in &tx.input {
-            let utxo = self.get_utxo(&input.previous_output).await?
-                .ok_or_else(|| AlkanesError::Wallet(format!("UTXO not found: {}", input.previous_output)))?;
+        for (i, input) in tx.input.iter().enumerate() {
+            // First try to use witness_utxo from PSBT (for presigned transactions that don't exist on-chain yet)
+            let utxo = if let Some(ref witness_utxo) = psbt.inputs[i].witness_utxo {
+                witness_utxo.clone()
+            } else {
+                // Fallback to fetching from network
+                self.get_utxo(&input.previous_output).await?
+                    .ok_or_else(|| AlkanesError::Wallet(format!("UTXO not found: {}", input.previous_output)))?
+            };
             prevouts.push(utxo);
+        }
+
+        // Handle signing based on wallet state
+        if let WalletState::ExternalKey { private_key, .. } = &self.wallet_state {
+            // Sign with external private key
+            let secret_key = bitcoin::secp256k1::SecretKey::from_str(private_key)?;
+            let keypair = bitcoin::secp256k1::Keypair::from_secret_key(&secp, &secret_key);
+
+            let mut sighash_cache = SighashCache::new(&mut tx);
+            for (i, psbt_input) in psbt.inputs.iter_mut().enumerate() {
+                let prev_txout = &prevouts[i];
+
+                log::info!("Signing input {} (ExternalKey): tap_scripts.is_empty()={}, tap_scripts.len()={}",
+                    i, psbt_input.tap_scripts.is_empty(), psbt_input.tap_scripts.len());
+
+                if !psbt_input.tap_scripts.is_empty() {
+                    // Script-path spend
+                    log::info!("Input {} is a script-path spend (ExternalKey)", i);
+                    let (control_block, (script, leaf_version)) = psbt_input.tap_scripts.iter().next().unwrap();
+                    let leaf_hash = taproot::TapLeafHash::from_script(script, *leaf_version);
+                    let sighash = sighash_cache.taproot_script_spend_signature_hash(
+                        i,
+                        &Prevouts::All(&prevouts),
+                        leaf_hash,
+                        TapSighashType::Default,
+                    )?;
+
+                    let msg = bitcoin::secp256k1::Message::from(sighash);
+
+                    #[cfg(not(target_arch = "wasm32"))]
+                    let signature = self.secp.sign_schnorr_with_rng(&msg, &keypair, &mut rand::thread_rng());
+                    #[cfg(target_arch = "wasm32")]
+                    let signature = self.secp.sign_schnorr_with_rng(&msg, &keypair, &mut OsRng);
+
+                    let taproot_signature = taproot::Signature { signature, sighash_type: TapSighashType::Default };
+
+                    let mut final_witness = Witness::new();
+                    final_witness.push(taproot_signature.to_vec());
+                    final_witness.push(script.as_bytes());
+                    final_witness.push(control_block.serialize());
+
+                    log::info!("Created script-path witness with {} items (ExternalKey):", final_witness.len());
+                    psbt_input.final_script_witness = Some(final_witness);
+
+                } else if prev_txout.script_pubkey.is_p2tr() {
+                    // P2TR key-path spend
+                    let untweaked_keypair = UntweakedKeypair::from(keypair);
+                    let tweaked_keypair = untweaked_keypair.tap_tweak(&secp, None);
+
+                    let sighash = sighash_cache.taproot_key_spend_signature_hash(
+                        i,
+                        &Prevouts::All(&prevouts),
+                        TapSighashType::Default,
+                    )?;
+
+                    let msg = bitcoin::secp256k1::Message::from(sighash);
+                    #[cfg(not(target_arch = "wasm32"))]
+                    let signature = secp.sign_schnorr_with_rng(&msg, &tweaked_keypair.to_keypair(), &mut rand::thread_rng());
+                    #[cfg(target_arch = "wasm32")]
+                    let signature = secp.sign_schnorr_with_rng(&msg, &tweaked_keypair.to_keypair(), &mut OsRng);
+
+                    let taproot_signature = taproot::Signature {
+                        signature,
+                        sighash_type: TapSighashType::Default,
+                    };
+
+                    psbt_input.tap_key_sig = Some(taproot_signature);
+
+                } else if prev_txout.script_pubkey.is_p2wpkh() {
+                    // P2WPKH key-path spend
+                    let public_key = bitcoin::PublicKey::from_private_key(&secp, &bitcoin::PrivateKey {
+                        compressed: true,
+                        network: network.into(),
+                        inner: secret_key,
+                    });
+
+                    let sighash = sighash_cache.p2wpkh_signature_hash(
+                        i,
+                        &prev_txout.script_pubkey,
+                        prev_txout.value,
+                        EcdsaSighashType::All,
+                    )?;
+
+                    let msg = bitcoin::secp256k1::Message::from(sighash);
+                    let signature = secp.sign_ecdsa(&msg, &secret_key);
+                    let ecdsa_signature = bitcoin::ecdsa::Signature {
+                        signature,
+                        sighash_type: EcdsaSighashType::All,
+                    };
+
+                    psbt_input.partial_sigs.insert(public_key, ecdsa_signature);
+
+                    let mut witness = Witness::new();
+                    witness.push(ecdsa_signature.serialize());
+                    witness.push(public_key.to_bytes());
+                    psbt_input.final_script_witness = Some(witness);
+
+                } else {
+                    return Err(AlkanesError::Wallet(format!(
+                        "Unsupported script type for ExternalKey input {}: {}",
+                        i, prev_txout.script_pubkey
+                    )));
+                }
+            }
+
+            return Ok(psbt);
         }
 
         let (keystore, mnemonic) = match &mut self.wallet_state {
@@ -1702,9 +2689,14 @@ impl WalletProvider for ConcreteProvider {
                 let (internal_pk, (_leaf_hashes, (master_fingerprint, derivation_path))) = psbt_input.tap_key_origins.iter().next()
                     .ok_or_else(|| AlkanesError::Wallet("tap_key_origins is empty for script spend".to_string()))?;
 
-                if *master_fingerprint != Fingerprint::from_str(&keystore.master_fingerprint)? {
+                // Allow dummy fingerprint "00000000" for ephemeral keys (anti-frontrunning)
+                let dummy_fingerprint = Fingerprint::from_str("00000000")?;
+                let wallet_fingerprint = Fingerprint::from_str(&keystore.master_fingerprint)?;
+
+                if *master_fingerprint != wallet_fingerprint && *master_fingerprint != dummy_fingerprint {
                     return Err(AlkanesError::Wallet(
-                        "Master fingerprint mismatch in tap_key_origins".to_string(),
+                        format!("Master fingerprint mismatch in tap_key_origins: expected {} or {}, got {}",
+                            wallet_fingerprint, dummy_fingerprint, master_fingerprint)
                     ));
                 }
 
@@ -1745,7 +2737,7 @@ impl WalletProvider for ConcreteProvider {
                 // Key-path spend
                 let address = Address::from_script(&prev_txout.script_pubkey, network)
                     .map_err(|e| AlkanesError::Wallet(format!("Failed to parse address from script: {e}")))?;
-                
+
                 let addr_info = Self::find_address_info(keystore, &address, network)?;
                 let path = DerivationPath::from_str(&addr_info.derivation_path)?;
 
@@ -1754,27 +2746,130 @@ impl WalletProvider for ConcreteProvider {
                 let root_key = Xpriv::new_master(network, &seed)?;
                 let derived_xpriv = root_key.derive_priv(&secp, &path)?;
                 let keypair = derived_xpriv.to_keypair(&secp);
-                let untweaked_keypair = UntweakedKeypair::from(keypair);
-                let tweaked_keypair = untweaked_keypair.tap_tweak(&secp, None);
 
-                let sighash = sighash_cache.taproot_key_spend_signature_hash(
-                    i,
-                    &Prevouts::All(&prevouts),
-                    TapSighashType::Default,
-                )?;
+                // Route to appropriate signing algorithm based on script type
+                match addr_info.script_type.as_str() {
+                    "p2wpkh" => {
+                        // P2WPKH: Use ECDSA signature (no tap_tweak!)
+                        let public_key = bitcoin::PublicKey::from_private_key(&secp, &bitcoin::PrivateKey {
+                            compressed: true,
+                            network: network.into(),
+                            inner: keypair.secret_key(),
+                        });
 
-                let msg = bitcoin::secp256k1::Message::from(sighash);
-                #[cfg(not(target_arch = "wasm32"))]
-                let signature = secp.sign_schnorr_with_rng(&msg, &tweaked_keypair.to_keypair(), &mut thread_rng());
-                #[cfg(target_arch = "wasm32")]
-                let signature = secp.sign_schnorr_with_rng(&msg, &tweaked_keypair.to_keypair(), &mut OsRng);
-                
-                let taproot_signature = taproot::Signature {
-                    signature,
-                    sighash_type: TapSighashType::Default,
-                };
+                        let sighash = sighash_cache.p2wpkh_signature_hash(
+                            i,
+                            &prev_txout.script_pubkey,
+                            prev_txout.value,
+                            EcdsaSighashType::All,
+                        )?;
 
-                psbt_input.tap_key_sig = Some(taproot_signature);
+                        let msg = bitcoin::secp256k1::Message::from(sighash);
+                        let signature = secp.sign_ecdsa(&msg, &keypair.secret_key());
+                        let ecdsa_signature = bitcoin::ecdsa::Signature {
+                            signature,
+                            sighash_type: EcdsaSighashType::All,
+                        };
+
+                        // Set partial_sigs for PSBT compatibility
+                        psbt_input.partial_sigs.insert(public_key, ecdsa_signature);
+
+                        // Set final witness so PSBT can be extracted
+                        let mut witness = Witness::new();
+                        witness.push(ecdsa_signature.serialize());
+                        witness.push(public_key.to_bytes());
+                        psbt_input.final_script_witness = Some(witness);
+                    }
+                    "p2pkh" => {
+                        // P2PKH: Legacy signing (no witness, uses scriptSig)
+                        let public_key = bitcoin::PublicKey::from_private_key(&secp, &bitcoin::PrivateKey {
+                            compressed: true,
+                            network: network.into(),
+                            inner: keypair.secret_key(),
+                        });
+
+                        // For legacy P2PKH, we use the legacy sighash
+                        let sighash = sighash_cache.legacy_signature_hash(
+                            i,
+                            &prev_txout.script_pubkey,
+                            EcdsaSighashType::All.to_u32(),
+                        ).map_err(|e| AlkanesError::Wallet(format!("Failed to compute P2PKH sighash: {e}")))?;
+
+                        let msg = bitcoin::secp256k1::Message::from(sighash);
+                        let signature = secp.sign_ecdsa(&msg, &keypair.secret_key());
+                        let ecdsa_signature = bitcoin::ecdsa::Signature {
+                            signature,
+                            sighash_type: EcdsaSighashType::All,
+                        };
+
+                        psbt_input.partial_sigs.insert(public_key, ecdsa_signature);
+
+                        // P2PKH uses scriptSig, not witness, but PSBT might need witness set for extraction
+                        // Actually, P2PKH should not have a witness. Let's create the scriptSig instead.
+                        // For now, leave it with just partial_sigs - the PSBT finalizer should handle it
+                    }
+                    "p2sh" | "p2sh-p2wpkh" => {
+                        // P2SH wrapping P2WPKH: Use segwit v0 signing
+                        let public_key = bitcoin::PublicKey::from_private_key(&secp, &bitcoin::PrivateKey {
+                            compressed: true,
+                            network: network.into(),
+                            inner: keypair.secret_key(),
+                        });
+
+                        // For P2SH-P2WPKH, we use p2wpkh_signature_hash
+                        let sighash = sighash_cache.p2wpkh_signature_hash(
+                            i,
+                            &prev_txout.script_pubkey,
+                            prev_txout.value,
+                            EcdsaSighashType::All,
+                        )?;
+
+                        let msg = bitcoin::secp256k1::Message::from(sighash);
+                        let signature = secp.sign_ecdsa(&msg, &keypair.secret_key());
+                        let ecdsa_signature = bitcoin::ecdsa::Signature {
+                            signature,
+                            sighash_type: EcdsaSighashType::All,
+                        };
+
+                        psbt_input.partial_sigs.insert(public_key, ecdsa_signature);
+
+                        // Set final witness for P2SH-P2WPKH
+                        let mut witness = Witness::new();
+                        witness.push(ecdsa_signature.serialize());
+                        witness.push(public_key.to_bytes());
+                        psbt_input.final_script_witness = Some(witness);
+                    }
+                    "p2tr" => {
+                        // P2TR: Use Schnorr signature with tap_tweak
+                        let untweaked_keypair = UntweakedKeypair::from(keypair);
+                        let tweaked_keypair = untweaked_keypair.tap_tweak(&secp, None);
+
+                        let sighash = sighash_cache.taproot_key_spend_signature_hash(
+                            i,
+                            &Prevouts::All(&prevouts),
+                            TapSighashType::Default,
+                        )?;
+
+                        let msg = bitcoin::secp256k1::Message::from(sighash);
+                        #[cfg(not(target_arch = "wasm32"))]
+                        let signature = secp.sign_schnorr_with_rng(&msg, &tweaked_keypair.to_keypair(), &mut thread_rng());
+                        #[cfg(target_arch = "wasm32")]
+                        let signature = secp.sign_schnorr_with_rng(&msg, &tweaked_keypair.to_keypair(), &mut OsRng);
+
+                        let taproot_signature = taproot::Signature {
+                            signature,
+                            sighash_type: TapSighashType::Default,
+                        };
+
+                        psbt_input.tap_key_sig = Some(taproot_signature);
+                    }
+                    _ => {
+                        return Err(AlkanesError::Wallet(format!(
+                            "Unsupported script type: {}",
+                            addr_info.script_type
+                        )));
+                    }
+                }
             }
         }
 
@@ -1845,10 +2940,19 @@ impl WalletProvider for ConcreteProvider {
 #[async_trait(?Send)]
 impl MetashrewRpcProvider for ConcreteProvider {
     async fn get_metashrew_height(&self) -> Result<u64> {
-        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Metashrew { 
-            command: crate::commands::MetashrewCommands::Height
-        })?;
-        let json = self.call(&rpc_url, "metashrew_height", json!([]), 1).await?;
+        let rpc_url = if let Some(ref url) = self.rpc_config.qubitcoin_rpc_url {
+            url.clone()
+        } else {
+            get_rpc_url(&self.rpc_config, &Commands::Metashrew {
+                command: crate::commands::MetashrewCommands::Height
+            })?
+        };
+        let (rpc_method, rpc_params) = if self.rpc_config.is_qubitcoin_mode() {
+            ("secondaryheight", json!(["alkanes"]))
+        } else {
+            ("metashrew_height", json!([]))
+        };
+        let json = self.call(&rpc_url, rpc_method, rpc_params, 1).await?;
         log::debug!("get_metashrew_height response: {:?}", json);
         if let Some(count) = json.as_u64() {
             return Ok(count);
@@ -1878,7 +2982,12 @@ impl MetashrewRpcProvider for ConcreteProvider {
             command: crate::commands::MetashrewCommands::Height
         })?;
         let params = serde_json::json!([height]);
-        let result = self.call(&rpc_url, "metashrew_stateroot", params, 1).await?;
+        let (rpc_method, rpc_params) = if self.rpc_config.is_qubitcoin_mode() {
+            ("secondaryroot", serde_json::json!(["alkanes"]))
+        } else {
+            ("metashrew_stateroot", params)
+        };
+        let result = self.call(&rpc_url, rpc_method, rpc_params, 1).await?;
         result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid state root response".to_string()))
     }
 
@@ -1947,9 +3056,14 @@ impl MetashrewRpcProvider for ConcreteProvider {
             let balance_sheet_pb = item.balances.ok_or_else(|| {
                 AlkanesError::Other("missing balance sheet in wallet response".to_string())
             })?;
-            let txid_bytes: [u8; 32] = outpoint.txid.try_into().map_err(|_| {
+            let mut txid_bytes: [u8; 32] = outpoint.txid.try_into().map_err(|_| {
                 AlkanesError::Other("invalid txid length in wallet response".to_string())
             })?;
+            // Protobuf txid bytes are in internal byte order (from metashrew).
+            // bitcoin::Txid::from_byte_array expects internal byte order, so no
+            // reversal is needed. (Previously reversed in qubitcoin mode because
+            // qubitcoind stored display order, but our qubitcoin-jsonrpc proxy
+            // routes to metashrew which uses internal order.)
             balances.push(crate::alkanes::protorunes::ProtoruneOutpointResponse {
                 output: TxOut {
                     value: Amount::from_sat(output.value),
@@ -2414,10 +3528,16 @@ impl EsploraProvider for ConcreteProvider {
             log::info!("[EsploraProvider] get_tx_hex response: {}", text);
             return Ok(text);
         }
-        
-        log::info!("[EsploraProvider] Falling back to JSON-RPC call: {}", crate::esplora::EsploraJsonRpcMethods::TX_HEX);
-        let result = self.call(&rpc_url, crate::esplora::EsploraJsonRpcMethods::TX_HEX, crate::esplora::params::single(txid), 1).await?;
-        result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid tx hex response".to_string()))
+
+        // For JSON-RPC mode (no esplora_url configured), use bitcoind_getrawtransaction
+        // This is the standard path for hosted environments like subfrost-regtest
+        log::info!("[EsploraProvider] Using bitcoind_getrawtransaction via JSON-RPC");
+        let bitcoind_rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind {
+            command: crate::commands::BitcoindCommands::Getblockcount { raw: false }
+        })?;
+        let params = serde_json::json!([txid, false]);
+        let result = self.call(&bitcoind_rpc_url, "getrawtransaction", params, 1).await?;
+        result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid tx hex response from bitcoind".to_string()))
     }
 
     async fn get_tx_raw(&self, txid: &str) -> Result<String> {
@@ -2432,9 +3552,15 @@ impl EsploraProvider for ConcreteProvider {
             let bytes = response.bytes().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
             return Ok(hex::encode(bytes));
         }
-        
-        let result = self.call(&rpc_url, crate::esplora::EsploraJsonRpcMethods::TX_RAW, crate::esplora::params::single(txid), 1).await?;
-        result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid raw tx response".to_string()))
+
+        // For JSON-RPC mode (no esplora_url configured), use bitcoind_getrawtransaction
+        log::info!("[EsploraProvider] Using bitcoind_getrawtransaction via JSON-RPC");
+        let bitcoind_rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind {
+            command: crate::commands::BitcoindCommands::Getblockcount { raw: false }
+        })?;
+        let params = serde_json::json!([txid, false]);
+        let result = self.call(&bitcoind_rpc_url, "getrawtransaction", params, 1).await?;
+        result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid raw tx response from bitcoind".to_string()))
     }
 
     async fn get_tx_status(&self, txid: &str) -> Result<serde_json::Value> {
@@ -2634,6 +3760,11 @@ impl AlkanesProvider for ConcreteProvider {
         executor.execute(params).await
     }
 
+    async fn execute_full(&mut self, params: EnhancedExecuteParams) -> Result<EnhancedExecuteResult> {
+        let mut executor = EnhancedAlkanesExecutor::new(self);
+        executor.execute_full(params).await
+    }
+
     async fn resume_execution(
         &mut self,
         state: ReadyToSignTx,
@@ -2722,13 +3853,31 @@ impl AlkanesProvider for ConcreteProvider {
 
     async fn simulate(&self, contract_id: &str, context: &alkanes_pb::MessageContextParcel, block_tag: Option<String>) -> Result<JsonValue> {
         use prost::Message;
+        use protorune_support::utils::encode_varint_list;
+
+        // Parse contract_id ("block:tx") and prepend to calldata as a cellpack.
+        // The metashrew "simulate" view function expects calldata = encipher([target_block, target_tx, ...inputs]),
+        // matching the encoding in alkanes-jsonrpc handler's encode_simulate_request.
+        let parts: Vec<&str> = contract_id.split(':').collect();
+        if parts.len() != 2 {
+            return Err(AlkanesError::Other(format!("Invalid contract_id format '{}', expected 'block:tx'", contract_id)));
+        }
+        let target_block: u128 = parts[0].parse()
+            .map_err(|_| AlkanesError::Other(format!("Invalid block in contract_id: {}", parts[0])))?;
+        let target_tx: u128 = parts[1].parse()
+            .map_err(|_| AlkanesError::Other(format!("Invalid tx in contract_id: {}", parts[1])))?;
+
+        // The caller already built calldata with Cellpack::encipher() which includes
+        // [target_block, target_tx, ...inputs]. Just use it directly — don't prepend
+        // the target again.
+        let mut patched = context.clone();
+
         let mut buf = Vec::new();
-        context.encode(&mut buf)?;
+        patched.encode(&mut buf)?;
         let params_hex = format!("0x{}", hex::encode(&buf));
-        
-        // Use metashrew_view with "simulate" view function, not alkanes_simulate
+
         let result_bytes = self.metashrew_view_call("simulate", &params_hex, block_tag.as_deref().unwrap_or("latest")).await?;
-        
+
         // Return as hex string JSON value
         Ok(serde_json::json!(format!("0x{}", hex::encode(result_bytes))))
     }
@@ -2849,9 +3998,13 @@ impl AlkanesProvider for ConcreteProvider {
         out_point_pb.vout = vout;
 
         let hex_input = format!("0x{}", hex::encode(out_point_pb.encode_to_vec()));
+        log::debug!("Trace request for outpoint {}:{} - hex_input: {}", parts[0], vout, hex_input);
         let response_bytes = self.metashrew_view_call("trace", &hex_input, "latest").await?;
-        
+
+        log::debug!("Trace response: {} bytes", response_bytes.len());
+
         if response_bytes.is_empty() {
+            log::debug!("Trace response empty for {}:{}", parts[0], vout);
             return Ok(alkanes_pb::Trace::default());
         }
         
@@ -2929,15 +4082,19 @@ impl AlkanesProvider for ConcreteProvider {
         Ok(serde_json::json!(entries))
     }
 
-    async fn trace_block(&self, height: u64) -> Result<alkanes_pb::Trace> {
+    async fn trace_block(&self, height: u64) -> Result<alkanes_pb::AlkanesBlockTraceEvent> {
         let mut block_request = alkanes_pb::BlockRequest::default();
         block_request.height = height as u32;
-        
+
         let hex_input = format!("0x{}", hex::encode(block_request.encode_to_vec()));
         let response_bytes = self.metashrew_view_call("traceblock", &hex_input, "latest").await?;
 
-        let trace = alkanes_pb::Trace::decode(response_bytes.as_slice())?;
-        Ok(trace)
+        if response_bytes.is_empty() {
+            return Ok(alkanes_pb::AlkanesBlockTraceEvent::default());
+        }
+
+        let trace_response = alkanes_pb::AlkanesBlockTraceEvent::decode(response_bytes.as_slice())?;
+        Ok(trace_response)
     }
 
     async fn get_bytecode(&self, alkane_id: &str, block_tag: Option<String>) -> Result<String> {
@@ -2987,13 +4144,56 @@ impl AlkanesProvider for ConcreteProvider {
         Ok(format!("0x{}", hex::encode(response_bytes)))
     }
 
+    async fn meta(&self, alkane_id: &str, block_tag: Option<String>) -> Result<Vec<u8>> {
+        // Parse the alkane_id into block:tx format
+        let parts: Vec<&str> = alkane_id.split(':').collect();
+        if parts.len() != 2 {
+            return Err(AlkanesError::InvalidParameters("Invalid alkane_id format. Expected 'block:tx'".to_string()));
+        }
+        let block = parts[0].parse::<u128>()?;
+        let tx = parts[1].parse::<u128>()?;
+
+        // Create a MessageContextParcel with the cellpack calling the target contract
+        let mut parcel = alkanes_pb::MessageContextParcel::default();
+        parcel.height = 0;
+        parcel.block = vec![];
+        parcel.transaction = vec![];
+        parcel.vout = 0;
+
+        // Encode the calldata as a cellpack: [block, tx] (varint encoded)
+        use protorune_support::utils::encode_varint_list;
+        parcel.calldata = encode_varint_list(&vec![block, tx]);
+        parcel.alkanes = vec![];
+        parcel.pointer = 0;
+        parcel.refund_pointer = 0;
+
+        // Encode the parcel to protobuf
+        use prost::Message;
+        let hex_input = format!("0x{}", hex::encode(parcel.encode_to_vec()));
+
+        self.info(&format!(
+            "[meta] Calling metashrew_view with view_fn: meta, params: {}",
+            hex_input
+        ));
+
+        // Call metashrew_view with "meta" view function
+        let response_bytes = self.metashrew_view_call("meta", &hex_input, block_tag.as_deref().unwrap_or("latest")).await?;
+
+        self.info(&format!(
+            "[meta] Received response: {} bytes",
+            response_bytes.len()
+        ));
+
+        Ok(response_bytes)
+    }
+
     #[cfg(feature = "wasm-inspection")]
     async fn inspect(
   &self,
   target: &str,
   config: AlkanesInspectConfig,
  ) -> Result<AlkanesInspectResult> {
-  let inspector = AlkaneInspector::new(self.clone());
+  let inspector = AlkaneInspector::new();
   let parts: Vec<&str> = target.split(':').collect();
   if parts.len() != 2 {
    return Err(AlkanesError::InvalidParameters(
@@ -3011,7 +4211,7 @@ impl AlkanesProvider for ConcreteProvider {
    codehash: config.codehash,
    raw: config.raw,
   };
-  let result = inspector.inspect_alkane(&alkane_id, &inspection_config).await.map_err(|e| AlkanesError::Other(e.to_string()))?;
+  let result = inspector.inspect_alkane(&alkane_id, &inspection_config, self).await.map_err(|e| AlkanesError::Other(e.to_string()))?;
   Ok(serde_json::from_value(serde_json::to_value(result)?)?)
  }
 
@@ -3031,35 +4231,53 @@ impl AlkanesProvider for ConcreteProvider {
             Some(a) => a.to_string(),
             None => WalletProvider::get_address(self).await?,
         };
-        let mut request = protorune_pb::WalletRequest::default();
+        // Use protorunesbyaddress with protocol_tag=1 (alkanes)
+        let mut request = protorune_pb::ProtorunesWalletRequest::default();
         request.wallet = addr_str.as_bytes().to_vec();
+        request.protocol_tag = Some(<u128 as Into<protorune_pb::Uint128>>::into(1u128));
         let hex_input = format!("0x{}", hex::encode(request.encode_to_vec()));
         let response_bytes = self
-            .metashrew_view_call("balancesbyaddress", &hex_input, "latest")
+            .metashrew_view_call("protorunesbyaddress", &hex_input, "latest")
             .await?;
         if response_bytes.is_empty() {
             return Ok(vec![]);
         }
-        let proto_sheet = protorune_pb::BalanceSheet::decode(response_bytes.as_slice())?;
+        let wallet_response = protorune_pb::WalletResponse::decode(response_bytes.as_slice())?;
 
-        let result: Vec<AlkaneBalance> = proto_sheet
-            .entries
+        // Aggregate balances across all outpoints
+        let mut balance_map: std::collections::HashMap<(u64, u64), (String, String, u64)> = std::collections::HashMap::new();
+
+        for item in wallet_response.outpoints.into_iter() {
+            if let Some(balance_sheet_pb) = item.balances {
+                for entry in balance_sheet_pb.entries {
+                    if let Some(rune) = entry.rune {
+                        if let Some(rune_id) = rune.rune_id {
+                            if let (Some(height), Some(txindex), Some(balance)) = (
+                                rune_id.height,
+                                rune_id.txindex,
+                                entry.balance,
+                            ) {
+                                let key = (height.lo, txindex.lo);
+                                let entry = balance_map.entry(key).or_insert((
+                                    rune.name.clone(),
+                                    rune.symbol.clone(),
+                                    0,
+                                ));
+                                entry.2 = entry.2.saturating_add(balance.lo);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let result: Vec<AlkaneBalance> = balance_map
             .into_iter()
-            .map(|item| {
-                let (alkane_id, name, symbol) = item.rune.map_or(
-                    (AlkaneId { block: 0, tx: 0 }, String::new(), String::new()),
-                    |r| {
-                        let id = r.rune_id.map_or(AlkaneId { block: 0, tx: 0 }, |rid| AlkaneId {
-                            block: rid.height.map_or(0, |b| b.lo),
-                            tx: rid.txindex.map_or(0, |t| t.lo),
-                        });
-                        (id, r.name.clone(), r.symbol.clone())
-                    },
-                );
-
-                let balance = item.balance.map_or(0, |b| b.lo);
-
-                AlkaneBalance { alkane_id, name, symbol, balance }
+            .map(|((block, tx), (name, symbol, balance))| AlkaneBalance {
+                alkane_id: AlkaneId { block, tx },
+                name,
+                symbol,
+                balance,
             })
             .collect();
 
@@ -3076,7 +4294,7 @@ impl AlkanesProvider for ConcreteProvider {
             .map_err(|e| AlkanesError::Serialization(e.to_string()))?;
         
         // Decode runestone to get protostones
-        let result = crate::runestone_enhanced::format_runestone_with_decoded_messages(&tx)
+        let result = crate::runestone_enhanced::format_runestone_with_decoded_messages(&tx, self.get_network())
             .map_err(|e| AlkanesError::Other(format!("Failed to decode runestone: {}", e)))?;
         
         // Extract number of protostones
@@ -3307,6 +4525,10 @@ impl DeezelProvider for ConcreteProvider {
         self.rpc_config.metashrew_rpc_url.clone()
     }
 
+    fn is_qubitcoin_mode(&self) -> bool {
+        self.rpc_config.is_qubitcoin_mode()
+    }
+
     fn get_brc20_prog_rpc_url(&self) -> Option<String> {
         // If explicitly set, use that
         if let Some(ref url) = self.rpc_config.brc20_prog_rpc_url {
@@ -3337,29 +4559,75 @@ impl DeezelProvider for ConcreteProvider {
     }
 
     async fn get_utxo(&self, outpoint: &OutPoint) -> Result<Option<TxOut>> {
-        let tx_info = self.get_tx(&outpoint.txid.to_string()).await?;
-        let vout_info = tx_info["vout"].get(outpoint.vout as usize)
-            .ok_or_else(|| AlkanesError::Wallet(format!("Vout {} not found for tx {}", outpoint.vout, outpoint.txid)))?;
+        let txid_str = outpoint.txid.to_string();
+        let vout = outpoint.vout;
+        let tx_result = self.get_tx(&txid_str).await;
 
-        let amount = vout_info["value"].as_u64()
-            .ok_or_else(|| AlkanesError::Wallet("UTXO value not found".to_string()))?;
-        let script_pubkey_hex = vout_info["scriptpubkey"].as_str()
-            .ok_or_else(|| AlkanesError::Wallet("UTXO script pubkey not found".to_string()))?;
+        let (amount, script_pubkey_hex) = match tx_result {
+            Ok(ref tx_info) if tx_info.get("error").is_none() && tx_info.get("vout").is_some() => {
+                let vout_info = tx_info["vout"].get(vout as usize)
+                    .ok_or_else(|| AlkanesError::Wallet(format!("Vout {} not found for tx {}", vout, txid_str)))?;
+                let amt = vout_info["value"].as_u64()
+                    .ok_or_else(|| AlkanesError::Wallet("UTXO value not found".to_string()))?;
+                let script = vout_info["scriptpubkey"].as_str()
+                    .ok_or_else(|| AlkanesError::Wallet("UTXO script pubkey not found".to_string()))?;
+                (amt, script.to_string())
+            }
+            _ => {
+                // Fallback: use gettxout for qubitcoin mode (no txindex)
+                log::info!("get_tx failed for get_utxo({}:{}), trying gettxout", &txid_str[..16.min(txid_str.len())], vout);
+                let network = self.get_network();
+                let gettxout_resp = <Self as crate::traits::JsonRpcProvider>::call(
+                    self, "", "gettxout", serde_json::json!([txid_str, vout]), 1,
+                ).await.unwrap_or(serde_json::Value::Null);
+                let result = gettxout_resp.get("result").unwrap_or(&gettxout_resp);
+                if result.is_null() {
+                    // Derive from wallet address
+                    let wallet_addr = WalletProvider::get_address(self).await.unwrap_or_default();
+                    let script_hex = bitcoin::Address::from_str(&wallet_addr).ok()
+                        .and_then(|a| a.require_network(network).ok())
+                        .map(|a| hex::encode(a.script_pubkey().as_bytes()))
+                        .unwrap_or_default();
+                    (546u64, script_hex)
+                } else {
+                    let value_btc = result["value"].as_f64().unwrap_or(0.0);
+                    let amt = (value_btc * 100_000_000.0) as u64;
+                    let script = result.get("scriptPubKey").and_then(|s| s.get("hex")).and_then(|h| h.as_str())
+                        .unwrap_or("").to_string();
+                    (amt, script)
+                }
+            }
+        };
+        let script_pubkey_hex = &script_pubkey_hex;
 
         let script_pubkey = ScriptBuf::from(Vec::from_hex(script_pubkey_hex)?);
         Ok(Some(TxOut { value: Amount::from_sat(amount), script_pubkey }))
     }
 
-    async fn sign_taproot_script_spend(&self, sighash: bitcoin::secp256k1::Message) -> Result<bitcoin::secp256k1::schnorr::Signature> {
-        let mnemonic = match &self.wallet_state {
-            WalletState::Unlocked { mnemonic, .. } => mnemonic,
-            _ => return Err(AlkanesError::Wallet("Wallet must be unlocked to sign".to_string())),
+    async fn sign_taproot_script_spend(&self, sighash: bitcoin::secp256k1::Message, ephemeral_secret: Option<bitcoin::secp256k1::SecretKey>) -> Result<bitcoin::secp256k1::schnorr::Signature> {
+        // ANTI-FRONTRUNNING: If ephemeral_secret is provided (from presign flow),
+        // use it instead of generating random entropy. This ensures the reveal can be
+        // signed with the same key used to create the commit address.
+        let keypair = if let Some(secret) = ephemeral_secret {
+            bitcoin::secp256k1::Keypair::from_secret_key(&self.secp, &secret)
+        } else if let WalletState::ExternalKey { private_key, .. } = &self.wallet_state {
+            // Use external private key for signing
+            let secret_key = bitcoin::secp256k1::SecretKey::from_str(private_key)
+                .map_err(|e| AlkanesError::Wallet(format!("Invalid external private key: {}", e)))?;
+            bitcoin::secp256k1::Keypair::from_secret_key(&self.secp, &secret_key)
+        } else {
+            // Fallback to keystore mnemonic for non-presign flows
+            let mnemonic = match &self.wallet_state {
+                WalletState::Unlocked { mnemonic, .. } => mnemonic,
+                _ => return Err(AlkanesError::Wallet("Wallet must be unlocked to sign".to_string())),
+            };
+            let _mnemonic = bip39::Mnemonic::parse_in(bip39::Language::English, mnemonic.as_str())?;
+            let seed = Mnemonic::from_entropy(&rand::random::<[u8; 32]>()).map_err(|e| AlkanesError::Wallet(format!("{e}")))?.to_seed("");
+            let network = self.get_network();
+            let root_key = Xpriv::new_master(network, &seed)?;
+            root_key.to_keypair(&self.secp)
         };
-        let _mnemonic = bip39::Mnemonic::parse_in(bip39::Language::English, mnemonic.as_str())?;
-        let seed = Mnemonic::from_entropy(&rand::random::<[u8; 32]>()).map_err(|e| AlkanesError::Wallet(format!("{e}")))?.to_seed("");
-        let network = self.get_network();
-        let root_key = Xpriv::new_master(network, &seed)?;
-        let keypair = root_key.to_keypair(&self.secp);
+
         #[cfg(not(target_arch = "wasm32"))]
         let signature = self.secp.sign_schnorr_with_rng(&sighash, &keypair, &mut rand::thread_rng());
         #[cfg(target_arch = "wasm32")]
@@ -3391,7 +4659,7 @@ impl AddressResolver for ConcreteProvider {
     async fn get_address(&self, address_type: &str, index: u32) -> Result<String> {
         // Normalize address type (handle both "p2sh-p2wpkh" and "p2sh_p2wpkh")
         let normalized_type = address_type.replace('-', "_");
-        
+
         // Map address identifiers to script types used by keystore
         let script_type = match normalized_type.to_lowercase().as_str() {
             "p2pk" => "p2pkh",  // P2PK addresses use similar derivation to P2PKH
@@ -3404,9 +4672,14 @@ impl AddressResolver for ConcreteProvider {
             "p2tr" => "p2tr",
             _ => return Err(AlkanesError::Wallet(format!("Unsupported address type: {}", address_type))),
         };
-        
-        // Get the keystore
-        let keystore = self.get_keystore()?;
+
+        // Get the keystore - allow both Locked and Unlocked states for view-only address derivation
+        // Only signing operations should require an unlocked wallet
+        let keystore = match &self.wallet_state {
+            WalletState::Unlocked { keystore, .. } => keystore,
+            WalletState::Locked(keystore) => keystore,
+            _ => return Err(AlkanesError::Wallet("No keystore available - wallet must be loaded with --wallet-file".to_string())),
+        };
         
         // Get network params from the current network
         let network = self.get_network();
@@ -3541,11 +4814,19 @@ impl BitcoinRpcProvider for ConcreteProvider {
     }
 
     async fn generate_future(&self, address: &str) -> Result<JsonValue> {
-        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind { 
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind {
             command: crate::commands::BitcoindCommands::Getblockcount { raw: false }
         })?;
         let params = json!([address]);
         self.call(&rpc_url, "generatefuture", params, 1).await
+    }
+
+    async fn subfrost_thieve(&self, address: &str, amount: u64) -> Result<JsonValue> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind {
+            command: crate::commands::BitcoindCommands::Getblockcount { raw: false }
+        })?;
+        let params = json!([address, amount]);
+        self.call(&rpc_url, "subfrost_thieve", params, 1).await
     }
 
     async fn get_blockchain_info(&self) -> Result<JsonValue> {
@@ -3594,16 +4875,81 @@ impl BitcoinRpcProvider for ConcreteProvider {
     }
 
     async fn send_raw_transaction(&self, tx_hex: &str) -> Result<String> {
-        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind { 
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind {
             command: crate::commands::BitcoindCommands::Getblockcount { raw: false }
         })?;
-        let maxfeerate = 0.1;
-        let maxburnamount = 0.1;
-        let params = json!([tx_hex, maxfeerate, maxburnamount]);
+        // Use maxfeerate=0 in qubitcoin mode: qubitcoind's block storage may not support
+        // UTXO value lookups needed for fee calculation, causing false "0 sat/kvB" errors.
+        let maxfeerate: f64 = if self.rpc_config.is_qubitcoin_mode() { 0.0 } else { 0.1 };
+        // Only pass maxfeerate - maxburnamount is not supported in Bitcoin Core < 26.0
+        let params = json!([tx_hex, maxfeerate]);
         let result = self.call(&rpc_url, "sendrawtransaction", params, 1).await?;
         result.as_str()
             .ok_or_else(|| AlkanesError::RpcError("Invalid sendrawtransaction response".to_string()))
             .map(|s| s.to_string())
+    }
+
+    async fn send_raw_transactions(&self, tx_hexes: &[String]) -> Result<Vec<String>> {
+        // If only one transaction, just use the single method
+        if tx_hexes.len() == 1 {
+            let txid = self.send_raw_transaction(&tx_hexes[0]).await?;
+            return Ok(vec![txid]);
+        }
+
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind {
+            command: crate::commands::BitcoindCommands::Getblockcount { raw: false }
+        })?;
+        let maxfeerate = 0.1;
+        // Only pass maxfeerate - maxburnamount is not supported in Bitcoin Core < 26.0
+        let params = json!([tx_hexes, maxfeerate]);
+
+        // Try batch sendrawtransactions first
+        match self.call(&rpc_url, "sendrawtransactions", params, 1).await {
+            Ok(result) => {
+                // Parse array of txids
+                result.as_array()
+                    .ok_or_else(|| AlkanesError::RpcError("Invalid sendrawtransactions response".to_string()))?
+                    .iter()
+                    .map(|v| v.as_str()
+                        .ok_or_else(|| AlkanesError::RpcError("Invalid txid in response".to_string()))
+                        .map(|s| s.to_string()))
+                    .collect()
+            }
+            Err(e) => {
+                // Check if this is a "method not found" error - fallback to iterative broadcast
+                let err_str = e.to_string().to_lowercase();
+                if err_str.contains("method not found") || err_str.contains("unknown method") || err_str.contains("-32601") {
+                    log::warn!("sendrawtransactions not available, falling back to sequential broadcast");
+                    log::warn!("⚠️ Sequential broadcast may be vulnerable to MEV/frontrunning");
+
+                    let mut txids = Vec::with_capacity(tx_hexes.len());
+                    for (i, tx_hex) in tx_hexes.iter().enumerate() {
+                        match self.send_raw_transaction(tx_hex).await {
+                            Ok(txid) => {
+                                log::info!("Broadcast tx {}/{}: {}", i + 1, tx_hexes.len(), txid);
+                                txids.push(txid);
+                            }
+                            Err(tx_err) => {
+                                // If we've already broadcast some, log the failure but don't abort
+                                // This allows partial success tracking
+                                if !txids.is_empty() {
+                                    log::error!("Failed to broadcast tx {}/{}: {}", i + 1, tx_hexes.len(), tx_err);
+                                    return Err(AlkanesError::RpcError(format!(
+                                        "Partial broadcast failure: {} of {} transactions broadcast. Failed at tx {}: {}",
+                                        txids.len(), tx_hexes.len(), i + 1, tx_err
+                                    )));
+                                }
+                                return Err(tx_err);
+                            }
+                        }
+                    }
+                    Ok(txids)
+                } else {
+                    // Some other error - propagate it
+                    Err(e)
+                }
+            }
+        }
     }
 
     async fn get_mempool_info(&self) -> Result<JsonValue> {
@@ -3682,11 +5028,27 @@ impl BitcoinRpcProvider for ConcreteProvider {
     }
 
     async fn get_tx_out(&self, txid: &str, vout: u32, include_mempool: bool) -> Result<JsonValue> {
-        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind { 
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind {
             command: crate::commands::BitcoindCommands::Getblockcount { raw: false }
         })?;
         let params = json!([txid, vout, include_mempool]);
         self.call(&rpc_url, "gettxout", params, 1).await
+    }
+
+    async fn decode_raw_transaction(&self, hex: &str) -> Result<JsonValue> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind {
+            command: crate::commands::BitcoindCommands::Getblockcount { raw: false }
+        })?;
+        let params = json!([hex]);
+        self.call(&rpc_url, "decoderawtransaction", params, 1).await
+    }
+
+    async fn decode_psbt(&self, psbt: &str) -> Result<JsonValue> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind {
+            command: crate::commands::BitcoindCommands::Getblockcount { raw: false }
+        })?;
+        let params = json!([psbt]);
+        self.call(&rpc_url, "decodepsbt", params, 1).await
     }
 }
 
@@ -4416,5 +5778,517 @@ impl LuaScriptExecutor for ConcreteProvider {
         args: Vec<JsonValue>,
     ) -> Result<JsonValue> {
         self.lua_evalscript_internal(script_content, args).await
+    }
+}
+
+// Implement EspoProvider for ConcreteProvider
+// Note: espo-pg uses object parameters {"key": "value"} rather than array parameters
+#[async_trait(?Send)]
+impl EspoProvider for ConcreteProvider {
+    async fn get_espo_height(&self) -> Result<u64> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling get_espo_height at {}", target.url);
+
+        let result = self.call(&target.url, "get_espo_height", json!({}), 1).await?;
+
+        // Handle format: {"height": N}
+        if let Some(height) = result.get("height").and_then(|v| v.as_u64()) {
+            return Ok(height);
+        }
+        // Handle direct number response
+        if let Some(height) = result.as_u64() {
+            return Ok(height);
+        }
+
+        Err(AlkanesError::RpcError(format!("Invalid get_espo_height response: {:?}", result)))
+    }
+
+    async fn get_address_balances(&self, address: &str, include_outpoints: bool) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling essentials.get_address_balances for {} (include_outpoints={}) at {}",
+            address, include_outpoints, target.url);
+
+        self.call(&target.url, "essentials.get_address_balances", json!({
+            "address": address,
+            "include_outpoints": include_outpoints
+        }), 1).await
+    }
+
+    async fn get_address_outpoints(&self, address: &str) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling essentials.get_address_outpoints for {} at {}", address, target.url);
+
+        self.call(&target.url, "essentials.get_address_outpoints", json!({
+            "address": address
+        }), 1).await
+    }
+
+    async fn get_address_spendable_outpoints(&self, address: &str) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!(
+            "[EspoProvider] Calling essentials.get_address_spendable_outpoints for {} at {}",
+            address,
+            target.url
+        );
+
+        self.call(&target.url, "essentials.get_address_spendable_outpoints", json!({
+            "address": address,
+            "omit_raw_tx": true
+        }), 1).await
+    }
+
+    async fn get_outpoint_balances(&self, outpoint: &str) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling essentials.get_outpoint_balances for {} at {}", outpoint, target.url);
+
+        self.call(&target.url, "essentials.get_outpoint_balances", json!({
+            "outpoint": outpoint
+        }), 1).await
+    }
+
+    async fn get_holders(&self, alkane_id: &str, page: u64, limit: u64) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling essentials.get_holders for {} (page={}, limit={}) at {}",
+            alkane_id, page, limit, target.url);
+
+        self.call(&target.url, "essentials.get_holders", json!({
+            "alkane": alkane_id,
+            "page": page,
+            "limit": limit
+        }), 1).await
+    }
+
+    async fn get_holders_count(&self, alkane_id: &str) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling essentials.get_holders_count for {} at {}", alkane_id, target.url);
+
+        self.call(&target.url, "essentials.get_holders_count", json!({
+            "alkane": alkane_id
+        }), 1).await
+    }
+
+    async fn get_keys(&self, alkane_id: &str, page: u64, limit: u64) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling essentials.get_keys for {} (page={}, limit={}) at {}",
+            alkane_id, page, limit, target.url);
+
+        self.call(&target.url, "essentials.get_keys", json!({
+            "alkane": alkane_id,
+            "page": page,
+            "limit": limit,
+            "try_decode_utf8": true
+        }), 1).await
+    }
+
+    async fn ping(&self) -> Result<String> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling essentials.ping at {}", target.url);
+
+        let result = self.call(&target.url, "essentials.ping", json!({}), 1).await?;
+
+        if let Some(s) = result.as_str() {
+            return Ok(s.to_string());
+        }
+
+        Ok(result.to_string())
+    }
+
+    async fn ammdata_ping(&self) -> Result<String> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling ammdata.ping at {}", target.url);
+
+        let result = self.call(&target.url, "ammdata.ping", json!({}), 1).await?;
+
+        if let Some(s) = result.as_str() {
+            return Ok(s.to_string());
+        }
+
+        Ok(result.to_string())
+    }
+
+    async fn get_candles(
+        &self,
+        pool: &str,
+        timeframe: Option<&str>,
+        side: Option<&str>,
+        limit: Option<u64>,
+        page: Option<u64>,
+    ) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling ammdata.get_candles for pool={} at {}", pool, target.url);
+
+        let mut params = json!({
+            "pool": pool
+        });
+
+        if let Some(tf) = timeframe {
+            params["timeframe"] = json!(tf);
+        }
+        if let Some(s) = side {
+            params["side"] = json!(s);
+        }
+        if let Some(l) = limit {
+            params["limit"] = json!(l);
+        }
+        if let Some(p) = page {
+            params["page"] = json!(p);
+        }
+
+        self.call(&target.url, "ammdata.get_candles", params, 1).await
+    }
+
+    async fn get_trades(
+        &self,
+        pool: &str,
+        limit: Option<u64>,
+        page: Option<u64>,
+        side: Option<&str>,
+        filter_side: Option<&str>,
+        sort: Option<&str>,
+        dir: Option<&str>,
+    ) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling ammdata.get_activity for pool={} at {}", pool, target.url);
+
+        let mut params = json!({
+            "pool": pool
+        });
+
+        if let Some(l) = limit {
+            params["limit"] = json!(l);
+        }
+        if let Some(p) = page {
+            params["page"] = json!(p);
+        }
+        if let Some(s) = side {
+            params["side"] = json!(s);
+        }
+        if let Some(fs) = filter_side {
+            params["filter_side"] = json!(fs);
+        }
+        if let Some(s) = sort {
+            params["sort"] = json!(s);
+        }
+        if let Some(d) = dir {
+            params["dir"] = json!(d);
+        }
+
+        self.call(&target.url, "ammdata.get_activity", params, 1).await
+    }
+
+    async fn get_pools(
+        &self,
+        limit: Option<u64>,
+        page: Option<u64>,
+    ) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling ammdata.get_pools at {}", target.url);
+
+        let mut params = json!({});
+
+        if let Some(l) = limit {
+            params["limit"] = json!(l);
+        }
+        if let Some(p) = page {
+            params["page"] = json!(p);
+        }
+
+        self.call(&target.url, "ammdata.get_pools", params, 1).await
+    }
+
+    async fn find_best_swap_path(
+        &self,
+        token_in: &str,
+        token_out: &str,
+        mode: Option<&str>,
+        amount_in: Option<&str>,
+        amount_out: Option<&str>,
+        amount_out_min: Option<&str>,
+        amount_in_max: Option<&str>,
+        available_in: Option<&str>,
+        fee_bps: Option<u64>,
+        max_hops: Option<u64>,
+    ) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling ammdata.find_best_swap_path for {} -> {} at {}", token_in, token_out, target.url);
+
+        let mut params = json!({
+            "token_in": token_in,
+            "token_out": token_out
+        });
+
+        if let Some(m) = mode {
+            params["mode"] = json!(m);
+        }
+        if let Some(ai) = amount_in {
+            params["amount_in"] = json!(ai);
+        }
+        if let Some(ao) = amount_out {
+            params["amount_out"] = json!(ao);
+        }
+        if let Some(aom) = amount_out_min {
+            params["amount_out_min"] = json!(aom);
+        }
+        if let Some(aim) = amount_in_max {
+            params["amount_in_max"] = json!(aim);
+        }
+        if let Some(av) = available_in {
+            params["available_in"] = json!(av);
+        }
+        if let Some(f) = fee_bps {
+            params["fee_bps"] = json!(f);
+        }
+        if let Some(h) = max_hops {
+            params["max_hops"] = json!(h);
+        }
+
+        self.call(&target.url, "ammdata.find_best_swap_path", params, 1).await
+    }
+
+    async fn get_best_mev_swap(
+        &self,
+        token: &str,
+        fee_bps: Option<u64>,
+        max_hops: Option<u64>,
+    ) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling ammdata.get_best_mev_swap for token={} at {}", token, target.url);
+
+        let mut params = json!({
+            "token": token
+        });
+
+        if let Some(f) = fee_bps {
+            params["fee_bps"] = json!(f);
+        }
+        if let Some(h) = max_hops {
+            params["max_hops"] = json!(h);
+        }
+
+        self.call(&target.url, "ammdata.get_best_mev_swap", params, 1).await
+    }
+
+    async fn get_amm_factories(
+        &self,
+        page: Option<u64>,
+        limit: Option<u64>,
+    ) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling ammdata.get_amm_factories at {}", target.url);
+        let mut params = json!({});
+        if let Some(p) = page { params["page"] = json!(p); }
+        if let Some(l) = limit { params["limit"] = json!(l); }
+        self.call(&target.url, "ammdata.get_amm_factories", params, 1).await
+    }
+
+    // ==================== Essentials methods (new) ====================
+
+    async fn get_all_alkanes(&self, page: Option<u64>, limit: Option<u64>) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling essentials.get_all_alkanes at {}", target.url);
+        let mut params = json!({});
+        if let Some(p) = page { params["page"] = json!(p); }
+        if let Some(l) = limit { params["limit"] = json!(l); }
+        self.call(&target.url, "essentials.get_all_alkanes", params, 1).await
+    }
+
+    async fn get_alkane_info(&self, alkane_id: &str) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling essentials.get_alkane_info for {} at {}", alkane_id, target.url);
+        self.call(&target.url, "essentials.get_alkane_info", json!({"alkane": alkane_id}), 1).await
+    }
+
+    async fn get_block_summary(&self, height: u64) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling essentials.get_block_summary for height={} at {}", height, target.url);
+        self.call(&target.url, "essentials.get_block_summary", json!({"height": height}), 1).await
+    }
+
+    async fn get_circulating_supply(&self, alkane_id: &str, height: Option<u64>) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling essentials.get_circulating_supply for {} at {}", alkane_id, target.url);
+        let mut params = json!({"alkane": alkane_id});
+        if let Some(h) = height { params["height"] = json!(h); }
+        self.call(&target.url, "essentials.get_circulating_supply", params, 1).await
+    }
+
+    async fn get_transfer_volume(&self, alkane_id: &str, page: Option<u64>, limit: Option<u64>) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling essentials.get_transfer_volume for {} at {}", alkane_id, target.url);
+        let mut params = json!({"alkane": alkane_id});
+        if let Some(p) = page { params["page"] = json!(p); }
+        if let Some(l) = limit { params["limit"] = json!(l); }
+        self.call(&target.url, "essentials.get_transfer_volume", params, 1).await
+    }
+
+    async fn get_total_received(&self, alkane_id: &str, page: Option<u64>, limit: Option<u64>) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling essentials.get_total_received for {} at {}", alkane_id, target.url);
+        let mut params = json!({"alkane": alkane_id});
+        if let Some(p) = page { params["page"] = json!(p); }
+        if let Some(l) = limit { params["limit"] = json!(l); }
+        self.call(&target.url, "essentials.get_total_received", params, 1).await
+    }
+
+    async fn get_address_activity(&self, address: &str) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling essentials.get_address_activity for {} at {}", address, target.url);
+        self.call(&target.url, "essentials.get_address_activity", json!({"address": address}), 1).await
+    }
+
+    async fn get_alkane_balances(&self, alkane_id: &str) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling essentials.get_alkane_balances for {} at {}", alkane_id, target.url);
+        self.call(&target.url, "essentials.get_alkane_balances", json!({"alkane": alkane_id}), 1).await
+    }
+
+    async fn get_alkane_balance_metashrew(&self, owner: &str, target_alkane: &str, height: Option<u64>) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling essentials.get_alkane_balance_metashrew for owner={} target={} at {}", owner, target_alkane, target.url);
+        let mut params = json!({"owner": owner, "target": target_alkane});
+        if let Some(h) = height { params["height"] = json!(h); }
+        self.call(&target.url, "essentials.get_alkane_balance_metashrew", params, 1).await
+    }
+
+    async fn get_alkane_balance_txs(&self, alkane_id: &str, page: Option<u64>, limit: Option<u64>) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling essentials.get_alkane_balance_txs for {} at {}", alkane_id, target.url);
+        let mut params = json!({"alkane": alkane_id});
+        if let Some(p) = page { params["page"] = json!(p); }
+        if let Some(l) = limit { params["limit"] = json!(l); }
+        self.call(&target.url, "essentials.get_alkane_balance_txs", params, 1).await
+    }
+
+    async fn get_alkane_balance_txs_by_token(&self, owner: &str, token: &str, page: Option<u64>, limit: Option<u64>) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling essentials.get_alkane_balance_txs_by_token for owner={} token={} at {}", owner, token, target.url);
+        let mut params = json!({"owner": owner, "token": token});
+        if let Some(p) = page { params["page"] = json!(p); }
+        if let Some(l) = limit { params["limit"] = json!(l); }
+        self.call(&target.url, "essentials.get_alkane_balance_txs_by_token", params, 1).await
+    }
+
+    async fn get_block_traces(&self, height: u64) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling essentials.get_block_traces for height={} at {}", height, target.url);
+        self.call(&target.url, "essentials.get_block_traces", json!({"height": height}), 1).await
+    }
+
+    async fn get_alkane_tx_summary(&self, txid: &str) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling essentials.get_alkane_tx_summary for {} at {}", txid, target.url);
+        self.call(&target.url, "essentials.get_alkane_tx_summary", json!({"txid": txid}), 1).await
+    }
+
+    async fn get_alkane_block_txs(&self, height: u64, page: Option<u64>, limit: Option<u64>) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling essentials.get_alkane_block_txs for height={} at {}", height, target.url);
+        let mut params = json!({"height": height});
+        if let Some(p) = page { params["page"] = json!(p); }
+        if let Some(l) = limit { params["limit"] = json!(l); }
+        self.call(&target.url, "essentials.get_alkane_block_txs", params, 1).await
+    }
+
+    async fn get_alkane_address_txs(&self, address: &str, page: Option<u64>, limit: Option<u64>) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling essentials.get_alkane_address_txs for {} at {}", address, target.url);
+        let mut params = json!({"address": address});
+        if let Some(p) = page { params["page"] = json!(p); }
+        if let Some(l) = limit { params["limit"] = json!(l); }
+        self.call(&target.url, "essentials.get_alkane_address_txs", params, 1).await
+    }
+
+    async fn get_address_transactions(&self, address: &str, page: Option<u64>, limit: Option<u64>, only_alkane_txs: Option<bool>) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling essentials.get_address_transactions for {} at {}", address, target.url);
+        let mut params = json!({"address": address});
+        if let Some(p) = page { params["page"] = json!(p); }
+        if let Some(l) = limit { params["limit"] = json!(l); }
+        if let Some(o) = only_alkane_txs { params["only_alkane_txs"] = json!(o); }
+        self.call(&target.url, "essentials.get_address_transactions", params, 1).await
+    }
+
+    async fn get_alkane_latest_traces(&self) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling essentials.get_alkane_latest_traces at {}", target.url);
+        self.call(&target.url, "essentials.get_alkane_latest_traces", json!({}), 1).await
+    }
+
+    async fn get_mempool_traces(&self, page: Option<u64>, limit: Option<u64>, address: Option<&str>) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling essentials.get_mempool_traces at {}", target.url);
+        let mut params = json!({});
+        if let Some(p) = page { params["page"] = json!(p); }
+        if let Some(l) = limit { params["limit"] = json!(l); }
+        if let Some(a) = address { params["address"] = json!(a); }
+        self.call(&target.url, "essentials.get_mempool_traces", params, 1).await
+    }
+
+    // ==================== Subfrost methods ====================
+
+    async fn get_wrap_events_all(&self, count: Option<u64>, offset: Option<u64>, successful: Option<bool>) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling subfrost.get_wrap_events_all at {}", target.url);
+        let mut params = json!({});
+        if let Some(c) = count { params["count"] = json!(c); }
+        if let Some(o) = offset { params["offset"] = json!(o); }
+        if let Some(s) = successful { params["successful"] = json!(s); }
+        self.call(&target.url, "subfrost.get_wrap_events_all", params, 1).await
+    }
+
+    async fn get_wrap_events_by_address(&self, address: &str, count: Option<u64>, offset: Option<u64>, successful: Option<bool>) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling subfrost.get_wrap_events_by_address for {} at {}", address, target.url);
+        let mut params = json!({"address": address});
+        if let Some(c) = count { params["count"] = json!(c); }
+        if let Some(o) = offset { params["offset"] = json!(o); }
+        if let Some(s) = successful { params["successful"] = json!(s); }
+        self.call(&target.url, "subfrost.get_wrap_events_by_address", params, 1).await
+    }
+
+    async fn get_unwrap_events_all(&self, count: Option<u64>, offset: Option<u64>, successful: Option<bool>) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling subfrost.get_unwrap_events_all at {}", target.url);
+        let mut params = json!({});
+        if let Some(c) = count { params["count"] = json!(c); }
+        if let Some(o) = offset { params["offset"] = json!(o); }
+        if let Some(s) = successful { params["successful"] = json!(s); }
+        self.call(&target.url, "subfrost.get_unwrap_events_all", params, 1).await
+    }
+
+    async fn get_unwrap_events_by_address(&self, address: &str, count: Option<u64>, offset: Option<u64>, successful: Option<bool>) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling subfrost.get_unwrap_events_by_address for {} at {}", address, target.url);
+        let mut params = json!({"address": address});
+        if let Some(c) = count { params["count"] = json!(c); }
+        if let Some(o) = offset { params["offset"] = json!(o); }
+        if let Some(s) = successful { params["successful"] = json!(s); }
+        self.call(&target.url, "subfrost.get_unwrap_events_by_address", params, 1).await
+    }
+
+    // ==================== PizzaFun methods ====================
+
+    async fn get_series_id_from_alkane_id(&self, alkane_id: &str) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling pizzafun.get_series_id_from_alkane_id for {} at {}", alkane_id, target.url);
+        self.call(&target.url, "pizzafun.get_series_id_from_alkane_id", json!({"alkane_id": alkane_id}), 1).await
+    }
+
+    async fn get_series_ids_from_alkane_ids(&self, alkane_ids: &[&str]) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling pizzafun.get_series_ids_from_alkane_ids for {} ids at {}", alkane_ids.len(), target.url);
+        self.call(&target.url, "pizzafun.get_series_ids_from_alkane_ids", json!({"alkane_ids": alkane_ids}), 1).await
+    }
+
+    async fn get_alkane_id_from_series_id(&self, series_id: &str) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling pizzafun.get_alkane_id_from_series_id for {} at {}", series_id, target.url);
+        self.call(&target.url, "pizzafun.get_alkane_id_from_series_id", json!({"series_id": series_id}), 1).await
+    }
+
+    async fn get_alkane_ids_from_series_ids(&self, series_ids: &[&str]) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling pizzafun.get_alkane_ids_from_series_ids for {} ids at {}", series_ids.len(), target.url);
+        self.call(&target.url, "pizzafun.get_alkane_ids_from_series_ids", json!({"series_ids": series_ids}), 1).await
     }
 }

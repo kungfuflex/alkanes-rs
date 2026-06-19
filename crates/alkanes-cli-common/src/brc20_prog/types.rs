@@ -1,10 +1,25 @@
 // Types for BRC20-Prog functionality
 
+use crate::alkanes::types::OrdinalsStrategy;
 use serde::{Deserialize, Serialize};
 #[cfg(not(feature = "std"))]
 use alloc::{string::String, vec::Vec};
 #[cfg(feature = "std")]
 use std::{string::String, vec::Vec};
+
+/// Anti-frontrunning strategy for BRC20-Prog transactions
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum AntiFrontrunningStrategy {
+    /// Use CheckLockTimeVerify to timelock reveal transaction
+    CheckLockTimeVerify,
+    /// Use Child-Pays-For-Parent to accelerate commit transaction
+    Cpfp,
+    /// Pre-sign all transactions and broadcast together
+    Presign,
+    /// Monitor mempool and use RBF to bump fees if frontrunning detected
+    Rbf,
+}
 
 /// Parameters for deploying a BRC20-prog contract
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -25,6 +40,16 @@ pub struct Brc20ProgDeployParams {
     pub mine_enabled: bool,
     /// Automatically confirm the transaction preview
     pub auto_confirm: bool,
+    /// Use 3-transaction activation pattern (commit-reveal-activation) instead of 2-transaction (commit-reveal)
+    pub use_activation: bool,
+    /// Use MARA Slipstream service for broadcasting
+    pub use_slipstream: bool,
+    /// Use Rebar Shield for private transaction relay
+    pub use_rebar: bool,
+    /// Rebar fee tier (1 or 2, default: 1). Tier 1: ~8% hashrate, Tier 2: ~16% hashrate
+    pub rebar_tier: Option<u8>,
+    /// Anti-frontrunning strategy to use
+    pub strategy: Option<AntiFrontrunningStrategy>,
 }
 
 /// Parameters for calling a BRC20-prog contract (transact subcommand)
@@ -50,6 +75,24 @@ pub struct Brc20ProgTransactParams {
     pub mine_enabled: bool,
     /// Automatically confirm the transaction preview
     pub auto_confirm: bool,
+    /// Use MARA Slipstream service for broadcasting
+    pub use_slipstream: bool,
+    /// Use Rebar Shield for private transaction relay
+    pub use_rebar: bool,
+    /// Rebar fee tier (1 or 2, default: 1). Tier 1: ~8% hashrate, Tier 2: ~16% hashrate
+    pub rebar_tier: Option<u8>,
+    /// Anti-frontrunning strategy to use
+    pub strategy: Option<AntiFrontrunningStrategy>,
+}
+
+/// Additional output to include in the activation transaction
+/// Used for FrBTC wrap/unwrap operations where BTC must be sent to the signer address
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AdditionalOutput {
+    /// Destination address (p2tr, p2wpkh, etc.)
+    pub address: String,
+    /// Amount in satoshis
+    pub amount: u64,
 }
 
 /// Generic execution parameters for BRC20-prog operations
@@ -71,11 +114,57 @@ pub struct Brc20ProgExecuteParams {
     pub mine_enabled: bool,
     /// Automatically confirm the transaction preview
     pub auto_confirm: bool,
+    /// Use 3-transaction activation pattern (commit-reveal-activation) instead of 2-transaction (commit-reveal)
+    pub use_activation: bool,
+    /// Use MARA Slipstream service for broadcasting
+    pub use_slipstream: bool,
+    /// Use Rebar Shield for private transaction relay
+    pub use_rebar: bool,
+    /// Rebar fee tier (1 or 2, default: 1). Tier 1: ~8% hashrate, Tier 2: ~16% hashrate
+    pub rebar_tier: Option<u8>,
+    /// Anti-frontrunning strategy to use
+    pub strategy: Option<AntiFrontrunningStrategy>,
+    /// Resume from existing commit transaction (commit txid)
+    pub resume_from_commit: Option<String>,
+    /// Additional outputs to include in the activation transaction
+    /// Used for FrBTC wrap (send BTC to signer) or unwrap (dust to signer)
+    pub additional_outputs: Option<Vec<AdditionalOutput>>,
+    /// Strategy for handling UTXOs that contain ordinal inscriptions
+    /// - exclude: Fail if inscribed UTXOs must be spent (default)
+    /// - preserve: Split inscribed UTXOs to protect inscriptions
+    /// - burn: Allow spending inscribed UTXOs without protection
+    #[serde(default)]
+    pub ordinals_strategy: OrdinalsStrategy,
+    /// Enable mempool indexer for tracing inscription state of pending UTXOs
+    /// When enabled, if we must use pending (unconfirmed) UTXOs, we'll trace back through
+    /// parent transactions to determine inscription state from settled UTXOs
+    #[serde(default)]
+    pub mempool_indexer: bool,
+    /// Mint DIESEL tokens in commit and reveal transactions
+    #[serde(default)]
+    pub mint_diesel: bool,
+    /// Return unsigned PSBTs instead of signing and broadcasting
+    /// When true, the execute method will return unsigned PSBTs that can be signed
+    /// by an external signer (e.g., browser wallet)
+    #[serde(default)]
+    pub return_unsigned: bool,
+    /// Deployer account nonce hint for contract address computation.
+    /// The EVM uses CREATE which derives the address from keccak256(rlp([deployer, nonce])).
+    /// On devnet, callers should track nonces across sequential deploys.
+    /// If not set, defaults to 0 (first deploy from this address).
+    #[serde(default)]
+    pub deployer_nonce: Option<u64>,
 }
 
 /// Result of a BRC20-prog execution
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Brc20ProgExecuteResult {
+    /// Split transaction ID (if inscribed UTXOs were split)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub split_txid: Option<String>,
+    /// Split transaction fee (if split was needed)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub split_fee: Option<u64>,
     /// Commit transaction ID
     pub commit_txid: String,
     /// Reveal transaction ID
@@ -96,6 +185,38 @@ pub struct Brc20ProgExecuteResult {
     pub outputs_created: Vec<String>,
     /// Trace results (if tracing was enabled)
     pub traces: Option<Vec<serde_json::Value>>,
+
+    /// Deployed contract address (for deploy operations)
+    /// Computed from the deployer's pkscript-derived ETH address at nonce 0.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub contract_address: Option<String>,
+
+    // === EXTERNAL SIGNER SUPPORT ===
+    // When return_unsigned=true, these fields contain PSBTs/transactions for external signing.
+    // NOTE: The reveal transaction is signed INTERNALLY with the ephemeral key (the SDK
+    // generates this key and only it knows the secret). External signers (browser wallets)
+    // only need to sign: split (if any), commit, and activation (if any).
+
+    /// Unsigned split PSBT (base64, if split was needed) - sign with user wallet
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unsigned_split_psbt: Option<String>,
+    /// Unsigned commit PSBT (base64) - sign with user wallet
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unsigned_commit_psbt: Option<String>,
+    /// Unsigned reveal PSBT (base64) - DEPRECATED: reveal is now signed internally
+    /// This field is kept for backwards compatibility but will always be None
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unsigned_reveal_psbt: Option<String>,
+    /// Signed reveal transaction hex - ready to broadcast after commit confirms
+    /// The reveal is signed internally with the ephemeral key (user wallet cannot sign it)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signed_reveal_tx_hex: Option<String>,
+    /// Unsigned activation PSBT (base64, if activation is used) - sign with user wallet
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unsigned_activation_psbt: Option<String>,
+    /// Whether this result contains unsigned PSBTs (for external signing)
+    #[serde(default)]
+    pub requires_signing: bool,
 }
 
 /// Type of BRC20-prog inscription

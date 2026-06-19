@@ -215,11 +215,7 @@ impl FuelTank {
 
         // Calculate fuel allocation based on transaction size
         let _block_fuel_before = tank.block_fuel;
-        tank.block_metered_fuel = if tank.size > 0 {
-            tank.block_fuel * txsize / tank.size
-        } else {
-            tank.block_fuel // If size is 0, allocate all remaining fuel
-        };
+        tank.block_metered_fuel = tank.block_fuel * txsize / tank.size;
         tank.transaction_fuel = FuelTank::_calculate_transaction_fuel(&tank, height);
 
         // Deduct allocated fuel from block fuel
@@ -259,7 +255,7 @@ impl FuelTank {
         // This value is updated by consume_fuel() to reflect the remaining amount
         // after transaction execution
         tank.block_fuel = tank.block_fuel + tank.block_metered_fuel;
-        tank.size = tank.size.saturating_sub(tank.txsize);
+        tank.size = tank.size - tank.txsize;
 
         #[cfg(feature = "debug-log")]
         {
@@ -319,6 +315,26 @@ impl FuelTank {
     }
 }
 
+//use if regtest
+#[cfg(not(any(
+    feature = "mainnet",
+    feature = "dogecoin",
+    feature = "bellscoin",
+    feature = "fractal",
+    feature = "luckycoin"
+)))]
+pub const V217_FIX_HEIGHT: u32 = 0;
+#[cfg(feature = "mainnet")]
+pub const V217_FIX_HEIGHT: u32 = 943_500;
+#[cfg(feature = "dogecoin")]
+pub const V217_FIX_HEIGHT: u32 = 0;
+#[cfg(feature = "fractal")]
+pub const V217_FIX_HEIGHT: u32 = 0;
+#[cfg(feature = "luckycoin")]
+pub const V217_FIX_HEIGHT: u32 = 0;
+#[cfg(feature = "bellscoin")]
+pub const V217_FIX_HEIGHT: u32 = 0;
+
 pub const MINIMUM_FUEL_START: u64 = 350_000;
 pub const MINIMUM_FUEL_CHANGE1: u64 = 3_500_000;
 pub const fn minimum_fuel(height: u32) -> u64 {
@@ -328,6 +344,7 @@ pub const fn minimum_fuel(height: u32) -> u64 {
         MINIMUM_FUEL_START
     }
 }
+
 pub const FUEL_PER_REQUEST_BYTE: u64 = 1;
 pub const FUEL_PER_LOAD_BYTE: u64 = 2;
 pub const FUEL_PER_STORE_BYTE_START: u64 = 8;
@@ -363,14 +380,22 @@ pub trait Fuelable {
 
 impl<'a> Fuelable for Caller<'_, AlkanesState> {
     fn consume_fuel(&mut self, n: u64) -> Result<()> {
-        overflow_error((self.get_fuel().unwrap() as u64).checked_sub(n))?;
+        let remaining = overflow_error((self.get_fuel().unwrap() as u64).checked_sub(n))?;
+        let height = self.data().context.lock().unwrap().message.height as u32;
+        if height >= V217_FIX_HEIGHT {
+            self.set_fuel(remaining).map_err(|e| anyhow!("failed to set fuel: {}", e))?;
+        }
         Ok(())
     }
 }
 
 impl Fuelable for AlkanesInstance {
     fn consume_fuel(&mut self, n: u64) -> Result<()> {
-        overflow_error((self.store.get_fuel().unwrap() as u64).checked_sub(n))?;
+        let remaining = overflow_error((self.store.get_fuel().unwrap() as u64).checked_sub(n))?;
+        let height = self.store.data().context.lock().unwrap().message.height as u32;
+        if height >= V217_FIX_HEIGHT {
+            self.store.set_fuel(remaining).map_err(|e| anyhow!("failed to set fuel: {}", e))?;
+        }
         Ok(())
     }
 }
@@ -378,6 +403,49 @@ impl Fuelable for AlkanesInstance {
 pub fn consume_fuel<'a>(caller: &mut Caller<'_, AlkanesState>, n: u64) -> Result<()> {
     caller.consume_fuel(n)
 }
+
+// ─── Gasless alkanes ─────────────────────────────────────────────────────────
+//
+// Certain well-audited genesis / system contracts are exempt from tx-level
+// fuel metering. The concrete case that motivated this: frBTC at [32, 0]'s
+// `wrap` opcode does `consensus_decode::<Transaction>` twice on the full BTC
+// tx bytes, plus `compute_txid` (double-SHA256 serialize), plus an
+// `observe_transaction` storage check, plus `compute_output` iterating and
+// comparing script_pubkeys. On regtest (with MINIMUM_FUEL_CHANGE1 = 3.5M
+// total tx fuel) a single wrap call consumes ~3.1M fuel — 88% of the budget
+// — leaving nothing for subsequent protostones in a chained
+// wrap → swap → burn tx. The work itself is cheap, the cost is in software
+// bitcoin parsing.
+//
+// Rather than pay to re-parse a tx that the runtime already has in hand,
+// gasless alkanes get an effectively-unlimited wasm fuel budget during
+// protostone execution, and whatever fuel they actually burn isn't charged
+// back against the tx-level FuelTank. Block-level metering is unaffected.
+//
+// This MUST be used sparingly — it's a trust boundary. Only contracts whose
+// logic is audited to terminate (no unbounded loops, no recursion) should
+// go on this list.
+
+use alkanes_support::id::AlkaneId;
+
+/// Alkane IDs whose protostone executions are not charged against the
+/// per-transaction fuel budget. Extend with extreme care.
+pub const GASLESS_ALKANES: &[AlkaneId] = &[
+    // frBTC — genesis synth at [32, 0]. `wrap` and `unwrap` both parse the
+    // full bitcoin tx; that parsing dominates the ~3M fuel cost per call.
+    AlkaneId { block: 32, tx: 0 },
+];
+
+#[inline]
+pub fn is_gasless_alkane(id: &AlkaneId) -> bool {
+    GASLESS_ALKANES.iter().any(|g| g == id)
+}
+
+/// Effective wasm start-fuel for a protostone call to a gasless alkane.
+/// Set to `u64::MAX / 2` so wasmtime doesn't trip OutOfFuel for any
+/// reasonable workload, while still bounding runaway loops at the
+/// architectural level.
+pub const GASLESS_ALKANE_FUEL: u64 = u64::MAX / 2;
 
 pub fn compute_extcall_fuel(savecount: u64, height: u32) -> Result<u64> {
     let save_fuel = overflow_error(fuel_per_store_byte(height).checked_mul(savecount))?;

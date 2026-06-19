@@ -418,7 +418,13 @@ impl SnapshotManager {
         let mut diff_data = Vec::new();
 
         // Format: [key_len(4 bytes)][key][value_len(4 bytes)][value]
-        for (key, value) in &incremental_changes {
+        // CRITICAL: Sort keys to ensure deterministic serialization order
+        // HashMap iteration is non-deterministic, so we must sort before serializing
+        let mut sorted_keys: Vec<&Vec<u8>> = incremental_changes.keys().collect();
+        sorted_keys.sort();
+
+        for key in sorted_keys {
+            let value = &incremental_changes[key];
             diff_data.extend_from_slice(&(key.len() as u32).to_le_bytes());
             diff_data.extend_from_slice(key);
             diff_data.extend_from_slice(&(value.len() as u32).to_le_bytes());
@@ -431,14 +437,19 @@ impl SnapshotManager {
         let compressed = zstd::encode_all(&diff_data[..], 3)?;
         let compressed_size = compressed.len();
         async_fs::write(&diff_path, compressed).await?;
-        
-        info!("Incremental snapshot diff compressed size: {} bytes", compressed_size);
+
+        info!("Incremental snapshot diff compressed size: {} bytes (saved {} bytes, {:.1}% compression)",
+              compressed_size, diff_data.len() - compressed_size,
+              (1.0 - (compressed_size as f64 / diff_data.len() as f64)) * 100.0);
 
         // Create stateroot.json file
         let state_root_hex = hex::encode(state_root);
         let state_root_obj = StateRoot {
             height: end_height,
             root: state_root_hex.clone(),
+            // NOTE: Timestamp is metadata-only and does NOT affect state verification
+            // The state_root field is the cryptographic hash used for validation
+            // This timestamp is informational only for debugging/monitoring
             timestamp: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or_default()
@@ -471,6 +482,8 @@ impl SnapshotManager {
             diff_file: format!("intervals/{}-{}/diff.bin.zst", start_height, end_height),
             wasm_file: format!("wasm/{}_{}.wasm", wasm_filename, if wasm_hash.len() >= 8 { &wasm_hash[..8] } else { &wasm_hash }),
             wasm_hash,
+            // NOTE: Timestamp is metadata-only for tracking snapshot creation time
+            // It does NOT affect state verification or determinism
             created_at: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or_default()
@@ -479,6 +492,8 @@ impl SnapshotManager {
 
         index.intervals.push(metadata);
         index.latest_height = end_height;
+        // NOTE: Index timestamp is metadata-only for tracking last update time
+        // It does NOT affect state verification or determinism
         index.created_at = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -489,13 +504,18 @@ impl SnapshotManager {
 
         // Reset for next interval
         self.last_snapshot_height = end_height;
-        
+
         // For incremental snapshots, we need to remove the keys that were just snapshotted
         // This prevents them from accumulating across intervals
-        for key in incremental_changes.keys() {
+        // CRITICAL: Sort keys to ensure deterministic removal order
+        // While removal order doesn't affect final state, it ensures consistent behavior
+        let mut keys_to_remove: Vec<Vec<u8>> = incremental_changes.keys().cloned().collect();
+        keys_to_remove.sort();
+
+        for key in keys_to_remove {
             // Remove from both tracking structures
-            self.key_change_heights.remove(key);
-            self.key_changes.remove(key);
+            self.key_change_heights.remove(&key);
+            self.key_changes.remove(&key);
         }
         
         // Clear raw operations as they're only used for debugging

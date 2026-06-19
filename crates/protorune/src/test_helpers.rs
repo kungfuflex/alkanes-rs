@@ -1,4 +1,4 @@
-use crate::balance_sheet::load_sheet;
+use crate::balance_sheet::{load_sheet, load_sheet_chunked};
 use crate::protostone::Protostones;
 use crate::tables;
 use bitcoin::address::NetworkChecked;
@@ -113,9 +113,6 @@ pub fn serialize_u32_little_endian(value: u32) -> Vec<u8> {
 }
 
 pub fn create_coinbase_transaction(height: u32) -> Transaction {
-    // Ensure Bitcoin network params are set (not Zcash or others)
-    init_network();
-    
     // Create the script for the coinbase transaction
     let script_pubkey = Address::from_str(ADDRESS1().as_str())
         .unwrap()
@@ -279,7 +276,7 @@ pub fn get_rune_balance_by_outpoint(
     outpoint: OutPoint,
     protorune_ids: Vec<ProtoruneRuneId>,
 ) -> Vec<u128> {
-    let mint_sheet = load_sheet(
+    let mint_sheet = load_sheet_chunked(
         &tables::RUNES
             .OUTPOINT_TO_RUNES
             .select(&consensus_encode(&outpoint).unwrap()),
@@ -296,7 +293,7 @@ pub fn get_protorune_balance_by_outpoint(
     outpoint: OutPoint,
     protorune_ids: Vec<ProtoruneRuneId>,
 ) -> Vec<u128> {
-    let mint_sheet = load_sheet(
+    let mint_sheet = load_sheet_chunked(
         &tables::RuneTable::for_protocol(protocol_id.into())
             .OUTPOINT_TO_RUNES
             .select(&consensus_encode(&outpoint).unwrap()),

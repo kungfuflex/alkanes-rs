@@ -1,40 +1,129 @@
-use crate::jsonrpc::{JsonRpcRequest, JsonRpcResponse};
+use alkanes_rpc_core::types::{JsonRpcRequest, JsonRpcResponse};
+use crate::handler::ProdDispatcher;
 use crate::proxy::ProxyClient;
 use anyhow::{anyhow, Result};
 use mlua::prelude::*;
+use moka::sync::Cache;
 use serde_json::Value;
-use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::Mutex;
 
-/// Script storage for saved Lua scripts
+/// Default max size of the LRU cache in bytes (128 MB)
+const DEFAULT_CACHE_MAX_SIZE: u64 = 128 * 1024 * 1024;
+
+/// Script storage for saved Lua scripts with LRU cache and optional disk persistence.
+/// Scripts are loaded lazily from disk on demand, not eagerly on startup.
 #[derive(Clone)]
 pub struct ScriptStorage {
-    scripts: Arc<Mutex<HashMap<String, String>>>,
+    cache: Cache<String, String>,
+    disk_path: Option<PathBuf>,
 }
 
 impl ScriptStorage {
+    fn build_cache() -> Cache<String, String> {
+        Cache::builder()
+            .weigher(|key: &String, value: &String| -> u32 {
+                // Weight is the size in bytes of key + value
+                (key.len() + value.len()).try_into().unwrap_or(u32::MAX)
+            })
+            .max_capacity(DEFAULT_CACHE_MAX_SIZE)
+            .build()
+    }
+
     pub fn new() -> Self {
         Self {
-            scripts: Arc::new(Mutex::new(HashMap::new())),
+            cache: Self::build_cache(),
+            disk_path: None,
         }
     }
 
-    pub async fn save(&self, script: String) -> String {
+    pub fn with_disk_path(path: PathBuf) -> Self {
+        // Ensure directory exists, but don't load scripts eagerly
+        if !path.exists() {
+            if let Err(e) = std::fs::create_dir_all(&path) {
+                log::warn!("Failed to create Lua script directory {:?}: {}", path, e);
+            } else {
+                log::info!("Created Lua script directory at {:?}", path);
+            }
+        } else {
+            log::info!("Lua script directory configured at {:?} (lazy loading enabled)", path);
+        }
+
+        Self {
+            cache: Self::build_cache(),
+            disk_path: Some(path),
+        }
+    }
+
+    /// Compute hash of a script
+    fn compute_hash(script: &str) -> String {
         use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
         hasher.update(script.as_bytes());
-        let hash = format!("{:x}", hasher.finalize());
-        
-        let mut scripts = self.scripts.lock().await;
-        scripts.insert(hash.clone(), script);
+        format!("{:x}", hasher.finalize())
+    }
+
+    /// Save script to disk if disk_path is configured
+    fn save_to_disk(&self, hash: &str, script: &str) {
+        if let Some(ref path) = self.disk_path {
+            let file_path = path.join(format!("{}.lua", hash));
+            if !file_path.exists() {
+                if let Err(e) = std::fs::write(&file_path, script) {
+                    log::warn!("Failed to persist Lua script to disk: {}", e);
+                } else {
+                    log::debug!("Persisted Lua script to disk: {}", hash);
+                }
+            }
+        }
+    }
+
+    /// Load script from disk if available
+    fn load_from_disk(&self, hash: &str) -> Option<String> {
+        if let Some(ref path) = self.disk_path {
+            let file_path = path.join(format!("{}.lua", hash));
+            if file_path.exists() {
+                match std::fs::read_to_string(&file_path) {
+                    Ok(content) => {
+                        log::debug!("Loaded Lua script from disk: {}", hash);
+                        return Some(content);
+                    }
+                    Err(e) => {
+                        log::warn!("Failed to read Lua script from disk: {}", e);
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    pub async fn save(&self, script: String) -> String {
+        let hash = Self::compute_hash(&script);
+
+        // Insert into cache if not present
+        if self.cache.get(&hash).is_none() {
+            self.cache.insert(hash.clone(), script.clone());
+            // Persist to disk
+            self.save_to_disk(&hash, &script);
+        }
         hash
     }
 
     pub async fn get(&self, hash: &str) -> Option<String> {
-        let scripts = self.scripts.lock().await;
-        scripts.get(hash).cloned()
+        // Check LRU cache first
+        if let Some(script) = self.cache.get(hash) {
+            return Some(script);
+        }
+
+        // Fallback to disk (lazy loading)
+        if let Some(script) = self.load_from_disk(hash) {
+            // Insert into LRU cache for future access
+            self.cache.insert(hash.to_string(), script.clone());
+            return Some(script);
+        }
+
+        None
     }
 }
 
@@ -63,13 +152,15 @@ pub struct LuaError {
 /// Context for RPC calls made from Lua
 #[derive(Clone)]
 struct RpcContext {
+    dispatcher: Arc<ProdDispatcher>,
     proxy: Arc<ProxyClient>,
     call_count: Arc<Mutex<usize>>,
 }
 
 impl RpcContext {
-    fn new(proxy: Arc<ProxyClient>) -> Self {
+    fn new(dispatcher: Arc<ProdDispatcher>, proxy: Arc<ProxyClient>) -> Self {
         Self {
+            dispatcher,
             proxy,
             call_count: Arc::new(Mutex::new(0)),
         }
@@ -86,7 +177,7 @@ impl RpcContext {
 
     async fn call_rpc(&self, method: &str, params: Vec<Value>) -> Result<Value> {
         self.increment_calls().await;
-        
+
         let request = JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
             method: method.to_string(),
@@ -94,8 +185,8 @@ impl RpcContext {
             id: serde_json::Value::Number(1.into()),
         };
 
-        let response = crate::handler::handle_request(&request, &self.proxy).await?;
-        
+        let response = crate::handler::handle_request(&request, &self.dispatcher, &self.proxy).await?;
+
         match response {
             JsonRpcResponse::Success { result, .. } => Ok(result),
             JsonRpcResponse::Error { error, .. } => {
@@ -109,10 +200,11 @@ impl RpcContext {
 pub async fn execute_lua_script(
     script: &str,
     args: Vec<Value>,
+    dispatcher: &Arc<ProdDispatcher>,
     proxy: &ProxyClient,
 ) -> Result<LuaExecutionResult> {
     let start = Instant::now();
-    let rpc_context = RpcContext::new(Arc::new(proxy.clone()));
+    let rpc_context = RpcContext::new(dispatcher.clone(), Arc::new(proxy.clone()));
 
     let lua = Lua::new();
 
@@ -258,6 +350,9 @@ fn add_all_rpc_methods<'lua>(
     // Alkanes methods
     rpc_table.set("alkanes_getbytecode", create_rpc_function(lua, "alkanes_getbytecode", rpc_context.clone())?)?;
     rpc_table.set("alkanes_protorunesbyaddress", create_rpc_function(lua, "alkanes_protorunesbyaddress", rpc_context.clone())?)?;
+    rpc_table.set("alkanes_protorunesbyoutpoint", create_rpc_function(lua, "alkanes_protorunesbyoutpoint", rpc_context.clone())?)?;
+    // Alias for Lua script compatibility (protorunes_by_outpoint is used in batch_utxo_balances.lua)
+    rpc_table.set("protorunes_by_outpoint", create_rpc_function(lua, "alkanes_protorunesbyoutpoint", rpc_context.clone())?)?;
 
     // Metashrew methods
     rpc_table.set("metashrew_view", create_rpc_function(lua, "metashrew_view", rpc_context.clone())?)?;

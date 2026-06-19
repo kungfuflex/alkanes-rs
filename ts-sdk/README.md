@@ -15,9 +15,15 @@ TypeScript SDK for Alkanes - Bitcoin smart contracts powered by WebAssembly.
 ## Installation
 
 ```bash
-npm install @alkanes/ts-sdk
-# or
-yarn add @alkanes/ts-sdk
+npm install "https://gitpkg.vercel.app/kungfuflex/alkanes-rs/ts-sdk?develop"
+# or with yarn
+yarn add "https://gitpkg.vercel.app/kungfuflex/alkanes-rs/ts-sdk?develop"
+```
+
+To install a specific branch or tag, replace `develop` with the branch/tag name:
+```bash
+npm install "https://gitpkg.vercel.app/kungfuflex/alkanes-rs/ts-sdk?main"
+npm install "https://gitpkg.vercel.app/kungfuflex/alkanes-rs/ts-sdk?v1.0.0"
 ```
 
 ## Quick Start
@@ -387,3 +393,4 @@ Contributions are welcome! Please read our contributing guidelines before submit
 - [alkanes-rs Repository](https://github.com/kungfuflex/alkanes-rs)
 - [@oyl/sdk](https://github.com/oyl-wallet/oyl-sdk)
 - [Bitcoin Developer Documentation](https://developer.bitcoin.org)
+# SDK with WASM support

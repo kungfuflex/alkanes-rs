@@ -10,7 +10,12 @@ use alkanes_support::cellpack::Cellpack;
 /// Parse input requirements from string format
 pub fn parse_input_requirements(input_str: &str) -> Result<Vec<InputRequirement>> {
     let mut requirements = Vec::new();
-    
+
+    // Handle empty string - means no input requirements
+    if input_str.trim().is_empty() {
+        return Ok(requirements);
+    }
+
     for part in input_str.split(',') {
         let trimmed = part.trim();
         

@@ -9,10 +9,6 @@ repository.workspace = true
 [lib]
 crate-type = ["cdylib", "rlib"]
 
-[[example]]
-name = "test_block_286639"
-required-features = ["zcash"]
-
 [features]
 test-utils = []
 testnet = []
@@ -20,10 +16,39 @@ dogecoin = []
 luckycoin = []
 bellscoin = []
 fractal = []
-zcash = ["ordinals/zcash", "protorune/zcash", "alkanes-support/zcash"]
 mainnet = ["protorune/mainnet"]
+zcash = ["alkanes-support/zcash", "protorune/zcash", "ordinals/zcash"]
+proxy = []
+owned_token = []
+auth_token = []
+genesis_alkane = []
+regtest = []
+genesis_protorune = []
+amm_pool = ["auth_token"]
+amm_factory = ["auth_token"]
+amm = ["amm_pool", "amm_factory"]
+orbital = []
 cache = ["protorune/cache"]
-debug-log = []
+all = []
+minimal = [
+    "refunder",
+    "merkle_distributor",
+    "free_mint",
+    "upgradeable",
+    "proxy",
+]
+refunder = []
+merkle_distributor = []
+free_mint = []
+upgradeable = []
+debug-log = ["metashrew-core/debug-log", "protorune/debug-log"]
+# fastpath: force the DIESEL native precompile (precompile_diesel.rs) active from
+# genesis instead of waiting for V220_FORK_HEIGHT. Consensus-equivalence with the
+# wasm path is enforced by tests::diesel_shadow.
+fastpath = []
+# address-indexing: restore v2-style address-keyed views on top of v3 chunked
+# storage (off in the canonical mainnet build).
+address-indexing = ["protorune/address-indexing"]
 
 [dependencies]
 anyhow = { workspace = true }
@@ -52,15 +77,21 @@ js-sys = { workspace = true }
 hex_lit = { workspace = true }
 once_cell = { workspace = true }
 borsh = { version = "1.5.7", features = ["derive"] }
-sha2 = "0.10.9"
+sha2 = { workspace = true }
 
 [dev-dependencies]
-alkanes = { path = "." }
+alkanes = { path = ".", features = [
+    "genesis_alkane",
+    "genesis_protorune",
+    "amm",
+    "orbital",
+    "auth_token",
+    "minimal",
+] }
 metashrew-core = { workspace = true, features = ["test-utils"] }
 protorune = { workspace = true, features = ["test-utils"] }
-async-trait = "0.1"
-hex = { workspace = true }
 
-[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
-metashrew-runtime = { path = "../metashrew-runtime" }
-tokio = { version = "1.42", features = ["full"] }
+[build-dependencies]
+anyhow = { workspace = true }
+flate2 = { workspace = true }
+hex = { workspace = true }

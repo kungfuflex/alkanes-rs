@@ -1,13 +1,12 @@
-use crate::{log_block, log_cache, log_error, log_network, log_success};
 use crate::message::AlkaneMessageContext;
+use protorune::message::MessageContext;
 use crate::network::{
-    check_and_upgrade_precompiled, genesis, genesis_alkane_upgrade_bytes, is_genesis, setup_diesel,
-    setup_frbtc, setup_frsigil, setup_ftrbtc,
+    check_and_upgrade_precompiled, clear_view_mode, genesis, genesis_alkane_upgrade_bytes,
+    is_active, is_genesis, setup_diesel, setup_frbtc, setup_frsigil,
 };
 use crate::unwrap;
 use crate::vm::fuel::FuelTank;
 use crate::vm::host_functions::clear_diesel_mints_cache;
-use alkanes_support::block_traits::BlockLike;
 use alkanes_support::gz::compress;
 use alkanes_support::id::AlkaneId;
 use anyhow::Result;
@@ -29,8 +28,7 @@ use std::sync::Arc;
     not(feature = "testnet"),
     not(feature = "luckycoin"),
     not(feature = "dogecoin"),
-    not(feature = "bellscoin"),
-    not(feature = "zcash")
+    not(feature = "bellscoin")
 ))]
 pub fn configure_network() {
     set_network(NetworkParams {
@@ -81,15 +79,6 @@ pub fn configure_network() {
     });
 }
 
-#[cfg(feature = "zcash")]
-pub fn configure_network() {
-    set_network(NetworkParams {
-        bech32_prefix: String::from("zs"), // Sapling addresses (not used by alkanes)
-        p2pkh_prefix: 0x1c, // t1 addresses (transparent)
-        p2sh_prefix: 0x1d,  // t3 addresses (transparent)
-    });
-}
-
 #[cfg(feature = "cache")]
 use crate::view::protorunes_by_address;
 #[cfg(feature = "cache")]
@@ -101,39 +90,39 @@ use protorune_support::proto::protorune::ProtorunesWalletRequest;
 #[cfg(feature = "cache")]
 use std::sync::Arc;
 
-/// Index a block (generic over BlockLike trait)
-pub fn index_block<B: BlockLike>(block: &B, height: u32) -> Result<()> {
-    log_block!("Indexing block at height {}", height);
-    
-    #[cfg(not(test))]
+pub fn index_block(block: &Block, height: u32) -> Result<()> {
     configure_network();
+    // Clear view mode at start of each block for deterministic behavior
+    clear_view_mode();
     clear_diesel_mints_cache();
     let really_is_genesis = is_genesis(height.into());
     if really_is_genesis {
-        log_network!("Processing genesis block");
         genesis().unwrap();
     }
-    
-    // Convert generic block to Bitcoin Block for setup functions
-    // These functions need the full block with transactions for fuel calculation
-    let bitcoin_block = block.to_bitcoin_block();
-    
-    setup_diesel(&bitcoin_block)?;
-    setup_frsigil(&bitcoin_block)?;  // Must be before setup_frbtc since frBTC/frZEC uses frSIGIL as auth token
-    setup_frbtc(&bitcoin_block)?;
-    setup_ftrbtc(&bitcoin_block)?;  // Initialize ftrBTC master contract at [31, 0]
-    check_and_upgrade_precompiled(height)?;
-    
-    // Initialize fuel tank with the full block (needs vfsize of all transactions)
-    FuelTank::initialize(&bitcoin_block, height);
-    
-    // Index using generic block (works with Bitcoin, Zcash, etc.)
+    if is_active(height.into()) {
+        setup_diesel(block)?;
+        setup_frbtc(block)?;
+        setup_frsigil(block)?;
+        check_and_upgrade_precompiled(height)?;
+        FuelTank::initialize(&block, height);
+    }
+    // Get the set of updated addresses from the indexing process
     let _updated_addresses =
-        Protorune::index_block::<B, AlkaneMessageContext>(block, height.into())?;
-    
-    log_success!("Block {} indexed successfully", height);
+        Protorune::index_block::<AlkaneMessageContext>(block.clone(), height.into())?;
 
-    unwrap::update_last_block(height as u128)?;
+    // Recycle-bin capture (native, no wasmi): sweep any protocol-tag balance left
+    // stranded at a spent input by a protostone-less spend into 8:dead's inventory
+    // + per-recipient ledger. From genesis (no height gate) so a reindex recovers
+    // historical burns; claims happen later via 8:dead opcode 3.
+    crate::recycle::capture_block(
+        block,
+        height.into(),
+        <AlkaneMessageContext as protorune::message::MessageContext>::protocol_tag(),
+    )?;
+
+    if is_active(height.into()) {
+        unwrap::update_last_block(height as u128)?;
+    }
 
     #[cfg(feature = "cache")]
     {
@@ -187,11 +176,10 @@ pub fn index_block<B: BlockLike>(block: &B, height: u32) -> Result<()> {
                         .set(Arc::new(filtered_response.write_to_bytes()?));
                 }
                 Err(e) => {
-                    log_error!("Error caching wallet response for address: {:?}", e);
+                    println!("Error caching wallet response for address: {:?}", e);
                 }
             }
         }
-        log_cache!("Cached wallet responses for {} addresses", _updated_addresses.len());
     }
 
     Ok(())

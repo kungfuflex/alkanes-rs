@@ -124,6 +124,19 @@ pub enum Commands {
         #[command(subcommand)]
         command: SubfrostCommands,
     },
+    /// ESPO indexer operations (alkanes balance indexer with PostgreSQL backend)
+    Espo {
+        #[command(subcommand)]
+        command: EspoCommands,
+    },
+    /// Decode a PSBT (Partially Signed Bitcoin Transaction) without calling bitcoind
+    Decodepsbt {
+        /// PSBT as base64 string
+        psbt: String,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
 }
 
 impl From<RunestoneCommands> for Commands {
@@ -138,6 +151,48 @@ impl Commands {
         Commands::Wallet {
             command: WalletCommands::Info,
         }
+    }
+
+    /// Check if the command requires wallet access (reading the keystore)
+    /// Read-only query commands don't need the wallet at all
+    pub fn requires_wallet(&self) -> bool {
+        match self {
+            // Wallet commands need the wallet (for info, addresses, etc.)
+            Commands::Wallet { command } => command.requires_wallet(),
+            Commands::Walletinfo { .. } => true,
+            // Bitcoin RPC queries don't need wallet
+            Commands::Bitcoind { .. } => false,
+            // Metashrew queries don't need wallet
+            Commands::Metashrew { .. } => false,
+            // Alkanes commands - only some need wallet
+            Commands::Alkanes { command } => command.requires_wallet(),
+            // BRC20-Prog commands - only some need wallet
+            Commands::Brc20Prog { command } => command.requires_wallet(),
+            // Runestone decoding doesn't need wallet
+            Commands::Runestone { .. } => false,
+            // Protorunes queries don't need wallet
+            Commands::Protorunes { .. } => false,
+            // Monitor commands don't need wallet
+            Commands::Monitor { .. } => false,
+            // Esplora queries don't need wallet
+            Commands::Esplora { .. } => false,
+            // Ord queries don't need wallet
+            Commands::Ord(_) => false,
+            // Subfrost queries don't need wallet (only queries unwrap status)
+            Commands::Subfrost { .. } => false,
+            // ESPO indexer queries don't need wallet
+            Commands::Espo { .. } => false,
+            // PSBT decoding doesn't need wallet
+            Commands::Decodepsbt { .. } => false,
+        }
+    }
+}
+
+impl WalletCommands {
+    /// Check if this wallet command requires wallet access
+    pub fn requires_wallet(&self) -> bool {
+        // All wallet commands need the wallet except Create (which creates a new one)
+        !matches!(self, WalletCommands::Create { .. })
     }
 }/// Wallet subcommands
 #[derive(Subcommand, Debug, Clone, Serialize, Deserialize)]
@@ -353,6 +408,8 @@ pub enum WalletCommands {
     Sync,
     /// Backup wallet
     Backup,
+    /// Get the mnemonic for the wallet
+    Mnemonic,
     /// List address identifiers
     ListIdentifiers,
 }
@@ -430,6 +487,12 @@ pub enum BitcoindCommands {
     Decoderawtransaction {
         /// Raw transaction hex
         hex: String,
+        #[arg(long)]
+        raw: bool,
+    },
+    Decodepsbt {
+        /// PSBT as base64 string
+        psbt: String,
         #[arg(long)]
         raw: bool,
     },
@@ -726,12 +789,29 @@ pub enum AlkanesCommands {
         #[arg(long)]
         raw: bool,
     },
+    /// Get metadata (ABI) for an alkane contract (maps to metashrew_view meta)
+    Meta {
+        /// Alkane ID (format: block:tx)
+        alkane_id: String,
+        /// Block tag to query (e.g., "latest" or a block height)
+        #[arg(long)]
+        block_tag: Option<String>,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
 }
 
 impl AlkanesCommands {
     /// Check if the command requires signing and thus a decrypted private key
     pub fn requires_signing(&self) -> bool {
         matches!(self, AlkanesCommands::Execute { .. } | AlkanesCommands::WrapBtc { .. })
+    }
+
+    /// Check if the command requires wallet access (reading the keystore)
+    /// Only signing commands need the wallet
+    pub fn requires_wallet(&self) -> bool {
+        self.requires_signing()
     }
 }
 
@@ -763,6 +843,21 @@ pub enum Brc20ProgCommands {
         /// Automatically confirm the transaction preview
         #[arg(short = 'y', long)]
         yes: bool,
+        /// Use MARA Slipstream service for broadcasting (bypasses standard mempool, accepts large/non-standard txs)
+        #[arg(long)]
+        use_slipstream: bool,
+        /// Use Rebar Shield for private transaction relay (requires payment output in tx)
+        #[arg(long)]
+        use_rebar: bool,
+        /// Rebar fee tier (1 or 2, default: 1). Tier 1: ~8% hashrate, Tier 2: ~16% hashrate
+        #[arg(long)]
+        rebar_tier: Option<u8>,
+        /// Anti-frontrunning strategy: checklocktimeverify, cpfp, presign, or rbf
+        #[arg(long, value_name = "STRATEGY")]
+        strategy: Option<String>,
+        /// Resume from existing commit transaction (provide commit txid)
+        #[arg(long, value_name = "TXID")]
+        resume: Option<String>,
     },
     /// Call a BRC20-prog contract function (transact)
     Transact {
@@ -797,6 +892,21 @@ pub enum Brc20ProgCommands {
         /// Automatically confirm the transaction preview
         #[arg(short = 'y', long)]
         yes: bool,
+        /// Use MARA Slipstream service for broadcasting (bypasses standard mempool, accepts large/non-standard txs)
+        #[arg(long)]
+        use_slipstream: bool,
+        /// Use Rebar Shield for private transaction relay (requires payment output in tx)
+        #[arg(long)]
+        use_rebar: bool,
+        /// Rebar fee tier (1 or 2, default: 1). Tier 1: ~8% hashrate, Tier 2: ~16% hashrate
+        #[arg(long)]
+        rebar_tier: Option<u8>,
+        /// Anti-frontrunning strategy: checklocktimeverify, cpfp, presign, or rbf
+        #[arg(long, value_name = "STRATEGY")]
+        strategy: Option<String>,
+        /// Resume from existing commit transaction (provide commit txid)
+        #[arg(long, value_name = "TXID")]
+        resume: Option<String>,
     },
     /// Wrap BTC to frBTC and execute in brc20-prog (wrapAndExecute2)
     WrapBtc {
@@ -842,12 +952,202 @@ pub enum Brc20ProgCommands {
         #[arg(long)]
         raw: bool,
     },
+    /// Wrap BTC to frBTC using the FrBTC contract
+    #[command(name = "frbtc-wrap")]
+    FrbtcWrap {
+        /// Amount of BTC to wrap (in satoshis)
+        amount: u64,
+        /// Addresses to source UTXOs from
+        #[arg(long, num_args = 1..)]
+        from: Option<Vec<String>>,
+        /// Change address
+        #[arg(long)]
+        change: Option<String>,
+        /// Fee rate in sat/vB
+        #[arg(long)]
+        fee_rate: Option<f32>,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+        /// Enable transaction tracing
+        #[arg(long)]
+        trace: bool,
+        /// Mine a block after broadcasting (regtest only)
+        #[arg(long)]
+        mine: bool,
+        /// Automatically confirm the transaction preview
+        #[arg(short = 'y', long)]
+        yes: bool,
+        /// Use MARA Slipstream service for broadcasting
+        #[arg(long)]
+        use_slipstream: bool,
+        /// Use Rebar Shield for private transaction relay
+        #[arg(long)]
+        use_rebar: bool,
+        /// Rebar fee tier (1 or 2, default: 1). Tier 1: ~8% hashrate, Tier 2: ~16% hashrate
+        #[arg(long)]
+        rebar_tier: Option<u8>,
+        /// Resume from existing commit transaction (provide commit txid)
+        #[arg(long, value_name = "TXID")]
+        resume: Option<String>,
+    },
+    /// Unwrap frBTC to receive BTC via the FrBTC contract
+    #[command(name = "frbtc-unwrap")]
+    FrbtcUnwrap {
+        /// Amount of frBTC to unwrap (in satoshis)
+        amount: u64,
+        /// Recipient Bitcoin address for the unwrapped BTC
+        #[arg(long)]
+        recipient: String,
+        /// Addresses to source UTXOs from
+        #[arg(long, num_args = 1..)]
+        from: Option<Vec<String>>,
+        /// Change address
+        #[arg(long)]
+        change: Option<String>,
+        /// Fee rate in sat/vB
+        #[arg(long)]
+        fee_rate: Option<f32>,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+        /// Enable transaction tracing
+        #[arg(long)]
+        trace: bool,
+        /// Mine a block after broadcasting (regtest only)
+        #[arg(long)]
+        mine: bool,
+        /// Automatically confirm the transaction preview
+        #[arg(short = 'y', long)]
+        yes: bool,
+        /// Use MARA Slipstream service for broadcasting
+        #[arg(long)]
+        use_slipstream: bool,
+        /// Use Rebar Shield for private transaction relay
+        #[arg(long)]
+        use_rebar: bool,
+        /// Rebar fee tier (1 or 2, default: 1). Tier 1: ~8% hashrate, Tier 2: ~16% hashrate
+        #[arg(long)]
+        rebar_tier: Option<u8>,
+        /// Resume from existing commit transaction (provide commit txid)
+        #[arg(long, value_name = "TXID")]
+        resume: Option<String>,
+    },
+    /// Wrap BTC and deploy+execute a script atomically
+    #[command(name = "frbtc-wrap-and-execute")]
+    FrbtcWrapAndExecute {
+        /// Amount of BTC to wrap (in satoshis)
+        amount: u64,
+        /// Bytecode of the script to deploy and execute (hex, 0x prefix optional)
+        #[arg(long)]
+        script: String,
+        /// Addresses to source UTXOs from
+        #[arg(long, num_args = 1..)]
+        from: Option<Vec<String>>,
+        /// Change address
+        #[arg(long)]
+        change: Option<String>,
+        /// Fee rate in sat/vB
+        #[arg(long)]
+        fee_rate: Option<f32>,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+        /// Enable transaction tracing
+        #[arg(long)]
+        trace: bool,
+        /// Mine a block after broadcasting (regtest only)
+        #[arg(long)]
+        mine: bool,
+        /// Automatically confirm the transaction preview
+        #[arg(short = 'y', long)]
+        yes: bool,
+        /// Use MARA Slipstream service for broadcasting
+        #[arg(long)]
+        use_slipstream: bool,
+        /// Use Rebar Shield for private transaction relay
+        #[arg(long)]
+        use_rebar: bool,
+        /// Rebar fee tier (1 or 2, default: 1). Tier 1: ~8% hashrate, Tier 2: ~16% hashrate
+        #[arg(long)]
+        rebar_tier: Option<u8>,
+        /// Resume from existing commit transaction (provide commit txid)
+        #[arg(long, value_name = "TXID")]
+        resume: Option<String>,
+    },
+    /// Wrap BTC and call an existing contract atomically
+    #[command(name = "frbtc-wrap-and-execute2")]
+    FrbtcWrapAndExecute2 {
+        /// Amount of BTC to wrap (in satoshis)
+        amount: u64,
+        /// Target contract address (0x prefixed hex)
+        #[arg(long)]
+        target: String,
+        /// Function signature to call on target (e.g., "deposit()")
+        #[arg(long)]
+        signature: String,
+        /// Calldata arguments as comma-separated values
+        #[arg(long, default_value = "")]
+        calldata: String,
+        /// Addresses to source UTXOs from
+        #[arg(long, num_args = 1..)]
+        from: Option<Vec<String>>,
+        /// Change address
+        #[arg(long)]
+        change: Option<String>,
+        /// Fee rate in sat/vB
+        #[arg(long)]
+        fee_rate: Option<f32>,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+        /// Enable transaction tracing
+        #[arg(long)]
+        trace: bool,
+        /// Mine a block after broadcasting (regtest only)
+        #[arg(long)]
+        mine: bool,
+        /// Automatically confirm the transaction preview
+        #[arg(short = 'y', long)]
+        yes: bool,
+        /// Use MARA Slipstream service for broadcasting
+        #[arg(long)]
+        use_slipstream: bool,
+        /// Use Rebar Shield for private transaction relay
+        #[arg(long)]
+        use_rebar: bool,
+        /// Rebar fee tier (1 or 2, default: 1). Tier 1: ~8% hashrate, Tier 2: ~16% hashrate
+        #[arg(long)]
+        rebar_tier: Option<u8>,
+        /// Resume from existing commit transaction (provide commit txid)
+        #[arg(long, value_name = "TXID")]
+        resume: Option<String>,
+    },
+    /// Get the FrBTC signer address for the current network
+    #[command(name = "frbtc-signer")]
+    FrbtcSigner {
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
 }
 
 impl Brc20ProgCommands {
     /// Check if the command requires signing and thus a decrypted private key
     pub fn requires_signing(&self) -> bool {
-        true // All BRC20-Prog commands require signing
+        match self {
+            // Query commands don't require signing
+            Brc20ProgCommands::Unwrap { .. } => false,
+            Brc20ProgCommands::FrbtcSigner { .. } => false,
+            // All other commands require signing
+            _ => true,
+        }
+    }
+
+    /// Check if the command requires wallet access (reading the keystore)
+    /// Only signing commands need the wallet
+    pub fn requires_wallet(&self) -> bool {
+        self.requires_signing()
     }
 }
 
@@ -1288,6 +1588,447 @@ pub enum SubfrostCommands {
         #[arg(long, default_value = "10")]
         expected_outputs: usize,
         /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+}
+
+/// ESPO subcommands (alkanes balance indexer with PostgreSQL backend)
+#[derive(Subcommand, Debug, Clone, Serialize, Deserialize)]
+pub enum EspoCommands {
+    /// Get current ESPO indexer height
+    Height {
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get alkanes balances for an address
+    Balances {
+        /// Address to query balances for
+        address: String,
+        /// Include outpoint details in response
+        #[arg(long)]
+        include_outpoints: bool,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get outpoints containing alkanes for an address
+    Outpoints {
+        /// Address to query outpoints for
+        address: String,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get alkanes balances at a specific outpoint
+    Outpoint {
+        /// Outpoint (format: txid:vout)
+        outpoint: String,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get holders of an alkane token
+    Holders {
+        /// Alkane ID (format: block:tx)
+        alkane_id: String,
+        /// Page number (default: 1)
+        #[arg(long, default_value = "1")]
+        page: u64,
+        /// Items per page (default: 100)
+        #[arg(long, default_value = "100")]
+        limit: u64,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get holder count for an alkane
+    HoldersCount {
+        /// Alkane ID (format: block:tx)
+        alkane_id: String,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get storage keys for an alkane contract
+    Keys {
+        /// Alkane ID (format: block:tx)
+        alkane_id: String,
+        /// Page number (default: 1)
+        #[arg(long, default_value = "1")]
+        page: u64,
+        /// Items per page (default: 100)
+        #[arg(long, default_value = "100")]
+        limit: u64,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Ping the ESPO server
+    Ping,
+    /// Ping the AMM Data module
+    AmmdataPing,
+    /// Get OHLCV candlestick data for a pool
+    Candles {
+        /// Pool ID (format: block:tx)
+        pool: String,
+        /// Timeframe (e.g., "10m", "1h", "1d", "1w", "1M")
+        #[arg(long)]
+        timeframe: Option<String>,
+        /// Side ("base" or "quote")
+        #[arg(long)]
+        side: Option<String>,
+        /// Items per page
+        #[arg(long)]
+        limit: Option<u64>,
+        /// Page number
+        #[arg(long)]
+        page: Option<u64>,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get trade history for a pool
+    Trades {
+        /// Pool ID (format: block:tx)
+        pool: String,
+        /// Items per page
+        #[arg(long)]
+        limit: Option<u64>,
+        /// Page number
+        #[arg(long)]
+        page: Option<u64>,
+        /// Side ("base" or "quote")
+        #[arg(long)]
+        side: Option<String>,
+        /// Filter side ("buy", "sell", or "all")
+        #[arg(long)]
+        filter_side: Option<String>,
+        /// Sort field
+        #[arg(long)]
+        sort: Option<String>,
+        /// Direction ("asc" or "desc")
+        #[arg(long)]
+        dir: Option<String>,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get all pools with pagination
+    Pools {
+        /// Items per page
+        #[arg(long)]
+        limit: Option<u64>,
+        /// Page number
+        #[arg(long)]
+        page: Option<u64>,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Find the best swap path between two tokens
+    FindBestSwapPath {
+        /// Input token (format: block:tx)
+        token_in: String,
+        /// Output token (format: block:tx)
+        token_out: String,
+        /// Mode ("exact_in", "exact_out", or "implicit")
+        #[arg(long)]
+        mode: Option<String>,
+        /// Amount in (as string to preserve precision)
+        #[arg(long)]
+        amount_in: Option<String>,
+        /// Amount out (as string to preserve precision)
+        #[arg(long)]
+        amount_out: Option<String>,
+        /// Minimum amount out (as string to preserve precision)
+        #[arg(long)]
+        amount_out_min: Option<String>,
+        /// Maximum amount in (as string to preserve precision)
+        #[arg(long)]
+        amount_in_max: Option<String>,
+        /// Available amount in (as string to preserve precision)
+        #[arg(long)]
+        available_in: Option<String>,
+        /// Fee in basis points
+        #[arg(long)]
+        fee_bps: Option<u64>,
+        /// Maximum number of hops
+        #[arg(long)]
+        max_hops: Option<u64>,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Find the best MEV swap opportunity for a token
+    GetBestMevSwap {
+        /// Token (format: block:tx)
+        token: String,
+        /// Fee in basis points
+        #[arg(long)]
+        fee_bps: Option<u64>,
+        /// Maximum number of hops
+        #[arg(long)]
+        max_hops: Option<u64>,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get all known AMM factories
+    AmmFactories {
+        #[arg(long)]
+        limit: Option<u64>,
+        #[arg(long)]
+        page: Option<u64>,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// List all alkanes with pagination
+    AllAlkanes {
+        #[arg(long)]
+        limit: Option<u64>,
+        #[arg(long)]
+        page: Option<u64>,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get detailed info for a specific alkane
+    AlkaneInfo {
+        /// Alkane ID (format: block:tx)
+        alkane_id: String,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get block summary (header, trace count)
+    BlockSummary {
+        /// Block height
+        height: u64,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get circulating supply for an alkane
+    CirculatingSupply {
+        /// Alkane ID (format: block:tx)
+        alkane_id: String,
+        /// Optional block height (default: latest)
+        #[arg(long)]
+        height: Option<u64>,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get transfer volume rankings for an alkane
+    TransferVolume {
+        /// Alkane ID (format: block:tx)
+        alkane_id: String,
+        #[arg(long)]
+        limit: Option<u64>,
+        #[arg(long)]
+        page: Option<u64>,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get total received rankings for an alkane
+    TotalReceived {
+        /// Alkane ID (format: block:tx)
+        alkane_id: String,
+        #[arg(long)]
+        limit: Option<u64>,
+        #[arg(long)]
+        page: Option<u64>,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get activity summary for an address
+    AddressActivity {
+        /// Bitcoin address
+        address: String,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get all balance holders for an alkane (keyed by address)
+    AlkaneBalances {
+        /// Alkane ID (format: block:tx)
+        alkane_id: String,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get alkane balance via metashrew (raw indexer query)
+    AlkaneBalanceMetashrew {
+        /// Owner AlkaneId (format: block:tx)
+        owner: String,
+        /// Target AlkaneId (format: block:tx)
+        target: String,
+        #[arg(long)]
+        height: Option<u64>,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get transactions that changed balances for an alkane
+    AlkaneBalanceTxs {
+        /// Alkane ID (format: block:tx)
+        alkane_id: String,
+        #[arg(long)]
+        limit: Option<u64>,
+        #[arg(long)]
+        page: Option<u64>,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get transactions that changed a specific token balance for an owner
+    AlkaneBalanceTxsByToken {
+        /// Owner AlkaneId (format: block:tx)
+        owner: String,
+        /// Token AlkaneId (format: block:tx)
+        token: String,
+        #[arg(long)]
+        limit: Option<u64>,
+        #[arg(long)]
+        page: Option<u64>,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get alkane traces for a specific block
+    BlockTraces {
+        /// Block height
+        height: u64,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get alkane trace summary for a transaction
+    TxSummary {
+        /// Transaction ID
+        txid: String,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get alkane transaction IDs in a block
+    BlockTxs {
+        /// Block height
+        height: u64,
+        #[arg(long)]
+        limit: Option<u64>,
+        #[arg(long)]
+        page: Option<u64>,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get alkane transaction IDs for an address
+    AddressTxs {
+        /// Bitcoin address
+        address: String,
+        #[arg(long)]
+        limit: Option<u64>,
+        #[arg(long)]
+        page: Option<u64>,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get full transaction details for an address
+    AddressTransactions {
+        /// Bitcoin address
+        address: String,
+        #[arg(long)]
+        limit: Option<u64>,
+        #[arg(long)]
+        page: Option<u64>,
+        /// Only include alkane transactions
+        #[arg(long)]
+        only_alkane_txs: bool,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get the most recent alkane traces
+    LatestTraces {
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get mempool traces (unconfirmed alkane transactions)
+    MempoolTraces {
+        #[arg(long)]
+        limit: Option<u64>,
+        #[arg(long)]
+        page: Option<u64>,
+        /// Filter by address
+        #[arg(long)]
+        address: Option<String>,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get all frBTC wrap events
+    WrapEvents {
+        #[arg(long)]
+        count: Option<u64>,
+        #[arg(long)]
+        offset: Option<u64>,
+        /// Filter by success status
+        #[arg(long)]
+        successful: Option<bool>,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get frBTC wrap events for an address
+    WrapEventsByAddress {
+        /// Bitcoin address
+        address: String,
+        #[arg(long)]
+        count: Option<u64>,
+        #[arg(long)]
+        offset: Option<u64>,
+        #[arg(long)]
+        successful: Option<bool>,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get all frBTC unwrap events
+    UnwrapEvents {
+        #[arg(long)]
+        count: Option<u64>,
+        #[arg(long)]
+        offset: Option<u64>,
+        #[arg(long)]
+        successful: Option<bool>,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Get frBTC unwrap events for an address
+    UnwrapEventsByAddress {
+        /// Bitcoin address
+        address: String,
+        #[arg(long)]
+        count: Option<u64>,
+        #[arg(long)]
+        offset: Option<u64>,
+        #[arg(long)]
+        successful: Option<bool>,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Look up series ID from an AlkaneId
+    SeriesIdFromAlkane {
+        /// Alkane ID (format: block:tx)
+        alkane_id: String,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Look up series IDs from multiple AlkaneIds
+    SeriesIdsFromAlkanes {
+        /// Alkane IDs (comma-separated, format: block:tx,block:tx)
+        alkane_ids: String,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Look up AlkaneId from a series ID
+    AlkaneFromSeriesId {
+        /// Series ID
+        series_id: String,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Look up AlkaneIds from multiple series IDs
+    AlkanesFromSeriesIds {
+        /// Series IDs (comma-separated)
+        series_ids: String,
         #[arg(long)]
         raw: bool,
     },

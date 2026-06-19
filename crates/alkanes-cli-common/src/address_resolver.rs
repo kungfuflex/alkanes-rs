@@ -8,6 +8,7 @@
 
 use crate::{Result, AlkanesError};
 use crate::traits::DeezelProvider;
+use prost::Message as ProstMessage;
 #[allow(unused_imports)]
 use crate::NetworkProvider;
 use crate::wallet::AddressType;
@@ -91,8 +92,9 @@ impl<P: DeezelProvider> AddressResolver<P> {
         
         // Check if first part is a valid address type
         let address_type = parts[0].to_lowercase();
-        let valid_types = ["p2pk", "p2tr", "p2pkh", "p2sh", "p2wpkh", "p2wsh", "p2sh-p2wpkh", "p2sh-p2wsh"];
-        
+        let valid_types = ["p2pk", "p2tr", "p2pkh", "p2sh", "p2wpkh", "p2wsh", "p2sh-p2wpkh", "p2sh-p2wsh",
+                           "subfrost-alkanes", "subfrost-brc20"];
+
         if !valid_types.contains(&address_type.as_str()) {
             return false;
         }
@@ -169,7 +171,8 @@ impl<P: DeezelProvider> AddressResolver<P> {
     
     /// Check if string is a valid address type
     fn is_valid_address_type(&self, s: &str) -> bool {
-        matches!(s.to_lowercase().as_str(), "p2pk" | "p2tr" | "p2pkh" | "p2sh" | "p2wpkh" | "p2wsh" | "p2sh-p2wpkh" | "p2sh-p2wsh")
+        matches!(s.to_lowercase().as_str(), "p2pk" | "p2tr" | "p2pkh" | "p2sh" | "p2wpkh" | "p2wsh" | "p2sh-p2wpkh" | "p2sh-p2wsh"
+            | "subfrost-alkanes" | "subfrost-brc20")
     }
     
     /// Resolve a single identifier to an address
@@ -178,12 +181,18 @@ impl<P: DeezelProvider> AddressResolver<P> {
         if let Some(cached) = self.cache.get(identifier) {
             return Ok(cached.clone());
         }
-        
+
         let parsed = self.parse_identifier(identifier)?;
-        
+
         let address = match parsed {
-            AddressIdentifier::SelfWallet { address_type, index } => {
-                crate::traits::AddressResolver::get_address(&self.provider, address_type.as_str(), index).await?
+            AddressIdentifier::SelfWallet { ref address_type, index } => {
+                let type_str = address_type.as_str().to_lowercase();
+                // Handle subfrost dynamic signer addresses
+                if type_str.starts_with("subfrost-") {
+                    self.resolve_subfrost_signer(&type_str, index).await?
+                } else {
+                    crate::traits::AddressResolver::get_address(&self.provider, address_type.as_str(), index).await?
+                }
             },
             AddressIdentifier::External { address } => address,
             AddressIdentifier::Raw { address } => {
@@ -192,11 +201,115 @@ impl<P: DeezelProvider> AddressResolver<P> {
                 address
             },
         };
-        
+
         // Cache the result
         self.cache.insert(identifier.to_string(), address.clone());
-        
+
         Ok(address)
+    }
+
+    /// Resolve a subfrost dynamic signer address by calling the contract's
+    /// GetSignerAddress opcode (103) via simulate, then computing P2TR.
+    ///
+    /// Address types:
+    /// - `subfrost-alkanes:N` → simulate [32:N] with input [103]
+    /// - `subfrost-brc20:N` → simulate BRC20 prog frBTC at equivalent ID
+    async fn resolve_subfrost_signer(&self, type_str: &str, index: u32) -> Result<String> {
+        use crate::traits::AlkanesProvider;
+
+        // Determine the contract to call based on the address type
+        let contract_id = match type_str {
+            "subfrost-alkanes" => format!("32:{}", index),
+            "subfrost-brc20" => format!("32:{}", index), // Same contract, different protocol
+            _ => return Err(AlkanesError::AddressResolution(
+                format!("Unknown subfrost address type: {}", type_str)
+            )),
+        };
+
+        log::info!("Resolving subfrost signer address for {} via simulate on {}", type_str, contract_id);
+
+        // Build simulate context with opcode 103 (GetSignerAddress)
+        let context = crate::proto::alkanes::MessageContextParcel {
+            alkanes: vec![],
+            transaction: vec![],
+            block: vec![],
+            height: 0,
+            txindex: 0,
+            calldata: {
+                use alkanes_support::cellpack::Cellpack;
+                use alkanes_support::id::AlkaneId;
+                let parts: Vec<&str> = contract_id.split(':').collect();
+                let block = parts[0].parse::<u128>().unwrap_or(32);
+                let tx = parts[1].parse::<u128>().unwrap_or(0);
+                Cellpack {
+                    target: AlkaneId { block, tx },
+                    inputs: vec![103], // GetSignerAddress opcode
+                }.encipher()
+            },
+            vout: 0,
+            pointer: 0,
+            refund_pointer: 0,
+        };
+
+        let sim_result = self.provider.simulate(&contract_id, &context, None).await
+            .map_err(|e| AlkanesError::AddressResolution(
+                format!("Failed to simulate GetSignerAddress on {}: {}", contract_id, e)
+            ))?;
+
+        // The simulate returns a hex string (protobuf-encoded SimulateResponse).
+        // We need to decode it to get the execution data.
+        let result_hex = sim_result.as_str().unwrap_or("");
+        let result_hex = result_hex.strip_prefix("0x").unwrap_or(result_hex);
+
+        // Decode the protobuf SimulateResponse
+        let result_bytes = hex::decode(result_hex)
+            .map_err(|e| AlkanesError::AddressResolution(
+                format!("Failed to decode simulate response: {}", e)
+            ))?;
+
+        // The SimulateResponse has: execution.data which contains the signer pubkey
+        let sim_response = crate::proto::alkanes::SimulateResponse::decode(&*result_bytes)
+            .map_err(|e| AlkanesError::AddressResolution(
+                format!("Failed to decode SimulateResponse protobuf: {}", e)
+            ))?;
+
+        let data_hex = sim_response.execution
+            .as_ref()
+            .map(|e| hex::encode(&e.data))
+            .unwrap_or_default();
+        if data_hex.len() < 64 {
+            return Err(AlkanesError::AddressResolution(
+                format!("GetSignerAddress returned invalid data ({}): expected 32-byte pubkey", data_hex)
+            ));
+        }
+
+        let pubkey_bytes = hex::decode(&data_hex[..64])
+            .map_err(|e| AlkanesError::AddressResolution(
+                format!("Failed to decode signer pubkey: {}", e)
+            ))?;
+
+        // Compute P2TR address from x-only pubkey
+        let secp = bitcoin::secp256k1::Secp256k1::new();
+        let xonly = bitcoin::key::UntweakedPublicKey::from_slice(&pubkey_bytes)
+            .map_err(|e| AlkanesError::AddressResolution(
+                format!("Invalid x-only pubkey: {}", e)
+            ))?;
+
+        use bitcoin::key::TapTweak;
+        let (tweaked, _) = xonly.tap_tweak(&secp, None);
+        let script = bitcoin::ScriptBuf::new_p2tr_tweaked(tweaked);
+
+        // Convert to address using network from provider
+        use crate::traits::StorageProvider;
+        let network = self.provider.get_network();
+        let address = bitcoin::Address::from_script(&script, network)
+            .map_err(|e| AlkanesError::AddressResolution(
+                format!("Failed to derive address from signer script: {}", e)
+            ))?;
+
+        let addr_str = address.to_string();
+        log::info!("Resolved {} → {}", type_str, addr_str);
+        Ok(addr_str)
     }
     
     /// Parse address range specification (e.g., "p2tr:0-1000", "p2sh:0-500", "p2tr:50")
@@ -258,7 +371,12 @@ impl<P: DeezelProvider> AddressResolver<P> {
                         // Resolve all addresses in the range
                         for i in 0..count {
                             let index = start_index + i;
-                            let address = crate::traits::AddressResolver::get_address(&self.provider, &address_type, index).await?;
+                            let at_lower = address_type.to_lowercase();
+                            let address = if at_lower.starts_with("subfrost-") {
+                                self.resolve_subfrost_signer(&at_lower, index).await?
+                            } else {
+                                crate::traits::AddressResolver::get_address(&self.provider, &address_type, index).await?
+                            };
                             result.push(address);
                         }
                     }
@@ -449,7 +567,7 @@ mod standalone_impls {
     use crate::traits::{
         JsonRpcProvider, StorageProvider, CryptoProvider, TimeProvider, LogProvider,
         WalletProvider, BitcoinRpcProvider, MetashrewRpcProvider, MetashrewProvider,
-        EsploraProvider, RunestoneProvider, AlkanesProvider, MonitorProvider, 
+        EsploraProvider, EspoProvider, RunestoneProvider, AlkanesProvider, MonitorProvider,
         KeystoreProvider, OrdProvider, SendParams, UtxoInfo, TransactionInfo,
         FeeEstimate, FeeRates, WalletBalance, WalletConfig, WalletInfo, AddressInfo,
         BlockEvent, KeystoreAddress, KeystoreInfo,
@@ -611,7 +729,11 @@ impl WalletProvider for StandaloneAddressResolver {
     async fn get_internal_key(&self) -> Result<(bitcoin::XOnlyPublicKey, (bitcoin::bip32::Fingerprint, bitcoin::bip32::DerivationPath))> {
         Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support wallet operations".to_string()))
     }
-    
+
+    async fn get_internal_key_with_secret(&self) -> Result<(bitcoin::XOnlyPublicKey, bitcoin::secp256k1::SecretKey, (bitcoin::bip32::Fingerprint, bitcoin::bip32::DerivationPath))> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support wallet operations".to_string()))
+    }
+
     async fn sign_psbt(&mut self, _psbt: &bitcoin::psbt::Psbt) -> Result<bitcoin::psbt::Psbt> {
         Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support wallet operations".to_string()))
     }
@@ -666,6 +788,9 @@ impl BitcoinRpcProvider for StandaloneAddressResolver {
     async fn generate_future(&self, _address: &str) -> Result<serde_json::Value> {
         Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Bitcoin RPC".to_string()))
     }
+    async fn subfrost_thieve(&self, _address: &str, _amount: u64) -> Result<serde_json::Value> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Bitcoin RPC".to_string()))
+    }
     async fn get_blockchain_info(&self) -> Result<serde_json::Value> {
         Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Bitcoin RPC".to_string()))
     }
@@ -679,6 +804,9 @@ impl BitcoinRpcProvider for StandaloneAddressResolver {
         Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Bitcoin RPC".to_string()))
     }
     async fn send_raw_transaction(&self, _tx_hex: &str) -> Result<String> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Bitcoin RPC".to_string()))
+    }
+    async fn send_raw_transactions(&self, _tx_hexes: &[String]) -> Result<Vec<String>> {
         Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Bitcoin RPC".to_string()))
     }
     async fn get_mempool_info(&self) -> Result<serde_json::Value> {
@@ -724,6 +852,14 @@ impl BitcoinRpcProvider for StandaloneAddressResolver {
     }
 
     async fn get_tx_out(&self, _txid: &str, _vout: u32, _include_mempool: bool) -> Result<serde_json::Value> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Bitcoin RPC".to_string()))
+    }
+
+    async fn decode_raw_transaction(&self, _hex: &str) -> Result<serde_json::Value> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Bitcoin RPC".to_string()))
+    }
+
+    async fn decode_psbt(&self, _psbt: &str) -> Result<serde_json::Value> {
         Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Bitcoin RPC".to_string()))
     }
 }
@@ -866,6 +1002,174 @@ impl EsploraProvider for StandaloneAddressResolver {
 
 #[cfg(not(target_arch = "wasm32"))]
 #[async_trait(?Send)]
+impl EspoProvider for StandaloneAddressResolver {
+    async fn get_espo_height(&self) -> Result<u64> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Espo API".to_string()))
+    }
+    async fn get_address_balances(&self, _address: &str, _include_outpoints: bool) -> Result<serde_json::Value> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Espo API".to_string()))
+    }
+    async fn get_address_outpoints(&self, _address: &str) -> Result<serde_json::Value> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Espo API".to_string()))
+    }
+    async fn get_address_spendable_outpoints(&self, _address: &str) -> Result<serde_json::Value> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Espo API".to_string()))
+    }
+    async fn get_outpoint_balances(&self, _outpoint: &str) -> Result<serde_json::Value> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Espo API".to_string()))
+    }
+    async fn get_holders(&self, _alkane_id: &str, _page: u64, _limit: u64) -> Result<serde_json::Value> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Espo API".to_string()))
+    }
+    async fn get_holders_count(&self, _alkane_id: &str) -> Result<serde_json::Value> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Espo API".to_string()))
+    }
+    async fn get_keys(&self, _alkane_id: &str, _page: u64, _limit: u64) -> Result<serde_json::Value> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Espo API".to_string()))
+    }
+    async fn ping(&self) -> Result<String> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Espo API".to_string()))
+    }
+    async fn ammdata_ping(&self) -> Result<String> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Espo API".to_string()))
+    }
+    async fn get_candles(
+        &self,
+        _pool: &str,
+        _timeframe: Option<&str>,
+        _side: Option<&str>,
+        _limit: Option<u64>,
+        _page: Option<u64>,
+    ) -> Result<serde_json::Value> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Espo API".to_string()))
+    }
+    async fn get_trades(
+        &self,
+        _pool: &str,
+        _limit: Option<u64>,
+        _page: Option<u64>,
+        _side: Option<&str>,
+        _filter_side: Option<&str>,
+        _sort: Option<&str>,
+        _dir: Option<&str>,
+    ) -> Result<serde_json::Value> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Espo API".to_string()))
+    }
+    async fn get_pools(
+        &self,
+        _limit: Option<u64>,
+        _page: Option<u64>,
+    ) -> Result<serde_json::Value> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Espo API".to_string()))
+    }
+    async fn find_best_swap_path(
+        &self,
+        _token_in: &str,
+        _token_out: &str,
+        _mode: Option<&str>,
+        _amount_in: Option<&str>,
+        _amount_out: Option<&str>,
+        _amount_out_min: Option<&str>,
+        _amount_in_max: Option<&str>,
+        _available_in: Option<&str>,
+        _fee_bps: Option<u64>,
+        _max_hops: Option<u64>,
+    ) -> Result<serde_json::Value> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Espo API".to_string()))
+    }
+    async fn get_best_mev_swap(
+        &self,
+        _token: &str,
+        _fee_bps: Option<u64>,
+        _max_hops: Option<u64>,
+    ) -> Result<serde_json::Value> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Espo API".to_string()))
+    }
+    async fn get_amm_factories(&self, _page: Option<u64>, _limit: Option<u64>) -> Result<serde_json::Value> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Espo API".to_string()))
+    }
+    async fn get_all_alkanes(&self, _page: Option<u64>, _limit: Option<u64>) -> Result<serde_json::Value> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Espo API".to_string()))
+    }
+    async fn get_alkane_info(&self, _alkane_id: &str) -> Result<serde_json::Value> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Espo API".to_string()))
+    }
+    async fn get_block_summary(&self, _height: u64) -> Result<serde_json::Value> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Espo API".to_string()))
+    }
+    async fn get_circulating_supply(&self, _alkane_id: &str, _height: Option<u64>) -> Result<serde_json::Value> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Espo API".to_string()))
+    }
+    async fn get_transfer_volume(&self, _alkane_id: &str, _page: Option<u64>, _limit: Option<u64>) -> Result<serde_json::Value> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Espo API".to_string()))
+    }
+    async fn get_total_received(&self, _alkane_id: &str, _page: Option<u64>, _limit: Option<u64>) -> Result<serde_json::Value> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Espo API".to_string()))
+    }
+    async fn get_address_activity(&self, _address: &str) -> Result<serde_json::Value> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Espo API".to_string()))
+    }
+    async fn get_alkane_balances(&self, _alkane_id: &str) -> Result<serde_json::Value> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Espo API".to_string()))
+    }
+    async fn get_alkane_balance_metashrew(&self, _owner: &str, _target: &str, _height: Option<u64>) -> Result<serde_json::Value> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Espo API".to_string()))
+    }
+    async fn get_alkane_balance_txs(&self, _alkane_id: &str, _page: Option<u64>, _limit: Option<u64>) -> Result<serde_json::Value> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Espo API".to_string()))
+    }
+    async fn get_alkane_balance_txs_by_token(&self, _owner: &str, _token: &str, _page: Option<u64>, _limit: Option<u64>) -> Result<serde_json::Value> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Espo API".to_string()))
+    }
+    async fn get_block_traces(&self, _height: u64) -> Result<serde_json::Value> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Espo API".to_string()))
+    }
+    async fn get_alkane_tx_summary(&self, _txid: &str) -> Result<serde_json::Value> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Espo API".to_string()))
+    }
+    async fn get_alkane_block_txs(&self, _height: u64, _page: Option<u64>, _limit: Option<u64>) -> Result<serde_json::Value> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Espo API".to_string()))
+    }
+    async fn get_alkane_address_txs(&self, _address: &str, _page: Option<u64>, _limit: Option<u64>) -> Result<serde_json::Value> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Espo API".to_string()))
+    }
+    async fn get_address_transactions(&self, _address: &str, _page: Option<u64>, _limit: Option<u64>, _only_alkane_txs: Option<bool>) -> Result<serde_json::Value> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Espo API".to_string()))
+    }
+    async fn get_alkane_latest_traces(&self) -> Result<serde_json::Value> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Espo API".to_string()))
+    }
+    async fn get_mempool_traces(&self, _page: Option<u64>, _limit: Option<u64>, _address: Option<&str>) -> Result<serde_json::Value> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Espo API".to_string()))
+    }
+    async fn get_wrap_events_all(&self, _count: Option<u64>, _offset: Option<u64>, _successful: Option<bool>) -> Result<serde_json::Value> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Espo API".to_string()))
+    }
+    async fn get_wrap_events_by_address(&self, _address: &str, _count: Option<u64>, _offset: Option<u64>, _successful: Option<bool>) -> Result<serde_json::Value> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Espo API".to_string()))
+    }
+    async fn get_unwrap_events_all(&self, _count: Option<u64>, _offset: Option<u64>, _successful: Option<bool>) -> Result<serde_json::Value> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Espo API".to_string()))
+    }
+    async fn get_unwrap_events_by_address(&self, _address: &str, _count: Option<u64>, _offset: Option<u64>, _successful: Option<bool>) -> Result<serde_json::Value> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Espo API".to_string()))
+    }
+    async fn get_series_id_from_alkane_id(&self, _alkane_id: &str) -> Result<serde_json::Value> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Espo API".to_string()))
+    }
+    async fn get_series_ids_from_alkane_ids(&self, _alkane_ids: &[&str]) -> Result<serde_json::Value> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Espo API".to_string()))
+    }
+    async fn get_alkane_id_from_series_id(&self, _series_id: &str) -> Result<serde_json::Value> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Espo API".to_string()))
+    }
+    async fn get_alkane_ids_from_series_ids(&self, _series_ids: &[&str]) -> Result<serde_json::Value> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support Espo API".to_string()))
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[async_trait(?Send)]
 impl RunestoneProvider for StandaloneAddressResolver {
     async fn decode_runestone(&self, _tx: &bitcoin::Transaction) -> Result<serde_json::Value> {
         Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support runestone operations".to_string()))
@@ -980,6 +1284,15 @@ impl AlkanesProvider for StandaloneAddressResolver {
         ))
     }
 
+    async fn execute_full(
+        &mut self,
+        _params: crate::alkanes::types::EnhancedExecuteParams,
+    ) -> Result<crate::alkanes::types::EnhancedExecuteResult> {
+        Err(AlkanesError::NotImplemented(
+            "StandaloneAddressResolver does not support alkanes operations".to_string(),
+        ))
+    }
+
     async fn resume_execution(
         &mut self,
         _state: crate::alkanes::types::ReadyToSignTx,
@@ -1068,11 +1381,15 @@ impl AlkanesProvider for StandaloneAddressResolver {
         Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support alkanes operations".to_string()))
     }
 
-    async fn trace_block(&self, _height: u64) -> Result<crate::proto::alkanes::Trace> {
+    async fn trace_block(&self, _height: u64) -> Result<crate::proto::alkanes::AlkanesBlockTraceEvent> {
         Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support alkanes operations".to_string()))
     }
 
     async fn get_bytecode(&self, _alkane_id: &str, _block_tag: Option<String>) -> Result<String> {
+        Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support alkanes operations".to_string()))
+    }
+
+    async fn meta(&self, _alkane_id: &str, _block_tag: Option<String>) -> Result<Vec<u8>> {
         Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support alkanes operations".to_string()))
     }
 
@@ -1159,7 +1476,7 @@ impl DeezelProvider for StandaloneAddressResolver {
     async fn get_utxo(&self, _outpoint: &bitcoin::OutPoint) -> Result<Option<bitcoin::TxOut>> {
         Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support get_utxo".to_string()))
     }
-    async fn sign_taproot_script_spend(&self, _sighash: bitcoin::secp256k1::Message) -> Result<bitcoin::secp256k1::schnorr::Signature> {
+    async fn sign_taproot_script_spend(&self, _sighash: bitcoin::secp256k1::Message, _ephemeral_secret: Option<bitcoin::secp256k1::SecretKey>) -> Result<bitcoin::secp256k1::schnorr::Signature> {
         Err(AlkanesError::NotImplemented("StandaloneAddressResolver does not support sign_taproot_script_spend".to_string()))
     }
 

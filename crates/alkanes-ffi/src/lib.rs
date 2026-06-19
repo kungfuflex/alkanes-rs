@@ -39,8 +39,6 @@
 //! println("Confirmed: ${balance.confirmed} sats")
 //! ```
 
-use std::sync::Arc;
-
 // UniFFI will generate the scaffolding code
 uniffi::include_scaffolding!("alkanes");
 
@@ -101,6 +99,10 @@ pub enum AlkanesError {
     TransactionError(String),
     #[error("Alkanes execution error: {0}")]
     AlkanesExecutionError(String),
+    #[error("Crypto error: {0}")]
+    CryptoError(String),
+    #[error("Keystore error: {0}")]
+    KeystoreError(String),
     #[error("{0}")]
     Generic(String),
 }
@@ -148,7 +150,7 @@ pub fn validate_address(address: String, network: Network) -> Result<bool> {
 pub fn generate_mnemonic(word_count: WordCount) -> Result<String> {
     use bip39::Mnemonic;
     use rand::RngCore;
-    
+
     let entropy_bits = match word_count {
         WordCount::Words12 => 128,
         WordCount::Words15 => 160,
@@ -156,15 +158,26 @@ pub fn generate_mnemonic(word_count: WordCount) -> Result<String> {
         WordCount::Words21 => 224,
         WordCount::Words24 => 256,
     };
-    
+
     let entropy_bytes = entropy_bits / 8;
     let mut entropy = vec![0u8; entropy_bytes];
     rand::thread_rng().fill_bytes(&mut entropy);
-    
+
     let mnemonic = Mnemonic::from_entropy(&entropy)
         .map_err(|e| AlkanesError::InvalidMnemonic(format!("{:?}", e)))?;
-    
+
     Ok(mnemonic.to_string())
+}
+
+/// Validate a mnemonic phrase
+pub fn validate_mnemonic(mnemonic: String) -> Result<bool> {
+    use bip39::Mnemonic;
+    use std::str::FromStr;
+
+    match Mnemonic::from_str(&mnemonic) {
+        Ok(_) => Ok(true),
+        Err(_) => Ok(false),
+    }
 }
 
 // ============================================================================
@@ -254,8 +267,199 @@ pub struct ParsedAddress {
     pub witness_program_hex: Option<String>,
 }
 
+/// PBKDF2 parameters for key derivation
+#[derive(Debug, Clone)]
+pub struct PbkdfParams {
+    pub salt: String,
+    pub nonce: Option<String>,
+    pub iterations: u32,
+    pub algorithm: Option<String>,
+}
+
+/// Address information returned from keystore
+#[derive(Debug, Clone)]
+pub struct AddressInfo {
+    pub derivation_path: String,
+    pub address: String,
+    pub script_type: String,
+    pub index: u32,
+    pub used: bool,
+}
+
+impl From<alkanes_cli_common::traits::AddressInfo> for AddressInfo {
+    fn from(info: alkanes_cli_common::traits::AddressInfo) -> Self {
+        Self {
+            derivation_path: info.derivation_path,
+            address: info.address,
+            script_type: info.script_type,
+            index: info.index,
+            used: info.used,
+        }
+    }
+}
+
+/// UTXO information
+#[derive(Debug, Clone)]
+pub struct UtxoInfo {
+    pub txid: String,
+    pub vout: u32,
+    pub amount: u64,
+    pub address: String,
+    pub script_pubkey_hex: String,
+    pub confirmations: u32,
+    pub frozen: bool,
+}
+
+/// Send transaction parameters
+#[derive(Debug, Clone)]
+pub struct SendParams {
+    pub to_address: String,
+    pub amount: u64,
+    pub fee_rate: Option<f32>,
+    pub send_all: bool,
+    pub from_addresses: Option<Vec<String>>,
+    pub change_address: Option<String>,
+}
+
+/// Prepared transaction ready for signing
+#[derive(Debug, Clone)]
+pub struct PreparedTransaction {
+    pub psbt_base64: String,
+    pub fee: u64,
+    pub input_total: u64,
+    pub output_total: u64,
+    pub inputs: Vec<UtxoInfo>,
+}
+
 // ============================================================================
-// Interfaces (Classes)
+// Keystore Interface
+// ============================================================================
+
+/// Keystore for encrypted wallet storage
+/// Wraps alkanes_cli_common::keystore::Keystore
+pub struct Keystore {
+    inner: std::sync::RwLock<alkanes_cli_common::keystore::Keystore>,
+}
+
+impl Keystore {
+    /// Create a new keystore from a mnemonic phrase
+    pub fn new(mnemonic: String, network: Network, passphrase: String) -> Result<Self> {
+        use bip39::Mnemonic;
+        use std::str::FromStr;
+
+        let mnemonic_parsed = Mnemonic::from_str(&mnemonic)
+            .map_err(|e| AlkanesError::InvalidMnemonic(e.to_string()))?;
+
+        let btc_network: bitcoin::Network = network.into();
+
+        let inner = alkanes_cli_common::keystore::Keystore::new(
+            &mnemonic_parsed,
+            btc_network,
+            &passphrase,
+            None,
+        ).map_err(|e| AlkanesError::KeystoreError(e.to_string()))?;
+
+        Ok(Self {
+            inner: std::sync::RwLock::new(inner),
+        })
+    }
+
+    /// Load a keystore from JSON string
+    pub fn from_json(json_str: String) -> Result<Self> {
+        let inner: alkanes_cli_common::keystore::Keystore = serde_json::from_str(&json_str)
+            .map_err(|e| AlkanesError::KeystoreError(format!("Failed to parse keystore JSON: {}", e)))?;
+
+        Ok(Self {
+            inner: std::sync::RwLock::new(inner),
+        })
+    }
+
+    /// Serialize keystore to JSON string
+    pub fn to_json(&self) -> Result<String> {
+        let inner = self.inner.read()
+            .map_err(|e| AlkanesError::KeystoreError(format!("Lock error: {}", e)))?;
+
+        serde_json::to_string_pretty(&*inner)
+            .map_err(|e| AlkanesError::SerializationError(e.to_string()))
+    }
+
+    /// Get the master fingerprint
+    pub fn get_master_fingerprint(&self) -> String {
+        let inner = self.inner.read().unwrap();
+        inner.master_fingerprint.clone()
+    }
+
+    /// Get the creation timestamp
+    pub fn get_created_at(&self) -> u64 {
+        let inner = self.inner.read().unwrap();
+        inner.created_at
+    }
+
+    /// Decrypt and return the mnemonic phrase
+    pub fn decrypt_mnemonic(&self, passphrase: String) -> Result<String> {
+        let inner = self.inner.read()
+            .map_err(|e| AlkanesError::KeystoreError(format!("Lock error: {}", e)))?;
+
+        inner.decrypt_mnemonic(&passphrase)
+            .map_err(|e| AlkanesError::CryptoError(e.to_string()))
+    }
+
+    /// Derive addresses using stored xpubs (no passphrase needed)
+    pub fn get_addresses(
+        &self,
+        network: Network,
+        address_type: String,
+        chain: u32,
+        start_index: u32,
+        count: u32,
+    ) -> Result<Vec<AddressInfo>> {
+        let inner = self.inner.read()
+            .map_err(|e| AlkanesError::KeystoreError(format!("Lock error: {}", e)))?;
+
+        let btc_network: bitcoin::Network = network.into();
+
+        let addresses = inner.get_addresses(btc_network, &address_type, chain, start_index, count)
+            .map_err(|e| AlkanesError::KeystoreError(e.to_string()))?;
+
+        Ok(addresses.into_iter().map(AddressInfo::from).collect())
+    }
+
+    /// Get a single address at a specific index
+    pub fn get_address(&self, network: Network, address_type: String, index: u32) -> Result<String> {
+        let addresses = self.get_addresses(network, address_type, 0, index, 1)?;
+        addresses.into_iter().next()
+            .map(|a| a.address)
+            .ok_or_else(|| AlkanesError::KeystoreError("No address generated".to_string()))
+    }
+
+    /// Check if keystore has xpub for a given address type and network
+    pub fn has_xpub(&self, address_type: String, network: Network) -> bool {
+        let inner = self.inner.read().unwrap();
+        let network_suffix = if network == Network::Bitcoin { "mainnet" } else { "testnet" };
+        let key = format!("{}:{}", address_type, network_suffix);
+        inner.account_xpubs.contains_key(&key) || inner.account_xpubs.contains_key(&address_type)
+    }
+
+    /// Get the account xpub for a given address type and network
+    pub fn get_xpub(&self, address_type: String, network: Network) -> Result<String> {
+        let inner = self.inner.read()
+            .map_err(|e| AlkanesError::KeystoreError(format!("Lock error: {}", e)))?;
+
+        let network_suffix = if network == Network::Bitcoin { "mainnet" } else { "testnet" };
+        let key = format!("{}:{}", address_type, network_suffix);
+
+        inner.account_xpubs.get(&key)
+            .or_else(|| inner.account_xpubs.get(&address_type))
+            .cloned()
+            .ok_or_else(|| AlkanesError::KeystoreError(format!(
+                "No xpub found for address type: {} on network: {:?}",
+                address_type, network
+            )))
+    }
+}
+
+// ============================================================================
+// Wallet Interface
 // ============================================================================
 
 /// Wallet interface for managing Bitcoin wallets
@@ -264,6 +468,7 @@ pub struct Wallet {
     provider: Option<alkanes_cli_common::provider::ConcreteProvider>,
     config: WalletConfig,
     mnemonic: Option<String>,
+    keystore: Option<std::sync::Arc<Keystore>>,
 }
 
 impl Wallet {
@@ -271,7 +476,7 @@ impl Wallet {
     pub fn new(config: WalletConfig, mnemonic: Option<String>) -> Result<Self> {
         let runtime = tokio::runtime::Runtime::new()
             .map_err(|e| AlkanesError::WalletError(e.to_string()))?;
-        
+
         // For now, we'll initialize the provider lazily when needed
         // Full implementation would set up the provider here
         let wallet = Self {
@@ -279,9 +484,31 @@ impl Wallet {
             provider: None,
             config: config.clone(),
             mnemonic: mnemonic.clone(),
+            keystore: None,
         };
-        
+
         Ok(wallet)
+    }
+
+    /// Create a wallet from an existing keystore
+    pub fn from_keystore(
+        keystore: std::sync::Arc<Keystore>,
+        passphrase: String,
+        config: WalletConfig,
+    ) -> Result<Self> {
+        let runtime = tokio::runtime::Runtime::new()
+            .map_err(|e| AlkanesError::WalletError(e.to_string()))?;
+
+        // Decrypt mnemonic from keystore
+        let mnemonic = keystore.decrypt_mnemonic(passphrase)?;
+
+        Ok(Self {
+            runtime,
+            provider: None,
+            config,
+            mnemonic: Some(mnemonic),
+            keystore: Some(keystore),
+        })
     }
     
     /// Get the wallet's receiving address
@@ -365,7 +592,180 @@ impl Wallet {
         // Would need provider integration
         Ok(())
     }
+
+    /// Sign a PSBT (Partially Signed Bitcoin Transaction)
+    /// Returns the signed PSBT as base64 string
+    pub fn sign_psbt(&self, psbt_base64: String) -> Result<String> {
+        use bitcoin::psbt::Psbt;
+        use bitcoin::secp256k1::Secp256k1;
+        use bitcoin::sighash::{SighashCache, TapSighashType};
+        use bitcoin::hashes::Hash;
+        use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+
+        let mnemonic_str = self.mnemonic.as_ref()
+            .ok_or_else(|| AlkanesError::WalletError("No mnemonic available for signing".to_string()))?;
+
+        // Decode PSBT from base64
+        let psbt_bytes = BASE64.decode(&psbt_base64)
+            .map_err(|e| AlkanesError::TransactionError(format!("Invalid PSBT base64: {}", e)))?;
+
+        let mut psbt = Psbt::deserialize(&psbt_bytes)
+            .map_err(|e| AlkanesError::TransactionError(format!("Invalid PSBT: {}", e)))?;
+
+        // Get keypair from mnemonic
+        let mnemonic = bip39::Mnemonic::parse_in(bip39::Language::English, mnemonic_str)
+            .map_err(|e| AlkanesError::InvalidMnemonic(e.to_string()))?;
+
+        let seed = mnemonic.to_seed("");
+        let network: bitcoin::Network = self.config.network.into();
+        let secp = Secp256k1::new();
+
+        let root_key = bitcoin::bip32::Xpriv::new_master(network, &seed)
+            .map_err(|e| AlkanesError::WalletError(e.to_string()))?;
+
+        // Collect prevouts for sighash calculation
+        let prevouts: Vec<bitcoin::TxOut> = psbt.inputs.iter()
+            .filter_map(|input| input.witness_utxo.clone())
+            .collect();
+
+        if prevouts.len() != psbt.inputs.len() {
+            return Err(AlkanesError::TransactionError(
+                "PSBT missing witness_utxo for some inputs".to_string()
+            ));
+        }
+
+        let prevouts_ref: Vec<&bitcoin::TxOut> = prevouts.iter().collect();
+
+        // Create sighash cache
+        let mut sighash_cache = SighashCache::new(&psbt.unsigned_tx);
+
+        // Sign each input
+        for i in 0..psbt.inputs.len() {
+            // Check if this is a taproot input (has tap_internal_key)
+            if psbt.inputs[i].tap_internal_key.is_some() || psbt.inputs[i].tap_key_sig.is_none() {
+                // Get derivation path from PSBT or use default
+                // TODO: Extract derivation path from tap_key_origins when available
+                // For now, use default BIP-86 Taproot path
+                let path_str = format!("m/86'/0'/0'/0/0");
+
+                let path = bitcoin::bip32::DerivationPath::from_str(&path_str)
+                    .map_err(|e| AlkanesError::WalletError(e.to_string()))?;
+
+                let derived_key = root_key.derive_priv(&secp, &path)
+                    .map_err(|e| AlkanesError::WalletError(e.to_string()))?;
+
+                let keypair = bitcoin::secp256k1::Keypair::from_secret_key(&secp, &derived_key.private_key);
+
+                // Calculate taproot sighash
+                let sighash = sighash_cache.taproot_key_spend_signature_hash(
+                    i,
+                    &bitcoin::sighash::Prevouts::All(&prevouts_ref),
+                    TapSighashType::Default,
+                ).map_err(|e| AlkanesError::TransactionError(format!("Sighash error: {}", e)))?;
+
+                let msg = bitcoin::secp256k1::Message::from_digest(*sighash.as_byte_array());
+                let sig = secp.sign_schnorr(&msg, &keypair);
+
+                let signature = bitcoin::taproot::Signature {
+                    signature: sig,
+                    sighash_type: TapSighashType::Default,
+                };
+                psbt.inputs[i].tap_key_sig = Some(signature);
+            }
+        }
+
+        // Serialize back to base64
+        let signed_bytes = psbt.serialize();
+        Ok(BASE64.encode(&signed_bytes))
+    }
+
+    /// Sign and finalize a PSBT, returning the raw transaction hex
+    pub fn sign_and_finalize_psbt(&self, psbt_base64: String) -> Result<String> {
+        use bitcoin::psbt::Psbt;
+        use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+
+        // First sign the PSBT
+        let signed_psbt_base64 = self.sign_psbt(psbt_base64)?;
+
+        // Decode signed PSBT
+        let psbt_bytes = BASE64.decode(&signed_psbt_base64)
+            .map_err(|e| AlkanesError::TransactionError(format!("Invalid PSBT base64: {}", e)))?;
+
+        let psbt = Psbt::deserialize(&psbt_bytes)
+            .map_err(|e| AlkanesError::TransactionError(format!("Invalid PSBT: {}", e)))?;
+
+        // Extract the final transaction
+        let tx = psbt.extract_tx()
+            .map_err(|e| AlkanesError::TransactionError(format!("Failed to finalize PSBT: {}", e)))?;
+
+        // Serialize to hex
+        Ok(bitcoin::consensus::encode::serialize_hex(&tx))
+    }
+
+    /// Sign a raw transaction hex
+    pub fn sign_transaction(&self, _tx_hex: String) -> Result<String> {
+        // For raw transaction signing, we'd need to create a PSBT first
+        // This is a simplified implementation
+        Err(AlkanesError::WalletError(
+            "Raw transaction signing not yet implemented. Use sign_psbt instead.".to_string()
+        ))
+    }
+
+    /// Get the internal (x-only) public key for Taproot
+    pub fn get_internal_key(&self) -> Result<String> {
+        use bitcoin::secp256k1::Secp256k1;
+
+        let mnemonic_str = self.mnemonic.as_ref()
+            .ok_or_else(|| AlkanesError::WalletError("No mnemonic available".to_string()))?;
+
+        let mnemonic = bip39::Mnemonic::parse_in(bip39::Language::English, mnemonic_str)
+            .map_err(|e| AlkanesError::InvalidMnemonic(e.to_string()))?;
+
+        let seed = mnemonic.to_seed("");
+        let network: bitcoin::Network = self.config.network.into();
+        let secp = Secp256k1::new();
+
+        let root_key = bitcoin::bip32::Xpriv::new_master(network, &seed)
+            .map_err(|e| AlkanesError::WalletError(e.to_string()))?;
+
+        // Derive the default Taproot key path
+        let path = bitcoin::bip32::DerivationPath::from_str("m/86'/0'/0'/0/0")
+            .map_err(|e| AlkanesError::WalletError(e.to_string()))?;
+
+        let derived_key = root_key.derive_priv(&secp, &path)
+            .map_err(|e| AlkanesError::WalletError(e.to_string()))?;
+
+        let public_key = derived_key.to_priv().public_key(&secp);
+        let (xonly, _) = public_key.inner.x_only_public_key();
+
+        Ok(xonly.to_string())
+    }
+
+    /// Export the keystore (encrypted)
+    pub fn export_keystore(&self) -> Result<std::sync::Arc<Keystore>> {
+        // If we already have a keystore, return it
+        if let Some(ref ks) = self.keystore {
+            return Ok(ks.clone());
+        }
+
+        // Otherwise, create a new keystore from the mnemonic
+        let mnemonic_str = self.mnemonic.as_ref()
+            .ok_or_else(|| AlkanesError::WalletError("No mnemonic available".to_string()))?;
+
+        let passphrase = self.config.passphrase.as_ref()
+            .ok_or_else(|| AlkanesError::WalletError("No passphrase available for keystore export".to_string()))?;
+
+        let keystore = Keystore::new(
+            mnemonic_str.clone(),
+            self.config.network,
+            passphrase.clone(),
+        )?;
+
+        Ok(std::sync::Arc::new(keystore))
+    }
 }
+
+use std::str::FromStr;
 
 /// RPC Client for interacting with Bitcoin/Alkanes nodes
 pub struct RpcClient {

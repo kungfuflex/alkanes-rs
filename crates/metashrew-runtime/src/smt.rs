@@ -46,6 +46,9 @@
 //!
 //! // Store key-value pairs with height indexing
 //! smt_helper.put(key, value, height)?;
+//!
+//! // Calculate and store state root
+//! let state_root = smt_helper.calculate_and_store_state_root(height)?;
 //! ```
 //!
 //! ## Historical Queries
@@ -81,6 +84,42 @@ pub const SMT_NODE_PREFIX: &str = "smt:node:";
 ///
 /// Format: `smt:root:{height}` where height is the block height
 pub const SMT_ROOT_PREFIX: &str = "smt:root:";
+pub const MANIFEST_PREFIX: &str = "/__INTERNAL/keys-at-height/";
+
+/// Serialize a list of keys into a compact binary format for per-height manifests.
+/// Format: [u32 LE: num_keys][u32 LE: key1_len][key1_bytes][u32 LE: key2_len][key2_bytes]...
+pub fn serialize_key_manifest(keys: &[&[u8]]) -> Vec<u8> {
+    let mut buf = Vec::new();
+    buf.extend_from_slice(&(keys.len() as u32).to_le_bytes());
+    for key in keys {
+        buf.extend_from_slice(&(key.len() as u32).to_le_bytes());
+        buf.extend_from_slice(key);
+    }
+    buf
+}
+
+/// Deserialize a per-height key manifest back into a list of keys.
+pub fn deserialize_key_manifest(data: &[u8]) -> Vec<Vec<u8>> {
+    if data.len() < 4 {
+        return Vec::new();
+    }
+    let num_keys = u32::from_le_bytes(data[0..4].try_into().unwrap_or([0; 4])) as usize;
+    let mut keys = Vec::with_capacity(num_keys);
+    let mut offset = 4;
+    for _ in 0..num_keys {
+        if offset + 4 > data.len() {
+            break;
+        }
+        let key_len = u32::from_le_bytes(data[offset..offset + 4].try_into().unwrap_or([0; 4])) as usize;
+        offset += 4;
+        if offset + key_len > data.len() {
+            break;
+        }
+        keys.push(data[offset..offset + key_len].to_vec());
+        offset += key_len;
+    }
+    keys
+}
 
 /// Empty node hash representing uninitialized or empty SMT nodes
 ///
@@ -177,6 +216,9 @@ pub enum SMTNode {
 ///
 /// // Store a key-value pair at specific height
 /// smt.put(b"key", b"value", height)?;
+///
+/// // Calculate state root for the height
+/// let root = smt.calculate_and_store_state_root(height)?;
 /// ```
 ///
 /// ## Historical Queries
@@ -387,12 +429,23 @@ impl<T: KeyValueStoreLike> BatchedSMTHelper<T> {
             key_lengths.insert(key.clone(), new_length);
         }
         
-        // MINIMAL SMT: Only compute and store the final root, not intermediate nodes
-        let new_root = self.compute_minimal_smt_root(prev_root, key_values)?;
-
-        // Store ONLY the new root (not intermediate SMT nodes)
+        // SKIP SMT root computation — it's O(n * tree_depth) with storage reads
+        // per key and is the primary bottleneck for large blocks. The state root
+        // is not used for reorg detection (block hashes are used instead) and is
+        // only stored as metadata. Store a placeholder to maintain schema compat.
+        let new_root = prev_root; // Use previous root as placeholder
         let root_key = format!("{}{}", SMT_ROOT_PREFIX, height).into_bytes();
         batch.put(root_key, new_root.to_vec());
+
+        // Write per-height manifest of modified keys for fast rollback
+        {
+            let mut unique_keys: Vec<&[u8]> = key_values.iter().map(|(k, _)| k.as_slice()).collect();
+            unique_keys.sort_unstable();
+            unique_keys.dedup();
+            let manifest_key = format!("{}{}", MANIFEST_PREFIX, height).into_bytes();
+            let manifest_value = serialize_key_manifest(&unique_keys);
+            batch.put(&manifest_key, &manifest_value);
+        }
 
         // Update tip height
         batch.put(
@@ -1650,6 +1703,29 @@ impl<T: KeyValueStoreLike> SMTHelper<T> {
         Ok(heights)
     }
 
+    /// Get all keys that were updated at a specific height using the new append-only approach
+    pub fn get_keys_at_height(&self, height: u32) -> Result<Vec<Vec<u8>>> {
+        let mut keys = Vec::new();
+        let length_suffix = "/length";
+        
+        // Scan for all keys with "/length" suffix to find all keys in the database
+        for (stored_key, _) in self.storage.scan_prefix(b"")
+            .map_err(|e| anyhow::anyhow!("Storage error: {:?}", e))? {
+            if stored_key.ends_with(length_suffix.as_bytes()) {
+                // Extract the original key by removing the "/length" suffix
+                let original_key = &stored_key[..stored_key.len() - length_suffix.len()];
+                
+                // Check if this key was updated at the specified height
+                let heights = self.get_heights_for_key(original_key)?;
+                if heights.contains(&height) {
+                    keys.push(original_key.to_vec());
+                }
+            }
+        }
+
+        Ok(keys)
+    }
+
     /// Rollback a key to its state before a specific height using the new append-only approach
     ///
     /// WARNING: This method creates and writes a batch immediately for each call.
@@ -1706,6 +1782,50 @@ impl<T: KeyValueStoreLike> SMTHelper<T> {
         Ok(())
     }
 
+    /// Rollback all keys to their state before a specific height using the new append-only approach
+    ///
+    /// WARNING: This method creates and writes a batch immediately for each call.
+    /// For better performance during block processing, use rollback_to_height_batched() instead.
+    pub fn rollback_to_height(&mut self, target_height: u32) -> Result<()> {
+        let mut batch = self.storage.create_batch();
+        self.rollback_to_height_to_batch(&mut batch, target_height)?;
+        self.storage.write(batch)
+            .map_err(|e| anyhow::anyhow!("Storage error: {:?}", e))?;
+        Ok(())
+    }
+
+    /// Rollback all keys to their state before a specific height using an existing batch
+    pub fn rollback_to_height_batched(&mut self, batch: &mut T::Batch, target_height: u32) -> Result<()> {
+        self.rollback_to_height_to_batch(batch, target_height)
+    }
+
+    /// Internal method to add rollback operations to a batch using the new append-only approach
+    fn rollback_to_height_to_batch(&self, batch: &mut T::Batch, target_height: u32) -> Result<()> {
+        // For the new append-only approach, we need to scan all keys and rollback each one
+        // This is more complex since we don't have a height index anymore
+        // We'll need to scan all keys that have a "/length" suffix
+        
+        let length_suffix = "/length";
+        let mut keys_to_rollback = Vec::new();
+        
+        // Scan for all keys with "/length" suffix to find all keys in the database
+        for (stored_key, _) in self.storage.scan_prefix(b"")
+            .map_err(|e| anyhow::anyhow!("Storage error: {:?}", e))? {
+            if stored_key.ends_with(length_suffix.as_bytes()) {
+                // Extract the original key by removing the "/length" suffix
+                let original_key = &stored_key[..stored_key.len() - length_suffix.len()];
+                keys_to_rollback.push(original_key.to_vec());
+            }
+        }
+        
+        // Rollback each key
+        for key in keys_to_rollback {
+            self.rollback_key_to_batch(batch, &key, target_height)?;
+        }
+
+        Ok(())
+    }
+
     /// Iterate backwards through all values of a key from most recent using the new append-only approach
     pub fn iterate_backwards(
         &self,
@@ -1727,6 +1847,48 @@ impl<T: KeyValueStoreLike> SMTHelper<T> {
         }
 
         Ok(results)
+    }
+
+    /// Calculate and store the SMT state root for a specific height using incremental updates
+    ///
+    /// WARNING: This method creates and writes a batch immediately for each call.
+    /// For better performance during block processing, use calculate_and_store_state_root_batched() instead.
+    pub fn calculate_and_store_state_root(&mut self, height: u32) -> Result<[u8; 32]> {
+        let prev_root = if height > 0 {
+            // For heights > 0, get the previous state root
+            match self.get_smt_root_at_height(height - 1) {
+                Ok(root) => root,
+                Err(_) => EMPTY_NODE_HASH, // If no previous root exists, start with empty
+            }
+        } else {
+            // For height 0, start with empty root
+            EMPTY_NODE_HASH
+        };
+
+        // Get all keys that were updated at this height
+        let updated_keys = self.get_keys_at_height(height)?;
+
+        if updated_keys.is_empty() {
+            // No updates at this height, return previous root
+            let mut batch = self.storage.create_batch();
+            let root_key = format!("{}{}", SMT_ROOT_PREFIX, height).into_bytes();
+            batch.put(root_key, prev_root.to_vec());
+            self.storage.write(batch)
+                .map_err(|e| anyhow::anyhow!("Storage error: {:?}", e))?;
+            return Ok(prev_root);
+        }
+
+        // Use incremental SMT updates instead of full state enumeration
+        let new_root = self.compute_incremental_smt_root(prev_root, &updated_keys, height)?;
+
+        // Store the new root
+        let mut batch = self.storage.create_batch();
+        let root_key = format!("{}{}", SMT_ROOT_PREFIX, height).into_bytes();
+        batch.put(root_key, new_root.to_vec());
+        self.storage.write(batch)
+            .map_err(|e| anyhow::anyhow!("Storage error: {:?}", e))?;
+
+        Ok(new_root)
     }
 
     /// Optimized batch calculation of state root for multiple keys

@@ -19,6 +19,8 @@ pub mod protoburn;
 pub mod simulation;
 pub mod protostone;
 pub mod balance_sheet;
+pub mod predict;
+pub mod rbf;
 pub mod byte_utils;
 
 pub mod rune_transfer;
@@ -26,11 +28,14 @@ pub mod utils;
 pub mod wrap_btc;
 pub mod amm;
 pub mod amm_cli;
+pub mod indexer_lag;
 pub mod pool_details;
 pub mod batch_pools;
 pub mod experimental_asm;
+pub mod synth_swap;
 
 pub use types::*;
+pub use synth_swap::{BtcToStableParams, StableToBtcParams, btc_to_stable_args, stable_to_btc_evm_args};
 pub use amm::{GetAllPoolsResult, AllPoolsDetailsResult, PoolDetailsResult, PoolDetailsWithId};
 pub use pool_details::{PoolDetails, PoolInfo};
-pub use experimental_asm::{get_all_pools, get_all_pools_with_details, get_all_pools_with_details_parallel, ParallelFetchConfig};
+pub use experimental_asm::{get_all_pools, get_all_pools_with_details, get_all_pools_with_details_parallel, ParallelFetchConfig, AlkaneReflection, reflect_alkane};

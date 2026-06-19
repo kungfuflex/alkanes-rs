@@ -1,7 +1,10 @@
+#[allow(unused_imports, dead_code, clippy::all)]
+mod generated {
+    include!(concat!(env!("OUT_DIR"), "/generated.rs"));
+}
+
 use alkanes_macros::storage_variable;
 use alkanes_runtime::auth::AuthenticatedResponder;
-use alkanes_runtime::declare_alkane;
-use alkanes_runtime::message::MessageDispatch;
 #[allow(unused_imports)]
 use alkanes_runtime::{
     println,
@@ -16,24 +19,12 @@ use metashrew_support::compat::{to_arraybuffer_layout, to_passback_ptr};
 use metashrew_support::index_pointer::KeyValuePointer;
 use std::sync::Arc;
 
+use generated::BeaconProxyInterface;
+
 #[derive(Default)]
 pub struct BeaconProxy(());
 
-#[derive(MessageDispatch)]
-enum BeaconProxyMessage {
-    #[opcode(0x7fff)]
-    Initialize { beacon: AlkaneId },
-    #[opcode(0x8fff)]
-    Forward {},
-}
-
 impl BeaconProxy {
-    fn forward(&self) -> Result<CallResponse> {
-        let context = self.context()?;
-        let response = CallResponse::forward(&context.incoming_alkanes);
-        Ok(response)
-    }
-
     storage_variable!(beacon: AlkaneId);
 
     pub fn get_logic_impl(&self) -> Result<AlkaneId> {
@@ -47,15 +38,6 @@ impl BeaconProxy {
             self.fuel(),
         )?;
         Ok(response.data.try_into()?)
-    }
-
-    fn initialize(&self, implementation: AlkaneId) -> Result<CallResponse> {
-        self.observe_proxy_initialization()?;
-        let context = self.context()?;
-
-        self.set_beacon(implementation);
-        let response: CallResponse = CallResponse::forward(&context.incoming_alkanes);
-        Ok(response)
     }
 }
 
@@ -73,9 +55,19 @@ impl AlkaneResponder for BeaconProxy {
     }
 }
 
-// Use the new macro format
-declare_alkane! {
-    impl AlkaneResponder for BeaconProxy {
-        type Message = BeaconProxyMessage;
+impl BeaconProxyInterface for BeaconProxy {
+    fn initialize(&self, beacon: AlkaneId) -> Result<CallResponse> {
+        self.observe_proxy_initialization()?;
+        let context = self.context()?;
+
+        self.set_beacon(beacon);
+        let response: CallResponse = CallResponse::forward(&context.incoming_alkanes);
+        Ok(response)
+    }
+
+    fn forward(&self) -> Result<CallResponse> {
+        let context = self.context()?;
+        let response = CallResponse::forward(&context.incoming_alkanes);
+        Ok(response)
     }
 }

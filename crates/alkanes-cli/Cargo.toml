@@ -15,6 +15,9 @@ sha2 = { workspace = true }
 reqwest = { workspace = true, features = ["json"] }
 alkanes-cli-common = { path = "../alkanes-cli-common", features = ["std"] }
 alkanes-cli-sys = { path = "../alkanes-cli-sys" }
+subfrost-wc = { path = "../../vendor/subfrost-wc", features = ["relay-client"] }
+async-trait = { workspace = true }
+dirs = "5.0"
 clap = { workspace = true }
 env_logger = { workspace = true }
 log = { workspace = true }

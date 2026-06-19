@@ -2,7 +2,7 @@
 
 use async_trait::async_trait;
 use log::{info, warn};
-use metashrew_runtime::KeyValueStoreLike;
+use metashrew_runtime::{rollback::SmtRollback, KeyValueStoreLike};
 use metashrew_sync::{StorageAdapter, StorageStats, SyncError, SyncResult};
 use rocksdb::DB;
 use std::sync::Arc;
@@ -18,6 +18,38 @@ pub struct RocksDBStorageAdapter {
 impl RocksDBStorageAdapter {
     pub fn new(db: Arc<DB>) -> Self {
         Self { db }
+    }
+}
+
+// Implement SmtRollback trait for proper reorg handling
+impl SmtRollback for RocksDBStorageAdapter {
+    fn iter_keys<F>(&self, mut callback: F) -> anyhow::Result<()>
+    where
+        F: FnMut(&[u8]) -> anyhow::Result<()>,
+    {
+        let iter = self.db.iterator(rocksdb::IteratorMode::Start);
+        for item in iter {
+            match item {
+                Ok((key, _)) => callback(&key)?,
+                Err(e) => return Err(anyhow::anyhow!("Failed to iterate keys: {}", e)),
+            }
+        }
+        Ok(())
+    }
+
+    fn delete_key(&mut self, key: &[u8]) -> anyhow::Result<()> {
+        self.db.delete(key)
+            .map_err(|e| anyhow::anyhow!("Failed to delete key: {}", e))
+    }
+
+    fn put_key(&mut self, key: &[u8], value: &[u8]) -> anyhow::Result<()> {
+        self.db.put(key, value)
+            .map_err(|e| anyhow::anyhow!("Failed to put key: {}", e))
+    }
+
+    fn get_value(&self, key: &[u8]) -> anyhow::Result<Option<Vec<u8>>> {
+        self.db.get(key)
+            .map_err(|e| anyhow::anyhow!("Failed to get value: {}", e))
     }
 }
 
@@ -85,21 +117,21 @@ impl StorageAdapter for RocksDBStorageAdapter {
     }
 
     async fn rollback_to_height(&mut self, height: u32) -> SyncResult<()> {
+        use metashrew_runtime::rollback::{rollback_smt_data, rollback_with_manifests};
+
         info!("Starting rollback to height {}", height);
         let current_height = self.get_indexed_height().await?;
-        if height >= current_height {
-            return Ok(());
+
+        // Try fast manifest-based rollback first, fall back to full scan
+        let used_fast = rollback_with_manifests(self, height, current_height)
+            .map_err(|e| SyncError::Storage(format!("Manifest rollback failed: {}", e)))?;
+
+        if !used_fast {
+            warn!("Using full SMT rollback (no manifests for rollback range)");
+            rollback_smt_data(self, height, current_height)
+                .map_err(|e| SyncError::Storage(format!("SMT rollback failed: {}", e)))?;
         }
-        for h in (height + 1)..=current_height {
-            let blockhash_key = format!("/__INTERNAL/height-to-hash/{}", h).into_bytes();
-            if let Err(e) = self.db.delete(&blockhash_key) {
-                warn!("Failed to delete blockhash for height {}: {}", h, e);
-            }
-            let root_key = format!("smt:root:{}", h).into_bytes();
-            if let Err(e) = self.db.delete(&root_key) {
-                warn!("Failed to delete state root for height {}: {}", h, e);
-            }
-        }
+
         self.set_indexed_height(height).await?;
         info!("Successfully completed rollback to height {}", height);
         Ok(())

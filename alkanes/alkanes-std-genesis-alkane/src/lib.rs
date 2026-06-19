@@ -1,5 +1,9 @@
-use alkanes_runtime::declare_alkane;
-use alkanes_runtime::message::MessageDispatch;
+// Include the generated code from WIT codegen
+#[allow(unused_imports, dead_code, clippy::all)]
+mod generated {
+    include!(concat!(env!("OUT_DIR"), "/generated.rs"));
+}
+
 #[allow(unused_imports)]
 use alkanes_runtime::{
     println,
@@ -7,41 +11,21 @@ use alkanes_runtime::{
 };
 use alkanes_runtime::{runtime::AlkaneResponder, storage::StoragePointer, token::Token};
 use alkanes_support::utils::overflow_error;
-use alkanes_support::{context::Context, parcel::AlkaneTransfer, response::CallResponse};
+use alkanes_support::{parcel::AlkaneTransfer, response::CallResponse};
 use anyhow::{anyhow, Result};
 use bitcoin::hashes::Hash;
 use bitcoin::Block;
 use hex;
 use metashrew_support::block::AuxpowBlock;
-use metashrew_support::compat::{to_arraybuffer_layout, to_passback_ptr};
 use metashrew_support::index_pointer::KeyValuePointer;
 use std::io::Cursor;
 pub mod chain;
 use crate::chain::{ChainConfiguration, CONTEXT_HANDLE};
 
+use generated::GenesisAlkaneInterface;
+
 #[derive(Default)]
 pub struct GenesisAlkane(());
-
-#[derive(MessageDispatch)]
-enum GenesisAlkaneMessage {
-    #[opcode(0)]
-    Initialize,
-
-    #[opcode(77)]
-    Mint,
-
-    #[opcode(99)]
-    #[returns(String)]
-    GetName,
-
-    #[opcode(100)]
-    #[returns(String)]
-    GetSymbol,
-
-    #[opcode(101)]
-    #[returns(u128)]
-    GetTotalSupply,
-}
 
 impl Token for GenesisAlkane {
     fn name(&self) -> String {
@@ -218,7 +202,11 @@ impl GenesisAlkane {
             value,
         })
     }
+}
 
+impl AlkaneResponder for GenesisAlkane {}
+
+impl GenesisAlkaneInterface for GenesisAlkane {
     fn initialize(&self) -> Result<CallResponse> {
         let context = self.context()?;
         let mut response = CallResponse::forward(&context.incoming_alkanes);
@@ -235,7 +223,6 @@ impl GenesisAlkane {
         Ok(response)
     }
 
-    // Method that matches the MessageDispatch enum
     fn mint(&self) -> Result<CallResponse> {
         let context = self.context()?;
         let mut response = CallResponse::forward(&context.incoming_alkanes);
@@ -270,14 +257,5 @@ impl GenesisAlkane {
         response.data = (&self.total_supply().to_le_bytes()).to_vec();
 
         Ok(response)
-    }
-}
-
-impl AlkaneResponder for GenesisAlkane {}
-
-// Use the new macro format
-declare_alkane! {
-    impl AlkaneResponder for GenesisAlkane {
-        type Message = GenesisAlkaneMessage;
     }
 }

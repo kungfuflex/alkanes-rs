@@ -637,3 +637,209 @@ mod hex_serde {
         hex::decode(s).map_err(Error::custom)
     }
 }
+
+/// Format trace JSON (as returned by trace_to_json) into a pretty tree-view string.
+/// This is used when we have the JSON representation and need to display it nicely.
+pub fn format_trace_json_pretty(trace_json: &JsonValue) -> String {
+    #[cfg(not(feature = "std"))]
+    use alloc::{string::String, format, vec::Vec};
+
+    let mut output = String::new();
+
+    // Try both "trace" (from trace_to_json) and "events" (legacy format)
+    let events = trace_json.get("trace").and_then(|e| e.as_array())
+        .or_else(|| trace_json.get("events").and_then(|e| e.as_array()));
+
+    let events = match events {
+        Some(events) => events,
+        None => {
+            output.push_str("📭 trace:\n");
+            output.push_str("    events: []\n");
+            output.push_str("    note: \"No events array found in trace\"\n");
+            return output;
+        }
+    };
+
+    if events.is_empty() {
+        output.push_str("📭 trace:\n");
+        output.push_str("    events: []\n");
+        output.push_str("    status: ✅ parsed_successfully\n");
+        output.push_str("    note: \"No execution events found\"\n");
+    } else {
+        output.push_str("📊 trace:\n");
+        output.push_str(&format!("    total_events: {}\n", events.len()));
+        output.push_str("    events:\n");
+
+        for (i, event) in events.iter().enumerate() {
+            let is_last = i == events.len() - 1;
+            let tree_prefix = if is_last { "    └─" } else { "    ├─" };
+            let indent_prefix = if is_last { "      " } else { "    │ " };
+
+            let event_type = event.get("type").and_then(|t| t.as_str()).unwrap_or("unknown");
+
+            match event_type {
+                "receive_intent" => {
+                    output.push_str(&format!("{} 📬 receive_intent:\n", tree_prefix));
+                    let alkanes = event.get("incoming_alkanes").and_then(|a| a.as_array());
+                    format_alkane_transfers(&mut output, alkanes, indent_prefix, "incoming_transfers");
+                },
+                "value_transfer" => {
+                    output.push_str(&format!("{} 💸 value_transfer:\n", tree_prefix));
+                    if let Some(redirect) = event.get("redirect_to") {
+                        output.push_str(&format!("{}    redirect_to: vout {}\n", indent_prefix, redirect));
+                    }
+                    let transfers = event.get("transfers").and_then(|t| t.as_array());
+                    format_alkane_transfers(&mut output, transfers, indent_prefix, "transfers");
+                },
+                "create_alkane" => {
+                    output.push_str(&format!("{} 🏗️  create_alkane:\n", tree_prefix));
+                    if let Some(id) = event.get("alkane_id") {
+                        output.push_str(&format!("{}    alkane_id:\n", indent_prefix));
+                        output.push_str(&format!("{}      block: {}\n", indent_prefix, id.get("block").unwrap_or(&JsonValue::Null)));
+                        output.push_str(&format!("{}      tx: {}\n", indent_prefix, id.get("tx").unwrap_or(&JsonValue::Null)));
+                    }
+                    output.push_str(&format!("{}    status: ✅ created\n", indent_prefix));
+                },
+                "call" => {
+                    output.push_str(&format!("{} 📞 call:\n", tree_prefix));
+                    format_call_context(&mut output, event, indent_prefix);
+                },
+                "delegatecall" => {
+                    output.push_str(&format!("{} 🔄 delegatecall:\n", tree_prefix));
+                    format_call_context(&mut output, event, indent_prefix);
+                },
+                "staticcall" => {
+                    output.push_str(&format!("{} 🔒 staticcall:\n", tree_prefix));
+                    format_call_context(&mut output, event, indent_prefix);
+                },
+                "return" => {
+                    output.push_str(&format!("{} ✅ return:\n", tree_prefix));
+                    if let Some(fuel) = event.get("fuel_used") {
+                        output.push_str(&format!("{}    ⛽ fuel_used: {}\n", indent_prefix, fuel));
+                    }
+                    format_return_data(&mut output, event, indent_prefix);
+                    let alkanes = event.get("alkane_transfers").and_then(|a| a.as_array());
+                    format_alkane_transfers(&mut output, alkanes, indent_prefix, "alkane_transfers");
+                },
+                "revert" => {
+                    output.push_str(&format!("{} ❌ revert:\n", tree_prefix));
+                    if let Some(fuel) = event.get("fuel_used") {
+                        output.push_str(&format!("{}    ⛽ fuel_used: {}\n", indent_prefix, fuel));
+                    }
+                    format_error_data(&mut output, event, indent_prefix);
+                },
+                _ => {
+                    output.push_str(&format!("{} ❓ {}:\n", tree_prefix, event_type));
+                    output.push_str(&format!("{}    raw: {}\n", indent_prefix, event));
+                }
+            }
+
+            // Add spacing between events except for the last one
+            if !is_last {
+                output.push_str("    │\n");
+            }
+        }
+    }
+
+    output
+}
+
+fn format_alkane_transfers(output: &mut String, transfers: Option<&Vec<JsonValue>>, indent_prefix: &str, label: &str) {
+    #[cfg(not(feature = "std"))]
+    use alloc::format;
+
+    match transfers {
+        Some(transfers) if !transfers.is_empty() => {
+            output.push_str(&format!("{}    🪙 {}:\n", indent_prefix, label));
+            for (j, transfer) in transfers.iter().enumerate() {
+                let transfer_tree = if j == transfers.len() - 1 { "└─" } else { "├─" };
+                let sub_indent = if j == transfers.len() - 1 { " " } else { "│" };
+                output.push_str(&format!("{}      {} transfer_{}:\n", indent_prefix, transfer_tree, j));
+                if let Some(id) = transfer.get("alkane_id") {
+                    output.push_str(&format!("{}      {}   alkane_id:\n", indent_prefix, sub_indent));
+                    output.push_str(&format!("{}      {}     block: {}\n", indent_prefix, sub_indent, id.get("block").unwrap_or(&JsonValue::Null)));
+                    output.push_str(&format!("{}      {}     tx: {}\n", indent_prefix, sub_indent, id.get("tx").unwrap_or(&JsonValue::Null)));
+                }
+                if let Some(amount) = transfer.get("amount") {
+                    output.push_str(&format!("{}      {}   amount: {}\n", indent_prefix, sub_indent, amount));
+                }
+            }
+        },
+        _ => {
+            output.push_str(&format!("{}    🪙 {}: []\n", indent_prefix, label));
+        }
+    }
+}
+
+fn format_call_context(output: &mut String, event: &JsonValue, indent_prefix: &str) {
+    #[cfg(not(feature = "std"))]
+    use alloc::format;
+
+    if let Some(target) = event.get("target") {
+        output.push_str(&format!("{}    target:\n", indent_prefix));
+        output.push_str(&format!("{}      block: {}\n", indent_prefix, target.get("block").unwrap_or(&JsonValue::Null)));
+        output.push_str(&format!("{}      tx: {}\n", indent_prefix, target.get("tx").unwrap_or(&JsonValue::Null)));
+    }
+    if let Some(caller) = event.get("caller") {
+        output.push_str(&format!("{}    caller:\n", indent_prefix));
+        output.push_str(&format!("{}      block: {}\n", indent_prefix, caller.get("block").unwrap_or(&JsonValue::Null)));
+        output.push_str(&format!("{}      tx: {}\n", indent_prefix, caller.get("tx").unwrap_or(&JsonValue::Null)));
+    }
+    if let Some(fuel) = event.get("fuel_allocated") {
+        output.push_str(&format!("{}    ⛽ fuel_allocated: {}\n", indent_prefix, fuel));
+    }
+    if let Some(inputs) = event.get("inputs").and_then(|i| i.as_array()) {
+        if !inputs.is_empty() {
+            output.push_str(&format!("{}    📥 inputs:\n", indent_prefix));
+            for (j, input) in inputs.iter().enumerate() {
+                let input_tree = if j == inputs.len() - 1 { "└─" } else { "├─" };
+                output.push_str(&format!("{}      {} [{}]: {}\n", indent_prefix, input_tree, j, input));
+            }
+        } else {
+            output.push_str(&format!("{}    📥 inputs: []\n", indent_prefix));
+        }
+    }
+}
+
+fn format_return_data(output: &mut String, event: &JsonValue, indent_prefix: &str) {
+    #[cfg(not(feature = "std"))]
+    use alloc::format;
+
+    if let Some(data) = event.get("return_data") {
+        if data.is_null() || (data.is_string() && data.as_str().map(|s| s.is_empty()).unwrap_or(false)) {
+            output.push_str(&format!("{}    📤 return_data: null\n", indent_prefix));
+        } else {
+            output.push_str(&format!("{}    📤 return_data:\n", indent_prefix));
+            output.push_str(&format!("{}      hex: \"{}\"\n", indent_prefix, data));
+        }
+    }
+}
+
+fn format_error_data(output: &mut String, event: &JsonValue, indent_prefix: &str) {
+    #[cfg(not(feature = "std"))]
+    use alloc::format;
+
+    if let Some(data) = event.get("error_data") {
+        if data.is_null() || (data.is_string() && data.as_str().map(|s| s.is_empty()).unwrap_or(false)) {
+            output.push_str(&format!("{}    🚨 error_data: null\n", indent_prefix));
+        } else {
+            let data_str = data.as_str().unwrap_or("");
+            output.push_str(&format!("{}    🚨 error_data:\n", indent_prefix));
+            output.push_str(&format!("{}      hex: \"{}\"\n", indent_prefix, data_str));
+
+            // Try to decode error message if it's hex and long enough
+            if data_str.len() > 8 {
+                if let Ok(bytes) = hex::decode(data_str) {
+                    if bytes.len() > 4 {
+                        if let Ok(msg) = core::str::from_utf8(&bytes[4..]) {
+                            let trimmed = msg.trim_end_matches('\0');
+                            if !trimmed.is_empty() {
+                                output.push_str(&format!("{}      💬 decoded_message: \"{}\"\n", indent_prefix, trimmed));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

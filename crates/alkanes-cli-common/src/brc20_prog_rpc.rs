@@ -6,6 +6,7 @@
 use crate::{AlkanesError, Result};
 use crate::brc20_prog_rpc_types::*;
 use serde_json::Value;
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 
 #[cfg(not(target_arch = "wasm32"))]
 use alloc::string::{String, ToString};
@@ -17,23 +18,38 @@ use alloc::vec::Vec;
 pub struct Brc20ProgRpcClient {
     url: String,
     client: reqwest::Client,
+    headers: HeaderMap,
 }
 
 impl Brc20ProgRpcClient {
     /// Create a new BRC20-Prog RPC client
     pub fn new(url: String) -> Result<Self> {
+        Self::with_headers(url, Vec::new())
+    }
+
+    /// Create a new BRC20-Prog RPC client with custom headers
+    pub fn with_headers(url: String, headers: Vec<(String, String)>) -> Result<Self> {
         #[cfg(not(target_arch = "wasm32"))]
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
             .build()
             .map_err(|e| AlkanesError::Network(e.to_string()))?;
-        
+
         #[cfg(target_arch = "wasm32")]
         let client = reqwest::Client::builder()
             .build()
             .map_err(|e| AlkanesError::Network(e.to_string()))?;
-        
-        Ok(Self { url, client })
+
+        let mut header_map = HeaderMap::new();
+        for (name, value) in headers {
+            let header_name = HeaderName::from_bytes(name.as_bytes())
+                .map_err(|e| AlkanesError::Network(format!("Invalid header name '{}': {}", name, e)))?;
+            let header_value = HeaderValue::from_str(&value)
+                .map_err(|e| AlkanesError::Network(format!("Invalid header value '{}': {}", value, e)))?;
+            header_map.insert(header_name, header_value);
+        }
+
+        Ok(Self { url, client, headers: header_map })
     }
 
     /// Make a JSON-RPC call
@@ -47,10 +63,17 @@ impl Brc20ProgRpcClient {
 
         log::debug!("BRC20-Prog RPC request: {} -> {}", method, request_body);
 
-        let response = self
+        let mut request = self
             .client
             .post(&self.url)
-            .json(&request_body)
+            .json(&request_body);
+
+        // Add custom headers
+        for (name, value) in self.headers.iter() {
+            request = request.header(name.clone(), value.clone());
+        }
+
+        let response = request
             .send()
             .await
             .map_err(|e| AlkanesError::Network(format!("HTTP request failed: {}", e)))?;

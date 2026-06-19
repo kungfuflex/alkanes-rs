@@ -1,6 +1,5 @@
 use crate::balance_sheet::OutgoingRunes;
 use crate::{
-    log_debug, log_error, log_warning,
     message::{MessageContext, MessageContextParcel},
     protoburn::{Protoburn, Protoburns},
 };
@@ -67,21 +66,6 @@ pub trait MessageProcessor {
         balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer>>,
         num_protostones: usize,
     ) -> Result<bool>;
-
-    /// Process message with a shared trace that will contain all events
-    fn process_message_with_trace<T: MessageContext>(
-        &self,
-        trace: alkanes_support::trace::Trace,
-        atomic: &mut AtomicPointer,
-        transaction: &Transaction,
-        txindex: u32,
-        block: &Block,
-        height: u64,
-        _runestone_output_index: u32,
-        protomessage_vout: u32,
-        balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer>>,
-        num_protostones: usize,
-    ) -> Result<bool>;
 }
 impl MessageProcessor for Protostone {
     fn process_message<T: MessageContext>(
@@ -115,8 +99,8 @@ impl MessageProcessor for Protostone {
             if let Ok(address) = protorune_support::network::to_address_str(
                 &transaction.output[pointer as usize].script_pubkey,
             ) {
-                log_debug!(
-                    "Protostone pointer ({}) → {}",
+                println!(
+                    "Protostone pointer ({}) points to Bitcoin address: {}",
                     pointer, address
                 );
             }
@@ -127,8 +111,8 @@ impl MessageProcessor for Protostone {
             if let Ok(address) = protorune_support::network::to_address_str(
                 &transaction.output[refund_pointer as usize].script_pubkey,
             ) {
-                log_debug!(
-                    "Protostone refund_pointer ({}) → {}",
+                println!(
+                    "Protostone refund_pointer ({}) points to Bitcoin address: {}",
                     refund_pointer, address
                 );
             }
@@ -166,7 +150,6 @@ impl MessageProcessor for Protostone {
                     .unwrap_or_else(|| BalanceSheet::default()),
             ),
             sheets: Box::new(BalanceSheet::default()),
-            trace: alkanes_support::trace::Trace::default(),
         };
 
         match T::handle(&parcel) {
@@ -177,15 +160,15 @@ impl MessageProcessor for Protostone {
                         Ok(true)
                     }
                     Err(e) => {
-                        log_error!("Reconcile error: {:?}", e);
-                        log_debug!("Refunding to refund_pointer: {}", refund_pointer);
+                        println!("Got error inside reconcile! {:?} \n\n", e);
+                        println!("Refunding to refund_pointer: {}", refund_pointer);
 
                         // Log the Bitcoin address again to make it clear this is the refund address being used
                         if refund_pointer < num_outputs as u32 {
                             if let Ok(address) = protorune_support::network::to_address_str(
                                 &transaction.output[refund_pointer as usize].script_pubkey,
                             ) {
-                                log_debug!("Refunding to: {}", address);
+                                println!("RECONCILE ERROR REFUND: Protostone refund_pointer ({}) points to Bitcoin address: {}", refund_pointer, address);
                             }
                         }
 
@@ -200,17 +183,17 @@ impl MessageProcessor for Protostone {
                 }
             }
             Err(e) => {
-                log_warning!("Alkanes message reverted: {:?}", e);
-                log_debug!("Refunding to refund_pointer: {}", refund_pointer);
+                println!("Alkanes message reverted with error: {:?}", e);
+                println!("Refunding to refund_pointer: {}", refund_pointer);
 
                 // Log the Bitcoin address again to make it clear this is the refund address being used
                 if refund_pointer < num_outputs as u32 {
                     if let Ok(address) = protorune_support::network::to_address_str(
                         &transaction.output[refund_pointer as usize].script_pubkey,
                     ) {
-                        log_debug!(
-                            "Refunding to: {}",
-                            address
+                        println!(
+                            "REFUND: Protostone refund_pointer ({}) points to Bitcoin address: {}",
+                            refund_pointer, address
                         );
                     }
                 }
@@ -218,99 +201,6 @@ impl MessageProcessor for Protostone {
                 refund_to_refund_pointer(balances_by_output, protomessage_vout, refund_pointer)?;
                 atomic.rollback();
 
-                Ok(false)
-            }
-        }
-    }
-
-    fn process_message_with_trace<T: MessageContext>(
-        &self,
-        trace: alkanes_support::trace::Trace,
-        atomic: &mut AtomicPointer,
-        transaction: &Transaction,
-        txindex: u32,
-        block: &Block,
-        height: u64,
-        _runestone_output_index: u32,
-        protomessage_vout: u32,
-        balances_by_output: &mut BTreeMap<u32, BalanceSheet<AtomicPointer>>,
-        num_protostones: usize,
-    ) -> Result<bool> {
-        // Validate output indexes and protomessage_vout
-        let num_outputs = transaction.output.len();
-        let pointer = self.pointer.ok_or_else(|| anyhow!("Missing pointer"))?;
-        let refund_pointer = self
-            .refund
-            .ok_or_else(|| anyhow!("Missing refund pointer"))?;
-
-        // Ensure pointers are valid transaction outputs
-        if pointer > (num_outputs + num_protostones) as u32
-            || refund_pointer > (num_outputs + num_protostones) as u32
-        {
-            return Err(anyhow::anyhow!("Invalid output pointer"));
-        }
-
-        // Validate protomessage vout
-        let max_virtual_vout = num_outputs + 100;
-        if protomessage_vout >= max_virtual_vout as u32 {
-            return Err(anyhow::anyhow!("Protomessage vout exceeds maximum allowed"));
-        }
-        
-        let initial_sheet = balances_by_output
-            .get(&protomessage_vout)
-            .map(|v| v.clone())
-            .unwrap_or_else(|| BalanceSheet::default());
-
-        atomic.checkpoint();
-
-        let parcel = MessageContextParcel {
-            atomic: atomic.derive(&IndexPointer::default()),
-            runes: RuneTransfer::from_balance_sheet(initial_sheet.clone()),
-            transaction: transaction.clone(),
-            block: block.clone(),
-            height,
-            vout: protomessage_vout,
-            pointer,
-            refund_pointer,
-            calldata: self.message.iter().flat_map(|v| v.to_be_bytes()).collect(),
-            txindex,
-            runtime_balances: Box::new(
-                balances_by_output
-                    .get(&u32::MAX)
-                    .map(|v| v.clone())
-                    .unwrap_or_else(|| BalanceSheet::default()),
-            ),
-            sheets: Box::new(BalanceSheet::default()),
-            trace, // Pass the shared trace
-        };
-
-        match T::handle(&parcel) {
-            Ok(values) => {
-                match values.reconcile(atomic, balances_by_output, protomessage_vout, pointer) {
-                    Ok(_) => {
-                        atomic.commit();
-                        Ok(true)
-                    }
-                    Err(e) => {
-                        log_error!("Reconcile error: {:?}", e);
-                        refund_to_refund_pointer(
-                            balances_by_output,
-                            protomessage_vout,
-                            refund_pointer,
-                        )?;
-                        atomic.rollback();
-                        Ok(false)
-                    }
-                }
-            }
-            Err(e) => {
-                log_warning!("Alkanes message reverted: {:?}", e);
-                refund_to_refund_pointer(
-                    balances_by_output,
-                    protomessage_vout,
-                    refund_pointer,
-                )?;
-                atomic.rollback();
                 Ok(false)
             }
         }

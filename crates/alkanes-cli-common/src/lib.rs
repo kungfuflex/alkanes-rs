@@ -55,9 +55,11 @@ pub mod address;
 #[cfg(feature = "std")]
 pub mod commands;
 pub mod traits;
+pub mod pending_tx_store;
 pub mod network;
 pub mod rpc;
 pub mod alkanes;
+pub mod bridge;
 pub mod brc20_prog;
 #[cfg(feature = "std")]
 pub mod brc20_prog_rpc;
@@ -75,6 +77,7 @@ pub mod utils;
 pub mod trace;
 pub mod keystore;
 pub mod esplora;
+pub mod psbt_utils;
 pub mod unwrap;
 pub mod lua_script;
 pub mod bitcoind;
@@ -85,9 +88,16 @@ pub mod index_pointer;
 pub mod byte_view;
 pub mod proto;
 pub mod subfrost;
+pub mod ordinals;
+
+#[cfg(feature = "std")]
+pub mod cache;
 
 #[cfg(feature = "std")]
 pub mod dataapi;
+
+#[cfg(feature = "std")]
+pub mod opi;
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod mock_provider;

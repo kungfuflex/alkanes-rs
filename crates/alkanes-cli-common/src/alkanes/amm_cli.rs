@@ -7,7 +7,7 @@ use super::execute::{EnhancedAlkanesExecutor, EnhancedExecuteParams};
 use super::parsing::parse_protostones;
 
 /// Parameters for initializing a new pool
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct InitPoolParams {
     pub factory_id: AlkaneId,
     pub token0: AlkaneId,
@@ -21,10 +21,12 @@ pub struct InitPoolParams {
     pub fee_rate: Option<f64>,
     pub trace: bool,
     pub auto_confirm: bool,
+    #[serde(default)]
+    pub ordinals_strategy: super::types::OrdinalsStrategy,
 }
 
 /// Parameters for executing a swap
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SwapExecuteParams {
     pub factory_id: AlkaneId,
     pub path: Vec<AlkaneId>, // Token path (minimum 2)
@@ -37,6 +39,8 @@ pub struct SwapExecuteParams {
     pub fee_rate: Option<f64>,
     pub trace: bool,
     pub auto_confirm: bool,
+    #[serde(default)]
+    pub ordinals_strategy: super::types::OrdinalsStrategy,
 }
 
 /// Add liquidity to a pool (opcode 1)
@@ -97,7 +101,12 @@ pub async fn init_pool(
     ];
     
     let protostones = parse_protostones(&calldata)?;
-    
+
+    // Indexer-lag filter for pool-init (this spends user alkanes — must
+    // skip UTXOs above metashrew tip to avoid silent burn).
+    let max_indexed_height = crate::alkanes::indexer_lag::
+        fetch_max_indexed_height_or_none(provider).await;
+
     // Build execute params with alkanes_change_address set to enable auto-change
     let mut executor = EnhancedAlkanesExecutor::new(provider);
     let execute_params = EnhancedExecuteParams {
@@ -113,8 +122,15 @@ pub async fn init_pool(
         trace_enabled: params.trace,
         mine_enabled: false,
         auto_confirm: params.auto_confirm,
+        ordinals_strategy: params.ordinals_strategy,
+        mempool_indexer: false,
+        split_transactions: false,
+        known_pending_tx_hexes: Vec::new(),
+        prefetched_utxos: Vec::new(),
+        max_indexed_height,
+        utxo_source: Default::default(),
     };
-    
+
     // Execute
     let state = executor.execute(execute_params.clone()).await?;
     let result = match state {
@@ -123,9 +139,9 @@ pub async fn init_pool(
         }
         _ => return Err(AlkanesError::Validation("Unexpected execution state".to_string())),
     };
-    
+
     let txid = result.reveal_txid.clone();
-    
+
     if !params.trace {
         println!("✅ Pool initialized!");
         println!("📝 Transaction: {}", txid);
@@ -194,7 +210,11 @@ pub async fn execute_swap(
     ];
     
     let protostones = parse_protostones(&calldata)?;
-    
+
+    // Indexer-lag filter for swap (spends alkanes).
+    let max_indexed_height = crate::alkanes::indexer_lag::
+        fetch_max_indexed_height_or_none(provider).await;
+
     // Build execute params
     let mut executor = EnhancedAlkanesExecutor::new(provider);
     let execute_params = EnhancedExecuteParams {
@@ -210,6 +230,13 @@ pub async fn execute_swap(
         trace_enabled: params.trace,
         mine_enabled: false,
         auto_confirm: params.auto_confirm,
+        ordinals_strategy: params.ordinals_strategy,
+        mempool_indexer: false,
+        split_transactions: false,
+        known_pending_tx_hexes: Vec::new(),
+        prefetched_utxos: Vec::new(),
+        max_indexed_height,
+        utxo_source: Default::default(),
     };
     
     // Execute

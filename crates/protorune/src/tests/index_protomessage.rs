@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use crate::balance_sheet::{load_sheet, PersistentRecord};
+    use crate::balance_sheet::{load_sheet, load_sheet_chunked, PersistentRecord};
     use crate::message::{MessageContext, MessageContextParcel};
     use crate::protostone::Protostones;
     use crate::test_helpers::{self as helpers, get_address, ADDRESS1};
@@ -374,13 +374,13 @@ mod tests {
             vout: 0,
         };
         // check runes balance
-        let sheet = load_sheet(
+        let sheet = load_sheet_chunked(
             &tables::RUNES
                 .OUTPOINT_TO_RUNES
                 .select(&consensus_encode(&outpoint_address).unwrap()),
         );
 
-        let protorunes_sheet = load_sheet(
+        let protorunes_sheet = load_sheet_chunked(
             &tables::RuneTable::for_protocol(protocol_id.into())
                 .OUTPOINT_TO_RUNES
                 .select(&consensus_encode(&outpoint_address).unwrap()),
@@ -428,18 +428,18 @@ mod tests {
             vout: 1,
         };
         // check runes balance
-        let sheet = load_sheet(
+        let sheet = load_sheet_chunked(
             &tables::RUNES
                 .OUTPOINT_TO_RUNES
                 .select(&consensus_encode(&outpoint_address0).unwrap()),
         );
 
-        let protorunes_sheet0 = load_sheet(
+        let protorunes_sheet0 = load_sheet_chunked(
             &tables::RuneTable::for_protocol(protocol_id.into())
                 .OUTPOINT_TO_RUNES
                 .select(&consensus_encode(&outpoint_address0).unwrap()),
         );
-        let protorunes_sheet1 = load_sheet(
+        let protorunes_sheet1 = load_sheet_chunked(
             &tables::RuneTable::for_protocol(protocol_id.into())
                 .OUTPOINT_TO_RUNES
                 .select(&consensus_encode(&outpoint_address1).unwrap()),
@@ -492,7 +492,7 @@ mod tests {
 
         assert!(Protorune::index_block::<T>(test_block.clone(), block_height as u64).is_ok());
 
-        let protorunes_sheet0 = load_sheet(
+        let protorunes_sheet0 = load_sheet_chunked(
             &tables::RuneTable::for_protocol(protocol_id.into())
                 .OUTPOINT_TO_RUNES
                 .select(
@@ -503,7 +503,7 @@ mod tests {
                     .unwrap(),
                 ),
         );
-        let protorunes_sheet1 = load_sheet(
+        let protorunes_sheet1 = load_sheet_chunked(
             &tables::RuneTable::for_protocol(protocol_id.into())
                 .OUTPOINT_TO_RUNES
                 .select(

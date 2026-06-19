@@ -204,3 +204,48 @@ export interface ImportOptions {
   validate?: boolean;
   network?: NetworkType;
 }
+
+/**
+ * Fee estimation result for BTC send transactions
+ */
+export interface FeeEstimation {
+  fee: number;              // Total fee in satoshis
+  numOutputs: number;       // 1 (no change) or 2 (with change)
+  change: number;           // Change amount in sats (0 if absorbed into fee)
+  vsize: number;            // Estimated vsize in vbytes
+  effectiveFeeRate: number; // Actual sat/vB (higher than requested when dust is absorbed)
+}
+
+/**
+ * BRC20-Prog types
+ */
+export type {
+  AntiFrontrunningStrategy,
+  Brc20ProgExecuteParams,
+  Brc20ProgDeployParams,
+  Brc20ProgTransactParams,
+  Brc20ProgWrapBtcParams,
+  Brc20ProgExecuteResult,
+} from './brc20-prog';
+
+/**
+ * Alkanes types (frBTC, AMM, execute)
+ */
+export type {
+  AlkaneId as AlkanesAlkaneId,
+  OrdinalsStrategy,
+  AlkanesExecuteBaseParams,
+  AlkanesTransferParams,
+  FrbtcWrapParams,
+  FrbtcUnwrapParams,
+  FrbtcWrapAndExecuteParams,
+  FrbtcWrapAndExecute2Params,
+  AlkanesSwapParams,
+  AlkanesInitPoolParams,
+  AlkanesExecuteParams,
+  AlkanesExecuteResult,
+  PendingUnwrap,
+  PendingUnwrapsResult,
+  PoolDetailsResult,
+  SignerAddressResult,
+} from './alkanes';

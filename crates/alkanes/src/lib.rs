@@ -1,7 +1,6 @@
 // Logging module must be declared first so macros are available
 pub mod logging;
 
-#[cfg(not(test))]
 use crate::indexer::configure_network;
 use crate::unwrap::{
     deserialize_payments, fr_btc_payments_at_block, fr_btc_storage_pointer, update_last_block,
@@ -25,10 +24,15 @@ use std::io::Cursor;
 use view::parcels_from_protobuf;
 pub mod block;
 pub mod etl;
+#[cfg(any(test, feature = "test-utils"))]
+pub mod fuel_probe;
 pub mod indexer;
 pub mod message;
 pub mod network;
+pub mod precompile;
+pub mod precompile_diesel;
 pub mod precompiled;
+pub mod recycle;
 pub mod tables;
 #[cfg(any(test, feature = "test-utils"))]
 pub mod tests;
@@ -37,8 +41,6 @@ pub mod unwrap;
 pub mod utils;
 pub mod view;
 pub mod vm;
-#[cfg(feature = "zcash")]
-pub mod zcash;
 use crate::indexer::index_block;
 
 /*
@@ -64,7 +66,7 @@ Thus, going to add not(test) to all these functions
 
 #[cfg(not(test))]
 #[no_mangle]
-pub fn multisimluate() -> u32 {
+pub fn multisimluate() -> i32 {
     configure_network();
     let data = input();
     let _height = u32::from_le_bytes((&data[0..4]).try_into().unwrap());
@@ -95,7 +97,7 @@ pub fn multisimluate() -> u32 {
 
 #[cfg(not(test))]
 #[no_mangle]
-pub fn simulate() -> u32 {
+pub fn simulate() -> i32 {
     configure_network();
     let data = input();
     let _height = u32::from_le_bytes((&data[0..4]).try_into().unwrap());
@@ -118,13 +120,13 @@ pub fn simulate() -> u32 {
 
 #[cfg(not(test))]
 #[no_mangle]
-pub fn sequence() -> u32 {
+pub fn sequence() -> i32 {
     export_bytes(view::sequence().unwrap())
 }
 
 #[cfg(not(test))]
 #[no_mangle]
-pub fn meta() -> u32 {
+pub fn meta() -> i32 {
     configure_network();
     let data = input();
     let _height = u32::from_le_bytes((&data[0..4]).try_into().unwrap());
@@ -139,7 +141,7 @@ pub fn meta() -> u32 {
 
 #[cfg(not(test))]
 #[no_mangle]
-pub fn runesbyaddress() -> u32 {
+pub fn runesbyaddress() -> i32 {
     configure_network();
     let mut data: Cursor<Vec<u8>> = Cursor::new(input());
     let _height = consume_sized_int::<u32>(&mut data).unwrap();
@@ -151,7 +153,7 @@ pub fn runesbyaddress() -> u32 {
 
 #[cfg(not(test))]
 #[no_mangle]
-pub fn unwrap() -> u32 {
+pub fn unwrap() -> i32 {
     configure_network();
     let mut data: Cursor<Vec<u8>> = Cursor::new(input());
     let height = consume_sized_int::<u32>(&mut data).unwrap();
@@ -160,7 +162,7 @@ pub fn unwrap() -> u32 {
 
 #[cfg(not(test))]
 #[no_mangle]
-pub fn runesbyoutpoint() -> u32 {
+pub fn runesbyoutpoint() -> i32 {
     configure_network();
     let mut data: Cursor<Vec<u8>> = Cursor::new(input());
     let _height = consume_sized_int::<u32>(&mut data).unwrap();
@@ -172,7 +174,7 @@ pub fn runesbyoutpoint() -> u32 {
 
 #[cfg(not(test))]
 #[no_mangle]
-pub fn spendablesbyaddress() -> u32 {
+pub fn spendablesbyaddress() -> i32 {
     configure_network();
     let mut data: Cursor<Vec<u8>> = Cursor::new(input());
     let _height = consume_sized_int::<u32>(&mut data).unwrap();
@@ -184,7 +186,7 @@ pub fn spendablesbyaddress() -> u32 {
 
 #[cfg(not(test))]
 #[no_mangle]
-pub fn protorunesbyaddress() -> u32 {
+pub fn protorunesbyaddress() -> i32 {
     configure_network();
     let mut data: Cursor<Vec<u8>> = Cursor::new(input());
     let _height = consume_sized_int::<u32>(&mut data).unwrap();
@@ -218,7 +220,7 @@ pub fn protorunesbyaddress() -> u32 {
 
 #[cfg(not(test))]
 #[no_mangle]
-pub fn getblock() -> u32 {
+pub fn getblock() -> i32 {
     configure_network();
     let mut data: Cursor<Vec<u8>> = Cursor::new(input());
     let _height = consume_sized_int::<u32>(&mut data).unwrap();
@@ -228,7 +230,7 @@ pub fn getblock() -> u32 {
 
 #[cfg(not(test))]
 #[no_mangle]
-pub fn protorunesbyheight() -> u32 {
+pub fn protorunesbyheight() -> i32 {
     configure_network();
     let mut data: Cursor<Vec<u8>> = Cursor::new(input());
     let _height = consume_sized_int::<u32>(&mut data).unwrap();
@@ -240,7 +242,7 @@ pub fn protorunesbyheight() -> u32 {
 
 #[cfg(not(test))]
 #[no_mangle]
-pub fn alkanes_id_to_outpoint() -> u32 {
+pub fn alkanes_id_to_outpoint() -> i32 {
     configure_network();
     let mut data: Cursor<Vec<u8>> = Cursor::new(input());
     // first 4 bytes come in as height, not used
@@ -256,7 +258,7 @@ pub fn alkanes_id_to_outpoint() -> u32 {
 
 #[cfg(not(test))]
 #[no_mangle]
-pub fn traceblock() -> u32 {
+pub fn traceblock() -> i32 {
     configure_network();
     let mut data: Cursor<Vec<u8>> = Cursor::new(input());
     let height = consume_sized_int::<u32>(&mut data).unwrap();
@@ -265,7 +267,7 @@ pub fn traceblock() -> u32 {
 
 #[cfg(not(test))]
 #[no_mangle]
-pub fn trace() -> u32 {
+pub fn trace() -> i32 {
     configure_network();
     let mut data: Cursor<Vec<u8>> = Cursor::new(input());
     let _height = consume_sized_int::<u32>(&mut data).unwrap();
@@ -279,7 +281,7 @@ pub fn trace() -> u32 {
 
 #[cfg(not(test))]
 #[no_mangle]
-pub fn getbytecode() -> u32 {
+pub fn getbytecode() -> i32 {
     configure_network();
     let mut data: Cursor<Vec<u8>> = Cursor::new(input());
     let _height = consume_sized_int::<u32>(&mut data).unwrap();
@@ -288,7 +290,7 @@ pub fn getbytecode() -> u32 {
 
 #[cfg(not(test))]
 #[no_mangle]
-pub fn protorunesbyoutpoint() -> u32 {
+pub fn protorunesbyoutpoint() -> i32 {
     configure_network();
     let mut data: Cursor<Vec<u8>> = Cursor::new(input());
     let _height = consume_sized_int::<u32>(&mut data).unwrap();
@@ -301,7 +303,7 @@ pub fn protorunesbyoutpoint() -> u32 {
 
 #[cfg(not(test))]
 #[no_mangle]
-pub fn runesbyheight() -> u32 {
+pub fn runesbyheight() -> i32 {
     configure_network();
     let mut data: Cursor<Vec<u8>> = Cursor::new(input());
     let _height = consume_sized_int::<u32>(&mut data).unwrap();
@@ -314,7 +316,7 @@ pub fn runesbyheight() -> u32 {
 // TODO: this function needs to improve the way it stores all alkane ids, it doesn't handle duplicates right now
 #[cfg(not(test))]
 #[no_mangle]
-pub fn getinventory() -> u32 {
+pub fn getinventory() -> i32 {
     let data = input();
     let _height = u32::from_le_bytes((&data[0..4]).try_into().unwrap());
     let reader = &data[4..];
@@ -329,7 +331,8 @@ pub fn getinventory() -> u32 {
 
 #[cfg(not(test))]
 #[no_mangle]
-pub fn getstorageat() -> u32 {
+pub fn getstorageat() -> i32 {
+    configure_network();
     let data = input();
     let _height = u32::from_le_bytes((&data[0..4]).try_into().unwrap());
     let reader = &data[4..];
@@ -347,51 +350,18 @@ pub fn getstorageat() -> u32 {
 pub fn _start() {
     let data = input();
     let height = u32::from_le_bytes((&data[0..4]).try_into().unwrap());
-    log_info!("Processing height {}", height);
     let reader = &data[4..];
-    
-    #[cfg(feature = "zcash")]
-    {
-        let block_data = reader.to_vec();
-        log_debug!("Parsing Zcash block: {} bytes", block_data.len());
-        log_debug!("First 100 bytes: {}", hex::encode(&block_data[..100.min(block_data.len())]));
-        
-        match alkanes_support::zcash::ZcashBlock::parse(&mut Cursor::<Vec<u8>>::new(block_data.clone())) {
-            Ok(zblock) => {
-                log_debug!("Successfully parsed Zcash block");
-                
-                // index_block is generic over BlockLike, so we can pass ZcashBlock directly
-                index_block(&zblock, height).unwrap();
-                
-                // TODO: etl::index_extensions for Zcash blocks
-                // For now, skip etl::index_extensions as it requires bitcoin::Block
-                // and we don't have a direct conversion from ZcashBlock
-                
-                flush();
-            }
-            Err(e) => {
-                log_error!("ERROR parsing Zcash block: {:?}", e);
-                log_debug!("Block data dump (full): {}", hex::encode(&block_data));
-                panic!("ZcashBlock parsing failed at height {}: {:?}", height, e);
-            }
-        }
-    }
-    
-    #[cfg(not(feature = "zcash"))]
-    {
-        #[cfg(any(feature = "dogecoin", feature = "luckycoin", feature = "bellscoin"))]
-        let block: Block = AuxpowBlock::parse(&mut Cursor::<Vec<u8>>::new(reader.to_vec()))
-            .unwrap()
-            .to_consensus();
-        
-        #[cfg(not(any(feature = "dogecoin", feature = "luckycoin", feature = "bellscoin")))]
-        let block: Block =
-            consensus_decode::<Block>(&mut Cursor::<Vec<u8>>::new(reader.to_vec())).unwrap();
+    #[cfg(any(feature = "dogecoin", feature = "luckycoin", feature = "bellscoin"))]
+    let block: Block = AuxpowBlock::parse(&mut Cursor::<Vec<u8>>::new(reader.to_vec()))
+        .unwrap()
+        .to_consensus();
+    #[cfg(not(any(feature = "dogecoin", feature = "luckycoin", feature = "bellscoin")))]
+    let block: Block =
+        consensus_decode::<Block>(&mut Cursor::<Vec<u8>>::new(reader.to_vec())).unwrap();
 
-        index_block(&block, height).unwrap();
-        etl::index_extensions(height, &block);
-        flush();
-    }
+    index_block(&block, height).unwrap();
+    etl::index_extensions(height, &block);
+    flush();
 }
 
 // #[cfg(test)]

@@ -18,3 +18,6 @@ alkanes-std-factory-support = { workspace = true }
 ordinals = { workspace = true }
 anyhow = { workspace = true }
 bitcoin = { workspace = true }
+
+[build-dependencies]
+alkanes-wit-build = { path = "../../crates/alkanes-wit-build" }

@@ -1,5 +1,9 @@
-use alkanes_runtime::declare_alkane;
-use alkanes_runtime::message::MessageDispatch;
+// Include the generated code from WIT codegen
+#[allow(unused_imports, dead_code, clippy::all)]
+mod generated {
+    include!(concat!(env!("OUT_DIR"), "/generated.rs"));
+}
+
 #[allow(unused_imports)]
 use alkanes_runtime::{
     println,
@@ -7,35 +11,14 @@ use alkanes_runtime::{
 };
 use alkanes_runtime::{runtime::AlkaneResponder, storage::StoragePointer, token::Token};
 use alkanes_support::{parcel::AlkaneTransfer, response::CallResponse};
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use hex_lit::hex;
-use metashrew_support::compat::{to_arraybuffer_layout, to_passback_ptr};
 use metashrew_support::index_pointer::KeyValuePointer;
+
+use generated::OrbitalInterface;
 
 #[derive(Default)]
 pub struct Orbital(());
-
-#[derive(MessageDispatch)]
-enum OrbitalMessage {
-    #[opcode(0)]
-    Initialize,
-
-    #[opcode(99)]
-    #[returns(String)]
-    GetName,
-
-    #[opcode(100)]
-    #[returns(String)]
-    GetSymbol,
-
-    #[opcode(101)]
-    #[returns(u128)]
-    GetTotalSupply,
-
-    #[opcode(1000)]
-    #[returns(Vec<u8>)]
-    GetData,
-}
 
 impl Token for Orbital {
     fn name(&self) -> String {
@@ -64,7 +47,11 @@ impl Orbital {
         // NFT data can be anything, however
         (&hex!("89504e470d0a1a0a0000000d494844520000000100000001010300000025db56ca00000003504c5445000000a77a3dda0000000174524e530040e6d8660000000a4944415408d76360000000020001e221bc330000000049454e44ae426082")).to_vec()
     }
+}
 
+impl AlkaneResponder for Orbital {}
+
+impl OrbitalInterface for Orbital {
     fn initialize(&self) -> Result<CallResponse> {
         self.observe_initialization()?;
         let context = self.context()?;
@@ -113,14 +100,5 @@ impl Orbital {
         response.data = self.data();
 
         Ok(response)
-    }
-}
-
-impl AlkaneResponder for Orbital {}
-
-// Use the new macro format
-declare_alkane! {
-    impl AlkaneResponder for Orbital {
-        type Message = OrbitalMessage;
     }
 }

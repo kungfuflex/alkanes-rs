@@ -4,7 +4,7 @@
 //! the actual work to the alkanes-cli-sys library. This keeps the CLI crate
 //! lightweight and focused on its primary role as a user interface.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Parser;
 use alkanes_cli_sys::{SystemAlkanes, SystemOrd};
 use alkanes_cli_common::traits::*;
@@ -13,7 +13,9 @@ use serde_json::json;
 
 mod commands;
 mod pretty_print;
-use commands::{Alkanes, AlkanesExecute, Commands, DeezelCommands, MetashrewCommands, Protorunes, Runestone, WalletCommands, DataApiCommand, SubfrostCommands};
+mod format_parser;
+mod wc_signer;
+use commands::{Alkanes, AlkanesExecute, Commands, DeezelCommands, MetashrewCommands, Protorunes, Runestone, WalletCommands, DataApiCommand, SubfrostCommands, OpiCommands, WcCommands};
 use alkanes_cli_common::alkanes;
 use pretty_print::*;
 
@@ -75,40 +77,79 @@ async fn main() -> Result<()> {
         return execute_dataapi_command(&args, cmd.clone()).await;
     }
 
+    // Handle OPI commands early (they don't need the System trait)
+    if let Commands::Opi(ref cmd) = args.command {
+        return execute_opi_command(&args, cmd.clone()).await;
+    }
+
     // Convert DeezelCommands to Args
     let alkanes_args = alkanes_cli_common::commands::Args::from(&args);
 
     // Validate RPC config (ensure only one backend is configured)
     alkanes_args.rpc_config.validate()?;
 
-    // Create a new SystemAlkanes instance
-    let mut system = SystemAlkanes::new(&alkanes_args).await?;
+    // Check if this command needs wallet access
+    // IMPORTANT: If --wallet-file is provided, always load the wallet (even in Locked state)
+    // because address identifiers like "p2tr:0" need wallet access for address derivation
+    let skip_wallet_init = !args.command.requires_wallet() && alkanes_args.wallet_file.is_none();
+
+    // Create a new SystemAlkanes instance (skip wallet init only if not needed AND no wallet file provided).
+    // When --use-walletconnect is set we ALWAYS skip wallet init — the
+    // local keystore is irrelevant; signing goes through the relay.
+    let effective_skip = skip_wallet_init || args.use_walletconnect;
+    let mut system = SystemAlkanes::new_with_options(&alkanes_args, effective_skip).await?;
+
+    // Wire up the remote signer if --use-walletconnect was passed. We
+    // reattach to the relay using the persisted session at
+    // ~/.alkanes/wc-session.json — pair flow must have run already.
+    if args.use_walletconnect {
+        attach_walletconnect_signer(&mut system).await?;
+    }
 
     // Set default brc20-prog RPC URL based on network if not provided
     let brc20_prog_rpc_url = alkanes_args.brc20_prog_rpc_url.clone()
         .or_else(|| alkanes_args.rpc_config.get_default_brc20_prog_rpc_url());
 
+    // Get JSON-RPC headers (used by brc20-prog RPC client)
+    let jsonrpc_headers = alkanes_args.rpc_config.get_jsonrpc_headers();
+
     // Execute other commands
-    execute_command(&mut system, args.command, brc20_prog_rpc_url, args.frbtc_address.clone()).await
+    execute_command(&mut system, args.command, brc20_prog_rpc_url, jsonrpc_headers, args.frbtc_address.clone()).await
 }
 
-async fn execute_command<T: System + SystemOrd + UtxoProvider>(system: &mut T, command: Commands, brc20_prog_rpc_url: Option<String>, frbtc_address: Option<String>) -> Result<()> {
+async fn execute_command<T: System + SystemOrd + UtxoProvider>(system: &mut T, command: Commands, brc20_prog_rpc_url: Option<String>, jsonrpc_headers: Vec<(String, String)>, frbtc_address: Option<String>) -> Result<()> {
     match command {
         Commands::Bitcoind(cmd) => system.execute_bitcoind_command(cmd.into()).await.map_err(|e| e.into()),
         Commands::Wallet(cmd) => execute_wallet_command(system, cmd).await,
-        Commands::Alkanes(cmd) => execute_alkanes_command(system, cmd).await,
+        Commands::Alkanes(cmd) => execute_alkanes_command(system, cmd, frbtc_address.clone()).await,
         Commands::Runestone(cmd) => execute_runestone_command(system, cmd).await,
         Commands::Protorunes(cmd) => execute_protorunes_command(system.provider(), cmd).await,
         Commands::Ord(cmd) => execute_ord_command(system.provider(), cmd.into()).await,
         Commands::Esplora(cmd) => execute_esplora_command(system.provider(), cmd.into()).await,
         Commands::Metashrew(cmd) => execute_metashrew_command(system.provider(), cmd).await,
         Commands::Lua(cmd) => execute_lua_command(system.provider(), cmd).await,
-        Commands::Brc20Prog(cmd) => execute_brc20prog_command(system, cmd, brc20_prog_rpc_url, frbtc_address).await,
+        Commands::Brc20Prog(cmd) => execute_brc20prog_command(system, cmd, brc20_prog_rpc_url, jsonrpc_headers, frbtc_address).await,
         Commands::Dataapi(_) => {
             // Dataapi is handled in main() because it doesn't need the System trait
             unreachable!("Dataapi commands should be handled in main()")
         }
+        Commands::Opi(_) => {
+            // OPI is handled in main() because it doesn't need the System trait
+            unreachable!("OPI commands should be handled in main()")
+        }
         Commands::Subfrost(cmd) => execute_subfrost_command(system.provider(), cmd).await,
+        Commands::Espo(cmd) => execute_espo_command(system.provider(), cmd.into()).await,
+        Commands::Wc(cmd) => execute_wc_command(cmd).await,
+        Commands::Decodepsbt { psbt, raw } => {
+            use alkanes_cli_common::psbt_utils::decode_psbt_from_base64;
+            let psbt_json = decode_psbt_from_base64(&psbt)?;
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&psbt_json)?);
+            } else {
+                println!("{}", serde_json::to_string_pretty(&psbt_json)?);
+            }
+            Ok(())
+        }
     }
 }
 
@@ -149,6 +190,166 @@ async fn execute_lua_command(
     Ok(())
 }
 
+/// Default location for the persisted WalletConnect session, so the user
+/// only has to pair once per device.
+fn wc_session_path() -> std::path::PathBuf {
+    if let Some(home) = dirs::home_dir() {
+        home.join(".alkanes").join("wc-session.json")
+    } else {
+        std::path::PathBuf::from(".alkanes-wc-session.json")
+    }
+}
+
+/// Reattach to a persisted WalletConnect session and wire it into the
+/// system's provider as a [`RemoteSigner`]. Called once at startup when
+/// `--use-walletconnect` is set, before any subcommand runs.
+async fn attach_walletconnect_signer(system: &mut alkanes_cli_sys::SystemAlkanes) -> Result<()> {
+    use subfrost_wc::signer::WalletConnectSigner;
+    let session = load_wc_session()?
+        .ok_or_else(|| anyhow::anyhow!(
+            "--use-walletconnect was set but no session is stashed at {}. \
+             Run `alkanes-cli wc pair` first.",
+            wc_session_path().display()
+        ))?;
+    log::info!(
+        "--use-walletconnect: re-attaching to relay {} (topic={})",
+        session.relay_url, session.topic
+    );
+    let signer = WalletConnectSigner::restore(session)
+        .await
+        .map_err(|e| anyhow::anyhow!("WC session restore failed: {e}"))?;
+    let wrapped = std::sync::Arc::new(wc_signer::WcRemoteSigner::new(signer));
+    system.attach_remote_signer(wrapped);
+    log::info!("--use-walletconnect: remote signer attached");
+    Ok(())
+}
+
+/// Read the persisted WC session from disk. Returns `Ok(None)` if no
+/// session is stashed; `Err` only on actual I/O / parse failure so
+/// callers can distinguish "user hasn't paired yet" from "the file is
+/// corrupt".
+fn load_wc_session() -> Result<Option<subfrost_wc::signer::PersistedSession>> {
+    let path = wc_session_path();
+    if !path.exists() {
+        return Ok(None);
+    }
+    let raw = std::fs::read_to_string(&path)
+        .with_context(|| format!("read {}", path.display()))?;
+    let session: subfrost_wc::signer::PersistedSession = serde_json::from_str(&raw)
+        .with_context(|| format!("parse {}", path.display()))?;
+    Ok(Some(session))
+}
+
+/// Write a session to disk, owner-only readable on Unix. Best-effort
+/// chmod — Windows just gets the default ACL.
+fn save_wc_session(session: &subfrost_wc::signer::PersistedSession) -> Result<()> {
+    let path = wc_session_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let json = serde_json::to_string_pretty(session)?;
+    std::fs::write(&path, json)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&path)?.permissions();
+        perms.set_mode(0o600);
+        std::fs::set_permissions(&path, perms)?;
+    }
+    Ok(())
+}
+
+async fn execute_wc_command(command: WcCommands) -> Result<()> {
+    use subfrost_wc::signer::{start_pairing, WalletConnectSigner};
+    use std::time::Duration;
+
+    match command {
+        WcCommands::Pair {
+            relay_url,
+            origin,
+            timeout_secs,
+        } => {
+            let relay_url = relay_url.unwrap_or_else(|| "wss://wc.subfrost.io/".to_string());
+            println!("📡 Connecting to relay: {relay_url}");
+            let pending = start_pairing(&relay_url, &origin).await
+                .map_err(|e| anyhow::anyhow!("pairing init failed: {e}"))?;
+            println!();
+            println!("📲 Open subfrost-mobile and scan or paste this URI:");
+            println!();
+            println!("   {}", pending.uri());
+            println!();
+            if let Some(code) = pending.code() {
+                println!("   Pairing code (type into wallet): {}", code);
+            }
+            println!();
+            println!("⏳ Waiting up to {timeout_secs}s for the wallet to pair...");
+            let mut signer = pending
+                .complete(Duration::from_secs(timeout_secs))
+                .await
+                .map_err(|e| anyhow::anyhow!("pairing did not complete: {e}"))?;
+            // Fetch accounts so the persisted session is immediately useful
+            // for `--use-walletconnect` without another round-trip.
+            let accounts = signer.get_accounts().await
+                .map_err(|e| anyhow::anyhow!("get_accounts: {e}"))?;
+            signer.set_accounts(accounts.clone());
+            let persisted = signer.to_persisted();
+            save_wc_session(&persisted)?;
+            let path = wc_session_path();
+            println!("✅ Paired. Accounts: {accounts:?}");
+            println!("   Session stashed at {} (mode 0600)", path.display());
+            Ok(())
+        }
+        WcCommands::Accounts {} => {
+            match load_wc_session()? {
+                Some(s) => {
+                    println!("Session: {}", s.topic);
+                    println!("Relay:   {}", s.relay_url);
+                    println!("Origin:  {}", s.origin);
+                    println!("Accounts:");
+                    for a in &s.accounts {
+                        println!("  {a}");
+                    }
+                }
+                None => {
+                    let path = wc_session_path();
+                    println!("⚠ No stashed session at {}. Run `alkanes-cli wc pair` first.", path.display());
+                }
+            }
+            Ok(())
+        }
+        WcCommands::SignPsbt { psbt_hex, addresses } => {
+            let session = load_wc_session()?
+                .ok_or_else(|| anyhow::anyhow!(
+                    "no WC session at {}. Run `alkanes-cli wc pair` first.",
+                    wc_session_path().display()
+                ))?;
+            let addrs = if addresses.is_empty() {
+                session.accounts.clone()
+            } else {
+                addresses
+            };
+            println!("📡 Re-attaching to relay {} …", session.relay_url);
+            let signer = WalletConnectSigner::restore(session).await
+                .map_err(|e| anyhow::anyhow!("session restore failed: {e}"))?;
+            println!("📲 Asking subfrost-mobile to sign (waiting up to 5 min)…");
+            let signed = signer.sign_psbt(&psbt_hex, addrs).await
+                .map_err(|e| anyhow::anyhow!("sign_psbt failed: {e}"))?;
+            println!("{signed}");
+            Ok(())
+        }
+        WcCommands::Revoke {} => {
+            let path = wc_session_path();
+            if path.exists() {
+                std::fs::remove_file(&path)?;
+                println!("🗑  Removed {}. Use subfrost-mobile's UI to revoke on the wallet side.", path.display());
+            } else {
+                println!("No session to revoke at {}.", path.display());
+            }
+            Ok(())
+        }
+    }
+}
+
 async fn execute_subfrost_command(
     provider: &dyn DeezelProvider,
     command: SubfrostCommands,
@@ -169,6 +370,32 @@ async fn execute_subfrost_command(
                 premium,
                 expected_inputs,
                 expected_outputs,
+                raw,
+            )
+            .await?;
+            println!("{}", result);
+        }
+        SubfrostCommands::Thieve {
+            address,
+            amount,
+            raw,
+        } => {
+            let result = subfrost::execute_thieve(
+                provider,
+                &address,
+                amount,
+                raw,
+            )
+            .await?;
+            println!("{}", result);
+        }
+        SubfrostCommands::SolvencyCheck {
+            block_tag,
+            raw,
+        } => {
+            let result = subfrost::execute_solvency_check(
+                provider,
+                block_tag,
                 raw,
             )
             .await?;
@@ -432,6 +659,639 @@ async fn execute_dataapi_command(args: &DeezelCommands, command: DataApiCommand)
                 }
             }
         }
+        DataApiCommand::GetBlockHeight { raw, raw_http } => {
+            if raw_http {
+                let text = client.get_raw("blockheight").await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_block_height(&client).await?;
+                if raw {
+                    println!("{}", result);
+                } else {
+                    println!("{}", result);
+                }
+            }
+        }
+        DataApiCommand::GetBlockHash { raw, raw_http } => {
+            if raw_http {
+                let text = client.get_raw("blockhash").await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_block_hash(&client).await?;
+                if raw {
+                    println!("{}", result);
+                } else {
+                    println!("{}", result);
+                }
+            }
+        }
+        DataApiCommand::GetIndexerPosition { raw, raw_http } => {
+            if raw_http {
+                let text = client.get_raw("indexer-position").await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_indexer_position(&client).await?;
+                if raw {
+                    println!("{}", result);
+                } else {
+                    println!("{}", result);
+                }
+            }
+        }
+        DataApiCommand::GetBitcoinMarketWeekly { raw: _, raw_http } => {
+            if raw_http {
+                let text = client.post_raw("get-bitcoin-market-weekly", &serde_json::json!({})).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_bitcoin_market_weekly(&client).await?;
+                println!("{}", result);
+            }
+        }
+        DataApiCommand::GetBitcoinMarkets { raw: _, raw_http } => {
+            if raw_http {
+                let text = client.post_raw("get-bitcoin-markets", &serde_json::json!({})).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_bitcoin_markets(&client).await?;
+                println!("{}", result);
+            }
+        }
+        DataApiCommand::GetAlkanesUtxo { address, raw: _, raw_http } => {
+            if raw_http {
+                let text = client.post_raw("get-alkanes-utxo", &serde_json::json!({"address": address})).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_alkanes_utxo(&client, &address).await?;
+                println!("{}", result);
+            }
+        }
+        DataApiCommand::GetAmmUtxos { address, raw: _, raw_http } => {
+            if raw_http {
+                let text = client.post_raw("get-amm-utxos", &serde_json::json!({"address": address})).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_amm_utxos(&client, &address).await?;
+                println!("{}", result);
+            }
+        }
+        DataApiCommand::GlobalSearch { query, limit, offset, raw: _, raw_http } => {
+            if raw_http {
+                let text = client.post_raw("global-alkanes-search", &serde_json::json!({"searchQuery": query, "limit": limit, "offset": offset})).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_global_search(&client, &query, limit, offset).await?;
+                println!("{}", result);
+            }
+        }
+        DataApiCommand::GetAddressOutpoints { address, raw: _, raw_http } => {
+            if raw_http {
+                let text = client.post_raw("get-address-outpoints", &serde_json::json!({"address": address})).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_address_outpoints(&client, &address).await?;
+                println!("{}", result);
+            }
+        }
+        DataApiCommand::Pathfind { token_in, token_out, amount_in, max_hops, raw: _, raw_http } => {
+            if raw_http {
+                let text = client.post_raw("pathfind", &serde_json::json!({"token_in": token_in, "token_out": token_out, "amount_in": amount_in, "max_hops": max_hops})).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_pathfind(&client, &token_in, &token_out, &amount_in, Some(max_hops)).await?;
+                println!("{}", result);
+            }
+        }
+        DataApiCommand::GetPoolDetails { pool_id, raw: _, raw_http } => {
+            if raw_http {
+                let id = alkanes_cli_common::dataapi::commands::parse_alkane_id(&pool_id)?;
+                let text = client.post_raw("get-pool-details", &serde_json::json!({"poolId": {"block": id.block.to_string(), "tx": id.tx.to_string()}})).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_pool_details(&client, &pool_id).await?;
+                println!("{}", result);
+            }
+        }
+        DataApiCommand::GetAllPoolsDetails { factory, limit, offset, raw: _, raw_http } => {
+            if raw_http {
+                let id = alkanes_cli_common::dataapi::commands::parse_alkane_id(&factory)?;
+                let text = client.post_raw("get-all-pools-details", &serde_json::json!({"factoryId": {"block": id.block.to_string(), "tx": id.tx.to_string()}, "limit": limit, "offset": offset})).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_all_pools_details(&client, &factory, limit, offset).await?;
+                println!("{}", result);
+            }
+        }
+        DataApiCommand::GetAddressPositions { address, factory, raw: _, raw_http } => {
+            if raw_http {
+                let fid = alkanes_cli_common::dataapi::commands::parse_alkane_id(&factory)?;
+                let text = client.post_raw("address-positions", &serde_json::json!({"address": address, "factoryId": {"block": fid.block.to_string(), "tx": fid.tx.to_string()}})).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_address_positions(&client, &address, &factory).await?;
+                println!("{}", result);
+            }
+        }
+        DataApiCommand::GetTokenPairs { factory, alkane, limit, offset, raw: _, raw_http } => {
+            if raw_http {
+                let id = alkanes_cli_common::dataapi::commands::parse_alkane_id(&factory)?;
+                let mut body = serde_json::json!({"factoryId": {"block": id.block.to_string(), "tx": id.tx.to_string()}, "limit": limit, "offset": offset});
+                if let Some(ref a) = alkane {
+                    let aid = alkanes_cli_common::dataapi::commands::parse_alkane_id(a)?;
+                    body["alkaneId"] = serde_json::json!({"block": aid.block.to_string(), "tx": aid.tx.to_string()});
+                }
+                let text = client.post_raw("get-token-pairs", &body).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_token_pairs(&client, &factory, alkane, limit, offset).await?;
+                println!("{}", result);
+            }
+        }
+        DataApiCommand::GetAllTokenPairs { factory, limit, offset, raw: _, raw_http } => {
+            if raw_http {
+                let id = alkanes_cli_common::dataapi::commands::parse_alkane_id(&factory)?;
+                let text = client.post_raw("get-all-token-pairs", &serde_json::json!({"factoryId": {"block": id.block.to_string(), "tx": id.tx.to_string()}, "limit": limit, "offset": offset})).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_all_token_pairs(&client, &factory, limit, offset).await?;
+                println!("{}", result);
+            }
+        }
+        DataApiCommand::GetSwapPairDetails { factory, token_a, token_b, raw: _, raw_http } => {
+            if raw_http {
+                let fid = alkanes_cli_common::dataapi::commands::parse_alkane_id(&factory)?;
+                let aid = alkanes_cli_common::dataapi::commands::parse_alkane_id(&token_a)?;
+                let bid = alkanes_cli_common::dataapi::commands::parse_alkane_id(&token_b)?;
+                let text = client.post_raw("get-alkane-swap-pair-details", &serde_json::json!({"factoryId": {"block": fid.block.to_string(), "tx": fid.tx.to_string()}, "tokenAId": {"block": aid.block.to_string(), "tx": aid.tx.to_string()}, "tokenBId": {"block": bid.block.to_string(), "tx": bid.tx.to_string()}})).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_alkane_swap_pair_details(&client, &factory, &token_a, &token_b).await?;
+                println!("{}", result);
+            }
+        }
+        DataApiCommand::GetPoolSwapHistory { pool_id, limit, offset, raw: _, raw_http } => {
+            if raw_http {
+                let mut body = serde_json::json!({"limit": limit, "offset": offset});
+                if let Some(ref pid) = pool_id {
+                    let id = alkanes_cli_common::dataapi::commands::parse_alkane_id(pid)?;
+                    body["poolId"] = serde_json::json!({"block": id.block.to_string(), "tx": id.tx.to_string()});
+                }
+                let text = client.post_raw("get-pool-swap-history", &body).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_pool_swap_history(&client, pool_id, limit, offset).await?;
+                println!("{}", result);
+            }
+        }
+        DataApiCommand::GetTokenSwapHistory { alkane, limit, offset, raw: _, raw_http } => {
+            if raw_http {
+                let id = alkanes_cli_common::dataapi::commands::parse_alkane_id(&alkane)?;
+                let text = client.post_raw("get-token-swap-history", &serde_json::json!({"alkaneId": {"block": id.block.to_string(), "tx": id.tx.to_string()}, "limit": limit, "offset": offset})).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_token_swap_history(&client, &alkane, limit, offset).await?;
+                println!("{}", result);
+            }
+        }
+        DataApiCommand::GetPoolMintHistory { pool_id, limit, offset, raw: _, raw_http } => {
+            if raw_http {
+                let mut body = serde_json::json!({"limit": limit, "offset": offset});
+                if let Some(ref pid) = pool_id {
+                    let id = alkanes_cli_common::dataapi::commands::parse_alkane_id(pid)?;
+                    body["poolId"] = serde_json::json!({"block": id.block.to_string(), "tx": id.tx.to_string()});
+                }
+                let text = client.post_raw("get-pool-mint-history", &body).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_pool_mint_history(&client, pool_id, limit, offset).await?;
+                println!("{}", result);
+            }
+        }
+        DataApiCommand::GetPoolBurnHistory { pool_id, limit, offset, raw: _, raw_http } => {
+            if raw_http {
+                let mut body = serde_json::json!({"limit": limit, "offset": offset});
+                if let Some(ref pid) = pool_id {
+                    let id = alkanes_cli_common::dataapi::commands::parse_alkane_id(pid)?;
+                    body["poolId"] = serde_json::json!({"block": id.block.to_string(), "tx": id.tx.to_string()});
+                }
+                let text = client.post_raw("get-pool-burn-history", &body).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_pool_burn_history(&client, pool_id, limit, offset).await?;
+                println!("{}", result);
+            }
+        }
+        DataApiCommand::GetAddressSwapHistoryForPool { address, pool_id, limit, offset, raw: _, raw_http } => {
+            if raw_http {
+                let id = alkanes_cli_common::dataapi::commands::parse_alkane_id(&pool_id)?;
+                let text = client.post_raw("get-address-swap-history-for-pool", &serde_json::json!({"address": address, "poolId": {"block": id.block.to_string(), "tx": id.tx.to_string()}, "limit": limit, "offset": offset})).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_address_swap_history_for_pool(&client, &address, &pool_id, limit, offset).await?;
+                println!("{}", result);
+            }
+        }
+        DataApiCommand::GetAddressSwapHistoryForToken { address, alkane, limit, offset, raw: _, raw_http } => {
+            if raw_http {
+                let id = alkanes_cli_common::dataapi::commands::parse_alkane_id(&alkane)?;
+                let text = client.post_raw("get-address-swap-history-for-token", &serde_json::json!({"address": address, "alkaneId": {"block": id.block.to_string(), "tx": id.tx.to_string()}, "limit": limit, "offset": offset})).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_address_swap_history_for_token(&client, &address, &alkane, limit, offset).await?;
+                println!("{}", result);
+            }
+        }
+        DataApiCommand::GetAddressWrapHistory { address, limit, offset, raw: _, raw_http } => {
+            if raw_http {
+                let text = client.post_raw("get-address-wrap-history", &serde_json::json!({"address": address, "limit": limit, "offset": offset})).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_address_wrap_history(&client, &address, limit, offset).await?;
+                println!("{}", result);
+            }
+        }
+        DataApiCommand::GetAddressUnwrapHistory { address, limit, offset, raw: _, raw_http } => {
+            if raw_http {
+                let text = client.post_raw("get-address-unwrap-history", &serde_json::json!({"address": address, "limit": limit, "offset": offset})).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_address_unwrap_history(&client, &address, limit, offset).await?;
+                println!("{}", result);
+            }
+        }
+        DataApiCommand::GetAllWrapHistory { limit, offset, raw: _, raw_http } => {
+            if raw_http {
+                let text = client.post_raw("get-all-wrap-history", &serde_json::json!({"limit": limit, "offset": offset})).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_all_wrap_history(&client, limit, offset).await?;
+                println!("{}", result);
+            }
+        }
+        DataApiCommand::GetAllUnwrapHistory { limit, offset, raw: _, raw_http } => {
+            if raw_http {
+                let text = client.post_raw("get-all-unwrap-history", &serde_json::json!({"limit": limit, "offset": offset})).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_all_unwrap_history(&client, limit, offset).await?;
+                println!("{}", result);
+            }
+        }
+        DataApiCommand::GetTotalUnwrapAmount { raw: _, raw_http } => {
+            if raw_http {
+                let text = client.post_raw("get-total-unwrap-amount", &serde_json::json!({})).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_total_unwrap_amount(&client).await?;
+                println!("{}", result);
+            }
+        }
+        DataApiCommand::GetAddressPoolCreationHistory { address, limit, offset, raw: _, raw_http } => {
+            if raw_http {
+                let text = client.post_raw("get-address-pool-creation-history", &serde_json::json!({"address": address, "limit": limit, "offset": offset})).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_address_pool_creation_history(&client, &address, limit, offset).await?;
+                println!("{}", result);
+            }
+        }
+        DataApiCommand::GetAddressPoolMintHistory { address, limit, offset, raw: _, raw_http } => {
+            if raw_http {
+                let text = client.post_raw("get-address-pool-mint-history", &serde_json::json!({"address": address, "limit": limit, "offset": offset})).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_address_pool_mint_history(&client, &address, limit, offset).await?;
+                println!("{}", result);
+            }
+        }
+        DataApiCommand::GetAddressPoolBurnHistory { address, limit, offset, raw: _, raw_http } => {
+            if raw_http {
+                let text = client.post_raw("get-address-pool-burn-history", &serde_json::json!({"address": address, "limit": limit, "offset": offset})).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_address_pool_burn_history(&client, &address, limit, offset).await?;
+                println!("{}", result);
+            }
+        }
+        DataApiCommand::GetAllAddressAmmTxHistory { address, limit, offset, raw: _, raw_http } => {
+            if raw_http {
+                let text = client.post_raw("get-all-address-amm-tx-history", &serde_json::json!({"address": address, "limit": limit, "offset": offset})).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_all_address_amm_tx_history(&client, &address, limit, offset).await?;
+                println!("{}", result);
+            }
+        }
+        DataApiCommand::GetAllAmmTxHistory { limit, offset, raw: _, raw_http } => {
+            if raw_http {
+                let text = client.post_raw("get-all-amm-tx-history", &serde_json::json!({"limit": limit, "offset": offset})).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_all_amm_tx_history(&client, limit, offset).await?;
+                println!("{}", result);
+            }
+        }
+        DataApiCommand::GetAddressBalance { address, raw: _, raw_http } => {
+            if raw_http {
+                let text = client.post_raw("get-address-balance", &serde_json::json!({"address": address})).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_address_balance(&client, &address).await?;
+                println!("{}", result);
+            }
+        }
+        DataApiCommand::GetTaprootBalance { address, raw: _, raw_http } => {
+            if raw_http {
+                let text = client.post_raw("get-taproot-balance", &serde_json::json!({"address": address})).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_taproot_balance(&client, &address).await?;
+                println!("{}", result);
+            }
+        }
+        DataApiCommand::GetAddressUtxos { address, raw: _, raw_http } => {
+            if raw_http {
+                let text = client.post_raw("get-address-utxos", &serde_json::json!({"address": address})).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_address_utxos(&client, &address).await?;
+                println!("{}", result);
+            }
+        }
+        DataApiCommand::GetAccountUtxos { account, raw: _, raw_http } => {
+            if raw_http {
+                let text = client.post_raw("get-account-utxos", &serde_json::json!({"account": account})).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_account_utxos(&client, &account).await?;
+                println!("{}", result);
+            }
+        }
+        DataApiCommand::GetAccountBalance { account, raw: _, raw_http } => {
+            if raw_http {
+                let text = client.post_raw("get-account-balance", &serde_json::json!({"account": account})).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_account_balance(&client, &account).await?;
+                println!("{}", result);
+            }
+        }
+        DataApiCommand::GetTaprootHistory { taproot_address, total_txs, raw: _, raw_http } => {
+            if raw_http {
+                let text = client.post_raw("get-taproot-history", &serde_json::json!({"taprootAddress": taproot_address, "totalTxs": total_txs})).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_taproot_history(&client, &taproot_address, total_txs).await?;
+                println!("{}", result);
+            }
+        }
+        DataApiCommand::GetIntentHistory { address, total_txs, last_seen_tx_id, raw: _, raw_http } => {
+            if raw_http {
+                let mut body = serde_json::json!({"address": address});
+                if let Some(txs) = total_txs { body["totalTxs"] = serde_json::json!(txs); }
+                if let Some(ref tx_id) = last_seen_tx_id { body["lastSeenTxId"] = serde_json::json!(tx_id); }
+                let text = client.post_raw("get-intent-history", &body).await?;
+                println!("{}", text);
+            } else {
+                let result = alkanes_cli_common::dataapi::commands::execute_dataapi_get_intent_history(&client, &address, total_txs, last_seen_tx_id.as_deref()).await?;
+                println!("{}", result);
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn execute_opi_command(args: &DeezelCommands, command: OpiCommands) -> Result<()> {
+    use alkanes_cli_common::opi::{OpiClient, OpiConfig};
+
+    // Determine the OPI URL based on --opi-url flag, jsonrpc-url, or provider network
+    let opi_url = if let Some(ref url) = args.opi_url {
+        url.clone()
+    } else if let Some(ref jsonrpc_url) = args.jsonrpc_url {
+        // Derive OPI URL from jsonrpc URL
+        // If URL ends with /jsonrpc or /v4/jsonrpc, replace with /opi or /v4/opi
+        if jsonrpc_url.ends_with("/jsonrpc") {
+            format!("{}/opi", jsonrpc_url.trim_end_matches("/jsonrpc"))
+        } else if jsonrpc_url.ends_with("/v4/jsonrpc") {
+            format!("{}/v4/opi", jsonrpc_url.trim_end_matches("/v4/jsonrpc"))
+        } else {
+            // Just append /opi to the base URL
+            format!("{}/opi", jsonrpc_url.trim_end_matches('/'))
+        }
+    } else {
+        OpiConfig::default_url_for_network(&args.provider)
+    };
+
+    let client = OpiClient::with_headers(opi_url, args.opi_headers.clone());
+
+    match command {
+        OpiCommands::BlockHeight => {
+            let result = alkanes_cli_common::opi::execute_opi_block_height(&client).await?;
+            println!("{}", result);
+        }
+        OpiCommands::ExtrasBlockHeight => {
+            let result = alkanes_cli_common::opi::execute_opi_extras_block_height(&client).await?;
+            println!("{}", result);
+        }
+        OpiCommands::DbVersion => {
+            let result = alkanes_cli_common::opi::execute_opi_db_version(&client).await?;
+            println!("{}", result);
+        }
+        OpiCommands::EventHashVersion => {
+            let result = alkanes_cli_common::opi::execute_opi_event_hash_version(&client).await?;
+            println!("{}", result);
+        }
+        OpiCommands::BalanceOnBlock { block_height, pkscript, ticker } => {
+            let result = alkanes_cli_common::opi::execute_opi_balance_on_block(&client, block_height, &pkscript, &ticker).await?;
+            println!("{}", result);
+        }
+        OpiCommands::ActivityOnBlock { block_height } => {
+            let result = alkanes_cli_common::opi::execute_opi_activity_on_block(&client, block_height).await?;
+            println!("{}", result);
+        }
+        OpiCommands::BitcoinRpcResultsOnBlock { block_height } => {
+            let result = alkanes_cli_common::opi::execute_opi_bitcoin_rpc_results_on_block(&client, block_height).await?;
+            println!("{}", result);
+        }
+        OpiCommands::CurrentBalance { ticker, address, pkscript } => {
+            let result = alkanes_cli_common::opi::execute_opi_current_balance(&client, &ticker, address.as_deref(), pkscript.as_deref()).await?;
+            println!("{}", result);
+        }
+        OpiCommands::ValidTxNotesOfWallet { address, pkscript } => {
+            let result = alkanes_cli_common::opi::execute_opi_valid_tx_notes_of_wallet(&client, address.as_deref(), pkscript.as_deref()).await?;
+            println!("{}", result);
+        }
+        OpiCommands::ValidTxNotesOfTicker { ticker } => {
+            let result = alkanes_cli_common::opi::execute_opi_valid_tx_notes_of_ticker(&client, &ticker).await?;
+            println!("{}", result);
+        }
+        OpiCommands::Holders { ticker } => {
+            let result = alkanes_cli_common::opi::execute_opi_holders(&client, &ticker).await?;
+            println!("{}", result);
+        }
+        OpiCommands::HashOfAllActivity { block_height } => {
+            let result = alkanes_cli_common::opi::execute_opi_hash_of_all_activity(&client, block_height).await?;
+            println!("{}", result);
+        }
+        OpiCommands::HashOfAllCurrentBalances => {
+            let result = alkanes_cli_common::opi::execute_opi_hash_of_all_current_balances(&client).await?;
+            println!("{}", result);
+        }
+        OpiCommands::Event { inscription_id } => {
+            let result = alkanes_cli_common::opi::execute_opi_event(&client, &inscription_id).await?;
+            println!("{}", result);
+        }
+        OpiCommands::Ip => {
+            let result = alkanes_cli_common::opi::execute_opi_ip(&client).await?;
+            println!("{}", result);
+        }
+        OpiCommands::Raw { endpoint } => {
+            let result = alkanes_cli_common::opi::execute_opi_raw(&client, &endpoint).await?;
+            println!("{}", result);
+        }
+
+        // ==================== RUNES ====================
+        OpiCommands::Runes(runes_cmd) => {
+            use crate::commands::OpiRunesCommands;
+            match runes_cmd {
+                OpiRunesCommands::BlockHeight => {
+                    match client.get_runes_block_height().await? {
+                        Some(h) => println!("{}", h),
+                        None => println!("null"),
+                    }
+                }
+                OpiRunesCommands::BalanceOnBlock { block_height, pkscript, rune_id } => {
+                    let result = client.get_runes_balance_on_block(block_height, &pkscript, &rune_id).await?;
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                OpiRunesCommands::ActivityOnBlock { block_height } => {
+                    let result = client.get_runes_activity_on_block(block_height).await?;
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                OpiRunesCommands::CurrentBalance { address, pkscript } => {
+                    let result = client.get_runes_current_balance_of_wallet(address.as_deref(), pkscript.as_deref()).await?;
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                OpiRunesCommands::UnspentOutpoints { address, pkscript } => {
+                    let result = client.get_runes_unspent_outpoints_of_wallet(address.as_deref(), pkscript.as_deref()).await?;
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                OpiRunesCommands::Holders { rune_id } => {
+                    let result = client.get_runes_holders(&rune_id).await?;
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                OpiRunesCommands::HashOfAllActivity { block_height } => {
+                    let result = client.get_runes_hash_of_all_activity(block_height).await?;
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                OpiRunesCommands::Event { txid } => {
+                    let result = client.get_runes_event(&txid).await?;
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+            }
+        }
+
+        // ==================== BITMAP ====================
+        OpiCommands::Bitmap(bitmap_cmd) => {
+            use crate::commands::OpiBitmapCommands;
+            match bitmap_cmd {
+                OpiBitmapCommands::BlockHeight => {
+                    match client.get_bitmap_block_height().await? {
+                        Some(h) => println!("{}", h),
+                        None => println!("null"),
+                    }
+                }
+                OpiBitmapCommands::HashOfAllActivity { block_height } => {
+                    let result = client.get_bitmap_hash_of_all_activity(block_height).await?;
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                OpiBitmapCommands::HashOfAllBitmaps => {
+                    let result = client.get_bitmap_hash_of_all_bitmaps().await?;
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                OpiBitmapCommands::InscriptionId { bitmap } => {
+                    let result = client.get_bitmap_inscription_id(&bitmap).await?;
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+            }
+        }
+
+        // ==================== POW20 ====================
+        OpiCommands::Pow20(pow20_cmd) => {
+            use crate::commands::OpiPow20Commands;
+            match pow20_cmd {
+                OpiPow20Commands::BlockHeight => {
+                    match client.get_pow20_block_height().await? {
+                        Some(h) => println!("{}", h),
+                        None => println!("null"),
+                    }
+                }
+                OpiPow20Commands::BalanceOnBlock { block_height, pkscript, ticker } => {
+                    let result = client.get_pow20_balance_on_block(block_height, &pkscript, &ticker).await?;
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                OpiPow20Commands::ActivityOnBlock { block_height } => {
+                    let result = client.get_pow20_activity_on_block(block_height).await?;
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                OpiPow20Commands::CurrentBalance { ticker, address, pkscript } => {
+                    let result = client.get_pow20_current_balance_of_wallet(&ticker, address.as_deref(), pkscript.as_deref()).await?;
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                OpiPow20Commands::ValidTxNotesOfWallet { address, pkscript } => {
+                    let result = client.get_pow20_valid_tx_notes_of_wallet(address.as_deref(), pkscript.as_deref()).await?;
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                OpiPow20Commands::ValidTxNotesOfTicker { ticker } => {
+                    let result = client.get_pow20_valid_tx_notes_of_ticker(&ticker).await?;
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                OpiPow20Commands::Holders { ticker } => {
+                    let result = client.get_pow20_holders(&ticker).await?;
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                OpiPow20Commands::HashOfAllActivity { block_height } => {
+                    let result = client.get_pow20_hash_of_all_activity(block_height).await?;
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                OpiPow20Commands::HashOfAllCurrentBalances => {
+                    let result = client.get_pow20_hash_of_all_current_balances().await?;
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+            }
+        }
+
+        // ==================== SNS ====================
+        OpiCommands::Sns(sns_cmd) => {
+            use crate::commands::OpiSnsCommands;
+            match sns_cmd {
+                OpiSnsCommands::BlockHeight => {
+                    match client.get_sns_block_height().await? {
+                        Some(h) => println!("{}", h),
+                        None => println!("null"),
+                    }
+                }
+                OpiSnsCommands::HashOfAllActivity { block_height } => {
+                    let result = client.get_sns_hash_of_all_activity(block_height).await?;
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                OpiSnsCommands::HashOfAllRegisteredNames => {
+                    let result = client.get_sns_hash_of_all_registered_names().await?;
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                OpiSnsCommands::Info { name } => {
+                    let result = client.get_sns_info(&name).await?;
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                OpiSnsCommands::InscriptionsOfDomain { domain } => {
+                    let result = client.get_sns_inscriptions_of_domain(&domain).await?;
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                OpiSnsCommands::RegisteredNamespaces => {
+                    let result = client.get_sns_registered_namespaces().await?;
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+            }
+        }
     }
     Ok(())
 }
@@ -490,12 +1350,23 @@ async fn execute_wallet_command<T: System + UtxoProvider>(system: &mut T, comman
                 use_rebar,
                 rebar_tier,
                 lock_alkanes,
+                ordinals_strategy: alkanes_cli_common::alkanes::types::OrdinalsStrategy::default(),
+                mempool_indexer: false,
             };
             let txid = system.provider_mut().send(params).await?;
             println!("Transaction sent: {txid}");
         }
         WalletCommands::Balance { addresses, raw } => {
-            let balance = WalletProvider::get_balance(system.provider(), addresses).await?;
+            let resolved_addresses = if let Some(addrs) = addresses {
+                let mut resolved = Vec::new();
+                for addr in addrs {
+                    resolved.push(system.provider().resolve_all_identifiers(&addr).await?);
+                }
+                Some(resolved)
+            } else {
+                None
+            };
+            let balance = WalletProvider::get_balance(system.provider(), resolved_addresses).await?;
             if raw {
                 println!("{}", serde_json::to_string_pretty(&balance)?);
             } else {
@@ -504,7 +1375,12 @@ async fn execute_wallet_command<T: System + UtxoProvider>(system: &mut T, comman
             }
         }
         WalletCommands::History { count, address, raw } => {
-            let history = system.provider().get_history(count, address).await?;
+            let resolved_address = if let Some(addr) = address {
+                Some(system.provider().resolve_all_identifiers(&addr).await?)
+            } else {
+                None
+            };
+            let history = system.provider().get_history(count, resolved_address).await?;
             if raw {
                 println!("{}", serde_json::to_string_pretty(&history)?);
             } else {
@@ -518,7 +1394,7 @@ async fn execute_wallet_command<T: System + UtxoProvider>(system: &mut T, comman
     Ok(())
 }
 
-async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) -> Result<()> {
+async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes, frbtc_address: Option<String>) -> Result<()> {
     match command {
         Alkanes::Execute(mut exec_args) => {
             // Resolve any address identifiers before passing them to the executor
@@ -539,75 +1415,35 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
                 exec_args.from = Some(resolved_from);
             }
 
-            let params = to_enhanced_execute_params(exec_args)?;
+            // Fetch the indexer tip first so the planner can skip UTXOs at
+            // heights metashrew hasn't seen yet (otherwise we'd silently spend
+            // alkanes the indexer didn't catalog). Falls back to None on RPC
+            // failure → degraded "no filter" mode rather than blocking.
+            let max_indexed_height =
+                alkanes::indexer_lag::fetch_max_indexed_height_or_none(system.provider()).await;
+            let params = to_enhanced_execute_params(exec_args, max_indexed_height)?;
             let mut executor = alkanes::execute::EnhancedAlkanesExecutor::new(system.provider_mut());
-            let mut state = executor.execute(params.clone()).await?;
 
-            loop {
-                state = match state {
-                    alkanes::types::ExecutionState::ReadyToSign(s) => {
-                        let result = executor.resume_execution(s, &params).await?;
-                        println!("\n✅ Alkanes execution completed successfully!");
-                        println!("🔗 Reveal TXID: {}", result.reveal_txid);
-                        println!("💰 Reveal Fee: {} sats", result.reveal_fee);
-                        if let Some(traces) = result.traces {
-                            if !traces.is_empty() {
-                                println!("\n🔍 Execution Traces:");
-                                for (i, trace) in traces.iter().enumerate() {
-                                    println!("\n📊 Protostone #{} trace:", i + 1);
-                                    println!("{}", serde_json::to_string_pretty(&trace)?);
-                                }
-                            }
-                        }
-                        break;
-                    },
-                    alkanes::types::ExecutionState::ReadyToSignCommit(s) => {
-                        executor.resume_commit_execution(s).await?
-                    },
-                    alkanes::types::ExecutionState::ReadyToSignReveal(s) => {
-                        let result = executor.resume_reveal_execution(s).await?;
-                        println!("\n✅ Alkanes execution completed successfully!");
-                        if let Some(commit_txid) = result.commit_txid {
-                            println!("🔗 Commit TXID: {commit_txid}");
-                        }
-                        println!("🔗 Reveal TXID: {}", result.reveal_txid);
-                        if let Some(commit_fee) = result.commit_fee {
-                            println!("💰 Commit Fee: {commit_fee} sats");
-                        }
-                        println!("💰 Reveal Fee: {} sats", result.reveal_fee);
-                        if let Some(traces) = result.traces {
-                            if !traces.is_empty() {
-                                println!("\n🔍 Execution Traces:");
-                                for (i, trace) in traces.iter().enumerate() {
-                                    println!("\n📊 Protostone #{} trace:", i + 1);
-                                    println!("{}", serde_json::to_string_pretty(&trace)?);
-                                }
-                            }
-                        }
-                        break;
-                    },
-                    alkanes::types::ExecutionState::Complete(result) => {
-                        println!("\n✅ Alkanes execution completed successfully!");
-                        if let Some(commit_txid) = result.commit_txid {
-                            println!("🔗 Commit TXID: {commit_txid}");
-                        }
-                        println!("🔗 Reveal TXID: {}", result.reveal_txid);
-                        if let Some(commit_fee) = result.commit_fee {
-                            println!("💰 Commit Fee: {commit_fee} sats");
-                        }
-                        println!("💰 Reveal Fee: {} sats", result.reveal_fee);
-                        if let Some(traces) = result.traces {
-                            if !traces.is_empty() {
-                                println!("\n🔍 Execution Traces:");
-                                for (i, trace) in traces.iter().enumerate() {
-                                    println!("\n📊 Protostone #{} trace:", i + 1);
-                                    println!("{}", serde_json::to_string_pretty(&trace)?);
-                                }
-                            }
-                        }
-                        break;
+            // Use execute_full() which implements the presign pattern with atomic broadcasting
+            let result = executor.execute_full(params).await?;
+
+            println!("\n✅ Alkanes execution completed successfully!");
+            if let Some(commit_txid) = result.commit_txid {
+                println!("🔗 Commit TXID: {commit_txid}");
+            }
+            println!("🔗 Reveal TXID: {}", result.reveal_txid);
+            if let Some(commit_fee) = result.commit_fee {
+                println!("💰 Commit Fee: {commit_fee} sats");
+            }
+            println!("💰 Reveal Fee: {} sats", result.reveal_fee);
+            if let Some(traces) = result.traces {
+                if !traces.is_empty() {
+                    println!("\n🔍 Execution Traces:");
+                    for (i, trace) in traces.iter().enumerate() {
+                        println!("\n📊 Protostone #{} trace:", i + 1);
+                        println!("{}", serde_json::to_string_pretty(&trace)?);
                     }
-                };
+                }
             }
             Ok(())
         },
@@ -656,18 +1492,19 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
             }
             Ok(())
         },
-        Alkanes::Simulate { 
-            alkane_id, 
-            inputs, 
-            height, 
-            block, 
+        Alkanes::Simulate {
+            alkane_id,
+            inputs,
+            height,
+            block,
             transaction,
             envelope,
-            pointer, 
-            txindex, 
-            refund, 
-            block_tag, 
-            raw 
+            pointer,
+            txindex,
+            refund,
+            block_tag,
+            raw,
+            format
         } => {
             use alkanes_cli_common::proto::alkanes::{MessageContextParcel, AlkaneTransfer, AlkaneId, Uint128};
             use alkanes_cli_common::traits::MetashrewRpcProvider;
@@ -676,19 +1513,22 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
             use bitcoin::{Transaction as BtcTransaction, TxIn, TxOut, OutPoint, Sequence, Amount, Address};
             use bitcoin::transaction::Version;
             
-            // Parse alkane_id (format: block:tx:calldata_opcode, e.g., 4:65522:3)
+            // Parse alkane_id (format: block:tx:arg1:arg2:..., e.g., 4:20013:2:1717855594)
             let parts: Vec<&str> = alkane_id.split(':').collect();
             if parts.len() < 2 {
-                return Err(anyhow::anyhow!("Invalid alkane_id format. Expected block:tx or block:tx:calldata_opcode"));
+                return Err(anyhow::anyhow!("Invalid alkane_id format. Expected block:tx or block:tx:arg1:arg2:..."));
             }
-            
-            let target_block: u64 = parts[0].parse()?;
-            let target_tx: u64 = parts[1].parse()?;
-            let calldata_opcode: u64 = if parts.len() >= 3 {
-                parts[2].parse()?
-            } else {
-                0
-            };
+
+            let target_block: u128 = parts[0].parse()?;
+            let target_tx: u128 = parts[1].parse()?;
+
+            // Parse all remaining values as arguments
+            let mut cellpack_inputs = Vec::new();
+            for i in 2..parts.len() {
+                let arg: u128 = parts[i].parse()
+                    .map_err(|_| anyhow::anyhow!("Invalid argument at position {}: '{}'", i, parts[i]))?;
+                cellpack_inputs.push(arg);
+            }
             
             // Parse input alkanes (format: block:tx:amount,block:tx:amount,...)
             let mut alkane_transfers = Vec::new();
@@ -777,11 +1617,18 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
                 Vec::new()
             };
             
-            // Build calldata: target_block, target_tx, calldata_opcode
-            let mut calldata = Vec::new();
-            leb128::write::unsigned(&mut calldata, target_block).unwrap();
-            leb128::write::unsigned(&mut calldata, target_tx).unwrap();
-            leb128::write::unsigned(&mut calldata, calldata_opcode).unwrap();
+            // Build calldata using Cellpack for proper encoding
+            use alkanes_support::cellpack::Cellpack;
+            use alkanes_support::id::AlkaneId as AlkanesAlkaneId;
+
+            let cellpack = Cellpack {
+                target: AlkanesAlkaneId {
+                    block: target_block,
+                    tx: target_tx,
+                },
+                inputs: cellpack_inputs,
+            };
+            let calldata = cellpack.encipher();
             
             // Construct MessageContextParcel
             let context = MessageContextParcel {
@@ -797,8 +1644,9 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
             };
             
             // Debug: Log the context summary
-            log::debug!("Simulating alkane {}:{} with opcode {}", target_block, target_tx, calldata_opcode);
-            log::debug!("Context: height={}, txindex={}, {} input alkanes", 
+            log::debug!("Simulating alkane {}:{} with {} arguments: {:?}",
+                target_block, target_tx, cellpack.inputs.len(), cellpack.inputs);
+            log::debug!("Context: height={}, txindex={}, {} input alkanes",
                 simulation_height, txindex, context.alkanes.len());
             
             // Run simulation
@@ -812,6 +1660,37 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
                     // Try to decode as SimulateResponse
                     use alkanes_cli_common::proto::alkanes::SimulateResponse;
                     if let Ok(sim_response) = SimulateResponse::decode(bytes.as_slice()) {
+                        // Check if format is specified
+                        if let Some(format_str) = format {
+                            use crate::format_parser::OutputFormat;
+                            use std::str::FromStr;
+
+                            if let Some(execution) = &sim_response.execution {
+                                // Parse format string to enum
+                                let output_format = OutputFormat::from_str(&format_str)?;
+
+                                // Parse data according to format
+                                match output_format.parse(&execution.data) {
+                                    Ok(formatted_json) => {
+                                        println!("{}", serde_json::to_string_pretty(&formatted_json)?);
+                                        return Ok(());
+                                    }
+                                    Err(e) => {
+                                        // Output error JSON with raw hex
+                                        let error_json = json!({
+                                            "error": e.to_string(),
+                                            "raw_hex": format!("0x{}", hex::encode(&execution.data)),
+                                            "byte_count": execution.data.len()
+                                        });
+                                        println!("{}", serde_json::to_string_pretty(&error_json)?);
+                                        return Err(e);
+                                    }
+                                }
+                            } else {
+                                return Err(anyhow::anyhow!("No execution data in simulation response"));
+                            }
+                        }
+
                         if raw {
                             // Convert SimulateResponse to JSON for raw output
                             let json_response = serde_json::json!({
@@ -958,21 +1837,53 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
         },
         Alkanes::TraceBlock { height, raw } => {
             let result = system.provider().trace_block(height).await?;
-            // The result is a proto::alkanes::Trace which contains the trace
-            if let Some(alkanes_trace) = result.trace {
-                // Convert via protobuf encoding/decoding
-                let trace = alkanes_support::trace::Trace::try_from(
-                    prost::Message::encode_to_vec(&alkanes_trace)
-                )?;
-                if raw {
-                    let json = alkanes_cli_common::alkanes::trace::trace_to_json(&trace);
-                    println!("{}", serde_json::to_string_pretty(&json)?);
-                } else {
-                    let pretty = alkanes_cli_common::alkanes::trace::format_trace_pretty(&trace);
-                    println!("{}", pretty);
-                }
-            } else {
+            // The result is AlkanesBlockTraceEvent which contains repeated AlkanesBlockEvent
+            if result.events.is_empty() {
                 println!("No trace data found for block: {}", height);
+            } else {
+                let mut all_json_traces = Vec::new();
+                let mut all_pretty_traces = Vec::new();
+
+                for (i, block_event) in result.events.iter().enumerate() {
+                    if let Some(ref alkanes_trace) = block_event.traces {
+                        // Convert via protobuf encoding/decoding
+                        match alkanes_support::trace::Trace::try_from(
+                            prost::Message::encode_to_vec(alkanes_trace)
+                        ) {
+                            Ok(trace) => {
+                                if raw {
+                                    let json = alkanes_cli_common::alkanes::trace::trace_to_json(&trace);
+                                    all_json_traces.push(serde_json::json!({
+                                        "txindex": block_event.txindex,
+                                        "outpoint": block_event.outpoint.as_ref().map(|op| {
+                                            let txid_hex = hex::encode(&op.txid);
+                                            format!("{}:{}", txid_hex, op.vout)
+                                        }),
+                                        "trace": json
+                                    }));
+                                } else {
+                                    let outpoint_str = block_event.outpoint.as_ref().map(|op| {
+                                        let txid_hex = hex::encode(&op.txid);
+                                        format!("{}:{}", txid_hex, op.vout)
+                                    }).unwrap_or_else(|| format!("trace #{}", i));
+                                    let pretty = alkanes_cli_common::alkanes::trace::format_trace_pretty(&trace);
+                                    all_pretty_traces.push(format!("📊 Trace for {} (txindex: {}):\n{}", outpoint_str, block_event.txindex, pretty));
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!("Failed to decode trace #{}: {}", i, e);
+                            }
+                        }
+                    }
+                }
+
+                if raw {
+                    println!("{}", serde_json::to_string_pretty(&all_json_traces)?);
+                } else {
+                    for pretty in all_pretty_traces {
+                        println!("{}\n", pretty);
+                    }
+                }
             }
             Ok(())
         },
@@ -982,6 +1893,44 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
                 println!("{result}");
             } else {
                 println!("Bytecode: {result}");
+            }
+            Ok(())
+        },
+        Alkanes::Meta { alkane_id, block_tag, raw } => {
+            let meta_bytes = AlkanesProvider::meta(system.provider(), &alkane_id, block_tag).await?;
+
+            if raw {
+                let json_result = serde_json::json!({
+                    "alkane_id": alkane_id,
+                    "meta": format!("0x{}", hex::encode(&meta_bytes)),
+                    "meta_utf8": String::from_utf8_lossy(&meta_bytes).to_string()
+                });
+                println!("{}", serde_json::to_string_pretty(&json_result)?);
+            } else {
+                println!("📋 Alkanes Contract Metadata (ABI)");
+                println!("═══════════════════════════════════");
+                println!("🏷️  Alkane ID: {alkane_id}");
+
+                if meta_bytes.is_empty() {
+                    println!("❌ No metadata found for this contract");
+                } else {
+                    println!("📦 Metadata:");
+                    println!("   Length: {} bytes", meta_bytes.len());
+                    println!("   Hex: 0x{}", hex::encode(&meta_bytes));
+
+                    // Try to decode as UTF-8 for display
+                    if let Ok(meta_str) = String::from_utf8(meta_bytes.clone()) {
+                        println!("   UTF-8: {meta_str}");
+
+                        // Try to parse as JSON ABI
+                        if let Ok(abi_json) = serde_json::from_str::<serde_json::Value>(&meta_str) {
+                            println!("\n🔍 Parsed ABI:");
+                            println!("{}", serde_json::to_string_pretty(&abi_json)?);
+                        }
+                    } else {
+                        println!("   (Binary data, not valid UTF-8)");
+                    }
+                }
             }
             Ok(())
         },
@@ -1027,6 +1976,40 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
                 println!("💰 Reveal Fee: {} sats", result.reveal_fee);
                 println!("🎉 frBTC minted and locked in vault!");
             }
+            Ok(())
+        }
+        Alkanes::BridgeDeposit { amount, stablecoin, evm_rpc, evm_key, vault_address, token_address, protostones, chain_id } => {
+            use alkanes_cli_common::bridge::deposit::execute_bridge_deposit;
+            use alkanes_cli_common::bridge::types::{BridgeDepositParams, Stablecoin};
+
+            let coin = match stablecoin.to_lowercase().as_str() {
+                "usdc" => Stablecoin::USDC,
+                "usdt" | _ => Stablecoin::USDT,
+            };
+
+            let network_str = match system.provider().get_network() {
+                bitcoin::Network::Bitcoin => "mainnet",
+                bitcoin::Network::Regtest => "regtest",
+                _ => "testnet",
+            };
+
+            let params = BridgeDepositParams {
+                amount,
+                stablecoin: coin,
+                evm_rpc_url: evm_rpc,
+                evm_private_key: evm_key,
+                vault_address,
+                token_address,
+                protostones_hex: protostones,
+                outputs: vec![],
+                chain_id,
+            };
+
+            let result = execute_bridge_deposit(&params, network_str).await?;
+            println!("✅ Bridge deposit submitted!");
+            println!("📝 EVM TX: {}", result.tx_hash);
+            println!("💰 Net amount: {} (after 0.1% fee)", result.net_amount);
+            println!("🔗 The signal engine will detect this and mint frUSD on Bitcoin");
             Ok(())
         }
         Alkanes::Unwrap { block_tag, raw } => {
@@ -1895,6 +2878,7 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
                 fee_rate: fee_rate.clone(),
                 trace: trace.clone(),
                 auto_confirm: auto_confirm.clone(),
+                ordinals_strategy: Default::default(),
             };
             
             let provider = system.provider_mut();
@@ -1945,13 +2929,24 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
                 }
             }
             
-            // Parse path tokens, replacing "B" with "32:0" (frBTC)
+            // Parse frBTC ID — use --frbtc-address if provided, else default [32:0]
+            let frbtc_id = if let Some(ref addr) = frbtc_address {
+                let parts: Vec<&str> = addr.split(':').collect();
+                if parts.len() == 2 {
+                    AlkaneId { block: parts[0].parse().unwrap_or(32), tx: parts[1].parse().unwrap_or(0) }
+                } else {
+                    AlkaneId { block: 32, tx: 0 }
+                }
+            } else {
+                AlkaneId { block: 32, tx: 0 }
+            };
+
+            // Parse path tokens, replacing "B" with frBTC ID
             let path_tokens: Result<Vec<AlkaneId>, _> = path_parts
                 .iter()
                 .map(|token_str| {
                     if token_str.to_uppercase() == "B" {
-                        // B represents frBTC (32:0)
-                        return Ok(AlkaneId { block: 32, tx: 0 });
+                        return Ok(frbtc_id.clone());
                     }
                     let parts: Vec<&str> = token_str.split(':').collect();
                     if parts.len() != 2 {
@@ -2401,8 +3396,8 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
             let subfrost_address = if needs_wrap || needs_unwrap {
                 use alkanes_cli_common::subfrost::get_subfrost_address;
                 use alkanes_cli_common::alkanes::types::AlkaneId as CliAlkaneId;
-                let frbtc_id = CliAlkaneId { block: 32, tx: 0 };
-                let addr = get_subfrost_address(system.provider(), &frbtc_id).await?;
+                let frbtc_cli_id = CliAlkaneId { block: frbtc_id.block, tx: frbtc_id.tx };
+                let addr = get_subfrost_address(system.provider(), &frbtc_cli_id).await?;
                 println!("📍 Subfrost address: {}", addr);
                 Some(addr)
             } else {
@@ -2495,6 +3490,10 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
                 protostones.push(unwrap_proto);
             }
             
+            // Indexer-lag filter: skip UTXOs above metashrew tip so the
+            // planner doesn't silently spend alkanes the indexer hasn't seen.
+            let max_indexed_height = alkanes_cli_common::alkanes::indexer_lag::
+                fetch_max_indexed_height_or_none(system.provider()).await;
             let mut executor = EnhancedAlkanesExecutor::new(system.provider_mut());
             let execute_params = EnhancedExecuteParams {
                 input_requirements: input_reqs,
@@ -2509,8 +3508,15 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
                 trace_enabled: trace,
                 mine_enabled: mine,
                 auto_confirm,
+                ordinals_strategy: alkanes_cli_common::alkanes::types::OrdinalsStrategy::default(),
+                mempool_indexer: false,
+                split_transactions: false,
+                known_pending_tx_hexes: Vec::new(),
+                prefetched_utxos: Vec::new(),
+                max_indexed_height,
+                utxo_source: alkanes_cli_common::alkanes::types::UtxoDataSource::default(),
             };
-            
+
             println!("\n📤 Executing swap...");
             let state = executor.execute(execute_params.clone()).await?;
             let result = match state {
@@ -2545,19 +3551,26 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes) ->
                         
                         if let Some(error) = trace_json.get("error") {
                             println!("   ❌ Error: {}\n", error);
-                        } else if let Some(events) = trace_json.get("events").and_then(|e| e.as_array()) {
-                            if events.is_empty() {
-                                println!("   ⚠️  No trace data found.\n");
-                            } else {
-                                // Pretty print the trace
-                                println!("{}\n", serde_json::to_string_pretty(trace_json)?);
-                            }
                         } else {
-                            println!("   ⚠️  Unexpected trace format: no events array\n");
-                            log::warn!("Trace JSON: {}", serde_json::to_string_pretty(trace_json)?);
+                            // Check for events in either "trace" or "events" field
+                            let events = trace_json.get("trace").and_then(|e| e.as_array())
+                                .or_else(|| trace_json.get("events").and_then(|e| e.as_array()));
+
+                            if let Some(events) = events {
+                                if events.is_empty() {
+                                    println!("   ⚠️  No trace data found.\n");
+                                } else {
+                                    // Format the trace nicely using the tree-view formatter
+                                    let pretty = alkanes_cli_common::alkanes::trace::format_trace_json_pretty(trace_json);
+                                    println!("{}\n", pretty);
+                                }
+                            } else {
+                                println!("   ⚠️  Unexpected trace format: no events array\n");
+                                log::warn!("Trace JSON: {}", serde_json::to_string_pretty(trace_json)?);
+                            }
                         }
                     }
-                    
+
                     println!("🎯 ═══════════════════════════════════════════════════════════════");
                     println!("✨                      TRACE COMPLETE                         ✨");
                     println!("🎯 ═══════════════════════════════════════════════════════════════");
@@ -3206,7 +4219,10 @@ fn pretty_print_transaction_analysis(tx: &bitcoin::Transaction) {
     }
 }
 
-fn to_enhanced_execute_params(args: AlkanesExecute) -> Result<alkanes::types::EnhancedExecuteParams> {
+fn to_enhanced_execute_params(
+    args: AlkanesExecute,
+    max_indexed_height: Option<u64>,
+) -> Result<alkanes::types::EnhancedExecuteParams> {
     let input_requirements = args.inputs.map(|s| alkanes::parsing::parse_input_requirements(&s)).transpose()?.unwrap_or_default();
     let protostones = alkanes::parsing::parse_protostones(&args.protostones.join(" "))?;
     let envelope_data = args.envelope.map(std::fs::read).transpose()?;
@@ -3224,39 +4240,48 @@ fn to_enhanced_execute_params(args: AlkanesExecute) -> Result<alkanes::types::En
         trace_enabled: args.trace,
         mine_enabled: args.mine,
         auto_confirm: args.auto_confirm,
+        ordinals_strategy: alkanes::types::OrdinalsStrategy::default(),
+        mempool_indexer: false,
+        split_transactions: false,
+        known_pending_tx_hexes: Vec::new(),
+        prefetched_utxos: Vec::new(),
+        max_indexed_height,
+        utxo_source: alkanes::types::UtxoDataSource::default(),
     })
 }
 
 async fn execute_runestone_command<T: System>(system: &mut T, command: Runestone) -> Result<()> {
     match command {
         Runestone::Analyze { txid, raw } => {
+            let network = system.provider().get_network();
             let tx_hex = system.provider().get_transaction_hex(&txid).await?;
             let tx_bytes = hex::decode(tx_hex)?;
             let tx: bitcoin::Transaction = bitcoin::consensus::deserialize(&tx_bytes)?;
-            let result = alkanes_cli_common::runestone_enhanced::format_runestone_with_decoded_messages(&tx)?;
-            
+            let result = alkanes_cli_common::runestone_enhanced::format_runestone_with_decoded_messages(&tx, network)?;
+
             if raw {
                 println!("{}", serde_json::to_string_pretty(&result)?);
             } else {
-                alkanes_cli_common::runestone_enhanced::print_human_readable_runestone(&tx, &result);
+                alkanes_cli_common::runestone_enhanced::print_human_readable_runestone(&tx, &result, network);
             }
         }
         Runestone::Trace { txid, raw } => {
             use alkanes_cli_common::traits::AlkanesProvider;
-            
+
             // Get and analyze transaction
+            let network = system.provider().get_network();
             let tx_hex = system.provider().get_transaction_hex(&txid).await?;
             let tx_bytes = hex::decode(tx_hex)?;
             let tx: bitcoin::Transaction = bitcoin::consensus::deserialize(&tx_bytes)?;
-            let result = alkanes_cli_common::runestone_enhanced::format_runestone_with_decoded_messages(&tx)?;
-            
+            let result = alkanes_cli_common::runestone_enhanced::format_runestone_with_decoded_messages(&tx, network)?;
+
             // Print transaction structure
             if !raw {
                 println!("🔍 ═══════════════════════════════════════════════════════════════");
                 println!("🧪           RUNESTONE TRANSACTION TRACE ANALYSIS             🧪");
                 println!("🔍 ═══════════════════════════════════════════════════════════════\n");
                 println!("📝 Transaction ID: {}\n", txid);
-                alkanes_cli_common::runestone_enhanced::print_human_readable_runestone(&tx, &result);
+                alkanes_cli_common::runestone_enhanced::print_human_readable_runestone(&tx, &result, network);
                 println!("\n🔍 ═══════════════════════════════════════════════════════════════");
                 println!("🧪                   PROTOSTONE TRACES                        🧪");
                 println!("🔍 ═══════════════════════════════════════════════════════════════\n");
@@ -3281,18 +4306,25 @@ async fn execute_runestone_command<T: System>(system: &mut T, command: Runestone
                         
                         if let Some(error) = trace_json.get("error") {
                             println!("   ❌ Error: {}\n", error);
-                        } else if let Some(events) = trace_json.get("events").and_then(|e| e.as_array()) {
-                            if events.is_empty() {
-                                println!("   ⚠️ No trace data found.\n");
+                        } else {
+                            // Check for events in either "trace" or "events" field
+                            let events = trace_json.get("trace").and_then(|e| e.as_array())
+                                .or_else(|| trace_json.get("events").and_then(|e| e.as_array()));
+
+                            if let Some(events) = events {
+                                if events.is_empty() {
+                                    println!("   ⚠️ No trace data found.\n");
+                                } else {
+                                    // Format the trace nicely using the tree-view formatter
+                                    let pretty = alkanes_cli_common::alkanes::trace::format_trace_json_pretty(trace_json);
+                                    println!("{}\n", pretty);
+                                }
                             } else {
-                                // Format the trace nicely - convert back to Trace struct for pretty formatting
-                                use prost::Message;
-                                // For now, just print the JSON
-                                println!("{}\n", serde_json::to_string_pretty(trace_json)?);
+                                println!("   ⚠️ Unexpected trace format.\n");
                             }
                         }
                     }
-                    
+
                     println!("🎯 ═══════════════════════════════════════════════════════════════");
                     println!("✨                      TRACE COMPLETE                         ✨");
                     println!("🎯 ═══════════════════════════════════════════════════════════════");
@@ -3437,11 +4469,12 @@ async fn execute_esplora_command(
             if runestone_trace {
                 use alkanes_cli_common::traits::AlkanesProvider;
                 use prost::Message;
-                
+
+                let network = provider.get_network();
                 println!("\n🔍 ═══════════════════════════════════════════════════════════════");
                 println!("🧪            RUNESTONE TRACES FOR TRANSACTIONS               🧪");
                 println!("🔍 ═══════════════════════════════════════════════════════════════\n");
-                
+
                 for esplora_tx in &txs {
                     // Check if transaction has an OP_RETURN output
                     let has_op_return = esplora_tx.vout.iter().any(|output| {
@@ -3473,7 +4506,7 @@ async fn execute_esplora_command(
                                 };
                                 
                                 // Try to parse runestone
-                                match alkanes_cli_common::runestone_enhanced::format_runestone_with_decoded_messages(&transaction) {
+                                match alkanes_cli_common::runestone_enhanced::format_runestone_with_decoded_messages(&transaction, network) {
                                     Ok(result) => {
                                         // Extract number of protostones
                                         let num_protostones = if let Some(protostones) = result.get("protostones").and_then(|p| p.as_array()) {
@@ -3907,7 +4940,7 @@ async fn execute_protorunes_command(
 }
 
 
-async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands::Brc20Prog, brc20_prog_rpc_url: Option<String>, frbtc_address: Option<String>) -> Result<()> {
+async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands::Brc20Prog, brc20_prog_rpc_url: Option<String>, jsonrpc_headers: Vec<(String, String)>, frbtc_address: Option<String>) -> Result<()> {
     use commands::Brc20Prog;
     use alkanes_cli_common::brc20_prog::{
         Brc20ProgExecutor, Brc20ProgExecuteParams, Brc20ProgDeployInscription,
@@ -3918,7 +4951,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
     let provider = system.provider_mut();
 
     match command {
-        Brc20Prog::DeployContract { foundry_json_path, from, change, fee_rate, raw, trace, mine, auto_confirm } => {
+        Brc20Prog::DeployContract { foundry_json_path, from, change, fee_rate, raw, trace, mine, auto_confirm, no_activation, use_slipstream, use_rebar, rebar_tier, strategy, resume, mint_diesel } => {
             let contract_data = parse_foundry_json(&foundry_json_path)?;
             let bytecode = extract_deployment_bytecode(&contract_data)?;
 
@@ -3935,9 +4968,23 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             } else {
                 None
             };
-            
+
             let resolved_change = if let Some(change_addr) = change {
                 Some(provider.resolve_all_identifiers(&change_addr).await?)
+            } else {
+                None
+            };
+
+            // Parse strategy
+            use alkanes_cli_common::brc20_prog::types::AntiFrontrunningStrategy;
+            let parsed_strategy = if let Some(ref strat_str) = strategy {
+                match strat_str.to_lowercase().as_str() {
+                    "checklocktimeverify" | "cltv" => Some(AntiFrontrunningStrategy::CheckLockTimeVerify),
+                    "cpfp" => Some(AntiFrontrunningStrategy::Cpfp),
+                    "presign" => Some(AntiFrontrunningStrategy::Presign),
+                    "rbf" => Some(AntiFrontrunningStrategy::Rbf),
+                    _ => return Err(anyhow::anyhow!("Invalid strategy: {}. Valid options: checklocktimeverify, cpfp, presign, rbf", strat_str)),
+                }
             } else {
                 None
             };
@@ -3951,6 +4998,18 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
                 trace_enabled: trace,
                 mine_enabled: mine,
                 auto_confirm: auto_confirm,
+                use_activation: !no_activation, // Default is true (3-tx pattern), false with --no-activation
+                use_slipstream,
+                use_rebar,
+                rebar_tier,
+                strategy: parsed_strategy,
+                resume_from_commit: resume,
+                additional_outputs: None, // Not used for deploy
+                ordinals_strategy: Default::default(),
+                mempool_indexer: false, // TODO: Add CLI flag when needed
+                mint_diesel,
+                return_unsigned: false,
+                deployer_nonce: None,
             };
 
             let mut executor = Brc20ProgExecutor::new(provider);
@@ -3973,7 +5032,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             }
             Ok(())
         }
-        Brc20Prog::Transact { address, signature, calldata, from, change, fee_rate, raw, trace, mine, auto_confirm } => {
+        Brc20Prog::Transact { address, signature, calldata, from, change, fee_rate, raw, trace, mine, auto_confirm, use_slipstream, use_rebar, rebar_tier, strategy, resume, mint_diesel } => {
             let calldata_hex = encode_function_call(&signature, &calldata)?; // calldata.split(',').map(|s| s.trim().to_string()).collect::<Vec<_>>())?;
 
             let inscription = Brc20ProgCallInscription::new(address, calldata_hex);
@@ -3989,9 +5048,23 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             } else {
                 None
             };
-            
+
             let resolved_change = if let Some(change_addr) = change {
                 Some(provider.resolve_all_identifiers(&change_addr).await?)
+            } else {
+                None
+            };
+
+            // Parse strategy
+            use alkanes_cli_common::brc20_prog::types::AntiFrontrunningStrategy;
+            let parsed_strategy = if let Some(ref strat_str) = strategy {
+                match strat_str.to_lowercase().as_str() {
+                    "checklocktimeverify" | "cltv" => Some(AntiFrontrunningStrategy::CheckLockTimeVerify),
+                    "cpfp" => Some(AntiFrontrunningStrategy::Cpfp),
+                    "presign" => Some(AntiFrontrunningStrategy::Presign),
+                    "rbf" => Some(AntiFrontrunningStrategy::Rbf),
+                    _ => return Err(anyhow::anyhow!("Invalid strategy: {}. Valid options: checklocktimeverify, cpfp, presign, rbf", strat_str)),
+                }
             } else {
                 None
             };
@@ -4005,6 +5078,18 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
                 trace_enabled: trace,
                 mine_enabled: mine,
                 auto_confirm: auto_confirm,
+                use_activation: true, // Use 3-tx pattern (required for brc20-prog indexing)
+                use_slipstream,
+                use_rebar,
+                rebar_tier,
+                strategy: parsed_strategy,
+                resume_from_commit: resume,
+                additional_outputs: None, // Not used for transact
+                ordinals_strategy: Default::default(),
+                mempool_indexer: false, // TODO: Add CLI flag when needed
+                mint_diesel,
+                return_unsigned: false,
+                deployer_nonce: None,
             };
 
             let mut executor = Brc20ProgExecutor::new(provider);
@@ -4021,12 +5106,8 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             }
             Ok(())
         }
-        Brc20Prog::WrapBtc { amount, target, signature, calldata, from, change, fee_rate, raw, trace, mine, auto_confirm } => {
-            use alkanes_cli_common::brc20_prog::wrap_btc::{Brc20ProgWrapBtcExecutor, Brc20ProgWrapBtcParams};
-
-            
-            let calldata_hex = encode_function_call(&signature, &calldata)?;
-            let calldata_bytes = hex::decode(calldata_hex.trim_start_matches("0x"))?;
+        Brc20Prog::WrapBtc { amount, from, change, fee_rate, raw, trace, mine, auto_confirm, use_slipstream, use_rebar, rebar_tier, resume, mint_diesel } => {
+            use alkanes_cli_common::brc20_prog::frbtc::{FrBtcExecutor, FrBtcWrapParams};
 
             // Resolve address identifiers before creating params
             let resolved_from = if let Some(from_addrs) = from {
@@ -4038,38 +5119,239 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             } else {
                 None
             };
-            
+
             let resolved_change = if let Some(change_addr) = change {
                 Some(provider.resolve_all_identifiers(&change_addr).await?)
             } else {
                 None
             };
 
-            let params = Brc20ProgWrapBtcParams {
+            let params = FrBtcWrapParams {
                 amount,
-                target_address: target,
-                calldata: calldata_bytes,
                 from_addresses: resolved_from,
                 change_address: resolved_change,
                 fee_rate,
                 raw_output: raw,
                 trace_enabled: trace,
                 mine_enabled: mine,
-                auto_confirm: auto_confirm,
+                auto_confirm,
+                use_slipstream,
+                use_rebar,
+                rebar_tier,
+                resume_from_commit: resume,
+                mint_diesel,
+                return_unsigned: false,
+                ordinals_strategy: Default::default(),
+                mempool_indexer: false,
+                contract_address: None,
             };
 
-            let mut executor = Brc20ProgWrapBtcExecutor::new(provider);
-            let result = executor.wrap_btc(params).await?;
+            let mut executor = FrBtcExecutor::new(provider);
+            let result = executor.wrap(params).await?;
 
             if raw {
                 println!("{}", serde_json::to_string_pretty(&result)?);
             } else {
-                println!("✅ BTC wrapped and locked successfully!");
+                println!("✅ BTC wrapped to frBTC successfully!");
                 println!("🔗 Commit TXID: {}", result.commit_txid);
                 println!("🔗 Reveal TXID: {}", result.reveal_txid);
                 println!("💰 Commit Fee: {} sats", result.commit_fee);
                 println!("💰 Reveal Fee: {} sats", result.reveal_fee);
-                println!("🎉 frBTC minted and locked in BRC20 vault!");
+            }
+            Ok(())
+        }
+        Brc20Prog::UnwrapBtc { amount, vout, to, from, change, fee_rate, raw, trace, mine, auto_confirm, use_slipstream, use_rebar, rebar_tier, resume, mint_diesel } => {
+            use alkanes_cli_common::brc20_prog::frbtc::{FrBtcExecutor, FrBtcUnwrapParams};
+
+            // Resolve address identifiers
+            let resolved_from = if let Some(from_addrs) = from {
+                let mut resolved = Vec::new();
+                for addr in from_addrs {
+                    resolved.push(provider.resolve_all_identifiers(&addr).await?);
+                }
+                Some(resolved)
+            } else {
+                None
+            };
+
+            let resolved_change = if let Some(change_addr) = change {
+                Some(provider.resolve_all_identifiers(&change_addr).await?)
+            } else {
+                None
+            };
+
+            let resolved_to = provider.resolve_all_identifiers(&to).await?;
+
+            let params = FrBtcUnwrapParams {
+                amount,
+                vout,
+                recipient_address: resolved_to,
+                from_addresses: resolved_from,
+                change_address: resolved_change,
+                fee_rate,
+                raw_output: raw,
+                trace_enabled: trace,
+                mine_enabled: mine,
+                auto_confirm,
+                use_slipstream,
+                use_rebar,
+                rebar_tier,
+                resume_from_commit: resume,
+                mint_diesel,
+                return_unsigned: false,
+                ordinals_strategy: Default::default(),
+                mempool_indexer: false,
+                contract_address: None,
+            };
+
+            let mut executor = FrBtcExecutor::new(provider);
+            let result = executor.unwrap(params).await?;
+
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("✅ frBTC unwrap queued successfully!");
+                println!("🔗 Commit TXID: {}", result.commit_txid);
+                println!("🔗 Reveal TXID: {}", result.reveal_txid);
+                println!("💰 Commit Fee: {} sats", result.commit_fee);
+                println!("💰 Reveal Fee: {} sats", result.reveal_fee);
+                println!("📬 BTC will be sent to {} by the subfrost operator", to);
+            }
+            Ok(())
+        }
+        Brc20Prog::WrapAndExecute { amount, script, from, change, fee_rate, raw, trace, mine, auto_confirm, use_slipstream, use_rebar, rebar_tier, resume, mint_diesel } => {
+            use alkanes_cli_common::brc20_prog::frbtc::{FrBtcExecutor, FrBtcWrapAndExecuteParams};
+
+            // Resolve address identifiers
+            let resolved_from = if let Some(from_addrs) = from {
+                let mut resolved = Vec::new();
+                for addr in from_addrs {
+                    resolved.push(provider.resolve_all_identifiers(&addr).await?);
+                }
+                Some(resolved)
+            } else {
+                None
+            };
+
+            let resolved_change = if let Some(change_addr) = change {
+                Some(provider.resolve_all_identifiers(&change_addr).await?)
+            } else {
+                None
+            };
+
+            let params = FrBtcWrapAndExecuteParams {
+                amount,
+                script_bytecode: script,
+                from_addresses: resolved_from,
+                change_address: resolved_change,
+                fee_rate,
+                raw_output: raw,
+                trace_enabled: trace,
+                mine_enabled: mine,
+                auto_confirm,
+                use_slipstream,
+                use_rebar,
+                rebar_tier,
+                resume_from_commit: resume,
+                mint_diesel,
+                return_unsigned: false,
+                ordinals_strategy: Default::default(),
+                mempool_indexer: false,
+                contract_address: None,
+            };
+
+            let mut executor = FrBtcExecutor::new(provider);
+            let result = executor.wrap_and_execute(params).await?;
+
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("✅ BTC wrapped and script executed!");
+                println!("🔗 Commit TXID: {}", result.commit_txid);
+                println!("🔗 Reveal TXID: {}", result.reveal_txid);
+                println!("💰 Commit Fee: {} sats", result.commit_fee);
+                println!("💰 Reveal Fee: {} sats", result.reveal_fee);
+            }
+            Ok(())
+        }
+        Brc20Prog::WrapAndExecute2 { amount, target, signature, calldata, from, change, fee_rate, raw, trace, mine, auto_confirm, use_slipstream, use_rebar, rebar_tier, resume, mint_diesel } => {
+            use alkanes_cli_common::brc20_prog::frbtc::{FrBtcExecutor, FrBtcWrapAndExecute2Params};
+
+            // Resolve address identifiers
+            let resolved_from = if let Some(from_addrs) = from {
+                let mut resolved = Vec::new();
+                for addr in from_addrs {
+                    resolved.push(provider.resolve_all_identifiers(&addr).await?);
+                }
+                Some(resolved)
+            } else {
+                None
+            };
+
+            let resolved_change = if let Some(change_addr) = change {
+                Some(provider.resolve_all_identifiers(&change_addr).await?)
+            } else {
+                None
+            };
+
+            let params = FrBtcWrapAndExecute2Params {
+                amount,
+                target_address: target,
+                signature,
+                calldata_args: calldata,
+                from_addresses: resolved_from,
+                change_address: resolved_change,
+                fee_rate,
+                raw_output: raw,
+                trace_enabled: trace,
+                mine_enabled: mine,
+                auto_confirm,
+                use_slipstream,
+                use_rebar,
+                rebar_tier,
+                resume_from_commit: resume,
+                mint_diesel,
+                return_unsigned: false,
+                ordinals_strategy: Default::default(),
+                mempool_indexer: false,
+                contract_address: None,
+            };
+
+            let mut executor = FrBtcExecutor::new(provider);
+            let result = executor.wrap_and_execute2(params).await?;
+
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("✅ BTC wrapped and contract called!");
+                println!("🔗 Commit TXID: {}", result.commit_txid);
+                println!("🔗 Reveal TXID: {}", result.reveal_txid);
+                println!("💰 Commit Fee: {} sats", result.commit_fee);
+                println!("💰 Reveal Fee: {} sats", result.reveal_fee);
+            }
+            Ok(())
+        }
+        Brc20Prog::SignerAddress { raw } => {
+            use alkanes_cli_common::brc20_prog::frbtc::{FrBtcExecutor, get_frbtc_contract_address};
+
+            let network = provider.get_network();
+            let frbtc_address = get_frbtc_contract_address(network);
+
+            let mut executor = FrBtcExecutor::new(provider);
+            let signer_address = executor.get_signer_address().await?;
+
+            if raw {
+                let result = serde_json::json!({
+                    "network": format!("{:?}", network),
+                    "frbtc_contract": frbtc_address,
+                    "signer_address": signer_address,
+                });
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("🔑 FrBTC Signer Address");
+                println!("   Network: {:?}", network);
+                println!("   FrBTC Contract: {}", frbtc_address);
+                println!("   Signer Address: {}", signer_address);
             }
             Ok(())
         }
@@ -4180,7 +5462,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             let rpc_url = brc20_prog_rpc_url
                 .ok_or_else(|| anyhow::anyhow!("BRC20-Prog RPC URL not set. Use --brc20-prog-rpc-url flag"))?;
             
-            let client = Brc20ProgRpcClient::new(rpc_url)?;
+            let client = Brc20ProgRpcClient::with_headers(rpc_url, jsonrpc_headers.clone())?;
             let code = client.eth_get_code(&address).await?;
             
             if raw {
@@ -4204,7 +5486,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             let rpc_url = brc20_prog_rpc_url.clone()
                 .ok_or_else(|| anyhow::anyhow!("BRC20-Prog RPC URL not set. Use --brc20-prog-rpc-url flag"))?;
             
-            let client = Brc20ProgRpcClient::new(rpc_url)?;
+            let client = Brc20ProgRpcClient::with_headers(rpc_url, jsonrpc_headers.clone())?;
             let params = EthCallParams { to, data, from, gas: None, gas_price: None, value: None };
             let result = client.eth_call(params, block.as_deref()).await?;
             
@@ -4222,7 +5504,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             let rpc_url = brc20_prog_rpc_url.clone()
                 .ok_or_else(|| anyhow::anyhow!("BRC20-Prog RPC URL not set. Use --brc20-prog-rpc-url flag"))?;
             
-            let client = Brc20ProgRpcClient::new(rpc_url)?;
+            let client = Brc20ProgRpcClient::with_headers(rpc_url, jsonrpc_headers.clone())?;
             let balance = client.eth_get_balance(&address, &block).await?;
             
             // Parse the hex balance
@@ -4251,7 +5533,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             let rpc_url = brc20_prog_rpc_url.clone()
                 .ok_or_else(|| anyhow::anyhow!("BRC20-Prog RPC URL not set. Use --brc20-prog-rpc-url flag"))?;
             
-            let client = Brc20ProgRpcClient::new(rpc_url)?;
+            let client = Brc20ProgRpcClient::with_headers(rpc_url, jsonrpc_headers.clone())?;
             let params = EthCallParams { to, data, from, gas: None, gas_price: None, value: None };
             let gas = client.eth_estimate_gas(params, block.as_deref()).await?;
             
@@ -4270,7 +5552,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             let rpc_url = brc20_prog_rpc_url.clone()
                 .ok_or_else(|| anyhow::anyhow!("BRC20-Prog RPC URL not set. Use --brc20-prog-rpc-url flag"))?;
             
-            let client = Brc20ProgRpcClient::new(rpc_url)?;
+            let client = Brc20ProgRpcClient::with_headers(rpc_url, jsonrpc_headers.clone())?;
             let block_num = client.eth_block_number().await?;
             
             if raw {
@@ -4288,7 +5570,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             let rpc_url = brc20_prog_rpc_url.clone()
                 .ok_or_else(|| anyhow::anyhow!("BRC20-Prog RPC URL not set. Use --brc20-prog-rpc-url flag"))?;
             
-            let client = Brc20ProgRpcClient::new(rpc_url)?;
+            let client = Brc20ProgRpcClient::with_headers(rpc_url, jsonrpc_headers.clone())?;
             let block_info = client.eth_get_block_by_number(&block, full).await?;
             
             if raw {
@@ -4310,7 +5592,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             let rpc_url = brc20_prog_rpc_url.clone()
                 .ok_or_else(|| anyhow::anyhow!("BRC20-Prog RPC URL not set. Use --brc20-prog-rpc-url flag"))?;
             
-            let client = Brc20ProgRpcClient::new(rpc_url)?;
+            let client = Brc20ProgRpcClient::with_headers(rpc_url, jsonrpc_headers.clone())?;
             let block_info = client.eth_get_block_by_hash(&hash, full).await?;
             
             if raw {
@@ -4332,7 +5614,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             let rpc_url = brc20_prog_rpc_url.clone()
                 .ok_or_else(|| anyhow::anyhow!("BRC20-Prog RPC URL not set. Use --brc20-prog-rpc-url flag"))?;
             
-            let client = Brc20ProgRpcClient::new(rpc_url)?;
+            let client = Brc20ProgRpcClient::with_headers(rpc_url, jsonrpc_headers.clone())?;
             let nonce = client.eth_get_transaction_count(&address, &block).await?;
             
             if raw {
@@ -4350,7 +5632,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             let rpc_url = brc20_prog_rpc_url.clone()
                 .ok_or_else(|| anyhow::anyhow!("BRC20-Prog RPC URL not set. Use --brc20-prog-rpc-url flag"))?;
             
-            let client = Brc20ProgRpcClient::new(rpc_url)?;
+            let client = Brc20ProgRpcClient::with_headers(rpc_url, jsonrpc_headers.clone())?;
             let tx = client.eth_get_transaction_by_hash(&hash).await?;
             
             if raw {
@@ -4380,7 +5662,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             let rpc_url = brc20_prog_rpc_url.clone()
                 .ok_or_else(|| anyhow::anyhow!("BRC20-Prog RPC URL not set. Use --brc20-prog-rpc-url flag"))?;
             
-            let client = Brc20ProgRpcClient::new(rpc_url)?;
+            let client = Brc20ProgRpcClient::with_headers(rpc_url, jsonrpc_headers.clone())?;
             let receipt = client.eth_get_transaction_receipt(&hash).await?;
             
             if raw {
@@ -4412,7 +5694,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             let rpc_url = brc20_prog_rpc_url.clone()
                 .ok_or_else(|| anyhow::anyhow!("BRC20-Prog RPC URL not set. Use --brc20-prog-rpc-url flag"))?;
             
-            let client = Brc20ProgRpcClient::new(rpc_url)?;
+            let client = Brc20ProgRpcClient::with_headers(rpc_url, jsonrpc_headers.clone())?;
             let value = client.eth_get_storage_at(&address, &position).await?;
             
             if raw {
@@ -4430,7 +5712,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             let rpc_url = brc20_prog_rpc_url.clone()
                 .ok_or_else(|| anyhow::anyhow!("BRC20-Prog RPC URL not set. Use --brc20-prog-rpc-url flag"))?;
             
-            let client = Brc20ProgRpcClient::new(rpc_url)?;
+            let client = Brc20ProgRpcClient::with_headers(rpc_url, jsonrpc_headers.clone())?;
             
             let topics_parsed = if let Some(topics_str) = topics {
                 Some(serde_json::from_str(&topics_str)?)
@@ -4472,7 +5754,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             let rpc_url = brc20_prog_rpc_url.clone()
                 .ok_or_else(|| anyhow::anyhow!("BRC20-Prog RPC URL not set. Use --brc20-prog-rpc-url flag"))?;
             
-            let client = Brc20ProgRpcClient::new(rpc_url)?;
+            let client = Brc20ProgRpcClient::with_headers(rpc_url, jsonrpc_headers.clone())?;
             let chain_id = client.eth_chain_id().await?;
             
             if raw {
@@ -4490,7 +5772,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             let rpc_url = brc20_prog_rpc_url.clone()
                 .ok_or_else(|| anyhow::anyhow!("BRC20-Prog RPC URL not set. Use --brc20-prog-rpc-url flag"))?;
             
-            let client = Brc20ProgRpcClient::new(rpc_url)?;
+            let client = Brc20ProgRpcClient::with_headers(rpc_url, jsonrpc_headers.clone())?;
             let gas_price = client.eth_gas_price().await?;
             
             if raw {
@@ -4506,7 +5788,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             let rpc_url = brc20_prog_rpc_url.clone()
                 .ok_or_else(|| anyhow::anyhow!("BRC20-Prog RPC URL not set. Use --brc20-prog-rpc-url flag"))?;
             
-            let client = Brc20ProgRpcClient::new(rpc_url)?;
+            let client = Brc20ProgRpcClient::with_headers(rpc_url, jsonrpc_headers.clone())?;
             let version = client.brc20_version().await?;
             
             if raw {
@@ -4522,7 +5804,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             let rpc_url = brc20_prog_rpc_url.clone()
                 .ok_or_else(|| anyhow::anyhow!("BRC20-Prog RPC URL not set. Use --brc20-prog-rpc-url flag"))?;
             
-            let client = Brc20ProgRpcClient::new(rpc_url)?;
+            let client = Brc20ProgRpcClient::with_headers(rpc_url, jsonrpc_headers.clone())?;
             let receipt = client.brc20_get_tx_receipt_by_inscription_id(&inscription_id).await?;
             
             if raw {
@@ -4548,7 +5830,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             let rpc_url = brc20_prog_rpc_url.clone()
                 .ok_or_else(|| anyhow::anyhow!("BRC20-Prog RPC URL not set. Use --brc20-prog-rpc-url flag"))?;
             
-            let client = Brc20ProgRpcClient::new(rpc_url)?;
+            let client = Brc20ProgRpcClient::with_headers(rpc_url, jsonrpc_headers.clone())?;
             let inscription_id = client.brc20_get_inscription_id_by_tx_hash(&tx_hash).await?;
             
             if raw {
@@ -4568,7 +5850,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             let rpc_url = brc20_prog_rpc_url.clone()
                 .ok_or_else(|| anyhow::anyhow!("BRC20-Prog RPC URL not set. Use --brc20-prog-rpc-url flag"))?;
             
-            let client = Brc20ProgRpcClient::new(rpc_url)?;
+            let client = Brc20ProgRpcClient::with_headers(rpc_url, jsonrpc_headers.clone())?;
             let inscription_id = client.brc20_get_inscription_id_by_contract_address(&address).await?;
             
             if raw {
@@ -4588,7 +5870,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             let rpc_url = brc20_prog_rpc_url.clone()
                 .ok_or_else(|| anyhow::anyhow!("BRC20-Prog RPC URL not set. Use --brc20-prog-rpc-url flag"))?;
             
-            let client = Brc20ProgRpcClient::new(rpc_url)?;
+            let client = Brc20ProgRpcClient::with_headers(rpc_url, jsonrpc_headers.clone())?;
             let balance = client.brc20_balance(&pkscript, &ticker).await?;
             
             if raw {
@@ -4604,7 +5886,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             let rpc_url = brc20_prog_rpc_url.clone()
                 .ok_or_else(|| anyhow::anyhow!("BRC20-Prog RPC URL not set. Use --brc20-prog-rpc-url flag"))?;
             
-            let client = Brc20ProgRpcClient::new(rpc_url)?;
+            let client = Brc20ProgRpcClient::with_headers(rpc_url, jsonrpc_headers.clone())?;
             let trace = client.debug_trace_transaction(&hash).await?;
             
             if raw {
@@ -4628,7 +5910,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             let rpc_url = brc20_prog_rpc_url.clone()
                 .ok_or_else(|| anyhow::anyhow!("BRC20-Prog RPC URL not set. Use --brc20-prog-rpc-url flag"))?;
             
-            let client = Brc20ProgRpcClient::new(rpc_url)?;
+            let client = Brc20ProgRpcClient::with_headers(rpc_url, jsonrpc_headers.clone())?;
             let content = client.txpool_content().await?;
             
             if raw {
@@ -4646,7 +5928,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             let rpc_url = brc20_prog_rpc_url.clone()
                 .ok_or_else(|| anyhow::anyhow!("BRC20-Prog RPC URL not set. Use --brc20-prog-rpc-url flag"))?;
             
-            let client = Brc20ProgRpcClient::new(rpc_url)?;
+            let client = Brc20ProgRpcClient::with_headers(rpc_url, jsonrpc_headers.clone())?;
             let version = client.web3_client_version().await?;
             
             if raw {
@@ -4656,7 +5938,7 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             }
             Ok(())
         }
-        Brc20Prog::Unwrap { block_tag: _, raw, experimental_asm } => {
+        Brc20Prog::Unwrap { block_tag, raw, experimental_asm, experimental_sol } => {
             use alkanes_cli_common::unwrap::{MetaprotocolUnwrap, Brc20ProgUnwrap};
             use alkanes_cli_common::brc20_prog::{get_frbtc_address, get_signer_address};
             use alkanes_cli_common::traits::{JsonRpcProvider, EsploraProvider};
@@ -4670,10 +5952,14 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             // Get unfiltered unwraps from BRC20-Prog
             let confirmations_required = 6; // Require 6 confirmations for safety
 
-            let all_unwraps = if experimental_asm {
+            let all_unwraps = if experimental_sol {
+                log::info!("🔬 Using experimental Solidity-compiled bytecode");
+                let frbtc_addr = frbtc_address.as_deref();
+                brc20_impl.get_pending_unwraps_experimental_sol(provider, confirmations_required, frbtc_addr, block_tag.as_deref()).await?
+            } else if experimental_asm {
                 log::info!("🚀 Using experimental ASM bytecode generator (100x faster!)");
                 let frbtc_addr = frbtc_address.as_deref();
-                brc20_impl.get_pending_unwraps_experimental_asm(provider, confirmations_required, frbtc_addr).await?
+                brc20_impl.get_pending_unwraps_experimental_asm(provider, confirmations_required, frbtc_addr, block_tag.as_deref()).await?
             } else {
                 brc20_impl.get_pending_unwraps(provider, confirmations_required).await?
             };
@@ -4761,5 +6047,491 @@ async fn execute_brc20prog_command<T: System>(system: &mut T, command: commands:
             Ok(())
         }
     }
+}
+
+async fn execute_espo_command(
+    provider: &dyn DeezelProvider,
+    command: alkanes_cli_common::commands::EspoCommands,
+) -> anyhow::Result<()> {
+    use alkanes_cli_common::commands::EspoCommands;
+    use alkanes_cli_common::traits::EspoProvider;
+
+    match command {
+        EspoCommands::Height { raw } => {
+            let height = provider.get_espo_height().await?;
+            if raw {
+                println!("{}", height);
+            } else {
+                println!("ESPO Indexer Height: {}", height);
+            }
+        }
+        EspoCommands::Balances { address, include_outpoints, raw } => {
+            let result = provider.get_address_balances(&address, include_outpoints).await?;
+            if raw {
+                println!("{}", result);
+            } else {
+                println!("Alkanes Balances for {}:", address);
+                if let Some(balances) = result.get("balances").and_then(|v| v.as_object()) {
+                    for (alkane_id, balance) in balances {
+                        println!("  {}: {}", alkane_id, balance);
+                    }
+                    if balances.is_empty() {
+                        println!("  (no balances)");
+                    }
+                } else {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+            }
+        }
+        EspoCommands::Outpoints { address, raw } => {
+            let result = provider.get_address_outpoints(&address).await?;
+            if raw {
+                println!("{}", result);
+            } else {
+                println!("Outpoints with Alkanes for {}:", address);
+                if let Some(outpoints) = result.get("outpoints").and_then(|v| v.as_array()) {
+                    for outpoint in outpoints {
+                        if let Some(op_str) = outpoint.as_str() {
+                            println!("  {}", op_str);
+                        } else {
+                            println!("  {}", outpoint);
+                        }
+                    }
+                    if outpoints.is_empty() {
+                        println!("  (no outpoints)");
+                    }
+                } else {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+            }
+        }
+        EspoCommands::Outpoint { outpoint, raw } => {
+            let result = provider.get_outpoint_balances(&outpoint).await?;
+            if raw {
+                println!("{}", result);
+            } else {
+                println!("Alkanes at {}:", outpoint);
+                if let Some(balances) = result.get("balances").and_then(|v| v.as_object()) {
+                    for (alkane_id, balance) in balances {
+                        println!("  {}: {}", alkane_id, balance);
+                    }
+                    if balances.is_empty() {
+                        println!("  (no alkanes)");
+                    }
+                } else {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+            }
+        }
+        EspoCommands::Holders { alkane_id, page, limit, raw } => {
+            let result = provider.get_holders(&alkane_id, page, limit).await?;
+            if raw {
+                println!("{}", result);
+            } else {
+                println!("Holders of {} (page {}, limit {}):", alkane_id, page, limit);
+                if let Some(holders) = result.get("holders").and_then(|v| v.as_array()) {
+                    for holder in holders {
+                        if let Some(obj) = holder.as_object() {
+                            let addr = obj.get("address").and_then(|v| v.as_str()).unwrap_or("?");
+                            let default_balance = serde_json::json!("?");
+                            let balance = obj.get("balance").unwrap_or(&default_balance);
+                            println!("  {}: {}", addr, balance);
+                        } else {
+                            println!("  {}", holder);
+                        }
+                    }
+                    if holders.is_empty() {
+                        println!("  (no holders)");
+                    }
+                } else {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+            }
+        }
+        EspoCommands::HoldersCount { alkane_id, raw } => {
+            let result = provider.get_holders_count(&alkane_id).await?;
+            if raw {
+                println!("{}", result);
+            } else {
+                if let Some(count) = result.get("count").and_then(|v| v.as_u64()) {
+                    println!("Holder count for {}: {}", alkane_id, count);
+                } else {
+                    println!("Holder count for {}: {}", alkane_id, result);
+                }
+            }
+        }
+        EspoCommands::Keys { alkane_id, page, limit, raw } => {
+            let result = provider.get_keys(&alkane_id, page, limit).await?;
+            if raw {
+                println!("{}", result);
+            } else {
+                println!("Storage keys for {} (page {}, limit {}):", alkane_id, page, limit);
+                if let Some(keys) = result.get("keys").and_then(|v| v.as_array()) {
+                    for key in keys {
+                        if let Some(key_str) = key.as_str() {
+                            println!("  {}", key_str);
+                        } else {
+                            println!("  {}", key);
+                        }
+                    }
+                    if keys.is_empty() {
+                        println!("  (no keys)");
+                    }
+                } else {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+            }
+        }
+        EspoCommands::Ping => {
+            let result = provider.ping().await?;
+            println!("{}", result);
+        }
+        EspoCommands::AmmdataPing => {
+            let result = provider.ammdata_ping().await?;
+            println!("{}", result);
+        }
+        EspoCommands::Candles { pool, timeframe, side, limit, page, raw } => {
+            let result = provider.get_candles(
+                &pool,
+                timeframe.as_deref(),
+                side.as_deref(),
+                limit,
+                page,
+            ).await?;
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("Candles for pool {}:", pool);
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+        }
+        EspoCommands::Trades { pool, limit, page, side, filter_side, sort, dir, raw } => {
+            let result = provider.get_trades(
+                &pool,
+                limit,
+                page,
+                side.as_deref(),
+                filter_side.as_deref(),
+                sort.as_deref(),
+                dir.as_deref(),
+            ).await?;
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("Trades for pool {}:", pool);
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+        }
+        EspoCommands::Pools { limit, page, raw } => {
+            let result = provider.get_pools(limit, page).await?;
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("All pools:");
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+        }
+        EspoCommands::FindBestSwapPath {
+            token_in,
+            token_out,
+            mode,
+            amount_in,
+            amount_out,
+            amount_out_min,
+            amount_in_max,
+            available_in,
+            fee_bps,
+            max_hops,
+            raw
+        } => {
+            let result = provider.find_best_swap_path(
+                &token_in,
+                &token_out,
+                mode.as_deref(),
+                amount_in.as_deref(),
+                amount_out.as_deref(),
+                amount_out_min.as_deref(),
+                amount_in_max.as_deref(),
+                available_in.as_deref(),
+                fee_bps,
+                max_hops,
+            ).await?;
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("Best swap path from {} to {}:", token_in, token_out);
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+        }
+        EspoCommands::GetBestMevSwap { token, fee_bps, max_hops, raw } => {
+            let result = provider.get_best_mev_swap(&token, fee_bps, max_hops).await?;
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("Best MEV swap for token {}:", token);
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+        }
+        EspoCommands::AmmFactories { limit, page, raw } => {
+            let result = provider.get_amm_factories(page, limit).await?;
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("AMM Factories:");
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+        }
+        EspoCommands::AllAlkanes { limit, page, raw } => {
+            let result = provider.get_all_alkanes(page, limit).await?;
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                let total = result.get("total").and_then(|v| v.as_u64()).unwrap_or(0);
+                println!("All Alkanes ({} total):", total);
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+        }
+        EspoCommands::AlkaneInfo { alkane_id, raw } => {
+            let result = provider.get_alkane_info(&alkane_id).await?;
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                let name = result.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+                let symbol = result.get("symbol").and_then(|v| v.as_str()).unwrap_or("?");
+                println!("Alkane {} — {} ({}):", alkane_id, name, symbol);
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+        }
+        EspoCommands::BlockSummary { height, raw } => {
+            let result = provider.get_block_summary(height).await?;
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("Block {} summary:", height);
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+        }
+        EspoCommands::CirculatingSupply { alkane_id, height, raw } => {
+            let result = provider.get_circulating_supply(&alkane_id, height).await?;
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                let supply = result.get("supply").and_then(|v| v.as_str()).unwrap_or("?");
+                println!("Circulating supply of {}: {}", alkane_id, supply);
+            }
+        }
+        EspoCommands::TransferVolume { alkane_id, limit, page, raw } => {
+            let result = provider.get_transfer_volume(&alkane_id, page, limit).await?;
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("Transfer volume for {}:", alkane_id);
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+        }
+        EspoCommands::TotalReceived { alkane_id, limit, page, raw } => {
+            let result = provider.get_total_received(&alkane_id, page, limit).await?;
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("Total received for {}:", alkane_id);
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+        }
+        EspoCommands::AddressActivity { address, raw } => {
+            let result = provider.get_address_activity(&address).await?;
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("Activity for {}:", address);
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+        }
+        EspoCommands::AlkaneBalances { alkane_id, raw } => {
+            let result = provider.get_alkane_balances(&alkane_id).await?;
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("All balances for {}:", alkane_id);
+                if let Some(balances) = result.get("balances").and_then(|v| v.as_object()) {
+                    for (addr, bal) in balances {
+                        println!("  {}: {}", addr, bal);
+                    }
+                    if balances.is_empty() {
+                        println!("  (no balances)");
+                    }
+                } else {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+            }
+        }
+        EspoCommands::AlkaneBalanceMetashrew { owner, target, height, raw } => {
+            let result = provider.get_alkane_balance_metashrew(&owner, &target, height).await?;
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("Metashrew balance for owner={} target={}:", owner, target);
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+        }
+        EspoCommands::AlkaneBalanceTxs { alkane_id, limit, page, raw } => {
+            let result = provider.get_alkane_balance_txs(&alkane_id, page, limit).await?;
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("Balance transactions for {}:", alkane_id);
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+        }
+        EspoCommands::AlkaneBalanceTxsByToken { owner, token, limit, page, raw } => {
+            let result = provider.get_alkane_balance_txs_by_token(&owner, &token, page, limit).await?;
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("Balance transactions for owner={} token={}:", owner, token);
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+        }
+        EspoCommands::BlockTraces { height, raw } => {
+            let result = provider.get_block_traces(height).await?;
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("Traces for block {}:", height);
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+        }
+        EspoCommands::TxSummary { txid, raw } => {
+            let result = provider.get_alkane_tx_summary(&txid).await?;
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("Transaction summary for {}:", txid);
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+        }
+        EspoCommands::BlockTxs { height, limit, page, raw } => {
+            let result = provider.get_alkane_block_txs(height, page, limit).await?;
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("Alkane transactions in block {}:", height);
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+        }
+        EspoCommands::AddressTxs { address, limit, page, raw } => {
+            let result = provider.get_alkane_address_txs(&address, page, limit).await?;
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("Alkane transactions for {}:", address);
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+        }
+        EspoCommands::AddressTransactions { address, limit, page, only_alkane_txs, raw } => {
+            let result = provider.get_address_transactions(&address, page, limit, if only_alkane_txs { Some(true) } else { None }).await?;
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("Transactions for {}:", address);
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+        }
+        EspoCommands::LatestTraces { raw } => {
+            let result = provider.get_alkane_latest_traces().await?;
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("Latest alkane traces:");
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+        }
+        EspoCommands::MempoolTraces { limit, page, address, raw } => {
+            let result = provider.get_mempool_traces(page, limit, address.as_deref()).await?;
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("Mempool traces:");
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+        }
+        EspoCommands::WrapEvents { count, offset, successful, raw } => {
+            let result = provider.get_wrap_events_all(count, offset, successful).await?;
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                let total = result.get("total").and_then(|v| v.as_u64()).unwrap_or(0);
+                println!("Wrap events ({} total):", total);
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+        }
+        EspoCommands::WrapEventsByAddress { address, count, offset, successful, raw } => {
+            let result = provider.get_wrap_events_by_address(&address, count, offset, successful).await?;
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("Wrap events for {}:", address);
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+        }
+        EspoCommands::UnwrapEvents { count, offset, successful, raw } => {
+            let result = provider.get_unwrap_events_all(count, offset, successful).await?;
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                let total = result.get("total").and_then(|v| v.as_u64()).unwrap_or(0);
+                println!("Unwrap events ({} total):", total);
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+        }
+        EspoCommands::UnwrapEventsByAddress { address, count, offset, successful, raw } => {
+            let result = provider.get_unwrap_events_by_address(&address, count, offset, successful).await?;
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("Unwrap events for {}:", address);
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+        }
+        EspoCommands::SeriesIdFromAlkane { alkane_id, raw } => {
+            let result = provider.get_series_id_from_alkane_id(&alkane_id).await?;
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("Series ID for {}:", alkane_id);
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+        }
+        EspoCommands::SeriesIdsFromAlkanes { alkane_ids, raw } => {
+            let ids: Vec<&str> = alkane_ids.split(',').map(|s| s.trim()).collect();
+            let result = provider.get_series_ids_from_alkane_ids(&ids).await?;
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("Series IDs:");
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+        }
+        EspoCommands::AlkaneFromSeriesId { series_id, raw } => {
+            let result = provider.get_alkane_id_from_series_id(&series_id).await?;
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("Alkane ID for series {}:", series_id);
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+        }
+        EspoCommands::AlkanesFromSeriesIds { series_ids, raw } => {
+            let ids: Vec<&str> = series_ids.split(',').map(|s| s.trim()).collect();
+            let result = provider.get_alkane_ids_from_series_ids(&ids).await?;
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("Alkane IDs:");
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+        }
+    }
+    Ok(())
 }
 

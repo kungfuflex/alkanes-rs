@@ -32,6 +32,7 @@ use crate::traits::{
 };
 use crate::{
     alkanes::protorunes::{ProtoruneOutpointResponse, ProtoruneWalletResponse},
+    lua_script::{LuaScript, LuaScriptExecutor},
     network::NetworkParams,
     AlkanesError, Result,
 };
@@ -56,6 +57,14 @@ pub struct MockProvider {
     pub secp: Secp256k1<All>,
     pub secret_key: SecretKey,
     pub internal_key: XOnlyPublicKey,
+    /// Mock alkane balances per outpoint: (txid_hex, vout) → Vec<(block, tx, amount)>
+    pub alkane_balances: Arc<Mutex<HashMap<String, Vec<(u64, u64, u64)>>>>,
+    /// Session-scoped pending-tx store. Provided so integration tests
+    /// can wire chained-broadcast scenarios without spinning up an
+    /// `Arc<dyn PendingTxStore>` of their own. `Some` by default so
+    /// the trait's `pending_tx_store()` accessor surfaces a real
+    /// store; tests can `take()` it out for direct inspection.
+    pub pending_tx_store: crate::pending_tx_store::MemoryPendingTxStore,
 }
 
 impl Default for MockProvider {
@@ -77,6 +86,8 @@ impl MockProvider {
             secp,
             secret_key,
             internal_key,
+            alkane_balances: Arc::new(Mutex::new(HashMap::new())),
+            pending_tx_store: crate::pending_tx_store::MemoryPendingTxStore::new(),
         }
     }
     
@@ -308,14 +319,21 @@ impl WalletProvider for MockProvider {
         let tx_bytes = hex::decode(&tx_hex).map_err(|e| AlkanesError::Hex(e.to_string()))?;
         let tx: Transaction = bitcoin::consensus::deserialize(&tx_bytes).map_err(|e| AlkanesError::Serialization(e.to_string()))?;
         let txid = tx.compute_txid();
-        
+
         // Add the new outputs of this transaction to the UTXO set
         let mut utxos = self.utxos.lock().unwrap();
         for (i, tx_out) in tx.output.iter().enumerate() {
             utxos.push((OutPoint::new(txid, i as u32), tx_out.clone()));
         }
 
-        self.broadcasted_txs.lock().unwrap().insert(txid.to_string(), tx_hex);
+        self.broadcasted_txs.lock().unwrap().insert(txid.to_string(), tx_hex.clone());
+
+        // Mirror the WebProvider auto-push so cargo integration tests
+        // can verify the wrapped behavior. See WebProvider::broadcast_transaction
+        // for the architectural rationale.
+        use crate::pending_tx_store::PendingTxStore as _;
+        let _ = self.pending_tx_store.add(&tx_hex).await;
+
         Ok(txid.to_string())
     }
     
@@ -355,7 +373,13 @@ impl WalletProvider for MockProvider {
         let path = DerivationPath::from_str("m/86'/1'/0'").unwrap();
         Ok((self.internal_key, (fingerprint, path)))
     }
-    
+
+    async fn get_internal_key_with_secret(&self) -> Result<(XOnlyPublicKey, bitcoin::secp256k1::SecretKey, (Fingerprint, DerivationPath))> {
+        let fingerprint = Fingerprint::from_str("00000000").unwrap();
+        let path = DerivationPath::from_str("m/86'/1'/0'").unwrap();
+        Ok((self.internal_key, self.secret_key, (fingerprint, path)))
+    }
+
     async fn sign_psbt(&mut self, psbt: &bitcoin::psbt::Psbt) -> Result<bitcoin::psbt::Psbt> {
         use bitcoin::sighash::{SighashCache, TapSighashType, Prevouts};
         use bitcoin::taproot;
@@ -527,6 +551,14 @@ impl BitcoinRpcProvider for MockProvider {
         Ok("mock_txid".to_string())
     }
 
+    async fn subfrost_thieve(&self, _address: &str, _amount: u64) -> Result<JsonValue> {
+        Ok(serde_json::json!(null))
+    }
+
+    async fn send_raw_transactions(&self, tx_hexes: &[String]) -> Result<Vec<String>> {
+        Ok(tx_hexes.iter().enumerate().map(|(i, _)| format!("mock_txid_{}", i)).collect())
+    }
+
     async fn get_blockchain_info(&self) -> Result<JsonValue> {
         Ok(JsonValue::Null)
     }
@@ -556,6 +588,14 @@ impl BitcoinRpcProvider for MockProvider {
     }
 
     async fn get_tx_out(&self, _txid: &str, _vout: u32, _include_mempool: bool) -> Result<JsonValue> {
+        Ok(JsonValue::Null)
+    }
+
+    async fn decode_raw_transaction(&self, _hex: &str) -> Result<JsonValue> {
+        Ok(JsonValue::Null)
+    }
+
+    async fn decode_psbt(&self, _psbt: &str) -> Result<JsonValue> {
         Ok(JsonValue::Null)
     }
 
@@ -599,11 +639,73 @@ impl MetashrewRpcProvider for MockProvider {
     }
     
     async fn get_protorunes_by_address(&self, _address: &str, _block_tag: Option<String>, _protocol_tag: u128) -> Result<ProtoruneWalletResponse> {
-        Ok(ProtoruneWalletResponse::default())
+        use crate::alkanes::balance_sheet::{BalanceSheet, CachedBalanceSheet, ProtoruneRuneId};
+
+        let ab = self.alkane_balances.lock().unwrap();
+        let utxos = self.utxos.lock().unwrap();
+
+        let mut outpoints = Vec::new();
+        for (outpoint, txout) in utxos.iter() {
+            let key = format!("{}:{}", outpoint.txid, outpoint.vout);
+            if let Some(balances) = ab.get(&key) {
+                let mut cached = CachedBalanceSheet { balances: alloc::collections::BTreeMap::new() };
+                for &(block, tx, amount) in balances {
+                    cached.balances.insert(
+                        ProtoruneRuneId { block: block as u128, tx: tx as u128 },
+                        amount as u128,
+                    );
+                }
+                outpoints.push(ProtoruneOutpointResponse {
+                    output: txout.clone(),
+                    outpoint: *outpoint,
+                    balance_sheet: BalanceSheet { cached, load_ptrs: vec![] },
+                });
+            }
+        }
+        Ok(ProtoruneWalletResponse { balances: outpoints })
     }
     
-    async fn get_protorunes_by_outpoint(&self, _txid: &str, _vout: u32, _block_tag: Option<String>, _protocol_tag: u128) -> Result<ProtoruneOutpointResponse> {
-        Ok(ProtoruneOutpointResponse::default())
+    async fn get_protorunes_by_outpoint(&self, txid: &str, vout: u32, _block_tag: Option<String>, _protocol_tag: u128) -> Result<ProtoruneOutpointResponse> {
+        // Look up alkane balances from the mock's `alkane_balances`
+        // map keyed by `txid:vout`. Each entry is a `Vec<(block, tx,
+        // amount)>` matching the on-chain protorune balance layout.
+        // Returns an empty balance sheet if the outpoint isn't
+        // registered. This is what cargo tests rely on to set up
+        // deterministic alkane-aware UTXO selection scenarios.
+        use crate::alkanes::balance_sheet::{
+            BalanceSheet, CachedBalanceSheet, ProtoruneRuneId,
+        };
+        use std::collections::BTreeMap;
+        let key = format!("{}:{}", txid, vout);
+        let ab = self.alkane_balances.lock().unwrap();
+        let entries = ab.get(&key).cloned().unwrap_or_default();
+        drop(ab);
+
+        let mut balances: BTreeMap<ProtoruneRuneId, u128> = BTreeMap::new();
+        for (block, tx, amount) in entries {
+            balances.insert(
+                ProtoruneRuneId {
+                    block: block as u128,
+                    tx: tx as u128,
+                },
+                amount as u128,
+            );
+        }
+        Ok(ProtoruneOutpointResponse {
+            balance_sheet: BalanceSheet {
+                cached: CachedBalanceSheet { balances },
+                load_ptrs: Vec::new(),
+            },
+            outpoint: bitcoin::OutPoint {
+                txid: bitcoin::Txid::from_str(txid)
+                    .map_err(|e| AlkanesError::Other(format!("bad txid: {}", e)))?,
+                vout,
+            },
+            output: bitcoin::TxOut {
+                value: bitcoin::Amount::from_sat(0),
+                script_pubkey: bitcoin::ScriptBuf::default(),
+            },
+        })
     }
 }
 
@@ -771,6 +873,11 @@ impl AlkanesProvider for MockProvider {
         executor.execute(params).await
     }
 
+    async fn execute_full(&mut self, params: EnhancedExecuteParams) -> Result<EnhancedExecuteResult> {
+        let mut executor = EnhancedAlkanesExecutor::new(self);
+        executor.execute_full(params).await
+    }
+
     async fn resume_execution(
         &mut self,
         state: ReadyToSignTx,
@@ -839,7 +946,7 @@ impl AlkanesProvider for MockProvider {
     async fn spendables_by_address(&self, _address: &str) -> Result<JsonValue> {
         todo!()
     }
-    async fn trace_block(&self, _height: u64) -> Result<crate::proto::alkanes::Trace> {
+    async fn trace_block(&self, _height: u64) -> Result<crate::proto::alkanes::AlkanesBlockTraceEvent> {
         Err(AlkanesError::NotImplemented("trace_block".to_string()))
     }
     async fn get_bytecode(&self, _alkane_id: &str, _block_tag: Option<String>) -> Result<String> {
@@ -853,6 +960,17 @@ impl AlkanesProvider for MockProvider {
     }
     async fn pending_unwraps(&self, _block_tag: Option<String>) -> Result<Vec<crate::alkanes::PendingUnwrap>> {
         todo!()
+    }
+    async fn tx_script(
+        &self,
+        _wasm_bytes: &[u8],
+        _inputs: Vec<u128>,
+        _block_tag: Option<String>,
+    ) -> Result<Vec<u8>> {
+        Err(AlkanesError::NotImplemented("tx_script".to_string()))
+    }
+    async fn meta(&self, _alkane_id: &str, _block_tag: Option<String>) -> Result<Vec<u8>> {
+        Err(AlkanesError::NotImplemented("meta".to_string()))
     }
 }
 
@@ -930,6 +1048,7 @@ use crate::ord::{
     ParentInscriptions as OrdParents, SatResponse as OrdSat, RuneInfo as OrdRuneInfo,
     Runes as OrdRunes, TxInfo as OrdTxInfo,
 };
+use crate::traits::EspoProvider;
 
 #[async_trait(?Send)]
 impl OrdProvider for MockProvider {
@@ -960,8 +1079,29 @@ impl OrdProvider for MockProvider {
     async fn get_inscriptions(&self, _page: Option<u32>) -> Result<OrdInscriptions> {
         todo!()
     }
-    async fn get_output(&self, _output: &str) -> Result<OrdOutput> {
-        todo!()
+    async fn get_output(&self, output: &str) -> Result<OrdOutput> {
+        // Return a minimal output with no inscriptions
+        let parts: Vec<&str> = output.split(':').collect();
+        let (txid_str, vout) = if parts.len() == 2 {
+            (parts[0], parts[1].parse::<u32>().unwrap_or(0))
+        } else {
+            (output, 0)
+        };
+        let txid = bitcoin::Txid::from_str(txid_str)
+            .unwrap_or_else(|_| bitcoin::Txid::from_str("0000000000000000000000000000000000000000000000000000000000000000").unwrap());
+        Ok(OrdOutput {
+            address: None,
+            confirmations: 100,
+            indexed: true,
+            inscriptions: Some(vec![]),
+            outpoint: OutPoint::new(txid, vout),
+            runes: None,
+            sat_ranges: None,
+            script_pubkey: bitcoin::ScriptBuf::new(),
+            spent: false,
+            transaction: txid,
+            value: 0,
+        })
     }
     async fn get_parents(&self, _inscription_id: &str, _page: Option<u32>) -> Result<OrdParents> {
         todo!()
@@ -998,6 +1138,10 @@ impl DeezelProvider for MockProvider {
         Box::new(self.clone())
     }
 
+    fn pending_tx_store(&self) -> Option<&dyn crate::pending_tx_store::PendingTxStore> {
+        Some(&self.pending_tx_store)
+    }
+
     fn get_bitcoin_rpc_url(&self) -> Option<String> {
         None
     }
@@ -1014,6 +1158,17 @@ impl DeezelProvider for MockProvider {
         None
     }
 
+    fn get_brc20_prog_rpc_url(&self) -> Option<String> {
+        None
+    }
+
+    fn is_qubitcoin_mode(&self) -> bool {
+        // Enable qubitcoin mode so alkane UTXO selection uses
+        // get_protorunes_by_address (which reads from alkane_balances)
+        // instead of espo/lua paths that require network access.
+        true
+    }
+
     fn secp(&self) -> &Secp256k1<All> {
         &self.secp
     }
@@ -1026,8 +1181,10 @@ impl DeezelProvider for MockProvider {
     async fn sign_taproot_script_spend(
         &self,
         sighash: bitcoin::secp256k1::Message,
+        ephemeral_secret: Option<bitcoin::secp256k1::SecretKey>,
     ) -> Result<schnorr::Signature> {
-        let keypair = Keypair::from_secret_key(&self.secp, &self.secret_key);
+        let secret = ephemeral_secret.unwrap_or(self.secret_key);
+        let keypair = Keypair::from_secret_key(&self.secp, &secret);
         Ok(self.secp.sign_schnorr_with_rng(&sighash, &keypair, &mut rand::thread_rng()))
     }
 
@@ -1037,5 +1194,240 @@ impl DeezelProvider for MockProvider {
 
     async fn unwrap(&mut self, _amount: u64, _address: Option<String>) -> Result<String> {
         unimplemented!("unwrap is not implemented for MockProvider")
+    }
+}
+
+#[async_trait(?Send)]
+impl LuaScriptExecutor for MockProvider {
+    async fn execute_lua_script(
+        &self,
+        _script: &LuaScript,
+        _args: Vec<JsonValue>,
+    ) -> Result<JsonValue> {
+        Ok(serde_json::json!({}))
+    }
+
+    async fn lua_evalsaved(
+        &self,
+        _script_hash: &str,
+        _args: Vec<JsonValue>,
+    ) -> Result<JsonValue> {
+        Ok(serde_json::json!({}))
+    }
+
+    async fn lua_evalscript(
+        &self,
+        _script_content: &str,
+        _args: Vec<JsonValue>,
+    ) -> Result<JsonValue> {
+        Ok(serde_json::json!({}))
+    }
+}
+
+#[async_trait(?Send)]
+impl EspoProvider for MockProvider {
+    async fn get_espo_height(&self) -> Result<u64> {
+        Ok(800000)
+    }
+
+    async fn get_address_balances(&self, _address: &str, _include_outpoints: bool) -> Result<JsonValue> {
+        Ok(serde_json::json!({"ok": true, "balances": {}}))
+    }
+
+    async fn get_address_outpoints(&self, _address: &str) -> Result<JsonValue> {
+        Ok(serde_json::json!({"ok": true, "outpoints": []}))
+    }
+
+    async fn get_address_spendable_outpoints(&self, _address: &str) -> Result<JsonValue> {
+        Ok(serde_json::json!({"ok": true, "outpoints": []}))
+    }
+
+    async fn get_outpoint_balances(&self, _outpoint: &str) -> Result<JsonValue> {
+        Ok(serde_json::json!({"ok": true, "items": []}))
+    }
+
+    async fn get_holders(&self, _alkane_id: &str, _page: u64, _limit: u64) -> Result<JsonValue> {
+        Ok(serde_json::json!({"ok": true, "items": []}))
+    }
+
+    async fn get_holders_count(&self, _alkane_id: &str) -> Result<JsonValue> {
+        Ok(serde_json::json!({"ok": true, "count": 0}))
+    }
+
+    async fn get_keys(&self, _alkane_id: &str, _page: u64, _limit: u64) -> Result<JsonValue> {
+        Ok(serde_json::json!({"ok": true, "items": {}}))
+    }
+
+    async fn ping(&self) -> Result<String> {
+        Ok("pong".to_string())
+    }
+
+    async fn ammdata_ping(&self) -> Result<String> {
+        Ok("pong".to_string())
+    }
+
+    async fn get_candles(
+        &self,
+        _pool: &str,
+        _timeframe: Option<&str>,
+        _side: Option<&str>,
+        _limit: Option<u64>,
+        _page: Option<u64>,
+    ) -> Result<JsonValue> {
+        Ok(serde_json::json!({"ok": true, "candles": []}))
+    }
+
+    async fn get_trades(
+        &self,
+        _pool: &str,
+        _limit: Option<u64>,
+        _page: Option<u64>,
+        _side: Option<&str>,
+        _filter_side: Option<&str>,
+        _sort: Option<&str>,
+        _dir: Option<&str>,
+    ) -> Result<JsonValue> {
+        Ok(serde_json::json!({"ok": true, "trades": []}))
+    }
+
+    async fn get_pools(
+        &self,
+        _limit: Option<u64>,
+        _page: Option<u64>,
+    ) -> Result<JsonValue> {
+        Ok(serde_json::json!({"ok": true, "pools": {}}))
+    }
+
+    async fn find_best_swap_path(
+        &self,
+        _token_in: &str,
+        _token_out: &str,
+        _mode: Option<&str>,
+        _amount_in: Option<&str>,
+        _amount_out: Option<&str>,
+        _amount_out_min: Option<&str>,
+        _amount_in_max: Option<&str>,
+        _available_in: Option<&str>,
+        _fee_bps: Option<u64>,
+        _max_hops: Option<u64>,
+    ) -> Result<JsonValue> {
+        Ok(serde_json::json!({"ok": true, "hops": []}))
+    }
+
+    async fn get_best_mev_swap(
+        &self,
+        _token: &str,
+        _fee_bps: Option<u64>,
+        _max_hops: Option<u64>,
+    ) -> Result<JsonValue> {
+        Ok(serde_json::json!({"ok": true}))
+    }
+
+    async fn get_amm_factories(&self, _page: Option<u64>, _limit: Option<u64>) -> Result<JsonValue> {
+        Ok(serde_json::json!({"ok": true, "factories": []}))
+    }
+
+    async fn get_all_alkanes(&self, _page: Option<u64>, _limit: Option<u64>) -> Result<JsonValue> {
+        Ok(serde_json::json!({"ok": true, "items": [], "total": 0}))
+    }
+
+    async fn get_alkane_info(&self, _alkane_id: &str) -> Result<JsonValue> {
+        Ok(serde_json::json!({"ok": true}))
+    }
+
+    async fn get_block_summary(&self, _height: u64) -> Result<JsonValue> {
+        Ok(serde_json::json!({"ok": true, "found": false}))
+    }
+
+    async fn get_circulating_supply(&self, _alkane_id: &str, _height: Option<u64>) -> Result<JsonValue> {
+        Ok(serde_json::json!({"ok": true, "supply": "0"}))
+    }
+
+    async fn get_transfer_volume(&self, _alkane_id: &str, _page: Option<u64>, _limit: Option<u64>) -> Result<JsonValue> {
+        Ok(serde_json::json!({"ok": true, "items": [], "total": 0}))
+    }
+
+    async fn get_total_received(&self, _alkane_id: &str, _page: Option<u64>, _limit: Option<u64>) -> Result<JsonValue> {
+        Ok(serde_json::json!({"ok": true, "items": [], "total": 0}))
+    }
+
+    async fn get_address_activity(&self, _address: &str) -> Result<JsonValue> {
+        Ok(serde_json::json!({"ok": true, "transfer_volume": {}, "total_received": {}}))
+    }
+
+    async fn get_alkane_balances(&self, _alkane_id: &str) -> Result<JsonValue> {
+        Ok(serde_json::json!({"ok": true, "balances": {}}))
+    }
+
+    async fn get_alkane_balance_metashrew(&self, _owner: &str, _target: &str, _height: Option<u64>) -> Result<JsonValue> {
+        Ok(serde_json::json!({"ok": true}))
+    }
+
+    async fn get_alkane_balance_txs(&self, _alkane_id: &str, _page: Option<u64>, _limit: Option<u64>) -> Result<JsonValue> {
+        Ok(serde_json::json!({"ok": true, "txids": [], "total": 0}))
+    }
+
+    async fn get_alkane_balance_txs_by_token(&self, _owner: &str, _token: &str, _page: Option<u64>, _limit: Option<u64>) -> Result<JsonValue> {
+        Ok(serde_json::json!({"ok": true, "txids": [], "total": 0}))
+    }
+
+    async fn get_block_traces(&self, _height: u64) -> Result<JsonValue> {
+        Ok(serde_json::json!({"ok": true, "traces": []}))
+    }
+
+    async fn get_alkane_tx_summary(&self, _txid: &str) -> Result<JsonValue> {
+        Ok(serde_json::json!({"ok": true}))
+    }
+
+    async fn get_alkane_block_txs(&self, _height: u64, _page: Option<u64>, _limit: Option<u64>) -> Result<JsonValue> {
+        Ok(serde_json::json!({"ok": true, "txids": [], "total": 0}))
+    }
+
+    async fn get_alkane_address_txs(&self, _address: &str, _page: Option<u64>, _limit: Option<u64>) -> Result<JsonValue> {
+        Ok(serde_json::json!({"ok": true, "txids": [], "total": 0}))
+    }
+
+    async fn get_address_transactions(&self, _address: &str, _page: Option<u64>, _limit: Option<u64>, _only_alkane_txs: Option<bool>) -> Result<JsonValue> {
+        Ok(serde_json::json!({"ok": true, "transactions": [], "total": 0}))
+    }
+
+    async fn get_alkane_latest_traces(&self) -> Result<JsonValue> {
+        Ok(serde_json::json!({"ok": true, "txids": []}))
+    }
+
+    async fn get_mempool_traces(&self, _page: Option<u64>, _limit: Option<u64>, _address: Option<&str>) -> Result<JsonValue> {
+        Ok(serde_json::json!({"ok": true, "items": [], "total": 0}))
+    }
+
+    async fn get_wrap_events_all(&self, _count: Option<u64>, _offset: Option<u64>, _successful: Option<bool>) -> Result<JsonValue> {
+        Ok(serde_json::json!({"items": [], "total": 0}))
+    }
+
+    async fn get_wrap_events_by_address(&self, _address: &str, _count: Option<u64>, _offset: Option<u64>, _successful: Option<bool>) -> Result<JsonValue> {
+        Ok(serde_json::json!({"items": [], "total": 0}))
+    }
+
+    async fn get_unwrap_events_all(&self, _count: Option<u64>, _offset: Option<u64>, _successful: Option<bool>) -> Result<JsonValue> {
+        Ok(serde_json::json!({"items": [], "total": 0}))
+    }
+
+    async fn get_unwrap_events_by_address(&self, _address: &str, _count: Option<u64>, _offset: Option<u64>, _successful: Option<bool>) -> Result<JsonValue> {
+        Ok(serde_json::json!({"items": [], "total": 0}))
+    }
+
+    async fn get_series_id_from_alkane_id(&self, _alkane_id: &str) -> Result<JsonValue> {
+        Ok(serde_json::json!({"ok": false, "error": "not_found"}))
+    }
+
+    async fn get_series_ids_from_alkane_ids(&self, _alkane_ids: &[&str]) -> Result<JsonValue> {
+        Ok(serde_json::json!({"ok": true, "items": []}))
+    }
+
+    async fn get_alkane_id_from_series_id(&self, _series_id: &str) -> Result<JsonValue> {
+        Ok(serde_json::json!({"ok": false, "error": "not_found"}))
+    }
+
+    async fn get_alkane_ids_from_series_ids(&self, _series_ids: &[&str]) -> Result<JsonValue> {
+        Ok(serde_json::json!({"ok": true, "items": []}))
     }
 }

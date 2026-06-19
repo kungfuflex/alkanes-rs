@@ -230,7 +230,10 @@ pub trait WalletProvider {
     
     /// Get internal key for wallet
     async fn get_internal_key(&self) -> Result<(bitcoin::XOnlyPublicKey, (Fingerprint, DerivationPath))>;
-    
+
+    /// Get ephemeral internal key with secret (for anti-frontrunning in inscriptions)
+    async fn get_internal_key_with_secret(&self) -> Result<(bitcoin::XOnlyPublicKey, bitcoin::secp256k1::SecretKey, (Fingerprint, DerivationPath))>;
+
     /// Sign PSBT
     async fn sign_psbt(&mut self, psbt: &bitcoin::psbt::Psbt) -> Result<bitcoin::psbt::Psbt>;
     
@@ -247,6 +250,48 @@ pub trait WalletProvider {
 
     async fn get_all_balances(&self, addresses: Option<Vec<String>>) -> Result<crate::provider::AllBalances>;
 
+}
+
+/// Async PSBT-signing trait for **remote** signers (WalletConnect over
+/// frtun, hardware wallets behind a USB transport, multisig
+/// coordinators, etc.).
+///
+/// Distinct from [`WalletProvider::sign_psbt`] in that no local
+/// keystore is involved — the caller has an unsigned PSBT and asks
+/// some external party to sign it. The remote signer also tells us
+/// which addresses it controls, so callers can scope coin selection.
+///
+/// Implementations live outside `alkanes-cli-common`:
+///   * `alkanes-cli`'s WalletConnect adapter wraps
+///     `subfrost_wc::signer::WalletConnectSigner` (a paired mobile).
+///   * Future HW-wallet adapters could implement this against e.g.
+///     Coldcard / Trezor.
+///
+/// [`crate::provider::ConcreteProvider`] holds an `Option<Arc<dyn
+/// RemoteSigner>>`. When present, `WalletProvider::sign_psbt` delegates
+/// to it BEFORE the local keystore path; absent, the existing keystore
+/// behaviour is unchanged.
+#[async_trait(?Send)]
+pub trait RemoteSigner: Send + Sync {
+    /// Sign the unsigned PSBT and return the signed one. The remote
+    /// signer is expected to populate witness data on every input
+    /// belonging to one of the addresses it controls; inputs from other
+    /// signers are passed through.
+    async fn sign_psbt(
+        &self,
+        psbt: &bitcoin::psbt::Psbt,
+        addresses: &[String],
+    ) -> Result<bitcoin::psbt::Psbt>;
+
+    /// Return the addresses this signer can sign for. Typically called
+    /// once and cached by the caller.
+    async fn get_addresses(&self) -> Result<Vec<String>>;
+
+    /// Short human-readable name for log messages (e.g. "walletconnect",
+    /// "coldcard").
+    fn backend_name(&self) -> &'static str {
+        "remote"
+    }
 }
 
 /// Wallet configuration
@@ -309,6 +354,13 @@ pub struct SendParams {
     pub use_rebar: bool,
     pub rebar_tier: u8,
     pub lock_alkanes: bool,
+    /// Strategy for handling UTXOs that contain ordinal inscriptions
+    /// - 'exclude': (default) Fail if inscribed UTXOs must be spent
+    /// - 'preserve': Split inscribed UTXOs to protect inscriptions
+    /// - 'burn': Allow spending inscribed UTXOs (destroys inscriptions)
+    pub ordinals_strategy: crate::alkanes::types::OrdinalsStrategy,
+    /// Enable mempool indexer for tracing inscription state of pending UTXOs
+    pub mempool_indexer: bool,
 }
 
 /// UTXO information
@@ -468,6 +520,10 @@ pub trait BitcoinRpcProvider {
     /// Generate a single block with future-claiming protostone (regtest only)
     async fn generate_future(&self, address: &str) -> Result<JsonValue>;
 
+    /// Request test BTC from subfrost regtest faucet (regtest only)
+    /// Calls subfrost_thieve JSON-RPC method with address and amount in satoshis
+    async fn subfrost_thieve(&self, address: &str, amount: u64) -> Result<JsonValue>;
+
     // Get the state info
     async fn get_blockchain_info(&self) -> Result<JsonValue>;
 
@@ -485,7 +541,10 @@ pub trait BitcoinRpcProvider {
     
     /// Send raw transaction
     async fn send_raw_transaction(&self, tx_hex: &str) -> Result<String>;
-    
+
+    /// Send multiple raw transactions atomically (anti-frontrunning)
+    async fn send_raw_transactions(&self, tx_hexes: &[String]) -> Result<Vec<String>>;
+
     /// Get mempool info
     async fn get_mempool_info(&self) -> Result<JsonValue>;
     
@@ -518,6 +577,12 @@ pub trait BitcoinRpcProvider {
 
     /// Get tx out
     async fn get_tx_out(&self, txid: &str, vout: u32, include_mempool: bool) -> Result<JsonValue>;
+
+    /// Decode raw transaction
+    async fn decode_raw_transaction(&self, hex: &str) -> Result<JsonValue>;
+
+    /// Decode PSBT
+    async fn decode_psbt(&self, psbt: &str) -> Result<JsonValue>;
 }
 
 /// Trait for bitcoind RPC operations using bitcoincore_rpc_json types
@@ -663,6 +728,321 @@ pub trait EsploraProvider {
     async fn get_fee_estimates(&self) -> Result<JsonValue>;
 }
 
+/// Trait for ESPO indexer operations (alkanes balance indexer with PostgreSQL backend)
+///
+/// Method names and parameters match the espo JSON-RPC API.
+///
+/// Namespaces:
+/// - Root: `get_espo_height`
+/// - `essentials.*`: Address balances, holders, traces, supply, storage keys, transactions
+/// - `ammdata.*`: AMM pools, candles, activity, swap path finding, MEV
+/// - `subfrost.*`: frBTC wrap/unwrap events
+/// - `pizzafun.*`: Series ID ↔ AlkaneId lookups
+#[async_trait(?Send)]
+pub trait EspoProvider {
+    /// Get current ESPO indexer height
+    /// Returns: {"height": N}
+    async fn get_espo_height(&self) -> Result<u64>;
+
+    /// Get alkanes balances for an address
+    /// Params: {"address": "...", "include_outpoints": bool}
+    /// Returns: {"ok": true, "address": "...", "balances": {"block:tx": "amount", ...}, "outpoints": [...]}
+    async fn get_address_balances(&self, address: &str, include_outpoints: bool) -> Result<JsonValue>;
+
+    /// Get outpoints containing alkanes for an address
+    /// Params: {"address": "..."}
+    /// Returns: {"ok": true, "address": "...", "outpoints": [{"outpoint": "...", "entries": [...]}]}
+    async fn get_address_outpoints(&self, address: &str) -> Result<JsonValue>;
+
+    /// Get all currently spendable BTC outpoints for an address, annotated with
+    /// alkanes/runes/scriptPubKey/coinbase metadata.
+    /// JSON-RPC: essentials.get_address_spendable_outpoints
+    async fn get_address_spendable_outpoints(&self, address: &str) -> Result<JsonValue>;
+
+    /// Get alkanes balances at a specific outpoint
+    /// Params: {"outpoint": "txid:vout"}
+    /// Returns: {"ok": true, "outpoint": "...", "items": [{"outpoint": "...", "entries": [...]}]}
+    async fn get_outpoint_balances(&self, outpoint: &str) -> Result<JsonValue>;
+
+    /// Get holders of an alkane token with pagination
+    /// Params: {"alkane": "block:tx", "page": N, "limit": N}
+    /// Returns: {"ok": true, "alkane": "...", "page": N, "limit": N, "total": N, "has_more": bool, "items": [...]}
+    async fn get_holders(&self, alkane_id: &str, page: u64, limit: u64) -> Result<JsonValue>;
+
+    /// Get holder count for an alkane
+    /// Params: {"alkane": "block:tx"}
+    /// Returns: {"ok": true, "count": N}
+    async fn get_holders_count(&self, alkane_id: &str) -> Result<JsonValue>;
+
+    /// Get storage keys for an alkane contract with pagination
+    /// Params: {"alkane": "block:tx", "page": N, "limit": N, "try_decode_utf8": bool}
+    /// Returns: {"ok": true, "alkane": "...", "page": N, "limit": N, "total": N, "has_more": bool, "items": {...}}
+    async fn get_keys(&self, alkane_id: &str, page: u64, limit: u64) -> Result<JsonValue>;
+
+    /// Get all alkanes with pagination
+    /// JSON-RPC: essentials.get_all_alkanes
+    /// Params: {"page": N, "limit": N}
+    /// Returns: {"ok": true, "page": N, "limit": N, "total": N, "items": [...]}
+    async fn get_all_alkanes(&self, page: Option<u64>, limit: Option<u64>) -> Result<JsonValue>;
+
+    /// Get detailed info for a specific alkane
+    /// JSON-RPC: essentials.get_alkane_info
+    /// Params: {"alkane": "block:tx"}
+    /// Returns: {"ok": true, "alkane": "...", "name": "...", "symbol": "...", "holder_count": N, "creation_height": N, "inspection": {...}}
+    async fn get_alkane_info(&self, alkane_id: &str) -> Result<JsonValue>;
+
+    /// Get block summary (header, trace count)
+    /// JSON-RPC: essentials.get_block_summary
+    /// Params: {"height": N}
+    /// Returns: {"ok": true, "found": bool, "height": N, "header_hex": "...", "trace_count": N}
+    async fn get_block_summary(&self, height: u64) -> Result<JsonValue>;
+
+    /// Get circulating supply for an alkane, optionally at a specific height
+    /// JSON-RPC: essentials.get_circulating_supply
+    /// Params: {"alkane": "block:tx", "height": N?}
+    /// Returns: {"ok": true, "alkane": "...", "supply": "...", "height": "latest" | N}
+    async fn get_circulating_supply(&self, alkane_id: &str, height: Option<u64>) -> Result<JsonValue>;
+
+    /// Get transfer volume rankings for an alkane
+    /// JSON-RPC: essentials.get_transfer_volume
+    /// Params: {"alkane": "block:tx", "page": N, "limit": N}
+    /// Returns: {"ok": true, "alkane": "...", "page": N, "limit": N, "total": N, "has_more": bool, "items": [{"address": "...", "amount": "..."}]}
+    async fn get_transfer_volume(&self, alkane_id: &str, page: Option<u64>, limit: Option<u64>) -> Result<JsonValue>;
+
+    /// Get total received rankings for an alkane
+    /// JSON-RPC: essentials.get_total_received
+    /// Params: {"alkane": "block:tx", "page": N, "limit": N}
+    /// Returns: {"ok": true, "alkane": "...", "page": N, "limit": N, "total": N, "has_more": bool, "items": [{"address": "...", "amount": "..."}]}
+    async fn get_total_received(&self, alkane_id: &str, page: Option<u64>, limit: Option<u64>) -> Result<JsonValue>;
+
+    /// Get activity summary for an address (transfer volume + total received)
+    /// JSON-RPC: essentials.get_address_activity
+    /// Params: {"address": "..."}
+    /// Returns: {"ok": true, "address": "...", "transfer_volume": {...}, "total_received": {...}}
+    async fn get_address_activity(&self, address: &str) -> Result<JsonValue>;
+
+    /// Get all balance holders for an alkane (keyed by address)
+    /// JSON-RPC: essentials.get_alkane_balances
+    /// Params: {"alkane": "block:tx"}
+    /// Returns: {"ok": true, "alkane": "...", "balances": {"address": "amount", ...}}
+    async fn get_alkane_balances(&self, alkane_id: &str) -> Result<JsonValue>;
+
+    /// Get alkane balance via metashrew (raw indexer query)
+    /// JSON-RPC: essentials.get_alkane_balance_metashrew
+    /// Params: {"owner": "block:tx", "target": "block:tx", "height": N?}
+    /// Note: owner is an AlkaneId, not a Bitcoin address
+    async fn get_alkane_balance_metashrew(&self, owner: &str, target: &str, height: Option<u64>) -> Result<JsonValue>;
+
+    /// Get transaction IDs that changed balances for an alkane
+    /// JSON-RPC: essentials.get_alkane_balance_txs
+    /// Params: {"alkane": "block:tx", "page": N, "limit": N}
+    /// Returns: {"ok": true, "alkane": "...", "page": N, "limit": N, "total": N, "has_more": bool, "txids": [{"txid": "...", "height": N, "outflow": {...}}]}
+    async fn get_alkane_balance_txs(&self, alkane_id: &str, page: Option<u64>, limit: Option<u64>) -> Result<JsonValue>;
+
+    /// Get transaction IDs that changed a specific token balance for an owner
+    /// JSON-RPC: essentials.get_alkane_balance_txs_by_token
+    /// Params: {"owner": "block:tx", "token": "block:tx", "page": N, "limit": N}
+    /// Note: owner is an AlkaneId, not a Bitcoin address
+    async fn get_alkane_balance_txs_by_token(&self, owner: &str, token: &str, page: Option<u64>, limit: Option<u64>) -> Result<JsonValue>;
+
+    /// Get alkane traces for a specific block
+    /// JSON-RPC: essentials.get_block_traces
+    /// Params: {"height": N}
+    /// Returns: {"ok": true, "height": N, "traces": [{"outpoint": "...", "events": [...]}]}
+    async fn get_block_traces(&self, height: u64) -> Result<JsonValue>;
+
+    /// Get alkane trace summary for a transaction
+    /// JSON-RPC: essentials.get_alkane_tx_summary
+    /// Params: {"txid": "..."}
+    /// Returns: {"ok": true, "txid": "...", "height": N, "traces": [...], "outflows": [...]}
+    async fn get_alkane_tx_summary(&self, txid: &str) -> Result<JsonValue>;
+
+    /// Get transaction IDs containing alkane operations for a block
+    /// JSON-RPC: essentials.get_alkane_block_txs
+    /// Params: {"height": N, "page": N, "limit": N}
+    /// Returns: {"ok": true, "height": N, "page": N, "limit": N, "total": N, "txids": [...]}
+    async fn get_alkane_block_txs(&self, height: u64, page: Option<u64>, limit: Option<u64>) -> Result<JsonValue>;
+
+    /// Get alkane transaction IDs for an address
+    /// JSON-RPC: essentials.get_alkane_address_txs
+    /// Params: {"address": "...", "page": N, "limit": N}
+    /// Returns: {"ok": true, "address": "...", "page": N, "limit": N, "total": N, "txids": [...]}
+    async fn get_alkane_address_txs(&self, address: &str, page: Option<u64>, limit: Option<u64>) -> Result<JsonValue>;
+
+    /// Get full transaction details for an address (with decoded inputs/outputs)
+    /// JSON-RPC: essentials.get_address_transactions
+    /// Params: {"address": "...", "page": N, "limit": N, "only_alkane_txs": bool}
+    /// Returns: {"ok": true, "address": "...", "page": N, "limit": N, "total": N, "has_more": bool, "transactions": [...]}
+    async fn get_address_transactions(&self, address: &str, page: Option<u64>, limit: Option<u64>, only_alkane_txs: Option<bool>) -> Result<JsonValue>;
+
+    /// Get the most recent alkane traces across all blocks
+    /// JSON-RPC: essentials.get_alkane_latest_traces
+    /// Returns: {"ok": true, "txids": [...]}
+    async fn get_alkane_latest_traces(&self) -> Result<JsonValue>;
+
+    /// Get mempool traces (unconfirmed alkane transactions)
+    /// JSON-RPC: essentials.get_mempool_traces
+    /// Params: {"page": N, "limit": N, "address": "..."}
+    /// Returns: {"ok": true, "page": N, "limit": N, "total": N, "has_more": bool, "items": [...]}
+    async fn get_mempool_traces(&self, page: Option<u64>, limit: Option<u64>, address: Option<&str>) -> Result<JsonValue>;
+
+    /// Ping the ESPO server
+    /// Returns: "pong"
+    async fn ping(&self) -> Result<String>;
+
+    // ==================== AMM Data Module Methods ====================
+
+    /// Ping the AMM Data module
+    /// Returns: "pong"
+    async fn ammdata_ping(&self) -> Result<String>;
+
+    /// Get OHLCV candlestick data for a pool
+    /// Params: {"pool": "block:tx", "timeframe": "10m" | "1h" | "1d" | "1w" | "1M", "side": "base" | "quote", "limit": N, "page": N}
+    /// Returns: {"ok": true, "pool": "...", "timeframe": "...", "side": "...", "page": N, "limit": N, "total": N, "has_more": bool, "candles": [...]}
+    async fn get_candles(
+        &self,
+        pool: &str,
+        timeframe: Option<&str>,
+        side: Option<&str>,
+        limit: Option<u64>,
+        page: Option<u64>,
+    ) -> Result<JsonValue>;
+
+    /// Get trade history for a pool
+    /// Params: {"pool": "block:tx", "limit": N, "page": N, "side": "base" | "quote", "filter_side": "buy" | "sell" | "all", "sort": "...", "dir": "asc" | "desc"}
+    /// Returns: {"ok": true, "pool": "...", "side": "...", "filter_side": "...", "sort": "...", "dir": "...", "page": N, "limit": N, "total": N, "has_more": bool, "trades": [...]}
+    async fn get_trades(
+        &self,
+        pool: &str,
+        limit: Option<u64>,
+        page: Option<u64>,
+        side: Option<&str>,
+        filter_side: Option<&str>,
+        sort: Option<&str>,
+        dir: Option<&str>,
+    ) -> Result<JsonValue>;
+
+    /// Get all pools with pagination
+    /// Params: {"limit": N, "page": N}
+    /// Returns: {"ok": true, "page": N, "limit": N, "total": N, "has_more": bool, "pools": {...}}
+    async fn get_pools(
+        &self,
+        limit: Option<u64>,
+        page: Option<u64>,
+    ) -> Result<JsonValue>;
+
+    /// Find the best swap path between two tokens
+    /// Params: {"token_in": "block:tx", "token_out": "block:tx", "mode": "exact_in" | "exact_out" | "implicit", "amount_in": N, "amount_out": N, "amount_out_min": N, "amount_in_max": N, "available_in": N, "fee_bps": N, "max_hops": N}
+    /// Returns: {"ok": true, "mode": "...", "token_in": "...", "token_out": "...", "fee_bps": N, "max_hops": N, "amount_in": "...", "amount_out": "...", "hops": [...]}
+    async fn find_best_swap_path(
+        &self,
+        token_in: &str,
+        token_out: &str,
+        mode: Option<&str>,
+        amount_in: Option<&str>,
+        amount_out: Option<&str>,
+        amount_out_min: Option<&str>,
+        amount_in_max: Option<&str>,
+        available_in: Option<&str>,
+        fee_bps: Option<u64>,
+        max_hops: Option<u64>,
+    ) -> Result<JsonValue>;
+
+    /// Find the best MEV swap opportunity for a token
+    /// Params: {"token": "block:tx", "fee_bps": N, "max_hops": N}
+    /// Returns: {"ok": true, "token": "...", "fee_bps": N, "max_hops": N, "amount_in": "...", "amount_out": "...", "profit": "...", "hops": [...]}
+    async fn get_best_mev_swap(
+        &self,
+        token: &str,
+        fee_bps: Option<u64>,
+        max_hops: Option<u64>,
+    ) -> Result<JsonValue>;
+
+    /// Get all known AMM factories
+    /// JSON-RPC: ammdata.get_amm_factories
+    /// Params: {"page": N, "limit": N}
+    /// Returns: {"ok": true, "page": N, "limit": N, "total": N, "has_more": bool, "factories": [...]}
+    async fn get_amm_factories(
+        &self,
+        page: Option<u64>,
+        limit: Option<u64>,
+    ) -> Result<JsonValue>;
+
+    // ==================== Subfrost Module Methods ====================
+
+    /// Get all frBTC wrap events
+    /// JSON-RPC: subfrost.get_wrap_events_all
+    /// Params: {"count": N (1-200), "offset": N, "successful": bool?}
+    /// Returns: {"items": [...], "total": N}
+    async fn get_wrap_events_all(
+        &self,
+        count: Option<u64>,
+        offset: Option<u64>,
+        successful: Option<bool>,
+    ) -> Result<JsonValue>;
+
+    /// Get frBTC wrap events for a specific address
+    /// JSON-RPC: subfrost.get_wrap_events_by_address
+    /// Params: {"address": "...", "count": N (1-200), "offset": N, "successful": bool?}
+    /// Returns: {"items": [...], "total": N}
+    async fn get_wrap_events_by_address(
+        &self,
+        address: &str,
+        count: Option<u64>,
+        offset: Option<u64>,
+        successful: Option<bool>,
+    ) -> Result<JsonValue>;
+
+    /// Get all frBTC unwrap events
+    /// JSON-RPC: subfrost.get_unwrap_events_all
+    /// Params: {"count": N (1-200), "offset": N, "successful": bool?}
+    /// Returns: {"items": [...], "total": N}
+    async fn get_unwrap_events_all(
+        &self,
+        count: Option<u64>,
+        offset: Option<u64>,
+        successful: Option<bool>,
+    ) -> Result<JsonValue>;
+
+    /// Get frBTC unwrap events for a specific address
+    /// JSON-RPC: subfrost.get_unwrap_events_by_address
+    /// Params: {"address": "...", "count": N (1-200), "offset": N, "successful": bool?}
+    /// Returns: {"items": [...], "total": N}
+    async fn get_unwrap_events_by_address(
+        &self,
+        address: &str,
+        count: Option<u64>,
+        offset: Option<u64>,
+        successful: Option<bool>,
+    ) -> Result<JsonValue>;
+
+    // ==================== PizzaFun Module Methods ====================
+
+    /// Look up series ID from an AlkaneId
+    /// JSON-RPC: pizzafun.get_series_id_from_alkane_id
+    /// Params: {"alkane_id": "block:tx"}
+    /// Returns: {"ok": true, "series_id": "...", "alkane_id": "...", "confirmations": N}
+    async fn get_series_id_from_alkane_id(&self, alkane_id: &str) -> Result<JsonValue>;
+
+    /// Look up series IDs from multiple AlkaneIds (batch)
+    /// JSON-RPC: pizzafun.get_series_ids_from_alkane_ids
+    /// Params: {"alkane_ids": ["block:tx", ...]}
+    /// Returns: {"ok": true, "items": [{"series_id": "...", "alkane_id": "...", "confirmations": N} | null, ...]}
+    async fn get_series_ids_from_alkane_ids(&self, alkane_ids: &[&str]) -> Result<JsonValue>;
+
+    /// Look up AlkaneId from a series ID
+    /// JSON-RPC: pizzafun.get_alkane_id_from_series_id
+    /// Params: {"series_id": "..."}
+    /// Returns: {"ok": true, "series_id": "...", "alkane_id": "...", "confirmations": N}
+    async fn get_alkane_id_from_series_id(&self, series_id: &str) -> Result<JsonValue>;
+
+    /// Look up AlkaneIds from multiple series IDs (batch)
+    /// JSON-RPC: pizzafun.get_alkane_ids_from_series_ids
+    /// Params: {"series_ids": ["...", ...]}
+    /// Returns: {"ok": true, "items": [{"series_id": "...", "alkane_id": "...", "confirmations": N} | null, ...]}
+    async fn get_alkane_ids_from_series_ids(&self, series_ids: &[&str]) -> Result<JsonValue>;
+}
+
 /// Trait for runestone operations
 #[async_trait(?Send)]
 pub trait RunestoneProvider {
@@ -715,8 +1095,18 @@ pub trait OrdProvider {
 /// Trait for alkanes operations
 #[async_trait(?Send)]
 pub trait AlkanesProvider {
-    /// Execute alkanes smart contract
+    /// Execute alkanes smart contract (returns intermediate state for manual control)
     async fn execute(&mut self, params: EnhancedExecuteParams) -> Result<ExecutionState>;
+
+    /// Execute alkanes smart contract fully (handles all steps internally)
+    ///
+    /// This method handles the complete execution flow:
+    /// - For deployments (with envelope): commit -> reveal -> mine -> trace
+    /// - For simple transactions: sign -> broadcast -> mine -> trace
+    ///
+    /// Use this instead of `execute` when you don't need manual control over
+    /// intermediate states (e.g., when auto_confirm is true).
+    async fn execute_full(&mut self, params: EnhancedExecuteParams) -> Result<EnhancedExecuteResult>;
 
     /// Resume execution after user confirmation (for simple transactions)
     async fn resume_execution(
@@ -770,8 +1160,9 @@ pub trait AlkanesProvider {
     async fn get_block(&self, height: u64) -> Result<alkanes_pb::BlockResponse>;
     async fn sequence(&self, block_tag: Option<String>) -> Result<JsonValue>;
     async fn spendables_by_address(&self, address: &str) -> Result<JsonValue>;
-    async fn trace_block(&self, height: u64) -> Result<alkanes_pb::Trace>;
+    async fn trace_block(&self, height: u64) -> Result<alkanes_pb::AlkanesBlockTraceEvent>;
     async fn get_bytecode(&self, alkane_id: &str, block_tag: Option<String>) -> Result<String>;
+    async fn meta(&self, alkane_id: &str, block_tag: Option<String>) -> Result<Vec<u8>>;
     async fn inspect(&self, target: &str, config: crate::alkanes::AlkanesInspectConfig) -> Result<crate::alkanes::AlkanesInspectResult>;
     async fn get_balance(&self, address: Option<&str>) -> Result<Vec<crate::alkanes::AlkaneBalance>>;
     async fn pending_unwraps(&self, block_tag: Option<String>) -> Result<Vec<crate::alkanes::PendingUnwrap>>;
@@ -815,6 +1206,7 @@ pub trait DeezelProvider:
     MetashrewRpcProvider +
     MetashrewProvider +
     EsploraProvider +
+    EspoProvider +
     RunestoneProvider +
     AlkanesProvider +
     MonitorProvider +
@@ -866,6 +1258,22 @@ pub trait DeezelProvider:
     /// Get the BRC20-Prog RPC URL
     fn get_brc20_prog_rpc_url(&self) -> Option<String>;
 
+    /// Check if operating in qubitcoin single-process mode
+    fn is_qubitcoin_mode(&self) -> bool { false }
+
+    /// Session-scoped store of broadcast-but-unconfirmed transactions.
+    ///
+    /// Read by `select_utxos` on every call to keep the candidate
+    /// set in sync with our own pending mempool state — see the
+    /// `pending_tx_store` module for the architectural rationale.
+    ///
+    /// Default returns `None`, in which case `select_utxos` falls
+    /// back to esplora's mempool view + the explicit
+    /// `known_pending_tx_hexes` param. Concrete providers
+    /// (`WebProvider`, the CLI provider) override this with a real
+    /// store so chained / atomic flows benefit automatically.
+    fn pending_tx_store(&self) -> Option<&dyn crate::pending_tx_store::PendingTxStore> { None }
+
     /// Create a boxed, clonable version of the provider
     fn clone_box(&self) -> Box<dyn DeezelProvider>;
     
@@ -882,7 +1290,8 @@ pub trait DeezelProvider:
     async fn get_utxo(&self, outpoint: &bitcoin::OutPoint) -> Result<Option<bitcoin::TxOut>>;
 
     /// Sign a taproot script spend sighash
-    async fn sign_taproot_script_spend(&self, sighash: bitcoin::secp256k1::Message) -> Result<bitcoin::secp256k1::schnorr::Signature>;
+    /// ANTI-FRONTRUNNING: If ephemeral_secret is provided, use it instead of generating random entropy
+    async fn sign_taproot_script_spend(&self, sighash: bitcoin::secp256k1::Message, ephemeral_secret: Option<bitcoin::secp256k1::SecretKey>) -> Result<bitcoin::secp256k1::schnorr::Signature>;
 
     async fn wrap(&mut self, amount: u64, address: Option<String>, fee_rate: Option<f32>) -> Result<String>;
 
@@ -1053,6 +1462,9 @@ impl<T: DeezelProvider + ?Sized> WalletProvider for Box<T> {
    async fn get_internal_key(&self) -> Result<(bitcoin::XOnlyPublicKey, (Fingerprint, DerivationPath))> {
        (**self).get_internal_key().await
    }
+   async fn get_internal_key_with_secret(&self) -> Result<(bitcoin::XOnlyPublicKey, bitcoin::secp256k1::SecretKey, (Fingerprint, DerivationPath))> {
+       (**self).get_internal_key_with_secret().await
+   }
    async fn sign_psbt(&mut self, psbt: &bitcoin::psbt::Psbt) -> Result<bitcoin::psbt::Psbt> {
        (**self).sign_psbt(psbt).await
    }
@@ -1103,6 +1515,9 @@ impl<T: DeezelProvider + ?Sized> BitcoinRpcProvider for Box<T> {
    async fn generate_future(&self, address: &str) -> Result<serde_json::Value> {
        (**self).generate_future(address).await
    }
+   async fn subfrost_thieve(&self, address: &str, amount: u64) -> Result<JsonValue> {
+       (**self).subfrost_thieve(address, amount).await
+   }
    async fn get_blockchain_info(&self) -> Result<serde_json::Value> {
         <T as BitcoinRpcProvider>::get_blockchain_info(self).await
    }
@@ -1120,6 +1535,9 @@ impl<T: DeezelProvider + ?Sized> BitcoinRpcProvider for Box<T> {
    }
    async fn send_raw_transaction(&self, tx_hex: &str) -> Result<String> {
        <T as BitcoinRpcProvider>::send_raw_transaction(self, tx_hex).await
+   }
+   async fn send_raw_transactions(&self, tx_hexes: &[String]) -> Result<Vec<String>> {
+       <T as BitcoinRpcProvider>::send_raw_transactions(self, tx_hexes).await
    }
    async fn get_mempool_info(&self) -> Result<serde_json::Value> {
        <T as BitcoinRpcProvider>::get_mempool_info(self).await
@@ -1160,6 +1578,14 @@ impl<T: DeezelProvider + ?Sized> BitcoinRpcProvider for Box<T> {
 
    async fn get_tx_out(&self, txid: &str, vout: u32, include_mempool: bool) -> Result<JsonValue> {
        (**self).get_tx_out(txid, vout, include_mempool).await
+   }
+
+   async fn decode_raw_transaction(&self, hex: &str) -> Result<JsonValue> {
+       (**self).decode_raw_transaction(hex).await
+   }
+
+   async fn decode_psbt(&self, psbt: &str) -> Result<JsonValue> {
+       (**self).decode_psbt(psbt).await
    }
 }
 
@@ -1308,6 +1734,173 @@ impl<T: DeezelProvider + ?Sized> EsploraProvider for Box<T> {
 }
 
 #[async_trait(?Send)]
+impl<T: DeezelProvider + ?Sized> EspoProvider for Box<T> {
+    async fn get_espo_height(&self) -> Result<u64> {
+        (**self).get_espo_height().await
+    }
+    async fn get_address_balances(&self, address: &str, include_outpoints: bool) -> Result<serde_json::Value> {
+        (**self).get_address_balances(address, include_outpoints).await
+    }
+    async fn get_address_outpoints(&self, address: &str) -> Result<serde_json::Value> {
+        (**self).get_address_outpoints(address).await
+    }
+    async fn get_address_spendable_outpoints(&self, address: &str) -> Result<serde_json::Value> {
+        (**self).get_address_spendable_outpoints(address).await
+    }
+    async fn get_outpoint_balances(&self, outpoint: &str) -> Result<serde_json::Value> {
+        (**self).get_outpoint_balances(outpoint).await
+    }
+    async fn get_holders(&self, alkane_id: &str, page: u64, limit: u64) -> Result<serde_json::Value> {
+        (**self).get_holders(alkane_id, page, limit).await
+    }
+    async fn get_holders_count(&self, alkane_id: &str) -> Result<serde_json::Value> {
+        (**self).get_holders_count(alkane_id).await
+    }
+    async fn get_keys(&self, alkane_id: &str, page: u64, limit: u64) -> Result<serde_json::Value> {
+        (**self).get_keys(alkane_id, page, limit).await
+    }
+    async fn get_all_alkanes(&self, page: Option<u64>, limit: Option<u64>) -> Result<serde_json::Value> {
+        (**self).get_all_alkanes(page, limit).await
+    }
+    async fn get_alkane_info(&self, alkane_id: &str) -> Result<serde_json::Value> {
+        (**self).get_alkane_info(alkane_id).await
+    }
+    async fn get_block_summary(&self, height: u64) -> Result<serde_json::Value> {
+        (**self).get_block_summary(height).await
+    }
+    async fn get_circulating_supply(&self, alkane_id: &str, height: Option<u64>) -> Result<serde_json::Value> {
+        (**self).get_circulating_supply(alkane_id, height).await
+    }
+    async fn get_transfer_volume(&self, alkane_id: &str, page: Option<u64>, limit: Option<u64>) -> Result<serde_json::Value> {
+        (**self).get_transfer_volume(alkane_id, page, limit).await
+    }
+    async fn get_total_received(&self, alkane_id: &str, page: Option<u64>, limit: Option<u64>) -> Result<serde_json::Value> {
+        (**self).get_total_received(alkane_id, page, limit).await
+    }
+    async fn get_address_activity(&self, address: &str) -> Result<serde_json::Value> {
+        (**self).get_address_activity(address).await
+    }
+    async fn get_alkane_balances(&self, alkane_id: &str) -> Result<serde_json::Value> {
+        (**self).get_alkane_balances(alkane_id).await
+    }
+    async fn get_alkane_balance_metashrew(&self, owner: &str, target: &str, height: Option<u64>) -> Result<serde_json::Value> {
+        (**self).get_alkane_balance_metashrew(owner, target, height).await
+    }
+    async fn get_alkane_balance_txs(&self, alkane_id: &str, page: Option<u64>, limit: Option<u64>) -> Result<serde_json::Value> {
+        (**self).get_alkane_balance_txs(alkane_id, page, limit).await
+    }
+    async fn get_alkane_balance_txs_by_token(&self, owner: &str, token: &str, page: Option<u64>, limit: Option<u64>) -> Result<serde_json::Value> {
+        (**self).get_alkane_balance_txs_by_token(owner, token, page, limit).await
+    }
+    async fn get_block_traces(&self, height: u64) -> Result<serde_json::Value> {
+        (**self).get_block_traces(height).await
+    }
+    async fn get_alkane_tx_summary(&self, txid: &str) -> Result<serde_json::Value> {
+        (**self).get_alkane_tx_summary(txid).await
+    }
+    async fn get_alkane_block_txs(&self, height: u64, page: Option<u64>, limit: Option<u64>) -> Result<serde_json::Value> {
+        (**self).get_alkane_block_txs(height, page, limit).await
+    }
+    async fn get_alkane_address_txs(&self, address: &str, page: Option<u64>, limit: Option<u64>) -> Result<serde_json::Value> {
+        (**self).get_alkane_address_txs(address, page, limit).await
+    }
+    async fn get_address_transactions(&self, address: &str, page: Option<u64>, limit: Option<u64>, only_alkane_txs: Option<bool>) -> Result<serde_json::Value> {
+        (**self).get_address_transactions(address, page, limit, only_alkane_txs).await
+    }
+    async fn get_alkane_latest_traces(&self) -> Result<serde_json::Value> {
+        (**self).get_alkane_latest_traces().await
+    }
+    async fn get_mempool_traces(&self, page: Option<u64>, limit: Option<u64>, address: Option<&str>) -> Result<serde_json::Value> {
+        (**self).get_mempool_traces(page, limit, address).await
+    }
+    async fn ping(&self) -> Result<String> {
+        (**self).ping().await
+    }
+    async fn ammdata_ping(&self) -> Result<String> {
+        (**self).ammdata_ping().await
+    }
+    async fn get_candles(
+        &self,
+        pool: &str,
+        timeframe: Option<&str>,
+        side: Option<&str>,
+        limit: Option<u64>,
+        page: Option<u64>,
+    ) -> Result<serde_json::Value> {
+        (**self).get_candles(pool, timeframe, side, limit, page).await
+    }
+    async fn get_trades(
+        &self,
+        pool: &str,
+        limit: Option<u64>,
+        page: Option<u64>,
+        side: Option<&str>,
+        filter_side: Option<&str>,
+        sort: Option<&str>,
+        dir: Option<&str>,
+    ) -> Result<serde_json::Value> {
+        (**self).get_trades(pool, limit, page, side, filter_side, sort, dir).await
+    }
+    async fn get_pools(
+        &self,
+        limit: Option<u64>,
+        page: Option<u64>,
+    ) -> Result<serde_json::Value> {
+        (**self).get_pools(limit, page).await
+    }
+    async fn find_best_swap_path(
+        &self,
+        token_in: &str,
+        token_out: &str,
+        mode: Option<&str>,
+        amount_in: Option<&str>,
+        amount_out: Option<&str>,
+        amount_out_min: Option<&str>,
+        amount_in_max: Option<&str>,
+        available_in: Option<&str>,
+        fee_bps: Option<u64>,
+        max_hops: Option<u64>,
+    ) -> Result<serde_json::Value> {
+        (**self).find_best_swap_path(token_in, token_out, mode, amount_in, amount_out, amount_out_min, amount_in_max, available_in, fee_bps, max_hops).await
+    }
+    async fn get_best_mev_swap(
+        &self,
+        token: &str,
+        fee_bps: Option<u64>,
+        max_hops: Option<u64>,
+    ) -> Result<serde_json::Value> {
+        (**self).get_best_mev_swap(token, fee_bps, max_hops).await
+    }
+    async fn get_amm_factories(&self, page: Option<u64>, limit: Option<u64>) -> Result<serde_json::Value> {
+        (**self).get_amm_factories(page, limit).await
+    }
+    async fn get_wrap_events_all(&self, count: Option<u64>, offset: Option<u64>, successful: Option<bool>) -> Result<serde_json::Value> {
+        (**self).get_wrap_events_all(count, offset, successful).await
+    }
+    async fn get_wrap_events_by_address(&self, address: &str, count: Option<u64>, offset: Option<u64>, successful: Option<bool>) -> Result<serde_json::Value> {
+        (**self).get_wrap_events_by_address(address, count, offset, successful).await
+    }
+    async fn get_unwrap_events_all(&self, count: Option<u64>, offset: Option<u64>, successful: Option<bool>) -> Result<serde_json::Value> {
+        (**self).get_unwrap_events_all(count, offset, successful).await
+    }
+    async fn get_unwrap_events_by_address(&self, address: &str, count: Option<u64>, offset: Option<u64>, successful: Option<bool>) -> Result<serde_json::Value> {
+        (**self).get_unwrap_events_by_address(address, count, offset, successful).await
+    }
+    async fn get_series_id_from_alkane_id(&self, alkane_id: &str) -> Result<serde_json::Value> {
+        (**self).get_series_id_from_alkane_id(alkane_id).await
+    }
+    async fn get_series_ids_from_alkane_ids(&self, alkane_ids: &[&str]) -> Result<serde_json::Value> {
+        (**self).get_series_ids_from_alkane_ids(alkane_ids).await
+    }
+    async fn get_alkane_id_from_series_id(&self, series_id: &str) -> Result<serde_json::Value> {
+        (**self).get_alkane_id_from_series_id(series_id).await
+    }
+    async fn get_alkane_ids_from_series_ids(&self, series_ids: &[&str]) -> Result<serde_json::Value> {
+        (**self).get_alkane_ids_from_series_ids(series_ids).await
+    }
+}
+
+#[async_trait(?Send)]
 impl<T: DeezelProvider + ?Sized> RunestoneProvider for Box<T> {
    async fn decode_runestone(&self, tx: &bitcoin::Transaction) -> Result<serde_json::Value> {
        (**self).decode_runestone(tx).await
@@ -1375,6 +1968,9 @@ impl<T: DeezelProvider + ?Sized> AlkanesProvider for Box<T> {
     async fn execute(&mut self, params: EnhancedExecuteParams) -> Result<ExecutionState> {
         (**self).execute(params).await
     }
+    async fn execute_full(&mut self, params: EnhancedExecuteParams) -> Result<EnhancedExecuteResult> {
+        (**self).execute_full(params).await
+    }
     async fn resume_execution(
         &mut self,
         state: ReadyToSignTx,
@@ -1437,11 +2033,14 @@ impl<T: DeezelProvider + ?Sized> AlkanesProvider for Box<T> {
     async fn spendables_by_address(&self, address: &str) -> Result<JsonValue> {
         (**self).spendables_by_address(address).await
     }
-    async fn trace_block(&self, height: u64) -> Result<alkanes_pb::Trace> {
+    async fn trace_block(&self, height: u64) -> Result<alkanes_pb::AlkanesBlockTraceEvent> {
         (**self).trace_block(height).await
     }
     async fn get_bytecode(&self, alkane_id: &str, block_tag: Option<String>) -> Result<String> {
         AlkanesProvider::get_bytecode(&**self, alkane_id, block_tag).await
+    }
+    async fn meta(&self, alkane_id: &str, block_tag: Option<String>) -> Result<Vec<u8>> {
+        AlkanesProvider::meta(&**self, alkane_id, block_tag).await
     }
     async fn inspect(&self, target: &str, config: crate::alkanes::AlkanesInspectConfig) -> Result<crate::alkanes::AlkanesInspectResult> {
         (**self).inspect(target, config).await
@@ -1524,8 +2123,8 @@ impl<T: DeezelProvider + ?Sized> DeezelProvider for Box<T> {
     async fn get_utxo(&self, outpoint: &bitcoin::OutPoint) -> Result<Option<bitcoin::TxOut>> {
         (**self).get_utxo(outpoint).await
     }
-    async fn sign_taproot_script_spend(&self, sighash: bitcoin::secp256k1::Message) -> Result<bitcoin::secp256k1::schnorr::Signature> {
-        (**self).sign_taproot_script_spend(sighash).await
+    async fn sign_taproot_script_spend(&self, sighash: bitcoin::secp256k1::Message, ephemeral_secret: Option<bitcoin::secp256k1::SecretKey>) -> Result<bitcoin::secp256k1::schnorr::Signature> {
+        (**self).sign_taproot_script_spend(sighash, ephemeral_secret).await
     }
 
     async fn wrap(&mut self, amount: u64, address: Option<String>, fee_rate: Option<f32>) -> Result<String> {
@@ -1603,6 +2202,14 @@ pub trait SystemEsplora {
    async fn execute_esplora_command(&self, command: crate::commands::EsploraCommands) -> Result<()>;
 }
 
+/// Trait for system-level ESPO operations
+#[cfg(feature = "std")]
+#[async_trait(?Send)]
+pub trait SystemEspo {
+   /// Execute an espo command
+   async fn execute_espo_command(&self, command: crate::commands::EspoCommands) -> Result<()>;
+}
+
 /// Trait for system-level PGP operations
 #[cfg(feature = "std")]
 
@@ -1618,6 +2225,7 @@ pub trait System:
    SystemProtorunes +
    SystemMonitor +
    SystemEsplora +
+   SystemEspo +
    Send + Sync
 {
    /// Get the underlying provider

@@ -4,6 +4,7 @@ volumes:
   metashrew-data:
   postgres-data:
   redis-data:
+  lua-scripts:
 services:
   bitcoind:
     build:
@@ -12,6 +13,8 @@ services:
     image: bitcoind:alkanes
     volumes:
       - bitcoin-data:/root/.bitcoin
+    ports:
+      - "18443:18443"
     command:
       [
         "-txindex",
@@ -93,6 +96,8 @@ services:
         condition: service_healthy
     volumes:
       - bitcoin-data:/data/bitcoin
+    ports:
+      - "50010:50010"
     environment:
       ELECTRS_AUTH: bitcoinrpc:bitcoinrpc
       ELECTRS_NETWORK: regtest
@@ -112,6 +117,8 @@ services:
     image: alkanes-jsonrpc:latest
     depends_on:
       - bitcoind
+    volumes:
+      - lua-scripts:/data/lua-scripts
     environment:
       SERVER_HOST: 0.0.0.0
       SERVER_PORT: 18888
@@ -122,6 +129,7 @@ services:
       MEMSHREW_URL: http://memshrew:8081
       ORD_URL: http://ord:8090
       ESPLORA_URL: http://esplora:50010
+      LUA_SCRIPT_PATH: /data/lua-scripts
       RUST_LOG: info
     ports:
       - "18888:18888"
@@ -135,8 +143,6 @@ services:
       POSTGRES_USER: alkanes_user
       POSTGRES_PASSWORD: alkanes_pass
       POSTGRES_DB: alkanes_indexer
-    ports:
-      - "5432:5432"
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U alkanes_user -d alkanes_indexer"]
@@ -148,8 +154,6 @@ services:
     image: redis:7-alpine
     volumes:
       - redis-data:/data
-    ports:
-      - "6379:6379"
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]

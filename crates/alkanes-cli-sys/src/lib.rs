@@ -55,7 +55,16 @@ pub struct SystemAlkanes {
 }
 
 impl SystemAlkanes {
+    /// Create a new SystemAlkanes instance
+    ///
+    /// If `skip_wallet_init` is true, keystore loading will be skipped.
+    /// This is useful for read-only commands that don't need wallet access.
     pub async fn new(args: &Args) -> anyhow::Result<Self> {
+        Self::new_with_options(args, false).await
+    }
+
+    /// Create a new SystemAlkanes instance with optional wallet initialization
+    pub async fn new_with_options(args: &Args, skip_wallet_init: bool) -> anyhow::Result<Self> {
         // Validate RPC config (ensure only one backend is configured)
         args.rpc_config.validate()?;
         
@@ -100,11 +109,15 @@ impl SystemAlkanes {
         // If a bitcoin_rpc_url is provided and the network is regtest, override the default.
         if let Some(rpc_url) = &args.rpc_config.bitcoin_rpc_url {
             if network_params.network == bitcoin::Network::Regtest {
-                network_params.bitcoin_rpc_url = rpc_url.clone();
-                network_params.metashrew_rpc_url = rpc_url.clone();
-                network_params.esplora_url = Some(rpc_url.clone());
+                network_params.bitcoin_rpc_url = Some(rpc_url.clone());
+                network_params.metashrew_rpc_url = Some(rpc_url.clone());
+                // Note: esplora_url should only be set if the user explicitly provides --esplora-url
+                // Do NOT auto-set it to bitcoin_rpc_url, as that's a JSON-RPC endpoint, not a REST API
             }
         }
+
+        // Set the global network parameters so signing/address derivation works
+        alkanes_cli_common::network::set_network(network_params.clone());
 
         // Handle wallet-address mode (no keystore needed)
         let wallet_path_opt = if args.wallet_address.is_some() {
@@ -152,7 +165,7 @@ impl SystemAlkanes {
             .clone()
             .or_else(|| {
                 if jsonrpc_url.is_none() {
-                    Some(network_params.bitcoin_rpc_url.clone())
+                    network_params.bitcoin_rpc_url.clone()
                 } else {
                     None
                 }
@@ -163,7 +176,8 @@ impl SystemAlkanes {
             .metashrew_rpc_url
             .clone()
             .or_else(|| jsonrpc_url.clone())
-            .unwrap_or_else(|| network_params.metashrew_rpc_url.clone());
+            .or_else(|| network_params.metashrew_rpc_url.clone())
+            .unwrap_or_else(|| "http://localhost:18888".to_string());
 
         let esplora_url = args
             .rpc_config
@@ -184,15 +198,16 @@ impl SystemAlkanes {
 
         // Create provider with the resolved URLs
         log::info!(
-            "Creating ConcreteProvider with URLs: bitcoin_rpc: {:?}, metashrew_rpc: {:?}, jsonrpc: {:?}, titan_api: {:?}, esplora: {:?}, brc20_prog_rpc: {:?}",
+            "Creating ConcreteProvider with URLs: bitcoin_rpc: {:?}, metashrew_rpc: {:?}, jsonrpc: {:?}, titan_api: {:?}, esplora: {:?}, brc20_prog_rpc: {:?}, jsonrpc_headers: {:?}",
             &bitcoin_rpc_url,
             &metashrew_rpc_url,
             &jsonrpc_url,
             &args.rpc_config.titan_api_url,
             &esplora_url,
-            &brc20_prog_rpc_url
+            &brc20_prog_rpc_url,
+            &args.rpc_config.jsonrpc_headers
         );
-        let mut provider = ConcreteProvider::new(
+        let mut provider = ConcreteProvider::new_with_headers(
             bitcoin_rpc_url,
             metashrew_rpc_url,
             jsonrpc_url,
@@ -201,8 +216,56 @@ impl SystemAlkanes {
             brc20_prog_rpc_url,
             args.rpc_config.provider.clone(),
             wallet_path_opt.map(std::path::PathBuf::from),
+            args.rpc_config.jsonrpc_headers.clone(),
         )
         .await?;
+
+        // Apply qubitcoin mode if configured
+        if let Some(ref qbc_url) = args.rpc_config.qubitcoin_rpc_url {
+            provider.rpc_config.qubitcoin_rpc_url = Some(qbc_url.clone());
+            log::info!("Qubitcoin single-process mode: {}", qbc_url);
+        }
+
+        // Attach the persistent cache unless the user opts out. We swallow
+        // any open error (permission denied, disk full, etc.) and run
+        // without a cache rather than failing the whole CLI — caching is a
+        // reliability/perf enhancement, not a hard requirement.
+        #[cfg(feature = "cache-sqlite")]
+        {
+            let cache_disabled = std::env::var("ALKANES_NO_CACHE")
+                .map(|v| !v.is_empty() && v != "0" && v.to_ascii_lowercase() != "false")
+                .unwrap_or(false);
+            if !cache_disabled {
+                let path = alkanes_cli_common::cache::sqlite::default_cache_path();
+                match alkanes_cli_common::cache::sqlite::SqliteCache::open(&path).await {
+                    Ok(cache) => {
+                        log::debug!("Opened persistent cache at {}", path.display());
+                        provider = provider.with_cache(std::sync::Arc::new(cache));
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "Failed to open cache at {} ({}). Falling back to in-memory cache.",
+                            path.display(),
+                            e
+                        );
+                        provider = provider
+                            .with_cache(std::sync::Arc::new(
+                                alkanes_cli_common::cache::in_memory::InMemoryCache::new(),
+                            ));
+                    }
+                }
+            } else {
+                log::info!("Cache disabled via ALKANES_NO_CACHE env var");
+            }
+        }
+        // When cache-sqlite is not compiled in, fall back to in-memory so
+        // retry + rate-limit handling still applies.
+        #[cfg(all(not(feature = "cache-sqlite"), feature = "std"))]
+        {
+            provider = provider.with_cache(std::sync::Arc::new(
+                alkanes_cli_common::cache::in_memory::InMemoryCache::new(),
+            ));
+        }
 
         if let Some(passphrase) = &args.passphrase {
             log::debug!("Setting passphrase for wallet");
@@ -211,8 +274,10 @@ impl SystemAlkanes {
             log::debug!("No passphrase provided");
         }
 
-        // Handle different wallet modes
-        if let Some(ref address) = args.wallet_address {
+        // Handle different wallet modes (skip if not needed for this command)
+        if skip_wallet_init {
+            log::debug!("Skipping wallet initialization (not needed for this command)");
+        } else if let Some(ref address) = args.wallet_address {
             // Address-only mode: no keystore needed
             log::info!("Using address-only mode with address: {}", address);
             provider.set_address_only_mode(address.clone(), "p2wpkh".to_string());
@@ -241,6 +306,23 @@ impl SystemAlkanes {
             keystore_manager,
             args: args.clone(),
         })
+    }
+}
+
+impl SystemAlkanes {
+    /// Inject a remote signer into the underlying provider. Used by
+    /// `alkanes-cli` to wire WalletConnect after construction (the
+    /// signer needs an active relay connection so we can't build it in
+    /// `new_with_options` without making that an async/lifetime mess).
+    pub fn attach_remote_signer(
+        &mut self,
+        signer: std::sync::Arc<dyn alkanes_cli_common::traits::RemoteSigner>,
+    ) {
+        // ConcreteProvider keeps remote_signer as pub(crate) inside its
+        // own crate, so we go through the builder method on the concrete
+        // type. Replacing via clone+with_remote_signer is fine — the
+        // provider holds Arcs internally so clone is cheap.
+        self.provider = self.provider.clone().with_remote_signer(Some(signer));
     }
 }
 
@@ -312,8 +394,9 @@ impl DeezelProvider for SystemAlkanes {
     async fn sign_taproot_script_spend(
         &self,
         sighash: bitcoin::secp256k1::Message,
+        ephemeral_secret: Option<bitcoin::secp256k1::SecretKey>,
     ) -> Result<bitcoin::secp256k1::schnorr::Signature> {
-        self.provider.sign_taproot_script_spend(sighash).await
+        self.provider.sign_taproot_script_spend(sighash, ephemeral_secret).await
     }
 }
 
@@ -471,6 +554,9 @@ impl WalletProvider for SystemAlkanes {
     async fn get_internal_key(&self) -> Result<(bitcoin::XOnlyPublicKey, (bitcoin::bip32::Fingerprint, bitcoin::bip32::DerivationPath))> {
         self.provider.get_internal_key().await
     }
+    async fn get_internal_key_with_secret(&self) -> Result<(bitcoin::XOnlyPublicKey, bitcoin::secp256k1::SecretKey, (bitcoin::bip32::Fingerprint, bitcoin::bip32::DerivationPath))> {
+        self.provider.get_internal_key_with_secret().await
+    }
     async fn sign_psbt(&mut self, psbt: &bitcoin::psbt::Psbt) -> Result<bitcoin::psbt::Psbt> {
         self.provider.sign_psbt(psbt).await
     }
@@ -524,6 +610,9 @@ impl BitcoinRpcProvider for SystemAlkanes {
     async fn generate_future(&self, address: &str) -> Result<alkanes_cli_common::JsonValue> {
         self.provider.generate_future(address).await
     }
+    async fn subfrost_thieve(&self, address: &str, amount: u64) -> Result<alkanes_cli_common::JsonValue> {
+        self.provider.subfrost_thieve(address, amount).await
+    }
     async fn get_blockchain_info(&self) -> Result<alkanes_cli_common::JsonValue> {
         self.provider.get_blockchain_info().await
     }
@@ -541,6 +630,9 @@ impl BitcoinRpcProvider for SystemAlkanes {
     }
     async fn send_raw_transaction(&self, tx_hex: &str) -> Result<String> {
         self.provider.send_raw_transaction(tx_hex).await
+    }
+    async fn send_raw_transactions(&self, tx_hexes: &[String]) -> Result<Vec<String>> {
+        self.provider.send_raw_transactions(tx_hexes).await
     }
     async fn get_mempool_info(&self) -> Result<alkanes_cli_common::JsonValue> {
         self.provider.get_mempool_info().await
@@ -581,6 +673,14 @@ impl BitcoinRpcProvider for SystemAlkanes {
 
     async fn get_tx_out(&self, txid: &str, vout: u32, include_mempool: bool) -> Result<alkanes_cli_common::JsonValue> {
         self.provider.get_tx_out(txid, vout, include_mempool).await
+    }
+
+    async fn decode_raw_transaction(&self, hex: &str) -> Result<alkanes_cli_common::JsonValue> {
+        self.provider.decode_raw_transaction(hex).await
+    }
+
+    async fn decode_psbt(&self, psbt: &str) -> Result<alkanes_cli_common::JsonValue> {
+        self.provider.decode_psbt(psbt).await
     }
 }
 
@@ -717,6 +817,173 @@ impl EsploraProvider for SystemAlkanes {
 }
 
 #[async_trait(?Send)]
+impl EspoProvider for SystemAlkanes {
+    async fn get_espo_height(&self) -> Result<u64> {
+        self.provider.get_espo_height().await
+    }
+    async fn get_address_balances(&self, address: &str, include_outpoints: bool) -> Result<alkanes_cli_common::JsonValue> {
+        self.provider.get_address_balances(address, include_outpoints).await
+    }
+    async fn get_address_outpoints(&self, address: &str) -> Result<alkanes_cli_common::JsonValue> {
+        self.provider.get_address_outpoints(address).await
+    }
+    async fn get_address_spendable_outpoints(&self, address: &str) -> Result<alkanes_cli_common::JsonValue> {
+        self.provider.get_address_spendable_outpoints(address).await
+    }
+    async fn get_outpoint_balances(&self, outpoint: &str) -> Result<alkanes_cli_common::JsonValue> {
+        self.provider.get_outpoint_balances(outpoint).await
+    }
+    async fn get_holders(&self, alkane_id: &str, page: u64, limit: u64) -> Result<alkanes_cli_common::JsonValue> {
+        self.provider.get_holders(alkane_id, page, limit).await
+    }
+    async fn get_holders_count(&self, alkane_id: &str) -> Result<alkanes_cli_common::JsonValue> {
+        self.provider.get_holders_count(alkane_id).await
+    }
+    async fn get_keys(&self, alkane_id: &str, page: u64, limit: u64) -> Result<alkanes_cli_common::JsonValue> {
+        self.provider.get_keys(alkane_id, page, limit).await
+    }
+    async fn ping(&self) -> Result<String> {
+        self.provider.ping().await
+    }
+    async fn ammdata_ping(&self) -> Result<String> {
+        self.provider.ammdata_ping().await
+    }
+    async fn get_candles(
+        &self,
+        pool: &str,
+        timeframe: Option<&str>,
+        side: Option<&str>,
+        limit: Option<u64>,
+        page: Option<u64>,
+    ) -> Result<alkanes_cli_common::JsonValue> {
+        self.provider.get_candles(pool, timeframe, side, limit, page).await
+    }
+    async fn get_trades(
+        &self,
+        pool: &str,
+        limit: Option<u64>,
+        page: Option<u64>,
+        side: Option<&str>,
+        filter_side: Option<&str>,
+        sort: Option<&str>,
+        dir: Option<&str>,
+    ) -> Result<alkanes_cli_common::JsonValue> {
+        self.provider.get_trades(pool, limit, page, side, filter_side, sort, dir).await
+    }
+    async fn get_pools(
+        &self,
+        limit: Option<u64>,
+        page: Option<u64>,
+    ) -> Result<alkanes_cli_common::JsonValue> {
+        self.provider.get_pools(limit, page).await
+    }
+    async fn find_best_swap_path(
+        &self,
+        token_in: &str,
+        token_out: &str,
+        mode: Option<&str>,
+        amount_in: Option<&str>,
+        amount_out: Option<&str>,
+        amount_out_min: Option<&str>,
+        amount_in_max: Option<&str>,
+        available_in: Option<&str>,
+        fee_bps: Option<u64>,
+        max_hops: Option<u64>,
+    ) -> Result<alkanes_cli_common::JsonValue> {
+        self.provider.find_best_swap_path(token_in, token_out, mode, amount_in, amount_out, amount_out_min, amount_in_max, available_in, fee_bps, max_hops).await
+    }
+    async fn get_best_mev_swap(
+        &self,
+        token: &str,
+        fee_bps: Option<u64>,
+        max_hops: Option<u64>,
+    ) -> Result<alkanes_cli_common::JsonValue> {
+        self.provider.get_best_mev_swap(token, fee_bps, max_hops).await
+    }
+    async fn get_amm_factories(&self, page: Option<u64>, limit: Option<u64>) -> Result<serde_json::Value> {
+        self.provider.get_amm_factories(page, limit).await
+    }
+    async fn get_all_alkanes(&self, page: Option<u64>, limit: Option<u64>) -> Result<serde_json::Value> {
+        self.provider.get_all_alkanes(page, limit).await
+    }
+    async fn get_alkane_info(&self, alkane_id: &str) -> Result<serde_json::Value> {
+        self.provider.get_alkane_info(alkane_id).await
+    }
+    async fn get_block_summary(&self, height: u64) -> Result<serde_json::Value> {
+        self.provider.get_block_summary(height).await
+    }
+    async fn get_circulating_supply(&self, alkane_id: &str, height: Option<u64>) -> Result<serde_json::Value> {
+        self.provider.get_circulating_supply(alkane_id, height).await
+    }
+    async fn get_transfer_volume(&self, alkane_id: &str, page: Option<u64>, limit: Option<u64>) -> Result<serde_json::Value> {
+        self.provider.get_transfer_volume(alkane_id, page, limit).await
+    }
+    async fn get_total_received(&self, alkane_id: &str, page: Option<u64>, limit: Option<u64>) -> Result<serde_json::Value> {
+        self.provider.get_total_received(alkane_id, page, limit).await
+    }
+    async fn get_address_activity(&self, address: &str) -> Result<serde_json::Value> {
+        self.provider.get_address_activity(address).await
+    }
+    async fn get_alkane_balances(&self, alkane_id: &str) -> Result<serde_json::Value> {
+        self.provider.get_alkane_balances(alkane_id).await
+    }
+    async fn get_alkane_balance_metashrew(&self, owner: &str, target: &str, height: Option<u64>) -> Result<serde_json::Value> {
+        self.provider.get_alkane_balance_metashrew(owner, target, height).await
+    }
+    async fn get_alkane_balance_txs(&self, alkane_id: &str, page: Option<u64>, limit: Option<u64>) -> Result<serde_json::Value> {
+        self.provider.get_alkane_balance_txs(alkane_id, page, limit).await
+    }
+    async fn get_alkane_balance_txs_by_token(&self, owner: &str, token: &str, page: Option<u64>, limit: Option<u64>) -> Result<serde_json::Value> {
+        self.provider.get_alkane_balance_txs_by_token(owner, token, page, limit).await
+    }
+    async fn get_block_traces(&self, height: u64) -> Result<serde_json::Value> {
+        self.provider.get_block_traces(height).await
+    }
+    async fn get_alkane_tx_summary(&self, txid: &str) -> Result<serde_json::Value> {
+        self.provider.get_alkane_tx_summary(txid).await
+    }
+    async fn get_alkane_block_txs(&self, height: u64, page: Option<u64>, limit: Option<u64>) -> Result<serde_json::Value> {
+        self.provider.get_alkane_block_txs(height, page, limit).await
+    }
+    async fn get_alkane_address_txs(&self, address: &str, page: Option<u64>, limit: Option<u64>) -> Result<serde_json::Value> {
+        self.provider.get_alkane_address_txs(address, page, limit).await
+    }
+    async fn get_address_transactions(&self, address: &str, page: Option<u64>, limit: Option<u64>, only_alkane_txs: Option<bool>) -> Result<serde_json::Value> {
+        self.provider.get_address_transactions(address, page, limit, only_alkane_txs).await
+    }
+    async fn get_alkane_latest_traces(&self) -> Result<serde_json::Value> {
+        self.provider.get_alkane_latest_traces().await
+    }
+    async fn get_mempool_traces(&self, page: Option<u64>, limit: Option<u64>, address: Option<&str>) -> Result<serde_json::Value> {
+        self.provider.get_mempool_traces(page, limit, address).await
+    }
+    async fn get_wrap_events_all(&self, count: Option<u64>, offset: Option<u64>, successful: Option<bool>) -> Result<serde_json::Value> {
+        self.provider.get_wrap_events_all(count, offset, successful).await
+    }
+    async fn get_wrap_events_by_address(&self, address: &str, count: Option<u64>, offset: Option<u64>, successful: Option<bool>) -> Result<serde_json::Value> {
+        self.provider.get_wrap_events_by_address(address, count, offset, successful).await
+    }
+    async fn get_unwrap_events_all(&self, count: Option<u64>, offset: Option<u64>, successful: Option<bool>) -> Result<serde_json::Value> {
+        self.provider.get_unwrap_events_all(count, offset, successful).await
+    }
+    async fn get_unwrap_events_by_address(&self, address: &str, count: Option<u64>, offset: Option<u64>, successful: Option<bool>) -> Result<serde_json::Value> {
+        self.provider.get_unwrap_events_by_address(address, count, offset, successful).await
+    }
+    async fn get_series_id_from_alkane_id(&self, alkane_id: &str) -> Result<serde_json::Value> {
+        self.provider.get_series_id_from_alkane_id(alkane_id).await
+    }
+    async fn get_series_ids_from_alkane_ids(&self, alkane_ids: &[&str]) -> Result<serde_json::Value> {
+        self.provider.get_series_ids_from_alkane_ids(alkane_ids).await
+    }
+    async fn get_alkane_id_from_series_id(&self, series_id: &str) -> Result<serde_json::Value> {
+        self.provider.get_alkane_id_from_series_id(series_id).await
+    }
+    async fn get_alkane_ids_from_series_ids(&self, series_ids: &[&str]) -> Result<serde_json::Value> {
+        self.provider.get_alkane_ids_from_series_ids(series_ids).await
+    }
+}
+
+#[async_trait(?Send)]
 impl RunestoneProvider for SystemAlkanes {
     async fn decode_runestone(&self, tx: &bitcoin::Transaction) -> Result<alkanes_cli_common::JsonValue> {
         self.provider.decode_runestone(tx).await
@@ -733,6 +1000,9 @@ impl RunestoneProvider for SystemAlkanes {
 impl AlkanesProvider for SystemAlkanes {
     async fn execute(&mut self, params: alkanes_cli_common::alkanes::types::EnhancedExecuteParams) -> Result<alkanes_cli_common::alkanes::types::ExecutionState> {
         self.provider.execute(params).await
+    }
+    async fn execute_full(&mut self, params: alkanes_cli_common::alkanes::types::EnhancedExecuteParams) -> Result<alkanes_cli_common::alkanes::types::EnhancedExecuteResult> {
+        self.provider.execute_full(params).await
     }
     async fn resume_execution(&mut self, state: alkanes_cli_common::alkanes::types::ReadyToSignTx, params: &alkanes_cli_common::alkanes::types::EnhancedExecuteParams) -> Result<alkanes_cli_common::alkanes::types::EnhancedExecuteResult> {
         self.provider.resume_execution(state, params).await
@@ -780,11 +1050,14 @@ impl AlkanesProvider for SystemAlkanes {
     async fn spendables_by_address(&self, address: &str) -> Result<alkanes_cli_common::JsonValue> {
         self.provider.spendables_by_address(address).await
     }
-    async fn trace_block(&self, height: u64) -> Result<alkanes_cli_common::proto::alkanes::Trace> {
+    async fn trace_block(&self, height: u64) -> Result<alkanes_cli_common::proto::alkanes::AlkanesBlockTraceEvent> {
         self.provider.trace_block(height).await
     }
     async fn get_bytecode(&self, alkane_id: &str, block_tag: Option<String>) -> Result<String> {
         <ConcreteProvider as AlkanesProvider>::get_bytecode(&self.provider, alkane_id, block_tag).await
+    }
+    async fn meta(&self, alkane_id: &str, block_tag: Option<String>) -> Result<Vec<u8>> {
+        <ConcreteProvider as AlkanesProvider>::meta(&self.provider, alkane_id, block_tag).await
     }
     async fn inspect(&self, target: &str, config: alkanes_cli_common::alkanes::AlkanesInspectConfig) -> Result<alkanes_cli_common::alkanes::AlkanesInspectResult> {
         self.provider.inspect(target, config).await
@@ -1409,8 +1682,10 @@ impl SystemWallet for SystemAlkanes {
                    use_rebar,
                    rebar_tier,
                    lock_alkanes,
+                   ordinals_strategy: alkanes_cli_common::alkanes::types::OrdinalsStrategy::default(),
+                   mempool_indexer: false,
                };
-               
+
                match provider.send(send_params).await {
                    Ok(txid) => {
                        println!("✅ Transaction sent successfully!");
@@ -1438,8 +1713,10 @@ impl SystemWallet for SystemAlkanes {
                    use_rebar: false,
                    rebar_tier: 1,
                    lock_alkanes: false,
+                   ordinals_strategy: alkanes_cli_common::alkanes::types::OrdinalsStrategy::default(),
+                   mempool_indexer: false,
                };
-               
+
                match provider.send(send_params).await {
                    Ok(txid) => {
                        println!("✅ All funds sent successfully!");
@@ -1467,8 +1744,10 @@ impl SystemWallet for SystemAlkanes {
                    use_rebar: false,
                    rebar_tier: 1,
                    lock_alkanes: false,
+                   ordinals_strategy: alkanes_cli_common::alkanes::types::OrdinalsStrategy::default(),
+                   mempool_indexer: false,
                };
-               
+
                match provider.create_transaction(create_params).await {
                    Ok(tx_hex) => {
                        println!("✅ Transaction created successfully!");
@@ -2094,6 +2373,23 @@ impl SystemWallet for SystemAlkanes {
                println!("{backup}");
                Ok(())
            },
+           WalletCommands::Mnemonic => {
+               let mnemonic = provider.get_mnemonic().await?;
+               match mnemonic {
+                   Some(words) => {
+                       println!("🔑 Wallet Mnemonic");
+                       println!("═══════════════════");
+                       println!("{words}");
+                       println!();
+                       println!("⚠️  WARNING: Keep this mnemonic safe and private!");
+                       println!("   Anyone with this mnemonic can access your funds.");
+                       Ok(())
+                   },
+                   None => {
+                       Err(AlkanesError::Wallet("Wallet is not unlocked or no mnemonic available".to_string()).into())
+                   }
+               }
+           },
            WalletCommands::ListIdentifiers => {
                let identifiers = provider.list_identifiers().await?;
                println!("🏷️  Address Identifiers");
@@ -2199,11 +2495,13 @@ impl SystemBitcoind for SystemAlkanes {
               log::debug!("Calling metashrew_view simulate with hex_input: {}", hex_input);
               
               // Call metashrew_view with ["simulate", hex_encoded_parcel, "latest"]
-              let sandshrew_url = "http://localhost:18888";
+              // Use the configured metashrew URL instead of hardcoded localhost
+              let sandshrew_url = provider.get_metashrew_rpc_url()
+                  .unwrap_or_else(|| "http://localhost:18888".to_string());
               let params = serde_json::json!(["simulate", hex_input, "latest"]);
               
               let simulate_result = provider.call(
-                  sandshrew_url,
+                  &sandshrew_url,
                   "metashrew_view",
                   params,
                   1
@@ -2353,6 +2651,18 @@ impl SystemBitcoind for SystemAlkanes {
                         println!("    Value: {} sats", output.value.to_sat());
                         println!("    Script: {} bytes", output.script_pubkey.len());
                     }
+                }
+                Ok(())
+            },
+            BitcoindCommands::Decodepsbt { psbt, raw } => {
+                use alkanes_cli_common::psbt_utils::decode_psbt_from_base64;
+
+                let psbt_json = decode_psbt_from_base64(&psbt)?;
+
+                if raw {
+                    println!("{}", serde_json::to_string_pretty(&psbt_json)?);
+                } else {
+                    println!("{}", serde_json::to_string_pretty(&psbt_json)?);
                 }
                 Ok(())
             },
@@ -2574,6 +2884,9 @@ impl alkanes_cli_common::SystemAlkanes for SystemAlkanes {
                     resolved
                 };
 
+                 // Indexer-lag filter: skip UTXOs above metashrew tip.
+                 let max_indexed_height = alkanes_cli_common::alkanes::indexer_lag::
+                     fetch_max_indexed_height_or_none(&provider).await;
                  // Create enhanced execute parameters
                  let execute_params = alkanes_cli_common::alkanes::types::EnhancedExecuteParams {
                      fee_rate,
@@ -2588,6 +2901,13 @@ impl alkanes_cli_common::SystemAlkanes for SystemAlkanes {
                     trace_enabled: trace,
                     mine_enabled: mine,
                     auto_confirm: yes, // Use the new field name
+                    ordinals_strategy: alkanes_cli_common::alkanes::types::OrdinalsStrategy::default(),
+                    mempool_indexer: false,
+                    split_transactions: false,
+                    known_pending_tx_hexes: Vec::new(),
+                    prefetched_utxos: Vec::new(),
+                    max_indexed_height,
+                    utxo_source: alkanes_cli_common::alkanes::types::UtxoDataSource::default(),
                 };
 
                 let mut current_state = provider.execute(execute_params.clone()).await?;
@@ -2755,6 +3075,44 @@ impl alkanes_cli_common::SystemAlkanes for SystemAlkanes {
                         // Show first few bytes for quick inspection
                         if clean_bytecode.len() >= 8 {
                             println!("   First 4 bytes: {}", &clean_bytecode[..8]);
+                        }
+                    }
+                }
+                Ok(())
+            }
+            AlkanesCommands::Meta { alkane_id, raw, block_tag } => {
+                let meta_bytes = AlkanesProvider::meta(&provider, &alkane_id, block_tag).await?;
+
+                if raw {
+                    let json_result = serde_json::json!({
+                        "alkane_id": alkane_id,
+                        "meta": format!("0x{}", hex::encode(&meta_bytes)),
+                        "meta_utf8": String::from_utf8_lossy(&meta_bytes).to_string()
+                    });
+                    println!("{}", serde_json::to_string_pretty(&json_result)?);
+                } else {
+                    println!("📋 Alkanes Contract Metadata (ABI)");
+                    println!("═══════════════════════════════════");
+                    println!("🏷️  Alkane ID: {alkane_id}");
+
+                    if meta_bytes.is_empty() {
+                        println!("❌ No metadata found for this contract");
+                    } else {
+                        println!("📦 Metadata:");
+                        println!("   Length: {} bytes", meta_bytes.len());
+                        println!("   Hex: 0x{}", hex::encode(&meta_bytes));
+
+                        // Try to decode as UTF-8 for display
+                        if let Ok(meta_str) = String::from_utf8(meta_bytes.clone()) {
+                            println!("   UTF-8: {meta_str}");
+
+                            // Try to parse as JSON ABI
+                            if let Ok(abi_json) = serde_json::from_str::<serde_json::Value>(&meta_str) {
+                                println!("\n🔍 Parsed ABI:");
+                                println!("{}", serde_json::to_string_pretty(&abi_json)?);
+                            }
+                        } else {
+                            println!("   (Binary data, not valid UTF-8)");
                         }
                     }
                 }
@@ -3093,7 +3451,7 @@ impl SystemRunestone for SystemAlkanes {
                 if raw {
                     println!("{}", serde_json::to_string_pretty(&analysis)?);
                 } else {
-                    let pretty_output = pretty_print_transaction_analysis(&analysis)?;
+                    let pretty_output = pretty_print_transaction_analysis(&analysis, network)?;
                     println!("{pretty_output}");
                 }
                 Ok(())
@@ -3107,7 +3465,7 @@ impl SystemRunestone for SystemAlkanes {
                 if raw {
                     println!("{}", serde_json::to_string_pretty(&analysis)?);
                 } else {
-                    let pretty_output = pretty_print_transaction_analysis(&analysis)?;
+                    let pretty_output = pretty_print_transaction_analysis(&analysis, network)?;
                     println!("{pretty_output}");
                 }
                 Ok(())
@@ -3706,6 +4064,562 @@ impl SystemOrd for SystemAlkanes {
                 } else {
                     println!("Transaction {}:
 {}", txid, serde_json::to_string_pretty(&result)?);
+                }
+                Ok(())
+            },
+        };
+        res.map_err(|e| AlkanesError::Wallet(e.to_string()))
+    }
+}
+
+#[async_trait(?Send)]
+impl SystemEspo for SystemAlkanes {
+    async fn execute_espo_command(&self, command: EspoCommands) -> alkanes_cli_common::Result<()> {
+        let provider = &self.provider;
+        let res: anyhow::Result<()> = match command {
+            EspoCommands::Height { raw } => {
+                let height = provider.get_espo_height().await?;
+                if raw {
+                    println!("{}", height);
+                } else {
+                    println!("📊 ESPO Indexer Height: {}", height);
+                }
+                Ok(())
+            },
+            EspoCommands::Balances { address, include_outpoints, raw } => {
+                let result = provider.get_address_balances(&address, include_outpoints).await?;
+                if raw {
+                    println!("{}", result);
+                } else {
+                    println!("💰 Alkanes Balances for {}:", address);
+                    // Pretty print the balances
+                    if let Some(balances) = result.get("balances").and_then(|v| v.as_object()) {
+                        if balances.is_empty() {
+                            println!("  (no balances)");
+                        } else {
+                            for (alkane, amount) in balances {
+                                println!("  {} : {}", alkane, amount);
+                            }
+                        }
+                    }
+                    if include_outpoints {
+                        if let Some(outpoints) = result.get("outpoints").and_then(|v| v.as_array()) {
+                            println!("\n📍 Outpoints:");
+                            for op in outpoints {
+                                if let Some(outpoint) = op.get("outpoint").and_then(|v| v.as_str()) {
+                                    println!("  {}", outpoint);
+                                    if let Some(entries) = op.get("entries").and_then(|v| v.as_array()) {
+                                        for entry in entries {
+                                            let alkane = entry.get("alkane").and_then(|v| v.as_str()).unwrap_or("?");
+                                            let amount = entry.get("amount").and_then(|v| v.as_str()).unwrap_or("?");
+                                            println!("    {} : {}", alkane, amount);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Ok(())
+            },
+            EspoCommands::Outpoints { address, raw } => {
+                let result = provider.get_address_outpoints(&address).await?;
+                if raw {
+                    println!("{}", result);
+                } else {
+                    println!("📍 Outpoints with Alkanes for {}:", address);
+                    if let Some(outpoints) = result.get("outpoints").and_then(|v| v.as_array()) {
+                        if outpoints.is_empty() {
+                            println!("  (no outpoints)");
+                        } else {
+                            for op in outpoints {
+                                if let Some(outpoint) = op.get("outpoint").and_then(|v| v.as_str()) {
+                                    println!("  {}", outpoint);
+                                    if let Some(entries) = op.get("entries").and_then(|v| v.as_array()) {
+                                        for entry in entries {
+                                            let alkane = entry.get("alkane").and_then(|v| v.as_str()).unwrap_or("?");
+                                            let amount = entry.get("amount").and_then(|v| v.as_str()).unwrap_or("?");
+                                            println!("    {} : {}", alkane, amount);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Ok(())
+            },
+            EspoCommands::Outpoint { outpoint, raw } => {
+                let result = provider.get_outpoint_balances(&outpoint).await?;
+                if raw {
+                    println!("{}", result);
+                } else {
+                    println!("📦 Alkanes at {}:", outpoint);
+                    if let Some(items) = result.get("items").and_then(|v| v.as_array()) {
+                        for item in items {
+                            if let Some(entries) = item.get("entries").and_then(|v| v.as_array()) {
+                                if entries.is_empty() {
+                                    println!("  (no alkanes)");
+                                } else {
+                                    for entry in entries {
+                                        let alkane = entry.get("alkane").and_then(|v| v.as_str()).unwrap_or("?");
+                                        let amount = entry.get("amount").and_then(|v| v.as_str()).unwrap_or("?");
+                                        println!("  {} : {}", alkane, amount);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Ok(())
+            },
+            EspoCommands::Holders { alkane_id, page, limit, raw } => {
+                let result = provider.get_holders(&alkane_id, page, limit).await?;
+                if raw {
+                    println!("{}", result);
+                } else {
+                    let total = result.get("total").and_then(|v| v.as_u64()).unwrap_or(0);
+                    let has_more = result.get("has_more").and_then(|v| v.as_bool()).unwrap_or(false);
+                    println!("👥 Holders of {} (page {}, showing {} of {}):", alkane_id, page, limit, total);
+                    if let Some(items) = result.get("items").and_then(|v| v.as_array()) {
+                        if items.is_empty() {
+                            println!("  (no holders)");
+                        } else {
+                            for holder in items {
+                                let address = holder.get("address").and_then(|v| v.as_str()).unwrap_or("?");
+                                let amount = holder.get("amount").and_then(|v| v.as_str()).unwrap_or("?");
+                                println!("  {} : {}", address, amount);
+                            }
+                        }
+                    }
+                    if has_more {
+                        println!("\n  (more results available, use --page {})", page + 1);
+                    }
+                }
+                Ok(())
+            },
+            EspoCommands::HoldersCount { alkane_id, raw } => {
+                let result = provider.get_holders_count(&alkane_id).await?;
+                if raw {
+                    println!("{}", result);
+                } else {
+                    let count = result.get("count").and_then(|v| v.as_u64()).unwrap_or(0);
+                    println!("👥 {} has {} holders", alkane_id, count);
+                }
+                Ok(())
+            },
+            EspoCommands::Keys { alkane_id, page, limit, raw } => {
+                let result = provider.get_keys(&alkane_id, page, limit).await?;
+                if raw {
+                    println!("{}", result);
+                } else {
+                    let total = result.get("total").and_then(|v| v.as_u64()).unwrap_or(0);
+                    let has_more = result.get("has_more").and_then(|v| v.as_bool()).unwrap_or(false);
+                    println!("🔑 Storage Keys for {} (page {}, showing {} of {}):", alkane_id, page, limit, total);
+                    if let Some(items) = result.get("items").and_then(|v| v.as_object()) {
+                        if items.is_empty() {
+                            println!("  (no keys)");
+                        } else {
+                            for (key, value) in items {
+                                println!("  {}:", key);
+                                if let Some(val_hex) = value.get("value_hex").and_then(|v| v.as_str()) {
+                                    println!("    hex: {}", val_hex);
+                                }
+                                if let Some(val_str) = value.get("value_str").and_then(|v| v.as_str()) {
+                                    println!("    str: {}", val_str);
+                                }
+                                if let Some(val_u128) = value.get("value_u128").and_then(|v| v.as_str()) {
+                                    println!("    u128: {}", val_u128);
+                                }
+                            }
+                        }
+                    }
+                    if has_more {
+                        println!("\n  (more results available, use --page {})", page + 1);
+                    }
+                }
+                Ok(())
+            },
+            EspoCommands::Ping => {
+                let result = provider.ping().await?;
+                println!("🏓 {}", result);
+                Ok(())
+            },
+            EspoCommands::AmmdataPing => {
+                let result = provider.ammdata_ping().await?;
+                println!("🏓 {}", result);
+                Ok(())
+            },
+            EspoCommands::Candles { pool, timeframe, side, limit, page, raw } => {
+                let result = provider.get_candles(
+                    &pool,
+                    timeframe.as_deref(),
+                    side.as_deref(),
+                    limit,
+                    page,
+                ).await?;
+                if raw {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                } else {
+                    println!("📊 Candles for pool {}:", pool);
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                Ok(())
+            },
+            EspoCommands::Trades { pool, limit, page, side, filter_side, sort, dir, raw } => {
+                let result = provider.get_trades(
+                    &pool,
+                    limit,
+                    page,
+                    side.as_deref(),
+                    filter_side.as_deref(),
+                    sort.as_deref(),
+                    dir.as_deref(),
+                ).await?;
+                if raw {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                } else {
+                    println!("💱 Trades for pool {}:", pool);
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                Ok(())
+            },
+            EspoCommands::Pools { limit, page, raw } => {
+                let result = provider.get_pools(limit, page).await?;
+                if raw {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                } else {
+                    println!("🏊 All pools:");
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                Ok(())
+            },
+            EspoCommands::FindBestSwapPath {
+                token_in,
+                token_out,
+                mode,
+                amount_in,
+                amount_out,
+                amount_out_min,
+                amount_in_max,
+                available_in,
+                fee_bps,
+                max_hops,
+                raw
+            } => {
+                let result = provider.find_best_swap_path(
+                    &token_in,
+                    &token_out,
+                    mode.as_deref(),
+                    amount_in.as_deref(),
+                    amount_out.as_deref(),
+                    amount_out_min.as_deref(),
+                    amount_in_max.as_deref(),
+                    available_in.as_deref(),
+                    fee_bps,
+                    max_hops,
+                ).await?;
+                if raw {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                } else {
+                    println!("🔀 Best swap path from {} to {}:", token_in, token_out);
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                Ok(())
+            },
+            EspoCommands::GetBestMevSwap { token, fee_bps, max_hops, raw } => {
+                let result = provider.get_best_mev_swap(&token, fee_bps, max_hops).await?;
+                if raw {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                } else {
+                    println!("🤖 Best MEV swap for token {}:", token);
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                Ok(())
+            },
+            EspoCommands::AmmFactories { limit, page, raw } => {
+                let result = provider.get_amm_factories(page, limit).await?;
+                if raw {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                } else {
+                    println!("AMM Factories:");
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                Ok(())
+            },
+            EspoCommands::AllAlkanes { limit, page, raw } => {
+                let result = provider.get_all_alkanes(page, limit).await?;
+                if raw {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                } else {
+                    let total = result.get("total").and_then(|v| v.as_u64()).unwrap_or(0);
+                    println!("All Alkanes ({} total):", total);
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                Ok(())
+            },
+            EspoCommands::AlkaneInfo { alkane_id, raw } => {
+                let result = provider.get_alkane_info(&alkane_id).await?;
+                if raw {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                } else {
+                    let name = result.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+                    let symbol = result.get("symbol").and_then(|v| v.as_str()).unwrap_or("?");
+                    println!("Alkane {} — {} ({}):", alkane_id, name, symbol);
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                Ok(())
+            },
+            EspoCommands::BlockSummary { height, raw } => {
+                let result = provider.get_block_summary(height).await?;
+                if raw {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                } else {
+                    println!("Block {} summary:", height);
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                Ok(())
+            },
+            EspoCommands::CirculatingSupply { alkane_id, height, raw } => {
+                let result = provider.get_circulating_supply(&alkane_id, height).await?;
+                if raw {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                } else {
+                    let supply = result.get("supply").and_then(|v| v.as_str()).unwrap_or("?");
+                    println!("Circulating supply of {}: {}", alkane_id, supply);
+                }
+                Ok(())
+            },
+            EspoCommands::TransferVolume { alkane_id, limit, page, raw } => {
+                let result = provider.get_transfer_volume(&alkane_id, page, limit).await?;
+                if raw {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                } else {
+                    println!("Transfer volume for {}:", alkane_id);
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                Ok(())
+            },
+            EspoCommands::TotalReceived { alkane_id, limit, page, raw } => {
+                let result = provider.get_total_received(&alkane_id, page, limit).await?;
+                if raw {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                } else {
+                    println!("Total received for {}:", alkane_id);
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                Ok(())
+            },
+            EspoCommands::AddressActivity { address, raw } => {
+                let result = provider.get_address_activity(&address).await?;
+                if raw {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                } else {
+                    println!("Activity for {}:", address);
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                Ok(())
+            },
+            EspoCommands::AlkaneBalances { alkane_id, raw } => {
+                let result = provider.get_alkane_balances(&alkane_id).await?;
+                if raw {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                } else {
+                    println!("All balances for {}:", alkane_id);
+                    if let Some(balances) = result.get("balances").and_then(|v| v.as_object()) {
+                        for (addr, bal) in balances {
+                            println!("  {}: {}", addr, bal);
+                        }
+                        if balances.is_empty() {
+                            println!("  (no balances)");
+                        }
+                    } else {
+                        println!("{}", serde_json::to_string_pretty(&result)?);
+                    }
+                }
+                Ok(())
+            },
+            EspoCommands::AlkaneBalanceMetashrew { owner, target, height, raw } => {
+                let result = provider.get_alkane_balance_metashrew(&owner, &target, height).await?;
+                if raw {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                } else {
+                    println!("Metashrew balance for owner={} target={}:", owner, target);
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                Ok(())
+            },
+            EspoCommands::AlkaneBalanceTxs { alkane_id, limit, page, raw } => {
+                let result = provider.get_alkane_balance_txs(&alkane_id, page, limit).await?;
+                if raw {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                } else {
+                    println!("Balance transactions for {}:", alkane_id);
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                Ok(())
+            },
+            EspoCommands::AlkaneBalanceTxsByToken { owner, token, limit, page, raw } => {
+                let result = provider.get_alkane_balance_txs_by_token(&owner, &token, page, limit).await?;
+                if raw {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                } else {
+                    println!("Balance transactions for owner={} token={}:", owner, token);
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                Ok(())
+            },
+            EspoCommands::BlockTraces { height, raw } => {
+                let result = provider.get_block_traces(height).await?;
+                if raw {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                } else {
+                    println!("Traces for block {}:", height);
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                Ok(())
+            },
+            EspoCommands::TxSummary { txid, raw } => {
+                let result = provider.get_alkane_tx_summary(&txid).await?;
+                if raw {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                } else {
+                    println!("Transaction summary for {}:", txid);
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                Ok(())
+            },
+            EspoCommands::BlockTxs { height, limit, page, raw } => {
+                let result = provider.get_alkane_block_txs(height, page, limit).await?;
+                if raw {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                } else {
+                    println!("Alkane transactions in block {}:", height);
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                Ok(())
+            },
+            EspoCommands::AddressTxs { address, limit, page, raw } => {
+                let result = provider.get_alkane_address_txs(&address, page, limit).await?;
+                if raw {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                } else {
+                    println!("Alkane transactions for {}:", address);
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                Ok(())
+            },
+            EspoCommands::AddressTransactions { address, limit, page, only_alkane_txs, raw } => {
+                let result = provider.get_address_transactions(&address, page, limit, if only_alkane_txs { Some(true) } else { None }).await?;
+                if raw {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                } else {
+                    println!("Transactions for {}:", address);
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                Ok(())
+            },
+            EspoCommands::LatestTraces { raw } => {
+                let result = provider.get_alkane_latest_traces().await?;
+                if raw {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                } else {
+                    println!("Latest alkane traces:");
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                Ok(())
+            },
+            EspoCommands::MempoolTraces { limit, page, address, raw } => {
+                let result = provider.get_mempool_traces(page, limit, address.as_deref()).await?;
+                if raw {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                } else {
+                    println!("Mempool traces:");
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                Ok(())
+            },
+            EspoCommands::WrapEvents { count, offset, successful, raw } => {
+                let result = provider.get_wrap_events_all(count, offset, successful).await?;
+                if raw {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                } else {
+                    let total = result.get("total").and_then(|v| v.as_u64()).unwrap_or(0);
+                    println!("Wrap events ({} total):", total);
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                Ok(())
+            },
+            EspoCommands::WrapEventsByAddress { address, count, offset, successful, raw } => {
+                let result = provider.get_wrap_events_by_address(&address, count, offset, successful).await?;
+                if raw {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                } else {
+                    println!("Wrap events for {}:", address);
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                Ok(())
+            },
+            EspoCommands::UnwrapEvents { count, offset, successful, raw } => {
+                let result = provider.get_unwrap_events_all(count, offset, successful).await?;
+                if raw {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                } else {
+                    let total = result.get("total").and_then(|v| v.as_u64()).unwrap_or(0);
+                    println!("Unwrap events ({} total):", total);
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                Ok(())
+            },
+            EspoCommands::UnwrapEventsByAddress { address, count, offset, successful, raw } => {
+                let result = provider.get_unwrap_events_by_address(&address, count, offset, successful).await?;
+                if raw {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                } else {
+                    println!("Unwrap events for {}:", address);
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                Ok(())
+            },
+            EspoCommands::SeriesIdFromAlkane { alkane_id, raw } => {
+                let result = provider.get_series_id_from_alkane_id(&alkane_id).await?;
+                if raw {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                } else {
+                    println!("Series ID for {}:", alkane_id);
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                Ok(())
+            },
+            EspoCommands::SeriesIdsFromAlkanes { alkane_ids, raw } => {
+                let ids: Vec<&str> = alkane_ids.split(',').map(|s| s.trim()).collect();
+                let result = provider.get_series_ids_from_alkane_ids(&ids).await?;
+                if raw {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                } else {
+                    println!("Series IDs:");
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                Ok(())
+            },
+            EspoCommands::AlkaneFromSeriesId { series_id, raw } => {
+                let result = provider.get_alkane_id_from_series_id(&series_id).await?;
+                if raw {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                } else {
+                    println!("Alkane ID for series {}:", series_id);
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                Ok(())
+            },
+            EspoCommands::AlkanesFromSeriesIds { series_ids, raw } => {
+                let ids: Vec<&str> = series_ids.split(',').map(|s| s.trim()).collect();
+                let result = provider.get_alkane_ids_from_series_ids(&ids).await?;
+                if raw {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                } else {
+                    println!("Alkane IDs:");
+                    println!("{}", serde_json::to_string_pretty(&result)?);
                 }
                 Ok(())
             },

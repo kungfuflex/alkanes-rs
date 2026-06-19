@@ -179,8 +179,7 @@ fn convert_trace_to_events(trace: &alkanes_pb::AlkanesTrace, vout: i32) -> Vec<J
                     }));
                 }
                 alkanes_pb::alkanes_trace_event::Event::ReceiveIntent(receive_intent) => {
-                    // Convert incoming alkanes
-                    let transfers: Vec<JsonValue> = receive_intent.incoming_alkanes.iter()
+                    let incoming_alkanes: Vec<JsonValue> = receive_intent.incoming_alkanes.iter()
                         .map(|a| {
                             let (block, tx) = a.id.as_ref()
                                 .map(|id| alkane_id_to_strings(id))
@@ -195,23 +194,21 @@ fn convert_trace_to_events(trace: &alkanes_pb::AlkanesTrace, vout: i32) -> Vec<J
                             })
                         })
                         .collect();
-                    
                     events.push(json!({
                         "event": "receive_intent",
                         "vout": vout,
                         "data": {
-                            "transfers": transfers,
+                            "incomingAlkanes": incoming_alkanes,
                         },
                     }));
                 }
                 alkanes_pb::alkanes_trace_event::Event::ValueTransfer(value_transfer) => {
-                    // Convert transfers
                     let transfers: Vec<JsonValue> = value_transfer.transfers.iter()
-                        .map(|a| {
-                            let (block, tx) = a.id.as_ref()
+                        .map(|t| {
+                            let (block, tx) = t.id.as_ref()
                                 .map(|id| alkane_id_to_strings(id))
                                 .unwrap_or_default();
-                            let value = a.value.as_ref().map(|v| uint128_to_u128(v)).unwrap_or(0);
+                            let value = t.value.as_ref().map(|v| uint128_to_u128(v)).unwrap_or(0);
                             json!({
                                 "id": {
                                     "block": block,
@@ -221,7 +218,7 @@ fn convert_trace_to_events(trace: &alkanes_pb::AlkanesTrace, vout: i32) -> Vec<J
                             })
                         })
                         .collect();
-                    
+
                     events.push(json!({
                         "event": "value_transfer",
                         "vout": vout,
@@ -426,7 +423,7 @@ where
                     }
                 };
                 info!(batch = batch_idx, index = local_idx, %txid_str, outputs = tx.output.len(), "tx ready; decoding runestone");
-                let decode_attempt = catch_unwind(AssertUnwindSafe(|| format_runestone_with_decoded_messages(&tx)));
+                let decode_attempt = catch_unwind(AssertUnwindSafe(|| format_runestone_with_decoded_messages(&tx, bitcoin::Network::Bitcoin)));
                 match decode_attempt {
                     Ok(Ok(formatted)) => {
                         let txid_be = formatted.get("transaction_id").and_then(|v| v.as_str()).map(|s| s.to_string()).unwrap_or_else(|| tx.compute_txid().to_string());

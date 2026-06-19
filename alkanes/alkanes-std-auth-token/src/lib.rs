@@ -1,44 +1,28 @@
+// Include the generated code from WIT codegen
+#[allow(unused_imports, dead_code, clippy::all)]
+mod generated {
+    include!(concat!(env!("OUT_DIR"), "/generated.rs"));
+}
+
 use alkanes_runtime::runtime::AlkaneResponder;
-use alkanes_runtime::{declare_alkane, message::MessageDispatch, storage::StoragePointer};
 #[allow(unused_imports)]
 use alkanes_runtime::{
     println,
     stdio::{stdout, Write},
 };
 use alkanes_std_factory_support::MintableToken;
-use alkanes_support::{context::Context, parcel::AlkaneTransfer, response::CallResponse};
+use alkanes_support::{parcel::AlkaneTransfer, response::CallResponse};
 use anyhow::{anyhow, Result};
-use metashrew_support::compat::{to_arraybuffer_layout, to_passback_ptr};
-use metashrew_support::index_pointer::KeyValuePointer;
-use std::sync::Arc;
+
+use generated::AuthTokenInterface;
 
 #[derive(Default)]
 pub struct AuthToken(());
 
 impl MintableToken for AuthToken {}
+impl AlkaneResponder for AuthToken {}
 
-#[derive(MessageDispatch)]
-enum AuthTokenMessage {
-    #[opcode(0)]
-    Initialize {
-        name: String,
-        symbol: String,
-        amount: u128,
-    },
-
-    #[opcode(1)]
-    Authenticate,
-
-    #[opcode(99)]
-    #[returns(String)]
-    GetName,
-
-    #[opcode(100)]
-    #[returns(String)]
-    GetSymbol,
-}
-
-impl AuthToken {
+impl AuthTokenInterface for AuthToken {
     fn initialize(&self, name: String, symbol: String, amount: u128) -> Result<CallResponse> {
         self.observe_initialization()?;
         let context = self.context()?;
@@ -89,14 +73,5 @@ impl AuthToken {
 
         response.data = self.symbol().into_bytes().to_vec();
         Ok(response)
-    }
-}
-
-impl AlkaneResponder for AuthToken {}
-
-// Use the new macro format
-declare_alkane! {
-    impl AlkaneResponder for AuthToken {
-        type Message = AuthTokenMessage;
     }
 }

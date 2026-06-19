@@ -3,7 +3,7 @@ import { defineConfig } from 'tsup';
 export default defineConfig({
   entry: ['src/index.ts'],
   format: ['cjs', 'esm'],
-  dts: false,
+  dts: false, // Disabled due to WASM module resolution issues - types available via source
   clean: true,
   splitting: false,
   sourcemap: true,
@@ -12,6 +12,10 @@ export default defineConfig({
   external: [
     'node:crypto',
     'crypto',
+    // WASM module - loaded separately via package exports
+    '@alkanes/ts-sdk/wasm',
+    '../wasm/alkanes_web_sys',
+    '../wasm/alkanes_web_sys.js',
   ],
   noExternal: [
     'bip39',
@@ -36,4 +40,20 @@ export default defineConfig({
     options.alias = options.alias || {};
     options.alias['stream'] = 'stream-browserify';
   },
+  esbuildPlugins: [
+    {
+      name: 'externalize-wasm',
+      setup(build) {
+        // Mark all .wasm files and wasm directory imports as external
+        build.onResolve({ filter: /\.wasm$/ }, (args) => ({
+          path: args.path,
+          external: true,
+        }));
+        build.onResolve({ filter: /\/wasm\// }, (args) => ({
+          path: args.path,
+          external: true,
+        }));
+      },
+    },
+  ],
 });

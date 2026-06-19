@@ -1,5 +1,9 @@
-use alkanes_runtime::message::MessageDispatch;
-use alkanes_runtime::{auth::AuthenticatedResponder, declare_alkane};
+#[allow(unused_imports, dead_code, clippy::all)]
+mod generated {
+    include!(concat!(env!("OUT_DIR"), "/generated.rs"));
+}
+
+use alkanes_runtime::auth::AuthenticatedResponder;
 #[allow(unused_imports)]
 use alkanes_runtime::{
     println,
@@ -20,38 +24,10 @@ use std::io::Cursor;
 pub mod chain;
 use crate::chain::{ChainConfiguration, CONTEXT_HANDLE};
 
+use generated::GenesisAlkaneInterface;
+
 #[derive(Default)]
 pub struct GenesisAlkane(());
-
-#[derive(MessageDispatch)]
-enum GenesisAlkaneMessage {
-    #[opcode(0)]
-    Initialize,
-
-    #[opcode(1)]
-    Upgrade,
-
-    #[opcode(77)]
-    Mint,
-
-    #[opcode(78)]
-    CollectFees,
-
-    #[opcode(79)]
-    Burn { amount: u128 },
-
-    #[opcode(99)]
-    #[returns(String)]
-    GetName,
-
-    #[opcode(100)]
-    #[returns(String)]
-    GetSymbol,
-
-    #[opcode(101)]
-    #[returns(u128)]
-    GetTotalSupply,
-}
 
 impl Token for GenesisAlkane {
     fn name(&self) -> String {
@@ -362,7 +338,9 @@ impl GenesisAlkane {
             Err(anyhow!("already upgraded diesel"))
         }
     }
+}
 
+impl GenesisAlkaneInterface for GenesisAlkane {
     fn initialize(&self) -> Result<CallResponse> {
         let context = self.context()?;
         let mut response = CallResponse::forward(&context.incoming_alkanes);
@@ -389,7 +367,6 @@ impl GenesisAlkane {
         Ok(response)
     }
 
-    // Method that matches the MessageDispatch enum
     fn mint(&self) -> Result<CallResponse> {
         let context = self.context()?;
         let mut response = CallResponse::forward(&context.incoming_alkanes);
@@ -472,10 +449,3 @@ impl GenesisAlkane {
 
 impl AuthenticatedResponder for GenesisAlkane {}
 impl AlkaneResponder for GenesisAlkane {}
-
-// Use the new macro format
-declare_alkane! {
-    impl AlkaneResponder for GenesisAlkane {
-        type Message = GenesisAlkaneMessage;
-    }
-}

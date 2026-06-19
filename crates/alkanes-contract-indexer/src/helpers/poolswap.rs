@@ -209,10 +209,13 @@ pub async fn index_pool_swaps_for_block(
             let t1_in = calculate_token_total(&incoming, &token1_block, &token1_tx);
             let t1_out = calculate_token_total(&outgoing, &token1_block, &token1_tx);
 
-            // Decide sold/bought
-            let (sold_block, sold_tx, bought_block, bought_tx, sold_amount_u128, bought_amount_u128) = if t0_out == 0 && t1_in == 0 {
+            // Decide sold/bought based on which token was sent IN (has positive incoming)
+            // The old logic checked t0_out == 0 which fails when excess tokens are returned
+            let (sold_block, sold_tx, bought_block, bought_tx, sold_amount_u128, bought_amount_u128) = if t0_in > 0 {
+                // User sent token0, should receive token1
                 (token0_block.clone(), token0_tx.clone(), token1_block.clone(), token1_tx.clone(), t0_in, t1_out)
             } else {
+                // User sent token1, should receive token0
                 (token1_block.clone(), token1_tx.clone(), token0_block.clone(), token0_tx.clone(), t1_in, t0_out)
             };
 

@@ -1,9 +1,62 @@
 [workspace]
-members = ["crates/*"]
+members = [
+    "crates/*",
+    "alkanes/alkanes-std-owned-token-wit",
+    "alkanes/alkanes-std-auth-token",
+    "alkanes/alkanes-std-orbital",
+    "alkanes/alkanes-std-genesis-alkane",
+    "alkanes/alkanes-std-genesis-protorune",
+    "alkanes/alkanes-std-genesis-alkane-upgraded",
+    "alkanes/alkanes-std-genesis-alkane-upgraded-eoa",
+    "alkanes/alkanes-std-proxy",
+    "alkanes/alkanes-std-upgradeable",
+    "alkanes/alkanes-std-upgradeable-beacon",
+    "alkanes/alkanes-std-beacon-proxy",
+    "alkanes/alkanes-std-owned-token",
+    "alkanes/alkanes-std-merkle-distributor",
+    "alkanes/alkanes-std-test",
+    "alkanes/alkanes-std-test-2",
+    "vendor/frtun-pair",
+    "vendor/subfrost-wc",
+    "vendor/qubitcoin-crypto",
+    "vendor/qubitcoin-primitives",
+    "vendor/qubitcoin-serialize",
+    "vendor/qubitcoin-script",
+    "vendor/qubitcoin-consensus",
+    "vendor/qubitcoin-util",
+    "vendor/qubitcoin-storage",
+    "vendor/qubitcoin-common",
+    "vendor/qubitcoin-node",
+    "vendor/qubitcoin-support",
+    "vendor/qubitcoin-indexer-core",
+    "vendor/qubitcoin-indexer",
+    "vendor/qubitcoin-indexer-fork",
+    "vendor/qubitcoin-rpc",
+]
+exclude = [
+    "crates/alkanes-web-leptos",
+    # v3 alignment: the in-tree v9 metashrew tree is no longer vendored — the core
+    # crates are referenced from ~/metashrew (v10); the operational runner crates
+    # (rockshrew-*/memshrew-*/minimal/macros) are excluded from the alkanes
+    # protocol build and aligned to v10 separately.
+    "crates/metashrew-core",
+    "crates/metashrew-support",
+    "crates/metashrew-runtime",
+    "crates/metashrew-sync",
+    "crates/metashrew-macros",
+    "crates/metashrew-minimal",
+    "crates/metashrew-memory-stress",
+    "crates/memshrew-p2p",
+    "crates/memshrew-runtime",
+    "crates/rockshrew-debug",
+    "crates/rockshrew-diff",
+    "crates/rockshrew-mono",
+    "crates/rockshrew-runtime",
+]
 resolver = "2"
 
 [workspace.metadata.alkanes-data-api]
-description = "REST API for alkanes blockchain data"
+description = "REST API for alkanes"
 
 [workspace.package]
 version = "10.0.0"
@@ -17,10 +70,12 @@ anyhow = "1.0.90"
 num = "0.4.3"
 bitcoin = { version = "0.32.4", features = ["rand"] }
 alkanes = { path = "./crates/alkanes" }
-metashrew-core = { path = "./crates/metashrew-core" }
-metashrew-support = { path = "./crates/metashrew-support" }
-metashrew-runtime = { path = "./crates/metashrew-runtime" }
-metashrew-sync = { path = "./crates/metashrew-sync" }
+# v3/v10: alkanes-rs develop depends on metashrew's develop branch (v10, chunk
+# API) via git — portable / CI-safe. The in-tree v9 metashrew vendor is excluded.
+metashrew-core = { git = "https://github.com/kungfuflex/metashrew", branch = "develop" }
+metashrew-support = { git = "https://github.com/kungfuflex/metashrew", branch = "develop" }
+metashrew-runtime = { git = "https://github.com/kungfuflex/metashrew", branch = "develop" }
+metashrew-sync = { git = "https://github.com/kungfuflex/metashrew", branch = "develop" }
 memshrew-runtime = { path = "./crates/memshrew-runtime" }
 memshrew-p2p = { path = "./crates/memshrew-p2p" }
 rockshrew-runtime = { path = "./crates/rockshrew-runtime" }
@@ -33,8 +88,9 @@ protorune-support = { path = "./crates/protorune-support" }
 alkanes-support = { path = "./crates/alkanes-support" }
 alkanes-runtime = { path = "./crates/alkanes-runtime" }
 alkanes-macros = { path = "./crates/alkanes-macros" }
-# alkanes-std-factory-support = { path = "./alkanes/alkanes-std-factory-support" }
+alkanes-std-factory-support = { path = "./alkanes/alkanes-std-factory-support" }
 alkanes-cli-common = { path = "./crates/alkanes-cli-common" }
+alkanes-rpc-core = { path = "./crates/alkanes-rpc-core" }
 alkanes-cli-sys = { path = "./crates/alkanes-cli-sys" }
 alkanes-cli = { path = "./crates/alkanes-cli" }
 alkanes-asc = { path = "./crates/alkanes-asc" }
@@ -44,9 +100,9 @@ alkanes-web-sys = { path = "./crates/alkanes-web-sys" }
 alkanes-web-leptos = { path = "./crates/alkanes-web-leptos" }
 alkanes-pretty-print-macro = { path = "./crates/alkanes-pretty-print-macro" }
 ruint = "1.12.3"
-wasm-bindgen = "0.2.100"
+wasm-bindgen = "0.2.114"
 byteorder = "1.5"
-wasm-bindgen-test = "0.3.49"
+wasm-bindgen-test = "0.3.50"
 wasmi = "0.37.2"
 serde = "1.0.210"
 serde_json = "1.0.128"
