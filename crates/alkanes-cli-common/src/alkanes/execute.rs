@@ -44,6 +44,47 @@ use protorune_support::balance_sheet::ProtoruneRuneId;
 const MAX_FEE_SATS: u64 = 100_000; // 0.001 BTC. Cap to avoid "absurdly high fee rate" errors.
 const DUST_LIMIT: u64 = 546;
 
+/// Bitcoin Core's default minimum relay fee rate (`-minrelaytxfee`) is
+/// 1000 sat/kvB == 1.0 sat/vB. A standalone tx (or, before package relay is
+/// universally deployed, an orphaned CPFP child once its parent confirms
+/// alone) below this rate cannot enter the mempool. The split-tx CPFP child
+/// must never be built below this floor.
+const MIN_RELAY_FEE_RATE: f32 = 1.0;
+
+/// Compute the fee rate the CPFP **child** (Tx B) must pay so that the whole
+/// parent+child *package* clears the user's target fee rate, then floor the
+/// result at the network min-relay rate.
+///
+/// True CPFP semantics: a miner evaluates the package by its combined rate
+///   (parent_fee + child_fee) / (parent_vsize + child_vsize).
+/// To make that ratio >= `target_rate`, the child must pay
+///   child_fee = target_rate * (parent_vsize + child_vsize) - parent_fee
+/// i.e. it pays for itself AND for any per-vbyte shortfall left by the parent.
+/// Dividing by the child's own vsize gives the rate to hand the child builder.
+///
+/// The parent is normally already built at `target_rate`, so the package term
+/// reduces to roughly `target_rate` — but if the parent came in under target
+/// (rounding, change-dust absorption, or a deliberately lean parent) the child
+/// makes up the difference. The result is floored at `MIN_RELAY_FEE_RATE` so
+/// the child is always individually relayable even if its parent confirms
+/// first and the child is briefly evaluated on its own.
+fn child_fee_rate_for_package(
+    target_rate: f32,
+    parent_fee: u64,
+    parent_vsize: u64,
+    child_vsize: u64,
+) -> f32 {
+    let child_vsize = child_vsize.max(1) as f32;
+    let package_vsize = parent_vsize as f32 + child_vsize;
+    let required_package_fee = target_rate * package_vsize;
+    // What the child must contribute on top of the parent's actual fee.
+    let required_child_fee = (required_package_fee - parent_fee as f32).max(0.0);
+    let child_rate = required_child_fee / child_vsize;
+    // Never below min-relay, and never below the user's own target either —
+    // a CPFP child should at minimum pay the target rate for itself.
+    child_rate.max(target_rate).max(MIN_RELAY_FEE_RATE)
+}
+
 /// frBTC, frZEC, frETH and any other cross-chain wrap target lives at block 32
 /// in the alkanes namespace. The wrap opcode is uniformly 77 across these
 /// contracts (calls `exchange()` which mints the wrapped representation).
@@ -776,8 +817,43 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         // Tx A's already-spent prevouts and triggering BIP125 RBF
         // rejection. With the synthetic injection, the strip pass
         // doesn't depend on indexer lag.
+        // CPFP fee: make Tx B (child) pay enough that the package (Tx A + Tx B)
+        // clears the target rate, floored at min-relay — see
+        // child_fee_rate_for_package. Decode Tx A from its broadcast hex to get
+        // the parent's true vsize; fall back to an estimate if hex is missing.
+        let target_rate = self.resolve_fee_rate(params.fee_rate).await?;
+        let parent_vsize = tx_a_result
+            .reveal_tx_hex
+            .as_ref()
+            .and_then(|hex| {
+                let bytes = hex::decode(hex).ok()?;
+                let tx: bitcoin::Transaction =
+                    bitcoin::consensus::encode::deserialize(&bytes).ok()?;
+                Some(tx.vsize() as u64)
+            })
+            .unwrap_or_else(|| {
+                Self::estimate_transaction_vsize(2, 3, false, true) as u64
+            });
+        let child_vsize_estimate = Self::estimate_transaction_vsize(
+            2,
+            params.to_addresses.len().saturating_sub(1).max(1) + 1,
+            false,
+            true,
+        ) as u64;
+        let child_rate = child_fee_rate_for_package(
+            target_rate,
+            wrap_fee,
+            parent_vsize,
+            child_vsize_estimate,
+        );
+        log::info!(
+            "[split-tx] CPFP child fee rate: {:.3} sat/vB (target {:.3}, parent {} sats / {} vB, child ~{} vB)",
+            child_rate, target_rate, wrap_fee, parent_vsize, child_vsize_estimate
+        );
+
         let mut tx_b_params = params.clone();
         tx_b_params.split_transactions = false;
+        tx_b_params.fee_rate = Some(child_rate);
         tx_b_params.protostones = params.protostones[1..].to_vec();
         if let Some(tx_a_hex) = tx_a_result.reveal_tx_hex.clone() {
             tx_b_params.known_pending_tx_hexes.push(tx_a_hex);
@@ -875,8 +951,39 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         let tx_a_hex = bitcoin::consensus::encode::serialize_hex(&tx_a_state.psbt.unsigned_tx);
         let wrap_txid = tx_a_state.psbt.unsigned_tx.compute_txid().to_string();
 
+        // CPFP fee: Tx B is the child of Tx A and must pay enough that the
+        // *package* (Tx A + Tx B) clears the user's target fee rate, and must
+        // never fall below the network min-relay floor. Previously Tx B was
+        // built at the bare target rate against its own tiny input value (just
+        // Tx A's dust + change), which collapsed to ~0.15 sat/vB once funds
+        // ran short — below min-relay, so once Tx A confirmed alone Tx B became
+        // an un-confirmable orphan. Force Tx B's fee rate to the package child
+        // rate so it pays for both itself and any parent shortfall.
+        let parent_vsize = tx_a_state.psbt.unsigned_tx.vsize() as u64;
+        let parent_fee = tx_a_state.fee;
+        let target_rate = self.resolve_fee_rate(params.fee_rate).await?;
+        // Estimate Tx B's vsize: it spends Tx A's alkane carrier + BTC change
+        // (~2 inputs) and produces the execute output(s) + change + runestone.
+        let child_vsize_estimate = Self::estimate_transaction_vsize(
+            2,
+            params.to_addresses.len().saturating_sub(1).max(1) + 1,
+            false,
+            true,
+        ) as u64;
+        let child_rate = child_fee_rate_for_package(
+            target_rate,
+            parent_fee,
+            parent_vsize,
+            child_vsize_estimate,
+        );
+        log::info!(
+            "[split-tx:psbt] CPFP child fee rate: {:.3} sat/vB (target {:.3}, parent {} sats / {} vB, child ~{} vB)",
+            child_rate, target_rate, parent_fee, parent_vsize, child_vsize_estimate
+        );
+
         let mut tx_b_params = params.clone();
         tx_b_params.split_transactions = false;
+        tx_b_params.fee_rate = Some(child_rate);
         tx_b_params.protostones = params.protostones[1..].to_vec();
         tx_b_params.known_pending_tx_hexes.push(tx_a_hex);
         tx_b_params.input_requirements.retain(|req| {
@@ -4510,6 +4617,44 @@ mod tests {
         for output in outputs {
             assert_eq!(output.value, Amount::from_sat(10000));
         }
+    }
+
+    /// The split-tx CPFP child fee rate must (a) never drop below the network
+    /// min-relay floor — the root cause of Issue 9, where the child landed at
+    /// ~0.15 sat/vB and orphaned once the parent confirmed alone — and (b) make
+    /// the parent+child package clear the user's target rate (true CPFP).
+    #[test]
+    fn test_child_fee_rate_for_package() {
+        // Degenerate / starved case (the bug): parent already ate the funds, so
+        // a naive child rate would be near zero. Must floor at min-relay.
+        let starved = child_fee_rate_for_package(5.0, 100_000, 200, 150);
+        assert!(starved >= MIN_RELAY_FEE_RATE, "child must clear min-relay");
+        assert!(starved >= 5.0, "child must at least pay its own target rate");
+
+        // Parent built exactly at target: child pays ~target for itself (the
+        // package is already at target, so no extra parent shortfall).
+        let parent_vsize = 200u64;
+        let child_vsize = 150u64;
+        let target = 10.0f32;
+        let parent_fee = (target * parent_vsize as f32) as u64; // parent at target
+        let rate = child_fee_rate_for_package(target, parent_fee, parent_vsize, child_vsize);
+        let package_fee = parent_fee as f32 + rate * child_vsize as f32;
+        let package_rate = package_fee / (parent_vsize + child_vsize) as f32;
+        assert!(package_rate >= target - 0.01, "package must clear target rate");
+
+        // Lean parent (below target): child must overpay to lift the package.
+        let lean_parent_fee = (target * parent_vsize as f32 * 0.2) as u64;
+        let lean_rate =
+            child_fee_rate_for_package(target, lean_parent_fee, parent_vsize, child_vsize);
+        let lean_package =
+            (lean_parent_fee as f32 + lean_rate * child_vsize as f32)
+                / (parent_vsize + child_vsize) as f32;
+        assert!(lean_package >= target - 0.01, "child must cover parent shortfall");
+        assert!(lean_rate > target, "lean-parent child must exceed bare target");
+
+        // Very low target still clamps to min-relay.
+        let low = child_fee_rate_for_package(0.1, 0, 200, 150);
+        assert!(low >= MIN_RELAY_FEE_RATE);
     }
 
     /// `is_wrap_protostone` must reliably distinguish frBTC/frZEC/frETH wraps
