@@ -36,10 +36,16 @@ async fn handle_jsonrpc(
     match handler::handle_request_with_storage(&body.0, &state.proxy, Some(&state.script_storage)).await {
         Ok(response) => HttpResponse::Ok().json(response),
         Err(e) => {
-            log::error!("Error handling request: {:?}", e);
+            // {:#} expands the full anyhow context chain (outer: inner: root cause)
+            // so when a request fails we can see WHICH code path produced the
+            // error, not just the leaf reqwest "error decoding response body"
+            // string. Long-running 2026-06-21 investigation showed the leaf
+            // error was escaping with no caller context, making it impossible
+            // to identify which `.json()` or `.send()` call was failing.
+            log::error!("Error handling request: {:#}", e);
             HttpResponse::Ok().json(JsonRpcResponse::error(
                 INTERNAL_ERROR,
-                e.to_string(),
+                format!("{:#}", e),
                 body.0.id.clone(),
             ))
         }

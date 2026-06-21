@@ -327,20 +327,36 @@ impl MetashrewViewCache {
     }
 
     async fn fetch_served_height(&self) -> Result<u64> {
+        use anyhow::Context;
         let body = serde_json::json!({
             "jsonrpc": "2.0",
             "id": 1,
             "method": "metashrew_height",
             "params": []
         });
-        let r: Value = self
+        // Read body as text first then parse — same pattern as post_json_with_retry
+        // in proxy.rs. The previous `.json()` call obscured the error site (just
+        // "error decoding response body" with no caller context). Surfacing the
+        // raw body on parse failure helps identify whether upstream is returning
+        // HTML 403/502 vs broken JSON.
+        let resp = self
             .http
             .post(&self.metashrew_url)
             .json(&body)
             .send()
-            .await?
-            .json()
-            .await?;
+            .await
+            .with_context(|| format!("fetch_served_height: POST {} failed", self.metashrew_url))?;
+        let text = resp
+            .text()
+            .await
+            .with_context(|| format!("fetch_served_height: read body from {} failed", self.metashrew_url))?;
+        let r: Value = serde_json::from_str(&text).with_context(|| {
+            let snippet: String = text.chars().take(200).collect();
+            format!(
+                "fetch_served_height: decode JSON from {} failed; first 200 bytes: {snippet:?}",
+                self.metashrew_url
+            )
+        })?;
         let s = r
             .get("result")
             .and_then(|v| v.as_str())
@@ -350,20 +366,31 @@ impl MetashrewViewCache {
     }
 
     async fn fetch_block_hash_at(&self, height: u64) -> Result<[u8; 32]> {
+        use anyhow::Context;
         let body = serde_json::json!({
             "jsonrpc": "2.0",
             "id": 1,
             "method": "metashrew_getblockhash",
             "params": [height]
         });
-        let r: Value = self
+        let resp = self
             .http
             .post(&self.metashrew_url)
             .json(&body)
             .send()
-            .await?
-            .json()
-            .await?;
+            .await
+            .with_context(|| format!("fetch_block_hash_at({}): POST {} failed", height, self.metashrew_url))?;
+        let text = resp
+            .text()
+            .await
+            .with_context(|| format!("fetch_block_hash_at({}): read body from {} failed", height, self.metashrew_url))?;
+        let r: Value = serde_json::from_str(&text).with_context(|| {
+            let snippet: String = text.chars().take(200).collect();
+            format!(
+                "fetch_block_hash_at({}): decode JSON from {} failed; first 200 bytes: {snippet:?}",
+                height, self.metashrew_url
+            )
+        })?;
         let s = r
             .get("result")
             .and_then(|v| v.as_str())
