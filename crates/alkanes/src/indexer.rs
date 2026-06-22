@@ -109,9 +109,17 @@ pub fn index_block(block: &Block, height: u32) -> Result<()> {
     let _updated_addresses =
         Protorune::index_block::<AlkaneMessageContext>(block.clone(), height.into())?;
 
-    if is_active(height.into()) {
-        unwrap::update_last_block(height as u128)?;
-    }
+    // 2026-06-22: removed per-block unwrap::update_last_block call.
+    // It triggers build_pending_cache → full scan from last_block to
+    // height every single block when the cache gate read is stale,
+    // which under subshrew/TiKV makes each block ~110s (signet bug,
+    // subkube task #91). The cache helper is develop-only; production
+    // branches (main, kungfuflex/v2.2.0-rc.5-oyl-disband, v3.0.0) don't
+    // have this function or its indexer-side caller at all and run
+    // fine. The unwrap view still works via lazy build at view-time.
+    // if is_active(height.into()) {
+    //     unwrap::update_last_block(height as u128)?;
+    // }
 
     #[cfg(feature = "cache")]
     {
