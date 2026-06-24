@@ -152,7 +152,12 @@ mod tests {
 
     /// Etch a rune, transfer it to address2 via an edict, then query runes_by_address
     /// for address2 and verify the balance is present.
+    ///
+    /// v3: address-index family removed — see
+    /// `tests/index_runes.rs::outpoints_by_address`. Address-keyed
+    /// lookups live in espo middleware now.
     #[wasm_bindgen_test]
+    #[ignore]
     fn test_runes_by_address_after_transfer() {
         clear();
         let config = RunesTestingConfig::default();

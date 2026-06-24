@@ -1,5 +1,15 @@
 #[cfg(any(feature = "test-utils", test))]
 pub mod helpers;
+#[cfg(test)]
+pub mod diesel_divergence_repro;
+#[cfg(test)]
+pub mod diesel_gas_paths;
+#[cfg(test)]
+pub mod diesel_mainnet_smoke;
+#[cfg(test)]
+pub mod diesel_shadow;
+#[cfg(test)]
+pub mod diesel_sidebyside;
 #[cfg(all(test, feature = "zcash"))]
 pub mod zcash_helpers;
 #[cfg(all(test, feature = "zcash"))]
@@ -61,6 +71,8 @@ pub mod memory_security_tests;
 pub mod merkle_distributor;
 #[cfg(test)]
 pub mod networks;
+#[cfg(test)]
+pub mod recycle;
 #[cfg(test)]
 pub mod special_extcall;
 #[cfg(test)]

@@ -16,7 +16,9 @@
 //! Enable with `--features runes` to compile the canonical-ord parity tests
 //! ported from kungfuflex/v2.1.8 (commit 47bd86b3) into your build.
 
-use crate::balance_sheet::{load_sheet, PersistentRecord};
+use crate::balance_sheet::{
+    clear_chunked_balances, load_sheet, load_sheet_chunked, save_chunked, PersistentRecord,
+};
 use crate::message::MessageContext;
 use crate::protorune_init::index_unique_protorunes;
 use crate::protostone::{
@@ -60,6 +62,8 @@ const BLACKLISTED_TX_HASHES: [&str; 1] =
 // Logging module must be declared first so macros are available
 pub mod logging;
 
+#[cfg(feature = "address-indexing")]
+pub mod address_index;
 pub mod balance_sheet;
 pub mod message;
 pub mod protoburn;
@@ -240,7 +244,8 @@ impl Protorune {
             .iter()
             .map(|input| {
                 let outpoint_bytes = consensus_encode(&input.previous_output)?;
-                Ok(load_sheet(&mut atomic.derive(
+                // v3 chunked-outpoint read: one chunk per outpoint.
+                Ok(load_sheet_chunked(&mut atomic.derive(
                     &tables::RUNES.OUTPOINT_TO_RUNES.select(&outpoint_bytes),
                 )))
             })
@@ -320,7 +325,9 @@ impl Protorune {
             //     "Saving balance sheet {:?} to outpoint {:?}",
             //     sheet, outpoint
             // );
-            sheet.save(
+            // v3 chunked-outpoint write: one chunk per outpoint per block.
+            save_chunked(
+                &sheet,
                 &mut atomic.derive(
                     &tables::RUNES
                         .OUTPOINT_TO_RUNES
@@ -734,17 +741,31 @@ impl Protorune {
             for input in &tx.input {
                 //all inputs must be used up, even in cenotaphs
                 let key = consensus_encode(&input.previous_output)?;
-                clear_balances(&mut tables::RUNES.OUTPOINT_TO_RUNES.select(&key));
+                // v3 chunked-outpoint: mark the consumed input chunk as
+                // spent at this height (zero entries, spent_at_height set).
+                // Replaces the legacy multi-pointer clear_balances.
+                clear_chunked_balances(
+                    &mut tables::RUNES.OUTPOINT_TO_RUNES.select(&key),
+                    height as u32,
+                );
             }
         }
         Ok(())
     }
-    pub fn index_spendables(txdata: &Vec<Transaction>) -> Result<BTreeSet<Vec<u8>>> {
+    pub fn index_spendables(
+        txdata: &Vec<Transaction>,
+        height: u32,
+    ) -> Result<BTreeSet<Vec<u8>>> {
+        // `height` is consumed only when --features address-indexing is
+        // enabled. Default builds keep the parameter for API stability
+        // (cheaper than a feature-conditional signature).
+        #[cfg(not(feature = "address-indexing"))]
+        let _ = height;
         // Track unique addresses that have their spendable outpoints updated
-        #[cfg(feature = "cache")]
+        #[cfg(any(feature = "cache", feature = "address-indexing"))]
         let mut updated_addresses: BTreeSet<Vec<u8>> = BTreeSet::new();
 
-        #[cfg(not(feature = "cache"))]
+        #[cfg(not(any(feature = "cache", feature = "address-indexing")))]
         let updated_addresses: BTreeSet<Vec<u8>> = BTreeSet::new();
 
         for (txindex, transaction) in txdata.iter().enumerate() {
@@ -753,35 +774,52 @@ impl Protorune {
                 .TXID_TO_TXINDEX
                 .select(&tx_id.as_byte_array().to_vec())
                 .set_value(txindex as u32);
-            for (_index, input) in transaction.input.iter().enumerate() {
-                tables::OUTPOINT_SPENDABLE_BY
-                    .select(&consensus_encode(&input.previous_output)?)
-                    .nullify();
-            }
-            for (index, output) in transaction.output.iter().enumerate() {
-                let outpoint = OutPoint {
-                    txid: tx_id.clone(),
-                    vout: index as u32,
-                };
-                let output_script_pubkey: &ScriptBuf = &output.script_pubkey;
-                if Payload::from_script(output_script_pubkey).is_ok() {
-                    let outpoint_bytes: Vec<u8> = consensus_encode(&outpoint)?;
-                    let address_str = to_address_str(output_script_pubkey)?;
-                    let address = address_str.into_bytes();
 
-                    // Add address to the set of updated addresses
-                    #[cfg(feature = "cache")]
-                    updated_addresses.insert(address.to_vec());
-
-                    tables::OUTPOINTS_FOR_ADDRESS
-                        .select(&address.clone())
-                        .append(Arc::new(outpoint_bytes.clone()));
-                    tables::OUTPOINT_SPENDABLE_BY
-                        .select(&outpoint_bytes.clone())
-                        .set(Arc::new(address.clone()))
+            // v3: the OUTPOINT_SPENDABLE_BY / OUTPOINTS_FOR_ADDRESS
+            // address-index family is no longer canonical state. The
+            // unwrap.rs spentness probe migrated to the chunked
+            // OUTPOINT_TO_RUNES spent_at_height marker; address-keyed
+            // lookups (protorunesbyaddress / runesbyaddress /
+            // spendablesbyaddress) are handled by espo middleware via
+            // esplora's UTXO API. We keep the per-tx TXID_TO_TXINDEX
+            // write above (still load-bearing for txindex resolution in
+            // view.rs::*_outpoint_to_outpoint_response) but drop the
+            // per-input nullify + per-output address write pair —
+            // historically the dominant write source on
+            // address-rich mainnet blocks.
+            //
+            // When --features cache is enabled, populate
+            // updated_addresses from output script pubkeys directly so
+            // cache invalidation downstream still sees the right set.
+            #[cfg(all(feature = "cache", not(feature = "address-indexing")))]
+            for output in transaction.output.iter() {
+                if Payload::from_script(&output.script_pubkey).is_ok() {
+                    if let std::result::Result::Ok(address_str) =
+                        to_address_str(&output.script_pubkey)
+                    {
+                        updated_addresses.insert(address_str.into_bytes());
+                    }
                 }
             }
         }
+
+        // v3 `address-indexing` opt-in: rewrite one chunked
+        // AddressOutpoints record per affected address. This is the
+        // sole place where /v3/addr/* state is written. The accumulator
+        // pattern guarantees one chunk write per address per block,
+        // regardless of how many of that address's outpoints were
+        // touched. Determinism contract: outpoints are sorted by
+        // (txid_le, vout) ascending. See `crate::address_index` for the
+        // full design discussion.
+        //
+        // The address-indexing writer ALSO populates updated_addresses
+        // (with the same union-of-inputs-and-outputs set), so when
+        // --features cache,address-indexing are both on we don't
+        // double-walk the outputs in the loop above — the
+        // `not(feature = "address-indexing")` cfg-gate skips that
+        // walk.
+        #[cfg(feature = "address-indexing")]
+        crate::address_index::write_address_index(txdata, height, &mut updated_addresses)?;
 
         // Return the set of updated addresses
         Ok(updated_addresses)
@@ -927,7 +965,9 @@ impl Protorune {
             //     "saving balancesheet: {:#?} to outpoint: {:#?}",
             //     sheet, outpoint
             // );
-            sheet.save(
+            // v3 chunked-outpoint write: one chunk per outpoint per block.
+            save_chunked(
+                &sheet,
                 &mut atomic.derive(
                     &table
                         .OUTPOINT_TO_RUNES
@@ -998,11 +1038,12 @@ impl Protorune {
             );
 
             // load the balance sheets
+            // v3 chunked-outpoint read: one chunk per outpoint.
             let sheets: Vec<BalanceSheet<AtomicPointer>> = tx
                 .input
                 .iter()
                 .map(|input| {
-                    Ok(load_sheet(
+                    Ok(load_sheet_chunked(
                         &mut atomic.derive(
                             &table
                                 .OUTPOINT_TO_RUNES
@@ -1116,7 +1157,12 @@ impl Protorune {
             for input in &tx.input {
                 //all inputs must be used up, even in cenotaphs
                 let key = consensus_encode(&input.previous_output)?;
-                clear_balances(&mut table.OUTPOINT_TO_RUNES.select(&key));
+                // v3 chunked-outpoint: mark the consumed input chunk as
+                // spent at this height (zero entries, spent_at_height set).
+                clear_chunked_balances(
+                    &mut table.OUTPOINT_TO_RUNES.select(&key),
+                    height as u32,
+                );
             }
         }
         Ok(())
@@ -1225,7 +1271,7 @@ impl Protorune {
         Self::index_outpoints(&block, height)?;
 
         // Get the set of updated addresses
-        let updated_addresses = Self::index_spendables(&block.txdata)?;
+        let updated_addresses = Self::index_spendables(&block.txdata, height as u32)?;
 
         Self::freeze_storage(height);
         Self::index_unspendables::<T>(&block, height)?;

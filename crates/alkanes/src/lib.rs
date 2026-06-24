@@ -24,9 +24,12 @@ use std::io::Cursor;
 use view::parcels_from_protobuf;
 pub mod block;
 pub mod etl;
+#[cfg(any(test, feature = "test-utils"))]
+pub mod fuel_probe;
 pub mod indexer;
 pub mod message;
 pub mod network;
+pub mod precompile;
 // precompile_diesel is always compiled into production builds (the
 // `tests::diesel_shadow` and `tests::diesel_sidebyside` paths need
 // `run_diesel_eoa` callable directly to compare against the wasm
@@ -34,8 +37,7 @@ pub mod network;
 // through the precompile depends on the `fastpath` Cargo feature.
 pub mod precompile_diesel;
 pub mod precompiled;
-#[cfg(any(test, feature = "test-utils"))]
-pub mod fuel_probe;
+pub mod recycle;
 pub mod tables;
 #[cfg(any(test, feature = "test-utils"))]
 pub mod tests;

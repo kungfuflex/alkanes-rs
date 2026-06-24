@@ -64,6 +64,17 @@ pub fn handle_message(
     }
     println!("================================");
     let target = cellpack.target.clone();
+
+    // RECYCLE CLAIM (8:dead opcode 3) is handled natively here, NOT by the wasm.
+    // The wasm cannot see `parcel.pointer` (the protostone output the response is
+    // routed to), so a wasm claim can't bind the payout to the ledger key — the
+    // theft vector ksyao found (PR #266). The native handler keys the ledger off
+    // the payout output's spk, so a claim can only ever release the ledger of the
+    // address it actually pays.
+    if crate::recycle::is_recycle_claim(&cellpack.target, &cellpack.inputs) {
+        return crate::recycle::handle_claim(parcel);
+    }
+
     let context = Arc::new(Mutex::new(AlkanesRuntimeContext::from_parcel_and_cellpack(
         parcel, &cellpack,
     )));

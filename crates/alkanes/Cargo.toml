@@ -41,7 +41,7 @@ refunder = []
 merkle_distributor = []
 free_mint = []
 upgradeable = []
-debug-log = []
+debug-log = ["metashrew-core/debug-log", "protorune/debug-log"]
 # fastpath: force the DIESEL precompile active from genesis instead of
 # waiting for V220_FORK_HEIGHT. The native DIESEL implementation
 # (precompile_diesel.rs) ships in every production build — `fastpath`
@@ -51,6 +51,9 @@ debug-log = []
 # for regtest/dev where there is no fork height. Consensus equivalence
 # is enforced by `tests::diesel_shadow`.
 fastpath = []
+# address-indexing: restore v2-style address-keyed views on top of v3 chunked
+# storage (off in the canonical mainnet build).
+address-indexing = ["protorune/address-indexing"]
 
 [dependencies]
 anyhow = { workspace = true }

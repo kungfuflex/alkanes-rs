@@ -6,7 +6,7 @@ publish = false
 description = "Native integration tests for alkanes using real wasmtime multi-indexer harness"
 
 [dependencies]
-metashrew-support = { path = "../metashrew-support" }
+metashrew-support = { workspace = true }
 alkanes-cli-common = { path = "../alkanes-cli-common", default-features = false, features = ["test-utils", "std", "native-deps"] }
 alkanes-support = { path = "../alkanes-support" }
 protorune-support = { path = "../protorune-support" }
@@ -38,4 +38,4 @@ tempfile = "3"
 [dev-dependencies]
 env_logger = "0.10"
 alkanes = { path = "../alkanes", default-features = false, features = ["test-utils"] }
-metashrew-core = { path = "../metashrew-core" }
+metashrew-core = { workspace = true }
