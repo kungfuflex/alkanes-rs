@@ -64,6 +64,23 @@ impl Cellpack {
 impl TryFrom<Vec<u128>> for Cellpack {
     type Error = anyhow::Error;
     fn try_from(v: Vec<u128>) -> std::result::Result<Cellpack, Self::Error> {
+        // Length guard added 2026-06-25 (audit candidate Ceyz.sats finding F1):
+        // a protostone message that decodes to fewer than 2 varints (e.g. a
+        // 15-byte continued-LEB payload [0x80;14, 0x01]) would otherwise reach
+        // `&v[0..2]` below and PANIC with "range out of bounds" — the slice
+        // expression is evaluated before the `try_from`'s `?`, so the panic
+        // fires before any error can propagate. Combined with metashrew's
+        // panic-stops-block behavior, a single ~37-byte mineable OP_RETURN
+        // would halt every alkanes indexer network-wide until a patch +
+        // reindex. The dispatcher in `crates/alkanes/src/message.rs` already
+        // treats an Err from this `try_from` as "skip protostone, refund,
+        // continue" — no behavior change for valid txs.
+        if v.len() < 2 {
+            return Err(anyhow::anyhow!(
+                "cellpack: need at least 2 varints (target.block + target.tx), got {}",
+                v.len()
+            ));
+        }
         Ok(Cellpack {
             target: <[u128; 2] as TryFrom<&[u128]>>::try_from(&v[0..2])?.into(),
             inputs: (&v[2..]).to_vec(),
