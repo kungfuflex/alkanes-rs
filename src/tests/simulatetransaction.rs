@@ -337,6 +337,153 @@ mod tests {
         Ok(())
     }
 
+    /// `simulate_block` smoke test: a 3-tx block (coinbase + 2 GetName
+    /// invocations) at h=1 verifies the orchestration shape:
+    ///   * Coinbase surfaces as `error = Some("coinbase")` so the index
+    ///     alignment is preserved (`txs[i]` corresponds to
+    ///     `block.txdata[i]`).
+    ///   * Both runestone-bearing txs run + produce traces, in order.
+    ///   * `block_hash` matches the input block's computed hash.
+    ///   * Per-tx fuel sums to `total_fuel_used`.
+    ///   * Zero on-disk side effects (the shared sandbox never touches
+    ///     the underlying store).
+    ///
+    /// Asset-flow correctness across tx boundaries is exercised by the
+    /// live indexer's existing `index_block` tests; this view function
+    /// just delegates the per-tx body to the same `index_protostones`
+    /// code path with the shared atomic.
+    #[wasm_bindgen_test]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    fn simulate_block_runs_each_tx_in_order_with_shared_sandbox() -> Result<()> {
+        use crate::tables::TRACES_BY_HEIGHT;
+        use crate::view::{simulate_block, SimulateBlockInput};
+        use bitcoin::consensus::serialize as bitcoin_serialize;
+        use bitcoin::hashes::Hash;
+        use bitcoin::{
+            blockdata::block::{Header, Version as BlockVersion},
+            BlockHash, CompactTarget, TxMerkleNode,
+        };
+        use protorune::protostone::Protostones;
+
+        clear();
+
+        // Seed the underlying store at h=0 so the genesis alkane at (2,0)
+        // is installed when our simulate_block txs invoke it.
+        let setup_cellpacks = vec![Cellpack {
+            target: AlkaneId { block: 1, tx: 0 },
+            inputs: vec![78],
+        }];
+        let setup_block: Block = alkane_helpers::init_with_multiple_cellpacks(
+            alkanes_std_test_build::get_bytes(),
+            setup_cellpacks,
+        );
+        crate::index_block(&setup_block, 0u32)?;
+        let setup_tx = &setup_block.txdata[1];
+        let prev_outpoint = OutPoint { txid: setup_tx.compute_txid(), vout: 0 };
+
+        // Build two GetName-invoking txs in sequence. tx2 references
+        // tx1's output (intra-block link), even though GetName itself
+        // doesn't actually transfer alkanes — the point is that the
+        // shared-sandbox flow handles the inter-tx outpoint
+        // chain without crashing.
+        fn build_getname_tx(prev: OutPoint) -> Transaction {
+            let cellpack = Cellpack {
+                target: AlkaneId { block: 2, tx: 0 },
+                inputs: vec![99u128],
+            };
+            let protostone = Protostone {
+                message: cellpack.encipher(),
+                protocol_tag: 1,
+                from: None,
+                burn: None,
+                pointer: Some(0),
+                refund: Some(0),
+                edicts: vec![],
+            };
+            let runestone_script: ScriptBuf = (Runestone {
+                etching: None,
+                mint: None,
+                pointer: None,
+                edicts: vec![],
+                protocol: vec![protostone].encipher().ok(),
+            })
+            .encipher();
+            Transaction {
+                version: Version::ONE,
+                lock_time: bitcoin::absolute::LockTime::ZERO,
+                input: vec![TxIn {
+                    previous_output: prev,
+                    script_sig: ScriptBuf::new(),
+                    sequence: Sequence::MAX,
+                    witness: Witness::new(),
+                }],
+                output: vec![
+                    TxOut { script_pubkey: ScriptBuf::new(), value: Amount::from_sat(546) },
+                    TxOut { script_pubkey: runestone_script, value: Amount::from_sat(0) },
+                ],
+            }
+        }
+
+        let coinbase = Transaction {
+            version: Version::ONE,
+            lock_time: bitcoin::absolute::LockTime::ZERO,
+            input: vec![TxIn {
+                previous_output: OutPoint::null(),
+                script_sig: ScriptBuf::from_bytes(vec![0x01, 0x01]),
+                sequence: Sequence::MAX,
+                witness: Witness::new(),
+            }],
+            output: vec![TxOut { script_pubkey: ScriptBuf::new(), value: Amount::from_sat(0) }],
+        };
+        let tx1 = build_getname_tx(prev_outpoint);
+        let tx2 = build_getname_tx(OutPoint { txid: tx1.compute_txid(), vout: 0 });
+
+        let block = Block {
+            header: Header {
+                version: BlockVersion::ONE,
+                prev_blockhash: BlockHash::all_zeros(),
+                merkle_root: TxMerkleNode::all_zeros(),
+                time: 0,
+                bits: CompactTarget::from_consensus(0),
+                nonce: 0xDEAD_BEEF,
+            },
+            txdata: vec![coinbase, tx1, tx2],
+        };
+        let block_bytes = bitcoin_serialize(&block);
+        let expected_block_hash = block.block_hash().to_string();
+
+        let table = RuneTable::for_protocol(AlkaneMessageContext::protocol_tag());
+        let key = consensus_encode(&prev_outpoint)?;
+        let pre_state = table.OUTPOINT_TO_RUNES.select(&key).keyword("/length").get_value::<u32>();
+        let pre_traces_at_h1 = TRACES_BY_HEIGHT.select_value(1u64).length();
+
+        let response = simulate_block(SimulateBlockInput {
+            height: 1,
+            block_bytes,
+            storage_overrides: vec![],
+        })?;
+
+        assert!(response.error.is_none(), "simulate_block error: {:?}", response.error);
+        assert_eq!(response.block_hash, expected_block_hash);
+        assert_eq!(response.height, 1);
+        assert_eq!(response.txs.len(), 3, "expected 3 tx slots (coinbase + 2 runestones)");
+        assert_eq!(response.txs[0].error.as_deref(), Some("coinbase"));
+        assert!(response.txs[1].error.is_none(), "tx1 should succeed");
+        assert!(response.txs[2].error.is_none(), "tx2 should succeed (sees tx1's sandbox state)");
+        assert!(!response.txs[1].protostones.is_empty());
+        assert!(!response.txs[2].protostones.is_empty());
+
+        let summed: u64 = response.txs.iter().map(|t| t.total_fuel_used).sum();
+        assert_eq!(response.total_fuel_used, summed);
+
+        // Zero on-disk side effects.
+        let post_state = table.OUTPOINT_TO_RUNES.select(&key).keyword("/length").get_value::<u32>();
+        assert_eq!(pre_state, post_state, "simulate_block must NOT mutate OUTPOINT_TO_RUNES");
+        let post_traces_at_h1 = TRACES_BY_HEIGHT.select_value(1u64).length();
+        assert_eq!(pre_traces_at_h1, post_traces_at_h1, "simulate_block must NOT persist traces");
+        Ok(())
+    }
+
     /// Storage overrides path: confirm that pre-execution writes injected
     /// into the sandbox atomic are visible to the executing alkane.
     /// alkanes-std-test opcode 1 is a no-op that just echoes — but more
