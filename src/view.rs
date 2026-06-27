@@ -4,7 +4,8 @@ use crate::tables::{TRACES, TRACES_BY_HEIGHT};
 use crate::unwrap as unwrap_view;
 use crate::utils::{
     alkane_id_to_outpoint, alkane_inventory_pointer, balance_pointer, credit_balances,
-    debit_balances, pipe_storagemap_to,
+    debit_balances, disable_touched_storage_collector, drain_touched_storage,
+    enable_touched_storage_collector, pipe_storagemap_to,
 };
 use crate::vm::instance::AlkanesInstance;
 use crate::vm::runtime::AlkanesRuntimeContext;
@@ -25,7 +26,8 @@ use bitcoin::blockdata::transaction::Version;
 use bitcoin::consensus::encode::serialize;
 use bitcoin::hashes::Hash;
 use bitcoin::{
-    blockdata::block::Header, Block, BlockHash, CompactTarget, OutPoint, Transaction, TxMerkleNode,
+    blockdata::block::Header, Amount, Block, BlockHash, CompactTarget, OutPoint, ScriptBuf,
+    Sequence, Transaction, TxIn, TxMerkleNode, TxOut, Witness,
 };
 use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
 #[allow(unused_imports)]
@@ -515,35 +517,54 @@ pub fn multi_simulate_safe(
 }
 
 // ---------------------------------------------------------------------------
-// simulate_transaction — full per-tx sandbox replay
+// simulate_protostones / simulate_transaction — full per-tx sandbox replay
 // ---------------------------------------------------------------------------
 //
-// Drives the exact same per-tx code path the live indexer uses
-// (`Protorune::index_protostones::<AlkaneMessageContext>`) but with:
+// Two-tier design:
 //
-//   1. A sandbox `AtomicPointer` — never committed, so any writes that
-//      went through the atomic chain get discarded on drop.
-//   2. The protorune-side `skip_protostone_persistence` flag — skips the
-//      terminal `save_balances` + `clear_balances` writes (those go through
-//      non-atomic IndexPointers and would persist regardless of the
-//      sandbox atomic).
-//   3. The trace.rs view-mode collector — `save_trace` pushes into the
-//      collector instead of writing the TRACES + TRACES_BY_HEIGHT tables.
-//   4. The protorune-side final-balances sink — captures the
-//      per-vout `proto_balances_by_output` at the end of
-//      `index_protostones` so the caller can read it.
+//   * `simulate_protostones(input)` — lower-level. Caller supplies:
+//       - alkane inputs (what flows in to the first protostone),
+//       - a list of protostones (already enciphered, same bytes a
+//         runestone's protocol field would carry),
+//       - optional transaction bytes (for `self.transaction()` host call;
+//         when omitted, a synthetic tx is constructed),
+//       - optional block bytes (for `self.block()` host call; when
+//         omitted, a minimal single-tx wrapper is built),
+//       - optional storage overrides (pre-execution writes to specific
+//         alkanes' storage slots, applied through the sandbox atomic).
 //
-// The result: identical execution semantics (including fuel accounting,
-// trace shape, edict processing, message dispatch through
-// `AlkaneMessageContext::handle`), zero on-disk side effects. This lets
-// `subfrost-mobile`'s preview / fanout layer hand a constructed PSBT to
-// the indexer and get back the same balance + trace shape the chain would
-// produce post-mining.
+//   * `simulate_transaction(input)` — wrapper. Decodes a PSBT or raw tx,
+//     derives `alkane_inputs` by loading each spent outpoint's
+//     OUTPOINT_TO_RUNES through the sandbox atomic (so they reflect live
+//     chain state at `height`), and auto-synthesizes a realistic-looking
+//     faux block chained off the last indexed header (vanity nonce with
+//     CRC32-salted low bytes — see `synthesize_faux_block_for`). Then
+//     delegates to `simulate_protostones` and returns the same response
+//     shape.
+//
+// Both reuse the exact code path the indexer uses
+// (`Protorune::index_protostones::<AlkaneMessageContext>`) — same fuel
+// accounting, trace shape, edict processing, message dispatch. The view-
+// mode toggles ensure zero on-disk side effects:
+//
+//   1. Sandbox `AtomicPointer` — never committed; writes discarded on drop.
+//   2. `skip_protostone_persistence` — gates the terminal `save_balances`
+//      + `clear_balances` block (those go through non-atomic IndexPointers
+//      so the sandbox atomic alone wouldn't roll them back).
+//   3. View-mode trace collector — `save_trace` pushes to a thread-local
+//      buffer instead of TRACES + TRACES_BY_HEIGHT.
+//   4. Final-balances sink — captures `proto_balances_by_output` at the
+//      end of `index_protostones` for the caller.
+//   5. Touched-storage collector — per-protostone, per-alkane storage
+//      writes (from both `handle_message` and the extcall `Saveable::save`
+//      path), bucketed using the per-iteration protostone index set by
+//      protorune.
 
-/// Native Rust response shape (no proto dependency at this layer — the
-/// JSON-RPC binding in `lib.rs` can serialize this to whatever surface is
-/// convenient). Mirrors the user's spec: per-vout final balance sheets,
-/// per-protostone fuel + trace, total fuel.
+/// Native Rust response shape. The proto encoding in `simulate_protostones_proto`
+/// / `simulate_transaction_proto` mirrors this. Mirrors the user's spec:
+/// per-vout final balance sheets, per-protostone fuel + trace +
+/// touched-storage map, total fuel, the actually-used block/tx bytes
+/// (provided or synthesized).
 #[derive(Debug, Clone)]
 pub struct SimulateTransactionResponseNative {
     pub txid: String,
@@ -551,18 +572,36 @@ pub struct SimulateTransactionResponseNative {
     pub protostones: Vec<ProtostoneExecution>,
     pub final_balances_by_vout: Vec<VoutBalances>,
     pub total_fuel_used: u64,
+    /// Consensus-encoded bytes of the tx that was actually run. For
+    /// `simulate_transaction` this is whatever the caller supplied (the
+    /// final-form Transaction extracted from a PSBT). For
+    /// `simulate_protostones` this is either the caller-supplied tx or
+    /// the synthesized one carrying their protostones in OP_RETURN.
+    pub used_transaction_bytes: Vec<u8>,
+    /// Consensus-encoded bytes of the block that was actually run. For
+    /// `simulate_transaction` this is the auto-synthesized faux block
+    /// (header chained off the previous indexed block, vanity nonce).
+    /// For `simulate_protostones` this is the caller-supplied block or
+    /// a minimal single-tx wrapper around the (provided or synthesized) tx.
+    pub used_block_bytes: Vec<u8>,
     pub error: Option<String>,
 }
 
 #[derive(Debug, Clone)]
 pub struct ProtostoneExecution {
-    /// Index of the protostone within the runestone's protocol field.
     pub index: usize,
     /// The synthetic outpoint the trace was keyed on
     /// (txid + shadow vout = num_real_outputs + 1 + index).
     pub outpoint: OutPoint,
-    /// Full trace as it would have been persisted by the indexer.
     pub trace: alkanes_support::trace::Trace,
+    pub fuel_used: u64,
+    /// Final values of every storage slot touched by this protostone,
+    /// keyed by the alkane that owns the slot (an alkane can extcall
+    /// and mutate another alkane's storage during execution, so multiple
+    /// entries per protostone are normal). Captures the LAST write per
+    /// (alkane_id, key) pair across all `handle_message` + extcall
+    /// returns that fired inside this protostone's processing.
+    pub touched_storage: Vec<(AlkaneId, Vec<(Vec<u8>, Vec<u8>)>)>,
 }
 
 #[derive(Debug, Clone)]
@@ -571,27 +610,167 @@ pub struct VoutBalances {
     pub runes: Vec<(ProtoruneRuneId, u128)>,
 }
 
+/// Structured input for `simulate_protostones`. Mirrors the
+/// SimulateProtostonesRequest proto. All fields except `height` are
+/// optional from the caller's perspective: an empty `alkane_inputs`
+/// means the first protostone sees no incoming alkanes; an empty
+/// `protostones` means there's nothing to execute and the response
+/// will be empty with `error = "no protostones"`.
+#[derive(Debug, Clone)]
+pub struct SimulateProtostonesInput {
+    pub height: u64,
+    pub alkane_inputs: Vec<alkanes_support::parcel::AlkaneTransfer>,
+    /// Enciphered protostones — the same bytes a runestone's protocol
+    /// field carries (i.e. `encode_varint_list(&protostones.encipher()?)`
+    /// in Rust client code).
+    pub protostones_bytes: Vec<u8>,
+    pub transaction_bytes: Option<Vec<u8>>,
+    pub block_bytes: Option<Vec<u8>>,
+    pub storage_overrides: Vec<(AlkaneId, Vec<(Vec<u8>, Vec<u8>)>)>,
+}
+
 /// Decode either a PSBT-hex or raw-tx-hex string into a `bitcoin::Transaction`.
 /// PSBT first (because a PSBT envelope is the more common mobile-app input);
 /// fall back to raw-tx if PSBT deserialize fails.
-fn decode_tx_or_psbt(input_hex: &str) -> Result<Transaction> {
+pub fn decode_tx_or_psbt(input_hex: &str) -> Result<Transaction> {
     let bytes = hex::decode(input_hex.trim_start_matches("0x"))
         .map_err(|e| anyhow!("hex decode failed: {}", e))?;
-    if let std::result::Result::Ok(psbt) = bitcoin::Psbt::deserialize(&bytes) {
-        // extract_tx_unchecked_fee_rate: the simulate path doesn't care about
-        // fee-rate safety, only about the final-form Transaction the chain
-        // would mine.
+    decode_tx_or_psbt_bytes(&bytes)
+}
+
+pub fn decode_tx_or_psbt_bytes(bytes: &[u8]) -> Result<Transaction> {
+    if let std::result::Result::Ok(psbt) = bitcoin::Psbt::deserialize(bytes) {
         return Ok(psbt.extract_tx_unchecked_fee_rate());
     }
-    bitcoin::consensus::deserialize::<Transaction>(&bytes)
+    bitcoin::consensus::deserialize::<Transaction>(bytes)
         .map_err(|e| anyhow!("input is neither valid PSBT nor raw tx: {}", e))
 }
 
-/// Build a one-tx synthetic Block wrapper. The header values aren't
-/// consulted by the alkanes message-dispatch path beyond `block.txdata`,
-/// so dummy header values are safe.
-fn build_synthetic_block_for(tx: Transaction, height: u64) -> Block {
-    let _ = height; // header doesn't carry height; included for clarity at callsite
+/// Minimal coinbase tx for a synthesized block. Real coinbase txs encode
+/// the height in BIP34; we follow the same shape (script_sig = BIP34
+/// little-endian height bytes) so a contract introspecting block.txdata[0]
+/// sees a structurally-valid coinbase. Single zero-value output to a
+/// nobody address.
+fn synth_coinbase(height: u64) -> Transaction {
+    let mut height_script = Vec::<u8>::new();
+    // BIP34: push the height as a little-endian minimal byte string.
+    let mut h = height;
+    let mut hbytes = Vec::<u8>::new();
+    if h == 0 {
+        hbytes.push(0);
+    } else {
+        while h > 0 {
+            hbytes.push((h & 0xff) as u8);
+            h >>= 8;
+        }
+    }
+    height_script.push(hbytes.len() as u8);
+    height_script.extend_from_slice(&hbytes);
+    Transaction {
+        version: Version::ONE,
+        lock_time: bitcoin::absolute::LockTime::ZERO,
+        input: vec![TxIn {
+            previous_output: OutPoint::null(),
+            script_sig: ScriptBuf::from_bytes(height_script),
+            sequence: Sequence::MAX,
+            witness: Witness::new(),
+        }],
+        output: vec![TxOut {
+            script_pubkey: ScriptBuf::new(),
+            value: Amount::from_sat(0),
+        }],
+    }
+}
+
+/// Compute a vanity nonce that's structurally a u32 but unambiguously
+/// non-PoW. Layout: high 16 bits = 0xDEAD (visible marker that this is a
+/// simulator-fabricated nonce), low 16 bits = CRC32(txid + height) & 0xFFFF
+/// (salt so independent simulations don't collide on the marker alone).
+/// A real miner would never produce 0xDEAD???? except by 1-in-65,536 luck;
+/// any developer inspecting the block can see this is fake immediately.
+fn vanity_nonce(seed_bytes: &[u8]) -> u32 {
+    let crc = crc32(seed_bytes);
+    0xDEAD_0000u32 | (crc & 0xFFFF)
+}
+
+/// Tiny CRC32 (poly 0xEDB88320) so we don't pull in a crate just for this.
+fn crc32(bytes: &[u8]) -> u32 {
+    let mut crc: u32 = 0xFFFF_FFFF;
+    for &b in bytes {
+        crc ^= b as u32;
+        for _ in 0..8 {
+            let mask = (crc & 1).wrapping_neg();
+            crc = (crc >> 1) ^ (0xEDB8_8320 & mask);
+        }
+    }
+    !crc
+}
+
+/// Synthesize a faux block that wraps `tx` at the given `height`. Chains
+/// off the previous indexed block's header if available (so prev_blockhash,
+/// time, and bits look continuous with the chain); otherwise falls back
+/// to zeroed defaults. The nonce is always the vanity sentinel — see
+/// `vanity_nonce`. The merkle root is computed honestly over [coinbase,
+/// tx] so a contract that recomputes it from block.txdata sees a
+/// consistent block. Used by `simulate_transaction`'s auto-build path.
+pub fn synthesize_faux_block_for(tx: Transaction, height: u64) -> Block {
+    let coinbase = synth_coinbase(height);
+    let txdata = vec![coinbase, tx];
+
+    // Previous-block lookup: best-effort. If `etl::get_block(height-1)`
+    // succeeds, chain off it. Otherwise default to zeros.
+    let (prev_blockhash, prev_time, prev_bits) = if height > 0 {
+        match crate::etl::get_block((height - 1) as u32) {
+            std::result::Result::Ok(prev) => (
+                prev.header.block_hash(),
+                prev.header.time,
+                prev.header.bits,
+            ),
+            std::result::Result::Err(_) => (
+                BlockHash::all_zeros(),
+                0,
+                CompactTarget::from_consensus(0),
+            ),
+        }
+    } else {
+        (
+            BlockHash::all_zeros(),
+            0,
+            CompactTarget::from_consensus(0),
+        )
+    };
+
+    // Nonce seed: bind to the user tx's txid + height so two distinct
+    // simulations don't end up with the same vanity value.
+    let mut seed = Vec::<u8>::new();
+    seed.extend_from_slice(&txdata[1].compute_txid()[..]);
+    seed.extend_from_slice(&height.to_le_bytes());
+    let nonce = vanity_nonce(&seed);
+
+    let mut block = Block {
+        header: Header {
+            version: bitcoin::blockdata::block::Version::ONE,
+            prev_blockhash,
+            merkle_root: TxMerkleNode::all_zeros(),
+            time: prev_time.saturating_add(600), // ~10 min — typical block interval
+            bits: prev_bits,
+            nonce,
+        },
+        txdata,
+    };
+    // Compute the honest merkle root now that txdata is fixed.
+    block.header.merkle_root = block
+        .compute_merkle_root()
+        .unwrap_or_else(TxMerkleNode::all_zeros);
+    block
+}
+
+/// Build a minimal single-tx Block wrapper (no faux-block heuristics).
+/// Used by `simulate_protostones` when the caller doesn't supply a block
+/// — the message-dispatch path doesn't introspect header fields beyond
+/// `block.txdata`, so dummies are safe at this layer. Callers that need
+/// realistic-looking blocks should pass `block_bytes` explicitly.
+fn minimal_block_wrapper(tx: Transaction) -> Block {
     Block {
         header: Header {
             version: bitcoin::blockdata::block::Version::ONE,
@@ -605,59 +784,271 @@ fn build_synthetic_block_for(tx: Transaction, height: u64) -> Block {
     }
 }
 
-/// `simulate_transaction` — primary entry point. Decodes the input
-/// (PSBT or raw tx hex), then runs the full per-tx indexer logic in a
-/// sandbox at `height`. Returns the native response (the lib.rs export
-/// wrapper handles proto encoding for the JSON-RPC surface).
-pub fn simulate_transaction(
-    input_hex: &str,
-    height: u64,
+/// Build a synthetic tx that carries the given protostones in its
+/// OP_RETURN. Used by `simulate_protostones` when the caller doesn't
+/// provide their own transaction. Constructed shape:
+///   * 1 input pointing at `synth_input_outpoint` (the caller will
+///     pre-populate that outpoint's OUTPOINT_TO_RUNES with the
+///     `alkane_inputs` via the sandbox atomic before
+///     `index_protostones` runs).
+///   * `num_dust_outputs` zero-value outputs (script_pubkey = empty) so
+///     any protostone.pointer values referencing vouts 0..N have somewhere
+///     real to land.
+///   * 1 final OP_RETURN carrying the runestone with the protostones'
+///     protocol field set to the decoded `protostones_values`.
+fn synth_tx_carrying_protostones(
+    synth_input_outpoint: OutPoint,
+    num_dust_outputs: usize,
+    protostones_values: Vec<u128>,
+) -> Transaction {
+    use ordinals::Runestone;
+    let runestone_script: ScriptBuf = (Runestone {
+        etching: None,
+        mint: None,
+        pointer: None,
+        edicts: vec![],
+        protocol: Some(protostones_values),
+    })
+    .encipher();
+
+    let mut output: Vec<TxOut> = (0..num_dust_outputs)
+        .map(|_| TxOut {
+            script_pubkey: ScriptBuf::new(),
+            value: Amount::from_sat(0),
+        })
+        .collect();
+    output.push(TxOut {
+        script_pubkey: runestone_script,
+        value: Amount::from_sat(0),
+    });
+
+    Transaction {
+        version: Version::ONE,
+        lock_time: bitcoin::absolute::LockTime::ZERO,
+        input: vec![TxIn {
+            previous_output: synth_input_outpoint,
+            script_sig: ScriptBuf::new(),
+            sequence: Sequence::MAX,
+            witness: Witness::new(),
+        }],
+        output,
+    }
+}
+
+/// Walk the storage overrides and write each entry into the sandbox
+/// atomic at `/alkanes/<id>/storage/<key>`. The next read through the
+/// host's `load_storage` will see these values (atomic reads walk the
+/// pending writes top-down before falling through to the underlying
+/// store).
+fn apply_storage_overrides(
+    atomic: &mut AtomicPointer,
+    overrides: &[(AlkaneId, Vec<(Vec<u8>, Vec<u8>)>)],
+) {
+    for (alkane, entries) in overrides {
+        for (k, v) in entries {
+            let mut ptr = atomic.derive(
+                &IndexPointer::from_keyword("/alkanes/")
+                    .select(&alkane.clone().into())
+                    .keyword("/storage/")
+                    .select(k),
+            );
+            ptr.set(Arc::new(v.clone()));
+        }
+    }
+}
+
+fn txid_is_all_zeros(txid: &bitcoin::Txid) -> bool {
+    txid[..].iter().all(|b| *b == 0)
+}
+
+/// Pre-populate the sandbox atomic with the alkane_inputs at the synth
+/// input outpoint. Mirrors what the indexer would see if the spent
+/// outpoint actually held these alkanes on-chain.
+fn seed_input_balances(
+    atomic: &mut AtomicPointer,
+    table: &protorune::tables::RuneTable,
+    outpoint: &OutPoint,
+    inputs: &[alkanes_support::parcel::AlkaneTransfer],
+) -> Result<()> {
+    use protorune::balance_sheet::PersistentRecord;
+    let runes: Vec<RuneTransfer> = inputs
+        .iter()
+        .map(|t| RuneTransfer {
+            id: t.id.clone().into(),
+            value: t.value,
+        })
+        .collect();
+    let sheet =
+        <BalanceSheet<AtomicPointer> as TryFrom<Vec<RuneTransfer>>>::try_from(runes)?;
+    let key = consensus_encode(outpoint)?;
+    sheet.save(&mut atomic.derive(&table.OUTPOINT_TO_RUNES.select(&key)), false);
+    Ok(())
+}
+
+/// Decode the enciphered protostones bytes — the same bytes the
+/// runestone's protocol field would carry — back into a `Vec<u128>`
+/// suitable for `Runestone { protocol: Some(values) }`. Empty input
+/// is allowed and produces an empty Vec.
+fn decode_protostones_bytes(bytes: &[u8]) -> Result<Vec<u128>> {
+    if bytes.is_empty() {
+        return Ok(Vec::new());
+    }
+    decode_varint_list(&mut Cursor::new(bytes.to_vec()))
+        .map_err(|e| anyhow!("failed to decode enciphered protostones bytes: {}", e))
+}
+
+/// Convert the touched-storage buckets returned by `drain_touched_storage`
+/// into the response shape (per-protostone ordered Vec, sorted by
+/// AlkaneId so the bytes are deterministic for caching/diffing).
+fn touched_storage_for_protostone(
+    bucket: &std::collections::BTreeMap<AlkaneId, std::collections::BTreeMap<Vec<u8>, Vec<u8>>>,
+) -> Vec<(AlkaneId, Vec<(Vec<u8>, Vec<u8>)>)> {
+    bucket
+        .iter()
+        .map(|(id, entries)| {
+            (
+                id.clone(),
+                entries
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect(),
+            )
+        })
+        .collect()
+}
+
+/// Lower-level entry point. Caller supplies the alkane inputs +
+/// protostones directly. See the module doc above for the full design.
+pub fn simulate_protostones(
+    input: SimulateProtostonesInput,
 ) -> Result<SimulateTransactionResponseNative> {
     set_view_mode();
 
-    let tx = decode_tx_or_psbt(input_hex)?;
-    let txid = tx.compute_txid().to_string();
+    let SimulateProtostonesInput {
+        height,
+        alkane_inputs,
+        protostones_bytes,
+        transaction_bytes,
+        block_bytes,
+        storage_overrides,
+    } = input;
 
-    // No runestone → nothing to simulate. Return an empty but well-formed response.
-    use ordinals::{Artifact, Runestone};
-    let runestone = match Runestone::decipher(&tx) {
-        Some(Artifact::Runestone(r)) => r,
-        _ => {
-            return Ok(SimulateTransactionResponseNative {
-                txid,
-                height,
-                protostones: vec![],
-                final_balances_by_vout: vec![],
-                total_fuel_used: 0,
-                error: Some("no runestone in transaction".to_string()),
-            });
-        }
+    let protostones_values = decode_protostones_bytes(&protostones_bytes)?;
+
+    // Decode or synthesize the transaction. Synth shape: 1 input
+    // pointing at a deterministic-but-fake outpoint (so the sandbox can
+    // pre-populate its OUTPOINT_TO_RUNES) + enough dust outputs to give
+    // protostone.pointer references a real vout to land on + the runestone
+    // OP_RETURN carrying these protostones.
+    let synth_input_outpoint = OutPoint {
+        txid: bitcoin::Txid::all_zeros(),
+        vout: 0,
     };
+    let tx = if let Some(bytes) = transaction_bytes {
+        decode_tx_or_psbt_bytes(&bytes)?
+    } else {
+        // Figure out how many dust outputs the protostones reference via
+        // their pointer fields. We need (max_pointer + 1) real outputs
+        // so the runestone OP_RETURN doesn't collide with a referenced
+        // vout. Build a temporary Vec<Protostone> from the decoded
+        // values to inspect pointers.
+        use protorune_support::protostone::Protostone;
+        let parsed_for_pointers = Protostone::decipher(&protostones_values).unwrap_or_default();
+        let max_pointer: u32 = parsed_for_pointers
+            .iter()
+            .filter_map(|p| p.pointer)
+            .max()
+            .unwrap_or(0);
+        let num_dust_outputs = (max_pointer as usize).saturating_add(1);
+        synth_tx_carrying_protostones(
+            synth_input_outpoint,
+            num_dust_outputs,
+            protostones_values.clone(),
+        )
+    };
+    let txid = tx.compute_txid().to_string();
+    let used_transaction_bytes = serialize(&tx);
 
-    let block = build_synthetic_block_for(tx.clone(), height);
-    let runestone_output_index = protorune::Protorune::get_runestone_output_index(&tx)?;
+    // Build a Runestone with the user-supplied protocol field, so
+    // index_protostones sees exactly the protostones the caller asked
+    // for (independent of what the tx's actual OP_RETURN says).
+    use ordinals::Runestone;
+    let runestone = Runestone {
+        etching: None,
+        mint: None,
+        pointer: None,
+        edicts: vec![],
+        protocol: if protostones_values.is_empty() {
+            None
+        } else {
+            Some(protostones_values.clone())
+        },
+    };
+    let runestone_output_index = protorune::Protorune::get_runestone_output_index(&tx)
+        .unwrap_or((tx.output.len() as u32).saturating_sub(1));
 
-    // Fresh FuelTank — full block fuel for the synthetic single-tx block.
-    // The real indexer initializes per-block; we're not racing it because
-    // each view query gets a fresh metashrew runtime.
+    // Decode or build the block.
+    let block = if let Some(bytes) = block_bytes {
+        bitcoin::consensus::deserialize::<Block>(&bytes)
+            .map_err(|e| anyhow!("block bytes did not decode: {}", e))?
+    } else {
+        minimal_block_wrapper(tx.clone())
+    };
+    let used_block_bytes = serialize(&block);
+
+    // Empty-protocol short-circuit. Saves a fuel-tank init + sandbox spin-up.
+    if protostones_values.is_empty() {
+        return Ok(SimulateTransactionResponseNative {
+            txid,
+            height,
+            protostones: vec![],
+            final_balances_by_vout: vec![],
+            total_fuel_used: 0,
+            used_transaction_bytes,
+            used_block_bytes,
+            error: Some("no protostones to simulate".to_string()),
+        });
+    }
+
     use crate::vm::fuel::FuelTank;
     FuelTank::initialize(&block, height as u32);
 
-    // Activate the three view-mode toggles. RAII-style guard would be nicer
-    // but the protorune/alkanes crate split makes a clean Drop impl awkward;
-    // the function body is short enough that the manual disable at the end
-    // is safe (we also disable in the error arm below).
+    // Activate the view-mode collectors.
     crate::trace::enable_view_trace_collector();
     protorune::enable_skip_protostone_persistence();
     protorune::enable_final_balances_sink();
+    enable_touched_storage_collector();
 
     let mut sandbox_atomic = AtomicPointer::default();
+
+    // Pre-execution seeds: storage overrides + input outpoint balances.
+    apply_storage_overrides(&mut sandbox_atomic, &storage_overrides);
+    let table = protorune::tables::RuneTable::for_protocol(
+        <AlkaneMessageContext as MessageContext>::protocol_tag(),
+    );
+    // Only seed input balances when the synth-tx path is in effect:
+    // there's no real chain state behind `synth_input_outpoint`, so
+    // `index_protostones`'s load_sheet would see nothing. When the caller
+    // supplies a real transaction, its inputs point at real outpoints
+    // that already hold the right OUTPOINT_TO_RUNES state — seeding on
+    // top of that would write duplicate entries (BalanceSheet::save
+    // appends, not overwrites) and inflate the alkane balance going in.
+    let used_synth_tx = txid_is_all_zeros(&tx.input[0].previous_output.txid);
+    if used_synth_tx && !alkane_inputs.is_empty() {
+        seed_input_balances(
+            &mut sandbox_atomic,
+            &table,
+            &synth_input_outpoint,
+            &alkane_inputs,
+        )?;
+    }
+
     let mut balances_by_output: BTreeMap<u32, BalanceSheet<AtomicPointer>> = BTreeMap::new();
 
     let outcome = protorune::Protorune::index_protostones::<AlkaneMessageContext>(
         &mut sandbox_atomic,
         &tx,
-        0, // txindex — single-tx synthetic block
+        0,
         &block,
         height,
         &runestone,
@@ -666,12 +1057,14 @@ pub fn simulate_transaction(
         protorune::default_output(&tx),
     );
 
-    // Drain regardless of outcome so the next call starts clean.
+    // Drain everything before returning so the next call starts clean.
     let collected_traces = crate::trace::drain_view_traces();
     let collected_balances = protorune::drain_final_balances();
+    let touched_buckets = drain_touched_storage();
     crate::trace::disable_view_trace_collector();
     protorune::disable_skip_protostone_persistence();
     protorune::disable_final_balances_sink();
+    disable_touched_storage_collector();
 
     if let Err(e) = outcome {
         return Ok(SimulateTransactionResponseNative {
@@ -680,35 +1073,49 @@ pub fn simulate_transaction(
             protostones: vec![],
             final_balances_by_vout: vec![],
             total_fuel_used: 0,
+            used_transaction_bytes,
+            used_block_bytes,
             error: Some(format!("index_protostones failed: {}", e)),
         });
     }
 
-    // Compute total fuel by walking each trace's TraceEvents and summing
-    // fuel_used from every ReturnContext + RevertContext.
+    // Sum fuel from each trace's ReturnContext + RevertContext events.
+    // Per-protostone fuel = sum of all return/revert frames in that
+    // protostone's trace (top-level + extcalls).
     use alkanes_support::trace::TraceEvent;
-    let mut total_fuel_used: u64 = 0;
-    for (_op, tr) in collected_traces.iter() {
+    let sum_fuel = |tr: &alkanes_support::trace::Trace| -> u64 {
+        let mut acc: u64 = 0;
         for ev in tr.0.lock().unwrap().iter() {
             match ev {
                 TraceEvent::ReturnContext(r) | TraceEvent::RevertContext(r) => {
-                    // Cap RevertContext fuel (= u64::MAX) so total stays meaningful.
                     if r.fuel_used != u64::MAX {
-                        total_fuel_used = total_fuel_used.saturating_add(r.fuel_used);
+                        acc = acc.saturating_add(r.fuel_used);
                     }
                 }
                 _ => {}
             }
         }
-    }
+        acc
+    };
 
+    let mut total_fuel_used: u64 = 0;
     let protostones: Vec<ProtostoneExecution> = collected_traces
         .into_iter()
         .enumerate()
-        .map(|(i, (op, tr))| ProtostoneExecution {
-            index: i,
-            outpoint: op,
-            trace: tr,
+        .map(|(i, (op, tr))| {
+            let fuel = sum_fuel(&tr);
+            total_fuel_used = total_fuel_used.saturating_add(fuel);
+            let touched = touched_buckets
+                .get(i)
+                .map(touched_storage_for_protostone)
+                .unwrap_or_default();
+            ProtostoneExecution {
+                index: i,
+                outpoint: op,
+                trace: tr,
+                fuel_used: fuel,
+                touched_storage: touched,
+            }
         })
         .collect();
 
@@ -730,8 +1137,276 @@ pub fn simulate_transaction(
         protostones,
         final_balances_by_vout,
         total_fuel_used,
+        used_transaction_bytes,
+        used_block_bytes,
         error: None,
     })
+}
+
+/// Higher-level entry point. Wraps `simulate_protostones`: decodes the
+/// PSBT/raw-tx input, derives `alkane_inputs` from the spent outpoints'
+/// live OUTPOINT_TO_RUNES state, auto-synthesizes a faux block, and
+/// delegates. Returns the same response shape.
+pub fn simulate_transaction(
+    input_hex: &str,
+    height: u64,
+) -> Result<SimulateTransactionResponseNative> {
+    simulate_transaction_with_overrides(input_hex, height, Vec::new())
+}
+
+pub fn simulate_transaction_with_overrides(
+    input_hex: &str,
+    height: u64,
+    storage_overrides: Vec<(AlkaneId, Vec<(Vec<u8>, Vec<u8>)>)>,
+) -> Result<SimulateTransactionResponseNative> {
+    set_view_mode();
+
+    let tx = decode_tx_or_psbt(input_hex)?;
+    let tx_bytes = serialize(&tx);
+    let txid = tx.compute_txid().to_string();
+
+    // No runestone → nothing to simulate. Return an empty but well-formed response.
+    use ordinals::{Artifact, Runestone};
+    let runestone = match Runestone::decipher(&tx) {
+        Some(Artifact::Runestone(r)) => r,
+        _ => {
+            let faux_block = synthesize_faux_block_for(tx.clone(), height);
+            return Ok(SimulateTransactionResponseNative {
+                txid,
+                height,
+                protostones: vec![],
+                final_balances_by_vout: vec![],
+                total_fuel_used: 0,
+                used_transaction_bytes: tx_bytes,
+                used_block_bytes: serialize(&faux_block),
+                error: Some("no runestone in transaction".to_string()),
+            });
+        }
+    };
+
+    // Re-encode the runestone's protocol field as enciphered bytes for
+    // the lower-level call. The Runestone we just deciphered already
+    // carries `protocol: Option<Vec<u128>>` directly — no need to round-trip
+    // through a Vec<Protostone>.
+    let protocol_values = runestone.protocol.clone().unwrap_or_default();
+    use protorune_support::utils::encode_varint_list;
+    let protostones_bytes = if protocol_values.is_empty() {
+        Vec::new()
+    } else {
+        encode_varint_list(&protocol_values)
+    };
+
+    // Derive alkane_inputs from spent outpoints' live OUTPOINT_TO_RUNES.
+    // We load through a sandbox atomic over the real table so we don't
+    // perturb on-disk state (load_sheet only reads; even atomically derived).
+    let table = protorune::tables::RuneTable::for_protocol(
+        <AlkaneMessageContext as MessageContext>::protocol_tag(),
+    );
+    let probe_atomic = AtomicPointer::default();
+    let mut combined: Vec<alkanes_support::parcel::AlkaneTransfer> = Vec::new();
+    for input in &tx.input {
+        use protorune::balance_sheet::load_sheet;
+        let sheet = load_sheet(&mut probe_atomic.derive(
+            &table
+                .OUTPOINT_TO_RUNES
+                .select(&consensus_encode(&input.previous_output)?),
+        ));
+        for (rune_id, balance) in sheet.balances().iter() {
+            if *balance == 0 {
+                continue;
+            }
+            combined.push(alkanes_support::parcel::AlkaneTransfer {
+                id: AlkaneId::from(rune_id.clone()),
+                value: *balance,
+            });
+        }
+    }
+
+    // Auto-synthesize the faux block.
+    let faux_block = synthesize_faux_block_for(tx.clone(), height);
+    let faux_block_bytes = serialize(&faux_block);
+
+    let mut response = simulate_protostones(SimulateProtostonesInput {
+        height,
+        alkane_inputs: combined,
+        protostones_bytes,
+        transaction_bytes: Some(tx_bytes.clone()),
+        block_bytes: Some(faux_block_bytes.clone()),
+        storage_overrides,
+    })?;
+
+    // Overwrite txid/used_bytes (just to be defensive — they should
+    // already match since we passed them through).
+    response.txid = txid;
+    response.used_transaction_bytes = tx_bytes;
+    response.used_block_bytes = faux_block_bytes;
+    Ok(response)
+}
+
+// ---------------------------------------------------------------------------
+// proto-encoded entry points — what `lib.rs` calls from the no_mangle
+// wasm exports `simulateprotostones()` and `simulatetransaction()`.
+// ---------------------------------------------------------------------------
+
+fn alkane_id_to_proto(id: &AlkaneId) -> proto::alkanes::AlkaneId {
+    proto::alkanes::AlkaneId {
+        block: Some(proto::alkanes::Uint128 {
+            lo: id.block as u64,
+            hi: (id.block >> 64) as u64,
+        }),
+        tx: Some(proto::alkanes::Uint128 {
+            lo: id.tx as u64,
+            hi: (id.tx >> 64) as u64,
+        }),
+    }
+}
+
+fn alkane_id_from_proto(v: &proto::alkanes::AlkaneId) -> AlkaneId {
+    AlkaneId {
+        block: v
+            .block
+            .as_ref()
+            .map(|u| ((u.hi as u128) << 64) | (u.lo as u128))
+            .unwrap_or(0),
+        tx: v
+            .tx
+            .as_ref()
+            .map(|u| ((u.hi as u128) << 64) | (u.lo as u128))
+            .unwrap_or(0),
+    }
+}
+
+fn alkane_transfer_from_proto(
+    v: &proto::alkanes::AlkaneTransfer,
+) -> alkanes_support::parcel::AlkaneTransfer {
+    alkanes_support::parcel::AlkaneTransfer {
+        id: alkane_id_from_proto(v.id.as_ref().unwrap()),
+        value: v
+            .value
+            .as_ref()
+            .map(|u| ((u.hi as u128) << 64) | (u.lo as u128))
+            .unwrap_or(0),
+    }
+}
+
+fn overrides_from_proto(
+    v: &[proto::alkanes::StorageOverride],
+) -> Vec<(AlkaneId, Vec<(Vec<u8>, Vec<u8>)>)> {
+    v.iter()
+        .map(|o| {
+            let id = o
+                .alkane
+                .as_ref()
+                .map(alkane_id_from_proto)
+                .unwrap_or(AlkaneId { block: 0, tx: 0 });
+            let entries: Vec<(Vec<u8>, Vec<u8>)> = o
+                .entries
+                .iter()
+                .map(|kv| (kv.key.clone(), kv.value.clone()))
+                .collect();
+            (id, entries)
+        })
+        .collect()
+}
+
+fn response_to_proto(r: SimulateTransactionResponseNative) -> proto::alkanes::SimulateTransactionResponse {
+    proto::alkanes::SimulateTransactionResponse {
+        txid: r.txid,
+        height: r.height,
+        protostones: r
+            .protostones
+            .into_iter()
+            .map(|p| proto::alkanes::ProtostoneExecution {
+                index: p.index as u32,
+                outpoint: Some(proto::alkanes::Outpoint {
+                    txid: p.outpoint.txid[..].to_vec(),
+                    vout: p.outpoint.vout,
+                }),
+                trace: Some(p.trace.into()),
+                fuel_used: p.fuel_used,
+                touched_storage: p
+                    .touched_storage
+                    .into_iter()
+                    .map(|(id, entries)| proto::alkanes::TouchedStorage {
+                        alkane: Some(alkane_id_to_proto(&id)),
+                        entries: entries
+                            .into_iter()
+                            .map(|(k, v)| proto::alkanes::KeyValuePair { key: k, value: v })
+                            .collect(),
+                    })
+                    .collect(),
+            })
+            .collect(),
+        final_balances_by_vout: r
+            .final_balances_by_vout
+            .into_iter()
+            .map(|vb| proto::alkanes::VoutBalances {
+                vout: vb.vout,
+                balances: vb
+                    .runes
+                    .into_iter()
+                    .map(|(id, amt)| {
+                        let alkane = AlkaneId::from(id);
+                        proto::alkanes::AlkaneTransfer {
+                            id: Some(alkane_id_to_proto(&alkane)),
+                            value: Some(proto::alkanes::Uint128 {
+                                lo: amt as u64,
+                                hi: (amt >> 64) as u64,
+                            }),
+                        }
+                    })
+                    .collect(),
+            })
+            .collect(),
+        total_fuel_used: r.total_fuel_used,
+        used_transaction: r.used_transaction_bytes,
+        used_block: r.used_block_bytes,
+        error: r.error.unwrap_or_default(),
+    }
+}
+
+/// Entry point for the `simulateprotostones()` wasm export.
+pub fn simulate_protostones_proto(input: &[u8]) -> Result<Vec<u8>> {
+    let req = proto::alkanes::SimulateProtostonesRequest::decode(input)
+        .map_err(|e| anyhow!("decode SimulateProtostonesRequest: {}", e))?;
+    let native = simulate_protostones(SimulateProtostonesInput {
+        height: req.height,
+        alkane_inputs: req
+            .alkane_inputs
+            .iter()
+            .map(alkane_transfer_from_proto)
+            .collect(),
+        protostones_bytes: req.protostones,
+        transaction_bytes: if req.transaction.is_empty() {
+            None
+        } else {
+            Some(req.transaction)
+        },
+        block_bytes: if req.block.is_empty() {
+            None
+        } else {
+            Some(req.block)
+        },
+        storage_overrides: overrides_from_proto(&req.storage_overrides),
+    })?;
+    Ok(response_to_proto(native).encode_to_vec())
+}
+
+/// Entry point for the `simulatetransaction()` wasm export.
+pub fn simulate_transaction_proto(input: &[u8]) -> Result<Vec<u8>> {
+    let req = proto::alkanes::SimulateTransactionRequest::decode(input)
+        .map_err(|e| anyhow!("decode SimulateTransactionRequest: {}", e))?;
+    // Accept either raw tx bytes or PSBT — decode_tx_or_psbt_bytes
+    // handles both. We re-hex-encode here just to satisfy the existing
+    // `simulate_transaction(&str, u64)` signature without adding a
+    // bytes-flavored sibling. Cheap.
+    let hex_input = hex::encode(&req.transaction);
+    let native = simulate_transaction_with_overrides(
+        &hex_input,
+        req.height,
+        overrides_from_proto(&req.storage_overrides),
+    )?;
+    Ok(response_to_proto(native).encode_to_vec())
 }
 
 pub fn getbytecode(input: &Vec<u8>) -> Result<Vec<u8>> {
