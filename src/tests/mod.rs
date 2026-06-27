@@ -57,3 +57,5 @@ pub mod vec_input_test;
 pub mod view;
 #[cfg(test)]
 pub mod getstorageat;
+#[cfg(test)]
+pub mod simulatetransaction;

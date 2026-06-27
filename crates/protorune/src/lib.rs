@@ -49,6 +49,7 @@ use protorune_support::{
     protostone::{into_protostone_edicts, Protostone, ProtostoneEdict},
     utils::{consensus_encode, field_to_name, outpoint_encode, tx_hex_to_txid},
 };
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Sub;
 use std::sync::Arc;
@@ -56,6 +57,59 @@ use std::sync::Arc;
 /// Blacklisted transaction IDs that should be ignored during processing
 const BLACKLISTED_TX_HASHES: [&str; 1] =
     ["5cbb0c466dd08d7af9223d45105fbbf0fdc9fb7cda4831c183d6b0cb5ba60fb0"];
+
+// View-mode skip-persistence flag. When set (by `simulatetransaction` and
+// similar non-persisting view paths), `index_protostones` skips the
+// final `save_balances` + per-input `clear_balances` calls — those write
+// to the OUTPOINT_TO_RUNES table through a non-atomic IndexPointer and
+// would persist even with a sandbox outer AtomicPointer. Indexer hot path
+// is unchanged: default is `false`.
+//
+// Thread-local so a view request can't bleed into a concurrent indexer
+// pass. wasm32 is single-threaded so this is effectively a static.
+thread_local! {
+    static SKIP_PROTOSTONE_PERSISTENCE: Cell<bool> = const { Cell::new(false) };
+    /// Sink for the final `proto_balances_by_output` map produced by
+    /// `index_protostones`. The map is otherwise local to the function;
+    /// the view caller activates this sink, runs `index_protostones`,
+    /// and reads back the per-vout balance sheets here. Serialized as
+    /// proto-encoded `(vout, BalanceSheet)` pairs so the protorune
+    /// crate doesn't need to expose its internal types across crate
+    /// boundaries in awkward ways.
+    static FINAL_BALANCES_SINK: RefCell<Option<Vec<(u32, BalanceSheet<AtomicPointer>)>>> =
+        const { RefCell::new(None) };
+}
+
+/// Switch index_protostones into "skip terminal persistence" mode. Used by
+/// `simulatetransaction` before calling `index_protostones` with a sandbox
+/// AtomicPointer — combined with the sandbox atomic, this guarantees the
+/// full per-tx replay leaves no on-disk side effects.
+pub fn enable_skip_protostone_persistence() {
+    SKIP_PROTOSTONE_PERSISTENCE.with(|c| c.set(true));
+}
+
+pub fn disable_skip_protostone_persistence() {
+    SKIP_PROTOSTONE_PERSISTENCE.with(|c| c.set(false));
+}
+
+pub fn should_skip_protostone_persistence() -> bool {
+    SKIP_PROTOSTONE_PERSISTENCE.with(|c| c.get())
+}
+
+/// Enable the final-balances capture sink. After `index_protostones`
+/// returns, call `drain_final_balances()` to retrieve the per-vout
+/// proto-balance map.
+pub fn enable_final_balances_sink() {
+    FINAL_BALANCES_SINK.with(|c| *c.borrow_mut() = Some(Vec::new()));
+}
+
+pub fn drain_final_balances() -> Vec<(u32, BalanceSheet<AtomicPointer>)> {
+    FINAL_BALANCES_SINK.with(|c| c.borrow_mut().take().unwrap_or_default())
+}
+
+pub fn disable_final_balances_sink() {
+    FINAL_BALANCES_SINK.with(|c| *c.borrow_mut() = None);
+}
 
 pub mod balance_sheet;
 pub mod message;
@@ -1101,18 +1155,43 @@ impl Protorune {
                     Ok(())
                 })
                 .collect::<Result<()>>()?;
-            Self::save_balances::<T>(
-                height,
-                &mut atomic.derive(&IndexPointer::default()),
-                &table,
-                tx,
-                &mut proto_balances_by_output,
-            )?;
-            for input in &tx.input {
-                //all inputs must be used up, even in cenotaphs
-                let key = consensus_encode(&input.previous_output)?;
-                clear_balances(&mut table.OUTPOINT_TO_RUNES.select(&key));
+            // View-mode (`simulatetransaction`) skips both terminal writes:
+            //   * save_balances → writes per-vout BalanceSheets to
+            //     OUTPOINT_TO_RUNES (through atomic, but also calls
+            //     index_unique_protorunes which writes to several
+            //     non-atomic IndexPointers).
+            //   * clear_balances → writes zeros to OUTPOINT_TO_RUNES for
+            //     every consumed input through a non-atomic IndexPointer
+            //     (so a sandbox AtomicPointer alone wouldn't roll it back).
+            // The terminal balance-sheet shape the view caller needs is
+            // already available in `proto_balances_by_output` at this
+            // point, so the caller can read it directly instead of via
+            // OUTPOINT_TO_RUNES.
+            if !should_skip_protostone_persistence() {
+                Self::save_balances::<T>(
+                    height,
+                    &mut atomic.derive(&IndexPointer::default()),
+                    &table,
+                    tx,
+                    &mut proto_balances_by_output,
+                )?;
+                for input in &tx.input {
+                    //all inputs must be used up, even in cenotaphs
+                    let key = consensus_encode(&input.previous_output)?;
+                    clear_balances(&mut table.OUTPOINT_TO_RUNES.select(&key));
+                }
             }
+            // Capture the final per-vout balances for the view caller
+            // (no-op when the sink isn't enabled). Cloned because the
+            // caller needs ownership across the function boundary.
+            FINAL_BALANCES_SINK.with(|c| {
+                if let Some(sink) = c.borrow_mut().as_mut() {
+                    sink.clear();
+                    for (vout, sheet) in proto_balances_by_output.iter() {
+                        sink.push((*vout, sheet.clone()));
+                    }
+                }
+            });
         }
         Ok(())
     }
