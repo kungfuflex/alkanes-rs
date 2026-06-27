@@ -514,6 +514,226 @@ pub fn multi_simulate_safe(
     multi_simulate(parcels, fuel)
 }
 
+// ---------------------------------------------------------------------------
+// simulate_transaction — full per-tx sandbox replay
+// ---------------------------------------------------------------------------
+//
+// Drives the exact same per-tx code path the live indexer uses
+// (`Protorune::index_protostones::<AlkaneMessageContext>`) but with:
+//
+//   1. A sandbox `AtomicPointer` — never committed, so any writes that
+//      went through the atomic chain get discarded on drop.
+//   2. The protorune-side `skip_protostone_persistence` flag — skips the
+//      terminal `save_balances` + `clear_balances` writes (those go through
+//      non-atomic IndexPointers and would persist regardless of the
+//      sandbox atomic).
+//   3. The trace.rs view-mode collector — `save_trace` pushes into the
+//      collector instead of writing the TRACES + TRACES_BY_HEIGHT tables.
+//   4. The protorune-side final-balances sink — captures the
+//      per-vout `proto_balances_by_output` at the end of
+//      `index_protostones` so the caller can read it.
+//
+// The result: identical execution semantics (including fuel accounting,
+// trace shape, edict processing, message dispatch through
+// `AlkaneMessageContext::handle`), zero on-disk side effects. This lets
+// `subfrost-mobile`'s preview / fanout layer hand a constructed PSBT to
+// the indexer and get back the same balance + trace shape the chain would
+// produce post-mining.
+
+/// Native Rust response shape (no proto dependency at this layer — the
+/// JSON-RPC binding in `lib.rs` can serialize this to whatever surface is
+/// convenient). Mirrors the user's spec: per-vout final balance sheets,
+/// per-protostone fuel + trace, total fuel.
+#[derive(Debug, Clone)]
+pub struct SimulateTransactionResponseNative {
+    pub txid: String,
+    pub height: u64,
+    pub protostones: Vec<ProtostoneExecution>,
+    pub final_balances_by_vout: Vec<VoutBalances>,
+    pub total_fuel_used: u64,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ProtostoneExecution {
+    /// Index of the protostone within the runestone's protocol field.
+    pub index: usize,
+    /// The synthetic outpoint the trace was keyed on
+    /// (txid + shadow vout = num_real_outputs + 1 + index).
+    pub outpoint: OutPoint,
+    /// Full trace as it would have been persisted by the indexer.
+    pub trace: alkanes_support::trace::Trace,
+}
+
+#[derive(Debug, Clone)]
+pub struct VoutBalances {
+    pub vout: u32,
+    pub runes: Vec<(ProtoruneRuneId, u128)>,
+}
+
+/// Decode either a PSBT-hex or raw-tx-hex string into a `bitcoin::Transaction`.
+/// PSBT first (because a PSBT envelope is the more common mobile-app input);
+/// fall back to raw-tx if PSBT deserialize fails.
+fn decode_tx_or_psbt(input_hex: &str) -> Result<Transaction> {
+    let bytes = hex::decode(input_hex.trim_start_matches("0x"))
+        .map_err(|e| anyhow!("hex decode failed: {}", e))?;
+    if let std::result::Result::Ok(psbt) = bitcoin::Psbt::deserialize(&bytes) {
+        // extract_tx_unchecked_fee_rate: the simulate path doesn't care about
+        // fee-rate safety, only about the final-form Transaction the chain
+        // would mine.
+        return Ok(psbt.extract_tx_unchecked_fee_rate());
+    }
+    bitcoin::consensus::deserialize::<Transaction>(&bytes)
+        .map_err(|e| anyhow!("input is neither valid PSBT nor raw tx: {}", e))
+}
+
+/// Build a one-tx synthetic Block wrapper. The header values aren't
+/// consulted by the alkanes message-dispatch path beyond `block.txdata`,
+/// so dummy header values are safe.
+fn build_synthetic_block_for(tx: Transaction, height: u64) -> Block {
+    let _ = height; // header doesn't carry height; included for clarity at callsite
+    Block {
+        header: Header {
+            version: bitcoin::blockdata::block::Version::ONE,
+            prev_blockhash: BlockHash::all_zeros(),
+            merkle_root: TxMerkleNode::all_zeros(),
+            time: 0,
+            bits: CompactTarget::from_consensus(0),
+            nonce: 0,
+        },
+        txdata: vec![tx],
+    }
+}
+
+/// `simulate_transaction` — primary entry point. Decodes the input
+/// (PSBT or raw tx hex), then runs the full per-tx indexer logic in a
+/// sandbox at `height`. Returns the native response (the lib.rs export
+/// wrapper handles proto encoding for the JSON-RPC surface).
+pub fn simulate_transaction(
+    input_hex: &str,
+    height: u64,
+) -> Result<SimulateTransactionResponseNative> {
+    set_view_mode();
+
+    let tx = decode_tx_or_psbt(input_hex)?;
+    let txid = tx.compute_txid().to_string();
+
+    // No runestone → nothing to simulate. Return an empty but well-formed response.
+    use ordinals::{Artifact, Runestone};
+    let runestone = match Runestone::decipher(&tx) {
+        Some(Artifact::Runestone(r)) => r,
+        _ => {
+            return Ok(SimulateTransactionResponseNative {
+                txid,
+                height,
+                protostones: vec![],
+                final_balances_by_vout: vec![],
+                total_fuel_used: 0,
+                error: Some("no runestone in transaction".to_string()),
+            });
+        }
+    };
+
+    let block = build_synthetic_block_for(tx.clone(), height);
+    let runestone_output_index = protorune::Protorune::get_runestone_output_index(&tx)?;
+
+    // Fresh FuelTank — full block fuel for the synthetic single-tx block.
+    // The real indexer initializes per-block; we're not racing it because
+    // each view query gets a fresh metashrew runtime.
+    use crate::vm::fuel::FuelTank;
+    FuelTank::initialize(&block, height as u32);
+
+    // Activate the three view-mode toggles. RAII-style guard would be nicer
+    // but the protorune/alkanes crate split makes a clean Drop impl awkward;
+    // the function body is short enough that the manual disable at the end
+    // is safe (we also disable in the error arm below).
+    crate::trace::enable_view_trace_collector();
+    protorune::enable_skip_protostone_persistence();
+    protorune::enable_final_balances_sink();
+
+    let mut sandbox_atomic = AtomicPointer::default();
+    let mut balances_by_output: BTreeMap<u32, BalanceSheet<AtomicPointer>> = BTreeMap::new();
+
+    let outcome = protorune::Protorune::index_protostones::<AlkaneMessageContext>(
+        &mut sandbox_atomic,
+        &tx,
+        0, // txindex — single-tx synthetic block
+        &block,
+        height,
+        &runestone,
+        runestone_output_index,
+        &mut balances_by_output,
+        protorune::default_output(&tx),
+    );
+
+    // Drain regardless of outcome so the next call starts clean.
+    let collected_traces = crate::trace::drain_view_traces();
+    let collected_balances = protorune::drain_final_balances();
+    crate::trace::disable_view_trace_collector();
+    protorune::disable_skip_protostone_persistence();
+    protorune::disable_final_balances_sink();
+
+    if let Err(e) = outcome {
+        return Ok(SimulateTransactionResponseNative {
+            txid,
+            height,
+            protostones: vec![],
+            final_balances_by_vout: vec![],
+            total_fuel_used: 0,
+            error: Some(format!("index_protostones failed: {}", e)),
+        });
+    }
+
+    // Compute total fuel by walking each trace's TraceEvents and summing
+    // fuel_used from every ReturnContext + RevertContext.
+    use alkanes_support::trace::TraceEvent;
+    let mut total_fuel_used: u64 = 0;
+    for (_op, tr) in collected_traces.iter() {
+        for ev in tr.0.lock().unwrap().iter() {
+            match ev {
+                TraceEvent::ReturnContext(r) | TraceEvent::RevertContext(r) => {
+                    // Cap RevertContext fuel (= u64::MAX) so total stays meaningful.
+                    if r.fuel_used != u64::MAX {
+                        total_fuel_used = total_fuel_used.saturating_add(r.fuel_used);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    let protostones: Vec<ProtostoneExecution> = collected_traces
+        .into_iter()
+        .enumerate()
+        .map(|(i, (op, tr))| ProtostoneExecution {
+            index: i,
+            outpoint: op,
+            trace: tr,
+        })
+        .collect();
+
+    let final_balances_by_vout: Vec<VoutBalances> = collected_balances
+        .into_iter()
+        .map(|(vout, sheet)| VoutBalances {
+            vout,
+            runes: sheet
+                .balances()
+                .iter()
+                .map(|(id, amt)| (id.clone(), *amt))
+                .collect(),
+        })
+        .collect();
+
+    Ok(SimulateTransactionResponseNative {
+        txid,
+        height,
+        protostones,
+        final_balances_by_vout,
+        total_fuel_used,
+        error: None,
+    })
+}
+
 pub fn getbytecode(input: &Vec<u8>) -> Result<Vec<u8>> {
     let request = alkanes_support::proto::alkanes::BytecodeRequest::decode(&**input)?;
     let alkane_id = request.id.clone().unwrap();
