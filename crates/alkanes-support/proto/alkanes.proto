@@ -280,3 +280,51 @@ message SimulateTransactionResponse {
   bytes used_block = 7;
   string error = 8;
 }
+
+// ---------------------------------------------------------------------------
+// simulateblock — full block replay in a shared sandbox.
+//
+// Drives every tx in `block` through the same per-tx code path
+// simulatetransaction uses, but with a SINGLE shared sandbox
+// AtomicPointer that carries writes across tx boundaries. So if tx[1]
+// spends an outpoint that tx[0] just created, tx[1] sees the alkanes
+// tx[0] routed to that vout — same intra-block semantics the live
+// indexer enforces. Zero on-disk side effects: the shared sandbox is
+// never committed.
+//
+// Per-tx breakdown in the response is sufficient to graph the full
+// asset flow across the block: each tx carries the same
+// SimulateTransactionResponse shape (protostone traces, touched
+// storage per alkane, final per-vout balance sheets, fuel used). The
+// txs appear in `txs` in block order, with non-runestone txs (incl.
+// coinbase) surfaced as empty-shape entries with `error =
+// "no_runestone"` so the index alignment with `block.txdata` is
+// preserved.
+// ---------------------------------------------------------------------------
+
+message SimulateBlockRequest {
+  uint64 height = 1;
+  // Raw consensus-encoded bitcoin::Block. Full block including coinbase.
+  bytes block = 2;
+  // Optional pre-execution storage overrides applied to the shared
+  // sandbox atomic before tx[0] runs. All txs in the block see these.
+  repeated StorageOverride storage_overrides = 3;
+}
+
+message SimulateBlockResponse {
+  string block_hash = 1;
+  uint64 height = 2;
+  // One entry per tx in `block.txdata`, in block order. Coinbase /
+  // no-runestone txs surface as empty entries with `error =
+  // "no_runestone"` so the caller can map `txs[i]` back to
+  // `block.txdata[i]` directly.
+  repeated SimulateTransactionResponse txs = 3;
+  // Sum of every protostone's fuel_used across every tx in the block
+  // (matches the per-tx total_fuel_used summed).
+  uint64 total_fuel_used = 4;
+  // Echo of the block bytes that were run — so the caller has a
+  // structured handle on what produced the response without having to
+  // round-trip the request.
+  bytes used_block = 5;
+  string error = 6;
+}

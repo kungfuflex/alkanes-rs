@@ -1216,7 +1216,17 @@ impl Protorune {
                 for input in &tx.input {
                     //all inputs must be used up, even in cenotaphs
                     let key = consensus_encode(&input.previous_output)?;
-                    clear_balances(&mut table.OUTPOINT_TO_RUNES.select(&key));
+                    // Route the clear through the atomic so view-mode
+                    // callers that share an AtomicPointer across multiple
+                    // tx executions (e.g. `simulateblock` for intra-block
+                    // flow) get proper sandbox containment. Production
+                    // semantics are unchanged: each per-tx atomic still
+                    // gets committed at the end of `index_runestone`, so
+                    // the underlying-store effect is identical to the
+                    // prior direct write.
+                    clear_balances(&mut atomic.derive(
+                        &table.OUTPOINT_TO_RUNES.select(&key),
+                    ));
                 }
             }
             // Capture the final per-vout balances for the view caller

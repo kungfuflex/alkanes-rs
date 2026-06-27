@@ -184,6 +184,27 @@ pub fn simulateprotostones() -> i32 {
 
 #[cfg(not(test))]
 #[no_mangle]
+pub fn simulateblock() -> i32 {
+    configure_network();
+    let data = input();
+    let _height = u32::from_le_bytes((&data[0..4]).try_into().unwrap());
+    let reader = &data[4..];
+    match view::simulate_block_proto(reader) {
+        Ok(bytes) => export_bytes(bytes),
+        Err(e) => {
+            // Surface decode/setup errors via the structured shape so
+            // callers can distinguish wire errors from per-tx errors.
+            let resp = proto::alkanes::SimulateBlockResponse {
+                error: e.to_string(),
+                ..Default::default()
+            };
+            export_bytes(resp.encode_to_vec())
+        }
+    }
+}
+
+#[cfg(not(test))]
+#[no_mangle]
 pub fn meta() -> i32 {
     configure_network();
     let data = input();

@@ -1244,6 +1244,266 @@ pub fn simulate_transaction_with_overrides(
 }
 
 // ---------------------------------------------------------------------------
+// simulate_block — full block replay in a shared sandbox.
+// ---------------------------------------------------------------------------
+//
+// Drives every tx in `block` through the same per-tx code path
+// simulatetransaction uses, with a SINGLE shared sandbox AtomicPointer
+// that carries writes across tx boundaries — so tx[1] sees the
+// OUTPOINT_TO_RUNES writes that tx[0]'s `save_balances` made (and the
+// `clear_balances` clearings on tx[0]'s spent inputs). Matches the
+// intra-block atomicity the live indexer enforces, but with zero
+// on-disk side effects: the shared sandbox is never committed past
+// the outer sandbox layer we install at the start.
+//
+// Checkpoint discipline:
+//   * Construct AtomicPointer::default()  // depth=1 (the auto-flush layer)
+//   * sandbox.checkpoint()                // depth=2 (our sandbox layer)
+//   * For each tx with a runestone:
+//       sandbox.checkpoint()              // depth=3 (tx layer)
+//       run index_protostones
+//       on Ok → sandbox.commit()          // depth=2, merge tx into sandbox
+//       on Err → sandbox.rollback()       // depth=2, discard tx writes
+//   * Drop sandbox — depth=2 contents discarded; auto-flush layer (depth=1)
+//     never had any writes piped to it, so nothing reaches the global store.
+//
+// `should_skip_protostone_persistence` is OFF for the simulateblock path
+// (we WANT save_balances + clear_balances to fire so the next tx in the
+// block sees the right OUTPOINT_TO_RUNES state). Both now route through
+// the atomic — see the corresponding `clear_balances` change in
+// `crates/protorune/src/lib.rs`.
+
+#[derive(Debug, Clone)]
+pub struct SimulateBlockResponseNative {
+    pub block_hash: String,
+    pub height: u64,
+    /// One entry per tx in `block.txdata`, in block order. Coinbase /
+    /// no-runestone txs surface as empty-shape entries with `error =
+    /// Some("no_runestone")` so `txs[i]` aligns with `block.txdata[i]`.
+    pub txs: Vec<SimulateTransactionResponseNative>,
+    pub total_fuel_used: u64,
+    pub used_block_bytes: Vec<u8>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SimulateBlockInput {
+    pub height: u64,
+    pub block_bytes: Vec<u8>,
+    pub storage_overrides: Vec<(AlkaneId, Vec<(Vec<u8>, Vec<u8>)>)>,
+}
+
+/// Build an empty-shape per-tx response for txs we skip (coinbase /
+/// no-runestone). Keeps `txs[i]` aligned with `block.txdata[i]` so
+/// callers can graph asset flow against the block's tx order.
+fn empty_tx_response(tx: &Transaction, height: u64, reason: &str) -> SimulateTransactionResponseNative {
+    SimulateTransactionResponseNative {
+        txid: tx.compute_txid().to_string(),
+        height,
+        protostones: vec![],
+        final_balances_by_vout: vec![],
+        total_fuel_used: 0,
+        used_transaction_bytes: serialize(tx),
+        used_block_bytes: Vec::new(),
+        error: Some(reason.to_string()),
+    }
+}
+
+pub fn simulate_block(input: SimulateBlockInput) -> Result<SimulateBlockResponseNative> {
+    set_view_mode();
+
+    let block: Block = bitcoin::consensus::deserialize::<Block>(&input.block_bytes)
+        .map_err(|e| anyhow!("simulateblock: block bytes did not decode: {}", e))?;
+    let used_block_bytes = input.block_bytes;
+    let block_hash = block.block_hash().to_string();
+
+    use crate::vm::fuel::FuelTank;
+    FuelTank::initialize(&block, input.height as u32);
+
+    // Construct the shared sandbox atomic + push the sandbox layer
+    // checkpoint. Per-tx checkpoints nest INSIDE this one, so per-tx
+    // commits only ever merge into the sandbox layer — never into the
+    // auto-flush root.
+    let mut sandbox_atomic = AtomicPointer::default();
+    sandbox_atomic.checkpoint(); // depth=2: sandbox layer
+
+    // Apply pre-execution storage overrides into the sandbox layer.
+    apply_storage_overrides(&mut sandbox_atomic, &input.storage_overrides);
+
+    let table = protorune::tables::RuneTable::for_protocol(
+        <AlkaneMessageContext as MessageContext>::protocol_tag(),
+    );
+
+    let mut txs: Vec<SimulateTransactionResponseNative> = Vec::with_capacity(block.txdata.len());
+    let mut total_fuel_used: u64 = 0;
+
+    use ordinals::{Artifact, Runestone};
+    for (txindex, tx) in block.txdata.iter().enumerate() {
+        // Skip coinbase outright — it never carries a runestone and the
+        // alkanes code path doesn't run for it.
+        if txindex == 0 && tx.is_coinbase() {
+            txs.push(empty_tx_response(tx, input.height, "coinbase"));
+            continue;
+        }
+
+        let runestone = match Runestone::decipher(tx) {
+            Some(Artifact::Runestone(r)) => r,
+            _ => {
+                txs.push(empty_tx_response(tx, input.height, "no_runestone"));
+                continue;
+            }
+        };
+        let runestone_output_index = match protorune::Protorune::get_runestone_output_index(tx) {
+            std::result::Result::Ok(i) => i,
+            std::result::Result::Err(_) => {
+                txs.push(empty_tx_response(tx, input.height, "runestone_output_index_unknown"));
+                continue;
+            }
+        };
+
+        // Per-tx checkpoint on the shared sandbox: any writes during this
+        // tx's index_protostones land in a temporary layer that gets
+        // merged into the sandbox layer on success (visible to the next
+        // tx) or discarded on failure.
+        sandbox_atomic.checkpoint(); // depth=3: tx layer
+
+        // Activate the per-protostone view-mode collectors fresh for
+        // this tx. drain afterwards so they don't bleed across txs.
+        crate::trace::enable_view_trace_collector();
+        protorune::enable_final_balances_sink();
+        enable_touched_storage_collector();
+        // Persistence flag is OFF for simulateblock so save_balances +
+        // clear_balances fire (through the atomic) and the next tx in
+        // the block sees the right outpoint state.
+        protorune::disable_skip_protostone_persistence();
+
+        let mut balances_by_output: BTreeMap<u32, BalanceSheet<AtomicPointer>> = BTreeMap::new();
+        let outcome = protorune::Protorune::index_protostones::<AlkaneMessageContext>(
+            &mut sandbox_atomic,
+            tx,
+            txindex as u32,
+            &block,
+            input.height,
+            &runestone,
+            runestone_output_index,
+            &mut balances_by_output,
+            protorune::default_output(tx),
+        );
+
+        let collected_traces = crate::trace::drain_view_traces();
+        let collected_balances = protorune::drain_final_balances();
+        let touched_buckets = drain_touched_storage();
+        crate::trace::disable_view_trace_collector();
+        protorune::disable_final_balances_sink();
+        disable_touched_storage_collector();
+
+        match outcome {
+            std::result::Result::Ok(_) => {
+                // Merge this tx's writes into the sandbox layer so the
+                // next tx in the block sees them.
+                sandbox_atomic.commit(); // depth=2
+            }
+            std::result::Result::Err(e) => {
+                // Discard this tx's partial writes; the next tx sees
+                // pre-failure state.
+                sandbox_atomic.rollback(); // depth=2
+                txs.push(SimulateTransactionResponseNative {
+                    txid: tx.compute_txid().to_string(),
+                    height: input.height,
+                    protostones: vec![],
+                    final_balances_by_vout: vec![],
+                    total_fuel_used: 0,
+                    used_transaction_bytes: serialize(tx),
+                    used_block_bytes: Vec::new(),
+                    error: Some(format!("index_protostones failed: {}", e)),
+                });
+                continue;
+            }
+        }
+
+        // Build the per-tx response. Same shape simulate_transaction
+        // returns.
+        use alkanes_support::trace::TraceEvent;
+        let sum_fuel = |tr: &alkanes_support::trace::Trace| -> u64 {
+            let mut acc: u64 = 0;
+            for ev in tr.0.lock().unwrap().iter() {
+                match ev {
+                    TraceEvent::ReturnContext(r) | TraceEvent::RevertContext(r) => {
+                        if r.fuel_used != u64::MAX {
+                            acc = acc.saturating_add(r.fuel_used);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            acc
+        };
+
+        let mut tx_fuel: u64 = 0;
+        let protostones: Vec<ProtostoneExecution> = collected_traces
+            .into_iter()
+            .enumerate()
+            .map(|(i, (op, tr))| {
+                let fuel = sum_fuel(&tr);
+                tx_fuel = tx_fuel.saturating_add(fuel);
+                let touched = touched_buckets
+                    .get(i)
+                    .map(touched_storage_for_protostone)
+                    .unwrap_or_default();
+                ProtostoneExecution {
+                    index: i,
+                    outpoint: op,
+                    trace: tr,
+                    fuel_used: fuel,
+                    touched_storage: touched,
+                }
+            })
+            .collect();
+
+        let final_balances_by_vout: Vec<VoutBalances> = collected_balances
+            .into_iter()
+            .map(|(vout, sheet)| VoutBalances {
+                vout,
+                runes: sheet
+                    .balances()
+                    .iter()
+                    .map(|(id, amt)| (id.clone(), *amt))
+                    .collect(),
+            })
+            .collect();
+
+        total_fuel_used = total_fuel_used.saturating_add(tx_fuel);
+        txs.push(SimulateTransactionResponseNative {
+            txid: tx.compute_txid().to_string(),
+            height: input.height,
+            protostones,
+            final_balances_by_vout,
+            total_fuel_used: tx_fuel,
+            used_transaction_bytes: serialize(tx),
+            used_block_bytes: Vec::new(),
+            error: None,
+        });
+    }
+
+    // Reference `table` to silence any unused-binding lint if no tx with
+    // a runestone existed — table is wired through so the read path uses
+    // the right RuneTable shape per AlkaneMessageContext::protocol_tag.
+    let _ = table;
+
+    // sandbox_atomic drops here. depth=2 holds all committed-tx writes
+    // and depth=1 is the original auto-flush root (empty). Neither
+    // reaches `set()` because no outer commit is called.
+    Ok(SimulateBlockResponseNative {
+        block_hash,
+        height: input.height,
+        txs,
+        total_fuel_used,
+        used_block_bytes,
+        error: None,
+    })
+}
+
+// ---------------------------------------------------------------------------
 // proto-encoded entry points — what `lib.rs` calls from the no_mangle
 // wasm exports `simulateprotostones()` and `simulatetransaction()`.
 // ---------------------------------------------------------------------------
@@ -1407,6 +1667,26 @@ pub fn simulate_transaction_proto(input: &[u8]) -> Result<Vec<u8>> {
         overrides_from_proto(&req.storage_overrides),
     )?;
     Ok(response_to_proto(native).encode_to_vec())
+}
+
+/// Entry point for the `simulateblock()` wasm export.
+pub fn simulate_block_proto(input: &[u8]) -> Result<Vec<u8>> {
+    let req = proto::alkanes::SimulateBlockRequest::decode(input)
+        .map_err(|e| anyhow!("decode SimulateBlockRequest: {}", e))?;
+    let native = simulate_block(SimulateBlockInput {
+        height: req.height,
+        block_bytes: req.block,
+        storage_overrides: overrides_from_proto(&req.storage_overrides),
+    })?;
+    let resp = proto::alkanes::SimulateBlockResponse {
+        block_hash: native.block_hash,
+        height: native.height,
+        txs: native.txs.into_iter().map(response_to_proto).collect(),
+        total_fuel_used: native.total_fuel_used,
+        used_block: native.used_block_bytes,
+        error: native.error.unwrap_or_default(),
+    };
+    Ok(resp.encode_to_vec())
 }
 
 pub fn getbytecode(input: &Vec<u8>) -> Result<Vec<u8>> {
