@@ -188,3 +188,95 @@ message Payment {
 message PendingUnwrapsResponse {
   repeated Payment payments = 1;
 }
+
+// ---------------------------------------------------------------------------
+// simulatetransaction / simulateprotostones — view-mode full per-tx replay.
+//
+// Two-tier shape: `simulateprotostones` is the lower-level entry point
+// (caller supplies alkane inputs + a list of protostones directly, with
+// optional transaction/block bytes for `self.transaction()` / `self.block()`
+// host calls and optional storage overrides). `simulatetransaction` wraps
+// it: it decodes a PSBT or raw tx, derives the alkane inputs from the
+// spent outpoints' live OUTPOINT_TO_RUNES state, auto-synthesizes a
+// realistic-looking faux block chained off the last indexed header, then
+// delegates to simulateprotostones. Both return the same response shape.
+//
+// The response includes the actual transaction + block bytes that were
+// used (either provided or synthesized) so the developer can inspect them.
+// Per protostone, we also surface the final state of every storage slot
+// touched during the simulation, keyed by the alkane that owns it (since
+// an alkane can extcall and mutate another alkane's storage).
+// ---------------------------------------------------------------------------
+
+message StorageOverride {
+  AlkaneId alkane = 1;
+  repeated KeyValuePair entries = 2;
+}
+
+message TouchedStorage {
+  AlkaneId alkane = 1;
+  repeated KeyValuePair entries = 2;
+}
+
+message VoutBalances {
+  uint32 vout = 1;
+  repeated AlkaneTransfer balances = 2;
+}
+
+message ProtostoneExecution {
+  uint32 index = 1;
+  Outpoint outpoint = 2;
+  AlkanesTrace trace = 3;
+  uint64 fuel_used = 4;
+  repeated TouchedStorage touched_storage = 5;
+}
+
+message SimulateProtostonesRequest {
+  uint64 height = 1;
+  repeated AlkaneTransfer alkane_inputs = 2;
+  // Enciphered protostones — exactly the bytes a runestone's protocol
+  // field would carry. Client-side: build `Vec<Protostone>`, call
+  // `protostones.encipher()` -> `Vec<u128>`, then
+  // `encode_varint_list(...)` -> `Vec<u8>`. Server-side: decode and
+  // pass into a synthetic `Runestone { protocol: Some(values) }` that
+  // drives `Protorune::index_protostones`.
+  bytes protostones = 3;
+  // OPTIONAL — raw consensus-encoded bitcoin::Transaction. When set, the
+  // view runs against this exact tx (so self.transaction() returns it
+  // verbatim). When unset, a synthetic tx is constructed that just
+  // carries the protostones in its OP_RETURN and routes outputs from
+  // protostone.pointer fields.
+  bytes transaction = 4;
+  // OPTIONAL — raw consensus-encoded bitcoin::Block wrapping the tx
+  // above. When unset, a faux block is synthesized; see
+  // SimulateTransactionResponse.used_block for the bytes returned.
+  bytes block = 5;
+  repeated StorageOverride storage_overrides = 6;
+}
+
+message SimulateTransactionRequest {
+  uint64 height = 1;
+  // Raw consensus-encoded bitcoin::Transaction OR a PSBT envelope; both
+  // accepted (PSBT first, falls back to raw on parse failure).
+  bytes transaction = 2;
+  repeated StorageOverride storage_overrides = 3;
+}
+
+message SimulateTransactionResponse {
+  string txid = 1;
+  uint64 height = 2;
+  repeated ProtostoneExecution protostones = 3;
+  repeated VoutBalances final_balances_by_vout = 4;
+  uint64 total_fuel_used = 5;
+  // Bytes of the bitcoin::Transaction that was actually run (either the
+  // one the caller provided or the synthesized one).
+  bytes used_transaction = 6;
+  // Bytes of the bitcoin::Block that was actually run. For
+  // simulateprotostones this is the provided block or a minimal
+  // single-tx wrapper. For simulatetransaction this is the auto-
+  // synthesized faux block — chained off the previous indexed block
+  // header with a vanity nonce (CRC32-salted low bytes) so the bytes
+  // are realistic-looking but unambiguously not real PoW.
+  bytes used_block = 7;
+  string error = 8;
+}

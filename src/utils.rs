@@ -12,6 +12,8 @@ use metashrew_core::{
 use metashrew_support::index_pointer::KeyValuePointer;
 use protorune_support::rune_transfer::RuneTransfer;
 use protorune_support::utils::consensus_decode;
+use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::io::Cursor;
 use std::sync::Arc;
 
@@ -143,5 +145,69 @@ pub fn pipe_storagemap_to<T: KeyValuePointer>(map: &StorageMap, pointer: &mut T)
             .keyword("/storage/")
             .select(k)
             .set(Arc::new(v.clone()));
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Per-protostone touched-storage collector — view-mode hook.
+//
+// When `simulateprotostones` / `simulatetransaction` activates the
+// collector, every alkane storage write that flows through `handle_message`
+// or `Saveable::save` (the extcall return path) is also pushed here,
+// bucketed by the current protostone index (which protorune sets via
+// `set_current_protostone_index` at the top of each `index_protostones`
+// iteration). Default-off, so the indexer hot path is unchanged.
+//
+// Shape: `Vec<BTreeMap<AlkaneId, BTreeMap<key, value>>>` indexed by
+// protostone index. Outer Vec auto-grows; inner BTreeMap dedupes per
+// (alkane_id, key), keeping the latest write — matches the
+// final-storage-value semantics the response promises.
+// ---------------------------------------------------------------------------
+
+type TouchedStorageBuckets = Vec<BTreeMap<AlkaneId, BTreeMap<Vec<u8>, Vec<u8>>>>;
+
+thread_local! {
+    static TOUCHED_STORAGE_COLLECTOR: RefCell<Option<TouchedStorageBuckets>> =
+        const { RefCell::new(None) };
+}
+
+pub fn enable_touched_storage_collector() {
+    TOUCHED_STORAGE_COLLECTOR.with(|c| *c.borrow_mut() = Some(Vec::new()));
+}
+
+pub fn drain_touched_storage() -> TouchedStorageBuckets {
+    TOUCHED_STORAGE_COLLECTOR.with(|c| c.borrow_mut().take().unwrap_or_default())
+}
+
+pub fn disable_touched_storage_collector() {
+    TOUCHED_STORAGE_COLLECTOR.with(|c| *c.borrow_mut() = None);
+}
+
+/// View-mode storage-write hook. No-op when the collector is disabled —
+/// the indexer's hot path always calls this but it's a single thread-local
+/// peek + early-return. When active, copies every entry from `map` into
+/// the per-protostone bucket keyed by `alkane`.
+pub fn record_touched_storage(alkane: &AlkaneId, map: &StorageMap) {
+    TOUCHED_STORAGE_COLLECTOR.with(|c| {
+        let mut borrow = c.borrow_mut();
+        let buckets = match borrow.as_mut() {
+            Some(b) => b,
+            None => return,
+        };
+        let i = protorune::current_protostone_index();
+        if i == usize::MAX {
+            return;
+        }
+        // Grow outer Vec to fit this protostone index.
+        while buckets.len() <= i {
+            buckets.push(BTreeMap::new());
+        }
+        let bucket = buckets.get_mut(i).unwrap();
+        let slot = bucket
+            .entry(alkane.clone())
+            .or_insert_with(BTreeMap::new);
+        for (k, v) in map.0.iter() {
+            slot.insert(k.clone(), v.clone());
+        }
     });
 }

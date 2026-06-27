@@ -78,6 +78,15 @@ thread_local! {
     /// boundaries in awkward ways.
     static FINAL_BALANCES_SINK: RefCell<Option<Vec<(u32, BalanceSheet<AtomicPointer>)>>> =
         const { RefCell::new(None) };
+    /// Index of the protostone currently being processed by
+    /// `index_protostones`, or `usize::MAX` if not in a view-mode loop.
+    /// Set by `index_protostones` before each iteration; read by the
+    /// alkanes-side `record_touched_storage` hook so per-protostone
+    /// storage writes can be bucketed correctly. Sentinel chosen
+    /// instead of `Option<usize>` so callers don't pay the locking
+    /// overhead of a `RefCell` on the hot path — `Cell<usize>` is fine
+    /// because the value is always set/cleared inline.
+    static CURRENT_PROTOSTONE_INDEX: Cell<usize> = const { Cell::new(usize::MAX) };
 }
 
 /// Switch index_protostones into "skip terminal persistence" mode. Used by
@@ -109,6 +118,26 @@ pub fn drain_final_balances() -> Vec<(u32, BalanceSheet<AtomicPointer>)> {
 
 pub fn disable_final_balances_sink() {
     FINAL_BALANCES_SINK.with(|c| *c.borrow_mut() = None);
+}
+
+/// Setter for the per-protostone index — called by `index_protostones`
+/// at the top of each loop iteration. The view-mode `record_touched_storage`
+/// hook in the alkanes crate reads this to bucket storage writes per
+/// protostone. The indexer's hot path also calls this (cheap `Cell::set`),
+/// but the value is only consulted when a view-mode collector is active.
+pub fn set_current_protostone_index(i: usize) {
+    CURRENT_PROTOSTONE_INDEX.with(|c| c.set(i));
+}
+
+/// Reads the protostone index currently being processed. Returns
+/// `usize::MAX` outside of an `index_protostones` loop body.
+pub fn current_protostone_index() -> usize {
+    CURRENT_PROTOSTONE_INDEX.with(|c| c.get())
+}
+
+/// Resets the sentinel — called by `index_protostones` after the loop.
+pub fn clear_current_protostone_index() {
+    CURRENT_PROTOSTONE_INDEX.with(|c| c.set(usize::MAX));
 }
 
 pub mod balance_sheet;
@@ -1092,6 +1121,12 @@ impl Protorune {
             protostones_iter
                 .enumerate()
                 .map(|(i, stone)| {
+                    // View-mode hook: tell the alkanes-side
+                    // `record_touched_storage` collector which protostone
+                    // owns the storage writes about to happen. Cheap
+                    // `Cell::set` (no allocation, no locking); only the
+                    // active collector ever reads this value.
+                    set_current_protostone_index(i);
                     let shadow_vout = (i as u32) + (tx.output.len() as u32) + 1;
                     if !proto_balances_by_output.contains_key(&shadow_vout) {
                         proto_balances_by_output.insert(shadow_vout, BalanceSheet::default());
@@ -1155,6 +1190,9 @@ impl Protorune {
                     Ok(())
                 })
                 .collect::<Result<()>>()?;
+            // Drop the per-protostone sentinel after the loop exits so any
+            // post-loop writes don't get bucketed under the last protostone.
+            clear_current_protostone_index();
             // View-mode (`simulatetransaction`) skips both terminal writes:
             //   * save_balances → writes per-vout BalanceSheets to
             //     OUTPOINT_TO_RUNES (through atomic, but also calls
