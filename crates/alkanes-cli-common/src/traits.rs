@@ -621,6 +621,17 @@ pub trait MetashrewRpcProvider {
         block_tag: Option<String>,
         protocol_tag: u128,
     ) -> Result<ProtoruneOutpointResponse>;
+
+    /// Low-level call to a metashrew_view function with hex-encoded params.
+    ///
+    /// Returns the raw byte response (already hex-decoded). The default impl
+    /// returns an error so most mock providers don't have to implement it;
+    /// the real `ConcreteProvider` overrides this.
+    async fn metashrew_view_call(&self, _method: &str, _params_hex: &str, _block_tag: &str) -> Result<alloc::vec::Vec<u8>> {
+        Err(crate::AlkanesError::Other(
+            "metashrew_view_call not implemented for this provider".into(),
+        ))
+    }
 }
 
 /// Trait for Metashrew provider operations
@@ -1606,6 +1617,9 @@ impl<T: DeezelProvider + ?Sized> MetashrewRpcProvider for Box<T> {
     }
    async fn get_spendables_by_address(&self, address: &str) -> Result<serde_json::Value> {
        (**self).get_spendables_by_address(address).await
+   }
+   async fn metashrew_view_call(&self, method: &str, params_hex: &str, block_tag: &str) -> Result<alloc::vec::Vec<u8>> {
+       (**self).metashrew_view_call(method, params_hex, block_tag).await
    }
     async fn get_protorunes_by_address(
         &self,

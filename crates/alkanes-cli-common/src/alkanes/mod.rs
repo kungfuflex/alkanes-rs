@@ -17,6 +17,7 @@ pub mod inspector;
 pub mod protorunes;
 pub mod protoburn;
 pub mod simulation;
+pub mod simulate_view;
 pub mod protostone;
 pub mod balance_sheet;
 pub mod predict;

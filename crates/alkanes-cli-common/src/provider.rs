@@ -2996,7 +2996,12 @@ impl MetashrewRpcProvider for ConcreteProvider {
         let params = serde_json::json!([block, tx]);
         self.call(&rpc_url, "metashrew_view", params, 1).await
     }
-    
+
+    async fn metashrew_view_call(&self, method: &str, params_hex: &str, block_tag: &str) -> Result<Vec<u8>> {
+        // Forward to the inherent method, which has the full retry/timeout/qubitcoin logic.
+        ConcreteProvider::metashrew_view_call(self, method, params_hex, block_tag).await
+    }
+
     async fn trace_outpoint(&self, txid: &str, vout: u32) -> Result<JsonValue> {
         let txid_parsed = bitcoin::Txid::from_str(txid)?;
         let mut outpoint_pb = protorune_pb::Outpoint::default();
