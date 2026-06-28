@@ -1475,6 +1475,61 @@ pub enum Alkanes {
         #[arg(long)]
         auto_confirm: bool,
     },
+
+    /// Call metashrew_view "simulatetransaction" with a raw tx / PSBT (RC8)
+    #[command(name = "simulatetransaction")]
+    SimulateTransaction {
+        /// Raw transaction OR PSBT hex (0x prefix optional)
+        transaction: String,
+        /// Simulation height (defaults to current metashrew_height)
+        #[arg(long)]
+        height: Option<u64>,
+        /// Block tag for the metashrew_view call (default: latest)
+        #[arg(long)]
+        block_tag: Option<String>,
+        /// Print raw JSON instead of the pretty summary
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Call metashrew_view "simulateprotostones" (RC8)
+    #[command(name = "simulateprotostones")]
+    SimulateProtostones {
+        /// Enciphered protostones bytes, hex-encoded
+        protostones: String,
+        /// Alkane inputs, comma-separated triplets `block:tx:amount`
+        #[arg(long)]
+        inputs: Option<String>,
+        /// Simulation height (defaults to current metashrew_height)
+        #[arg(long)]
+        height: Option<u64>,
+        /// Optional raw transaction hex to anchor the synthetic block
+        #[arg(long)]
+        transaction: Option<String>,
+        /// Optional raw block hex to wrap the synthetic tx
+        #[arg(long)]
+        block: Option<String>,
+        /// Block tag for the metashrew_view call (default: latest)
+        #[arg(long)]
+        block_tag: Option<String>,
+        /// Print raw JSON instead of the pretty summary
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Call metashrew_view "simulateblock" with a full consensus-encoded block (RC8)
+    #[command(name = "simulateblock")]
+    SimulateBlock {
+        /// Raw bitcoin::Block hex (0x prefix optional)
+        block: String,
+        /// Simulation height (defaults to current metashrew_height)
+        #[arg(long)]
+        height: Option<u64>,
+        /// Block tag for the metashrew_view call (default: latest)
+        #[arg(long)]
+        block_tag: Option<String>,
+        /// Print raw JSON instead of the pretty summary
+        #[arg(long)]
+        raw: bool,
+    },
 }
 
 /// DataAPI subcommands

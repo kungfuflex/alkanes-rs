@@ -1907,6 +1907,107 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes, fr
             }
             Ok(())
         },
+        Alkanes::SimulateTransaction { transaction, height, block_tag, raw } => {
+            use alkanes_cli_common::alkanes::simulate_view as sv;
+            use alkanes_cli_common::traits::MetashrewRpcProvider;
+            let tx_hex = transaction.strip_prefix("0x").unwrap_or(&transaction);
+            let tx_bytes = hex::decode(tx_hex)
+                .map_err(|e| anyhow::anyhow!("invalid transaction hex: {}", e))?;
+            let height_resolved = match height {
+                Some(h) => h,
+                None => system.provider().get_metashrew_height().await?,
+            };
+            let input = sv::SimulateTransactionInput {
+                height: height_resolved,
+                transaction: tx_bytes,
+                storage_overrides: vec![],
+            };
+            let resp = sv::simulate_transaction(system.provider(), &input, block_tag.as_deref()).await?;
+            print_simulate_transaction_response(&resp, raw)?;
+            Ok(())
+        },
+        Alkanes::SimulateProtostones { protostones, inputs, height, transaction, block, block_tag, raw } => {
+            use alkanes_cli_common::alkanes::simulate_view as sv;
+            use alkanes_cli_common::traits::MetashrewRpcProvider;
+            let ps_hex = protostones.strip_prefix("0x").unwrap_or(&protostones);
+            let ps_bytes = hex::decode(ps_hex)
+                .map_err(|e| anyhow::anyhow!("invalid protostones hex: {}", e))?;
+            let mut alkane_inputs = Vec::new();
+            if let Some(inp) = inputs {
+                for triplet in inp.split(',') {
+                    let parts: Vec<&str> = triplet.trim().split(':').collect();
+                    if parts.len() != 3 {
+                        return Err(anyhow::anyhow!("invalid input '{}': expected block:tx:amount", triplet));
+                    }
+                    let b: u128 = parts[0].parse()?;
+                    let t: u128 = parts[1].parse()?;
+                    let amt: u128 = parts[2].parse()?;
+                    alkane_inputs.push(sv::AlkaneTransfer {
+                        id: sv::AlkaneId { block: b, tx: t },
+                        value: amt,
+                    });
+                }
+            }
+            let tx_bytes = if let Some(h) = transaction {
+                let s = h.strip_prefix("0x").unwrap_or(&h);
+                hex::decode(s).map_err(|e| anyhow::anyhow!("invalid --transaction hex: {}", e))?
+            } else { vec![] };
+            let block_bytes = if let Some(h) = block {
+                let s = h.strip_prefix("0x").unwrap_or(&h);
+                hex::decode(s).map_err(|e| anyhow::anyhow!("invalid --block hex: {}", e))?
+            } else { vec![] };
+            let height_resolved = match height {
+                Some(h) => h,
+                None => system.provider().get_metashrew_height().await?,
+            };
+            let input = sv::SimulateProtostonesInput {
+                height: height_resolved,
+                alkane_inputs,
+                protostones: ps_bytes,
+                transaction: tx_bytes,
+                block: block_bytes,
+                storage_overrides: vec![],
+            };
+            let resp = sv::simulate_protostones(system.provider(), &input, block_tag.as_deref()).await?;
+            print_simulate_transaction_response(&resp, raw)?;
+            Ok(())
+        },
+        Alkanes::SimulateBlock { block, height, block_tag, raw } => {
+            use alkanes_cli_common::alkanes::simulate_view as sv;
+            use alkanes_cli_common::traits::MetashrewRpcProvider;
+            let block_hex = block.strip_prefix("0x").unwrap_or(&block);
+            let block_bytes = hex::decode(block_hex)
+                .map_err(|e| anyhow::anyhow!("invalid block hex: {}", e))?;
+            let height_resolved = match height {
+                Some(h) => h,
+                None => system.provider().get_metashrew_height().await?,
+            };
+            let input = sv::SimulateBlockInput {
+                height: height_resolved,
+                block: block_bytes,
+                storage_overrides: vec![],
+            };
+            let resp = sv::simulate_block(system.provider(), &input, block_tag.as_deref()).await?;
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&resp)?);
+            } else {
+                println!("📦 simulateblock");
+                println!("    block_hash:       {}", resp.block_hash);
+                println!("    height:           {}", resp.height);
+                println!("    txs:              {}", resp.txs.len());
+                println!("    total_fuel_used:  {}", resp.total_fuel_used);
+                println!("    used_block:       {} bytes", resp.used_block.len());
+                if !resp.error.is_empty() {
+                    println!("    error:            {}", resp.error);
+                }
+                for (i, tx) in resp.txs.iter().enumerate() {
+                    println!();
+                    println!("  ── tx[{}] ──", i);
+                    print_simulate_transaction_response(tx, false)?;
+                }
+            }
+            Ok(())
+        },
         Alkanes::GetBytecode { alkane_id, block_tag, raw } => {
             let result = AlkanesProvider::get_bytecode(system.provider(), &alkane_id, block_tag).await?;
             if raw {
@@ -6549,6 +6650,57 @@ async fn execute_espo_command(
             } else {
                 println!("Alkane IDs:");
                 println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Pretty-print an RC8 SimulateTransactionResponse (or print the raw JSON).
+fn print_simulate_transaction_response(
+    resp: &alkanes_cli_common::alkanes::simulate_view::SimulateTransactionResponse,
+    raw: bool,
+) -> anyhow::Result<()> {
+    if raw {
+        println!("{}", serde_json::to_string_pretty(resp)?);
+        return Ok(());
+    }
+    println!("🧪 simulatetransaction");
+    println!("    txid:             {}", if resp.txid.is_empty() { "(synthesized)" } else { &resp.txid });
+    println!("    height:           {}", resp.height);
+    println!("    protostones:      {}", resp.protostones.len());
+    println!("    total_fuel_used:  {}", resp.total_fuel_used);
+    println!("    used_transaction: {} bytes", resp.used_transaction.len());
+    println!("    used_block:       {} bytes", resp.used_block.len());
+    if !resp.error.is_empty() {
+        println!("    error:            {}", resp.error);
+    }
+    for ps in &resp.protostones {
+        println!();
+        println!("  📜 protostone[{}]", ps.index);
+        let txid_hex = hex::encode(&ps.outpoint.txid);
+        println!("    outpoint:         {}:{}", txid_hex, ps.outpoint.vout);
+        println!("    fuel_used:        {}", ps.fuel_used);
+        println!("    trace bytes:      {}", ps.trace.len());
+        if !ps.touched_storage.is_empty() {
+            println!("    touched_storage:");
+            for ts in &ps.touched_storage {
+                println!("      [{}:{}] {} slots", ts.alkane.block, ts.alkane.tx, ts.entries.len());
+                for kv in &ts.entries {
+                    let key_disp = String::from_utf8(kv.key.clone())
+                        .unwrap_or_else(|_| format!("0x{}", hex::encode(&kv.key)));
+                    println!("          {}  →  0x{}", key_disp, hex::encode(&kv.value));
+                }
+            }
+        }
+    }
+    if !resp.final_balances_by_vout.is_empty() {
+        println!();
+        println!("  💰 final_balances_by_vout");
+        for vb in &resp.final_balances_by_vout {
+            println!("    vout {}:", vb.vout);
+            for t in &vb.balances {
+                println!("      [{}:{}]  ×  {}", t.id.block, t.id.tx, t.value);
             }
         }
     }
