@@ -1,5 +1,5 @@
 use super::{AlkanesInstance, AlkanesRuntimeContext, AlkanesState};
-use crate::utils::{pipe_storagemap_to, transfer_from};
+use crate::utils::{pipe_storagemap_to, record_touched_storage, transfer_from};
 use crate::vm::fuel::fuel_per_store_byte;
 use alkanes_support::trace::TraceEvent;
 use alkanes_support::{
@@ -234,11 +234,15 @@ pub trait Saveable {
     fn storage_map(&self) -> StorageMap;
     fn alkanes(&self) -> AlkaneTransferParcel;
     fn save(&self, atomic: &mut AtomicPointer, is_delegate: bool) -> Result<()> {
+        let storage_map = self.storage_map();
         pipe_storagemap_to(
-            &self.storage_map(),
+            &storage_map,
             &mut atomic
                 .derive(&IndexPointer::from_keyword("/alkanes/").select(&self.from().into())),
         );
+        // View-mode hook: extcall return path. Captures the called
+        // alkane's storage delta into the current-protostone bucket.
+        record_touched_storage(&self.from(), &storage_map);
         if !is_delegate {
             // delegate call retains caller and myself, so no alkanes are transferred from the subcontext to myself
             transfer_from(

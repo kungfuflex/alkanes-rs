@@ -1,6 +1,8 @@
 use crate::network::{genesis::GENESIS_BLOCK, is_active};
 use crate::trace::save_trace;
-use crate::utils::{balance_pointer, credit_balances, debit_balances, pipe_storagemap_to};
+use crate::utils::{
+    balance_pointer, credit_balances, debit_balances, pipe_storagemap_to, record_touched_storage,
+};
 use crate::vm::{
     fuel::{is_gasless_alkane, FuelTank, VirtualFuelBytes, GASLESS_ALKANE_FUEL},
     runtime::AlkanesRuntimeContext,
@@ -136,6 +138,11 @@ pub fn handle_message(
                     &IndexPointer::from_keyword("/alkanes/").select(&myself.clone().into()),
                 ),
             );
+            // View-mode hook (no-op outside simulateprotostones /
+            // simulatetransaction). Captures this message's storage
+            // delta into the touched-storage bucket for the current
+            // protostone.
+            record_touched_storage(&myself, &response.storage);
             let mut combined = parcel.runtime_balances.as_ref().clone();
             <BalanceSheet<AtomicPointer> as TryFrom<Vec<RuneTransfer>>>::try_from(
                 parcel.runes.clone(),

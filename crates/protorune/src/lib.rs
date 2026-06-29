@@ -51,6 +51,7 @@ use protorune_support::{
     protostone::{into_protostone_edicts, Protostone, ProtostoneEdict},
     utils::{consensus_encode, field_to_name, outpoint_encode, tx_hex_to_txid},
 };
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Sub;
 use std::sync::Arc;
@@ -64,6 +65,89 @@ pub mod logging;
 
 #[cfg(feature = "address-indexing")]
 pub mod address_index;
+
+// View-mode skip-persistence flag. When set (by `simulatetransaction` and
+// similar non-persisting view paths), `index_protostones` skips the
+// final `save_balances` + per-input `clear_chunked_balances` calls — those
+// write to the OUTPOINT_TO_RUNES table through a non-atomic IndexPointer and
+// would persist even with a sandbox outer AtomicPointer. Indexer hot path
+// is unchanged: default is `false`.
+//
+// Thread-local so a view request can't bleed into a concurrent indexer
+// pass. wasm32 is single-threaded so this is effectively a static.
+thread_local! {
+    static SKIP_PROTOSTONE_PERSISTENCE: Cell<bool> = const { Cell::new(false) };
+    /// Sink for the final `proto_balances_by_output` map produced by
+    /// `index_protostones`. The map is otherwise local to the function;
+    /// the view caller activates this sink, runs `index_protostones`,
+    /// and reads back the per-vout balance sheets here. Serialized as
+    /// proto-encoded `(vout, BalanceSheet)` pairs so the protorune
+    /// crate doesn't need to expose its internal types across crate
+    /// boundaries in awkward ways.
+    static FINAL_BALANCES_SINK: RefCell<Option<Vec<(u32, BalanceSheet<AtomicPointer>)>>> =
+        const { RefCell::new(None) };
+    /// Index of the protostone currently being processed by
+    /// `index_protostones`, or `usize::MAX` if not in a view-mode loop.
+    /// Set by `index_protostones` before each iteration; read by the
+    /// alkanes-side `record_touched_storage` hook so per-protostone
+    /// storage writes can be bucketed correctly. Sentinel chosen
+    /// instead of `Option<usize>` so callers don't pay the locking
+    /// overhead of a `RefCell` on the hot path — `Cell<usize>` is fine
+    /// because the value is always set/cleared inline.
+    static CURRENT_PROTOSTONE_INDEX: Cell<usize> = const { Cell::new(usize::MAX) };
+}
+
+/// Switch index_protostones into "skip terminal persistence" mode. Used by
+/// `simulatetransaction` before calling `index_protostones` with a sandbox
+/// AtomicPointer — combined with the sandbox atomic, this guarantees the
+/// full per-tx replay leaves no on-disk side effects.
+pub fn enable_skip_protostone_persistence() {
+    SKIP_PROTOSTONE_PERSISTENCE.with(|c| c.set(true));
+}
+
+pub fn disable_skip_protostone_persistence() {
+    SKIP_PROTOSTONE_PERSISTENCE.with(|c| c.set(false));
+}
+
+pub fn should_skip_protostone_persistence() -> bool {
+    SKIP_PROTOSTONE_PERSISTENCE.with(|c| c.get())
+}
+
+/// Enable the final-balances capture sink. After `index_protostones`
+/// returns, call `drain_final_balances()` to retrieve the per-vout
+/// proto-balance map.
+pub fn enable_final_balances_sink() {
+    FINAL_BALANCES_SINK.with(|c| *c.borrow_mut() = Some(Vec::new()));
+}
+
+pub fn drain_final_balances() -> Vec<(u32, BalanceSheet<AtomicPointer>)> {
+    FINAL_BALANCES_SINK.with(|c| c.borrow_mut().take().unwrap_or_default())
+}
+
+pub fn disable_final_balances_sink() {
+    FINAL_BALANCES_SINK.with(|c| *c.borrow_mut() = None);
+}
+
+/// Setter for the per-protostone index — called by `index_protostones`
+/// at the top of each loop iteration. The view-mode `record_touched_storage`
+/// hook in the alkanes crate reads this to bucket storage writes per
+/// protostone. The indexer's hot path also calls this (cheap `Cell::set`),
+/// but the value is only consulted when a view-mode collector is active.
+pub fn set_current_protostone_index(i: usize) {
+    CURRENT_PROTOSTONE_INDEX.with(|c| c.set(i));
+}
+
+/// Reads the protostone index currently being processed. Returns
+/// `usize::MAX` outside of an `index_protostones` loop body.
+pub fn current_protostone_index() -> usize {
+    CURRENT_PROTOSTONE_INDEX.with(|c| c.get())
+}
+
+/// Resets the sentinel — called by `index_protostones` after the loop.
+pub fn clear_current_protostone_index() {
+    CURRENT_PROTOSTONE_INDEX.with(|c| c.set(usize::MAX));
+}
+
 pub mod balance_sheet;
 pub mod message;
 pub mod protoburn;
@@ -1084,6 +1168,12 @@ impl Protorune {
             protostones_iter
                 .enumerate()
                 .map(|(i, stone)| {
+                    // View-mode hook: tell the alkanes-side
+                    // `record_touched_storage` collector which protostone
+                    // owns the storage writes about to happen. Cheap
+                    // `Cell::set` (no allocation, no locking); only the
+                    // active collector ever reads this value.
+                    set_current_protostone_index(i);
                     let shadow_vout = (i as u32) + (tx.output.len() as u32) + 1;
                     if !proto_balances_by_output.contains_key(&shadow_vout) {
                         proto_balances_by_output.insert(shadow_vout, BalanceSheet::default());
@@ -1147,23 +1237,61 @@ impl Protorune {
                     Ok(())
                 })
                 .collect::<Result<()>>()?;
-            Self::save_balances::<T>(
-                height,
-                &mut atomic.derive(&IndexPointer::default()),
-                &table,
-                tx,
-                &mut proto_balances_by_output,
-            )?;
-            for input in &tx.input {
-                //all inputs must be used up, even in cenotaphs
-                let key = consensus_encode(&input.previous_output)?;
-                // v3 chunked-outpoint: mark the consumed input chunk as
-                // spent at this height (zero entries, spent_at_height set).
-                clear_chunked_balances(
-                    &mut table.OUTPOINT_TO_RUNES.select(&key),
-                    height as u32,
-                );
+            // Drop the per-protostone sentinel after the loop exits so any
+            // post-loop writes don't get bucketed under the last protostone.
+            clear_current_protostone_index();
+            // View-mode (`simulatetransaction`) skips both terminal writes:
+            //   * save_balances → writes per-vout BalanceSheets to
+            //     OUTPOINT_TO_RUNES (through atomic, but also calls
+            //     index_unique_protorunes which writes to several
+            //     non-atomic IndexPointers).
+            //   * clear_chunked_balances → marks consumed inputs as spent;
+            //     in the v3-chunked layout this also touches non-atomic
+            //     pointers, so we route it through the atomic below and
+            //     gate it on the skip-persistence flag.
+            // The terminal balance-sheet shape the view caller needs is
+            // already available in `proto_balances_by_output` at this
+            // point, so the caller can read it directly instead of via
+            // OUTPOINT_TO_RUNES.
+            if !should_skip_protostone_persistence() {
+                Self::save_balances::<T>(
+                    height,
+                    &mut atomic.derive(&IndexPointer::default()),
+                    &table,
+                    tx,
+                    &mut proto_balances_by_output,
+                )?;
+                for input in &tx.input {
+                    //all inputs must be used up, even in cenotaphs
+                    let key = consensus_encode(&input.previous_output)?;
+                    // Route the clear through the atomic so view-mode
+                    // callers that share an AtomicPointer across multiple
+                    // tx executions (e.g. `simulateblock` for intra-block
+                    // flow) get proper sandbox containment. Production
+                    // semantics are unchanged: each per-tx atomic still
+                    // gets committed at the end of `index_runestone`, so
+                    // the underlying-store effect is identical to the
+                    // prior direct write.
+                    // v3 chunked-outpoint: mark the consumed input chunk
+                    // as spent at this height (zero entries,
+                    // spent_at_height set).
+                    clear_chunked_balances(
+                        &mut atomic.derive(&table.OUTPOINT_TO_RUNES.select(&key)),
+                        height as u32,
+                    );
+                }
             }
+            // Capture the final per-vout balances for the view caller
+            // (no-op when the sink isn't enabled). Cloned because the
+            // caller needs ownership across the function boundary.
+            FINAL_BALANCES_SINK.with(|c| {
+                if let Some(sink) = c.borrow_mut().as_mut() {
+                    sink.clear();
+                    for (vout, sheet) in proto_balances_by_output.iter() {
+                        sink.push((*vout, sheet.clone()));
+                    }
+                }
+            });
         }
         Ok(())
     }
