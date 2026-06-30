@@ -1,6 +1,8 @@
 #[cfg(any(feature = "test-utils", test))]
 pub mod helpers;
 #[cfg(test)]
+pub mod hashlock;
+#[cfg(test)]
 pub mod std;
 #[cfg(test)]
 pub mod utils;
