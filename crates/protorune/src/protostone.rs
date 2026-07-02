@@ -129,6 +129,16 @@ impl MessageProcessor for Protostone {
             .map(|v| v.clone())
             .unwrap_or_else(|| BalanceSheet::default());
 
+        // Snapshot the NON-transactional in-memory balance map so a failed message
+        // rolls back in LOCKSTEP with `atomic`. This binds the two stores: on
+        // revert, `atomic.rollback()` unwinds the KV side and restoring this
+        // snapshot unwinds the in-memory side. No partial in-memory mutation (e.g.
+        // a `reconcile` that removed the incoming vout before overflowing on the
+        // pointer) can survive a revert, so the whole "two stores, one rollback"
+        // bug class cannot exist here regardless of the internals of `reconcile`
+        // or any future in-memory mutation added to the message path.
+        let balances_snapshot = balances_by_output.clone();
+
         // Create a nested atomic transaction for the entire message processing
         atomic.checkpoint();
 
@@ -172,12 +182,18 @@ impl MessageProcessor for Protostone {
                             }
                         }
 
+                        // Restore the in-memory map to its pre-message state, roll
+                        // back the KV side, THEN refund from the clean snapshot.
+                        // Rolling back BEFORE the (fallible) refund also means a
+                        // refund-side overflow can no longer leave this message's
+                        // checkpoint dangling on the stack.
+                        *balances_by_output = balances_snapshot;
+                        atomic.rollback();
                         refund_to_refund_pointer(
                             balances_by_output,
                             protomessage_vout,
                             refund_pointer,
                         )?;
-                        atomic.rollback();
                         Ok(false)
                     }
                 }
@@ -198,8 +214,12 @@ impl MessageProcessor for Protostone {
                     }
                 }
 
-                refund_to_refund_pointer(balances_by_output, protomessage_vout, refund_pointer)?;
+                // Restore the in-memory map to its pre-message state, roll back the
+                // KV side, THEN refund from the clean snapshot (see reconcile-Err
+                // branch above for the ordering rationale).
+                *balances_by_output = balances_snapshot;
                 atomic.rollback();
+                refund_to_refund_pointer(balances_by_output, protomessage_vout, refund_pointer)?;
 
                 Ok(false)
             }
