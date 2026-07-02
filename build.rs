@@ -42,6 +42,12 @@ fn build_alkane(wasm_str: &str, features: Vec<&'static str>) -> Result<()> {
 
 fn main() {
     println!("cargo:rerun-if-changed=crates/");
+    // Force build.rs to rerun on every build: it generates test-fixture
+    // files under src/tests/std/ that are NOT checked in and get wiped by
+    // remote-sync tooling (rcargo rsync). Referencing a path that never
+    // exists makes cargo always rerun this script so the fixtures are
+    // regenerated. (Referenced nonexistent file → cargo treats as changed.)
+    println!("cargo:rerun-if-changed=.always-regenerate-fixtures");
     let env_var = env::var_os("OUT_DIR").unwrap();
     let base_dir = Path::new(&env_var)
         .parent()
@@ -56,25 +62,15 @@ fn main() {
     let wasm_dir = base_dir.parent().unwrap().join("alkanes");
     fs::create_dir_all(&wasm_dir).unwrap();
     let wasm_str = wasm_dir.to_str().unwrap();
-    let write_dir = Path::new(&out_dir)
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .join("src")
-        .join("tests");
+    // Anchor test-fixture paths to the crate root (CARGO_MANIFEST_DIR is
+    // always the package dir) rather than deriving from OUT_DIR, whose
+    // nesting depends on the target-dir layout (breaks under relocated
+    // target dirs, e.g. rcargo's ~/rcargo-builds/<proj>/).
+    let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
+    let write_dir = Path::new(&manifest_dir).join("src").join("tests");
 
     fs::create_dir_all(&write_dir.join("std")).unwrap();
-    let crates_dir = out_dir
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .join("crates");
+    let crates_dir = Path::new(&manifest_dir).join("crates");
     match std::env::set_current_dir(&crates_dir) {
         Err(_) => return,
         _ => {}

@@ -14,6 +14,10 @@ pub mod alkane;
 #[cfg(test)]
 pub mod arbitrary_alkane_mint;
 #[cfg(test)]
+pub mod inflation_poc;
+#[cfg(test)]
+pub mod attack;
+#[cfg(test)]
 pub mod auth_token;
 #[cfg(test)]
 pub mod crash;
@@ -59,3 +63,5 @@ pub mod view;
 pub mod getstorageat;
 #[cfg(test)]
 pub mod simulatetransaction;
+#[cfg(test)]
+pub mod freeze_poc;

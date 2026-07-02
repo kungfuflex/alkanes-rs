@@ -71,6 +71,10 @@ enum LoggerAlkaneMessage {
     #[opcode(30)]
     TestArbitraryMint { alkane: AlkaneId, amount: u128 },
 
+    // PoC opcode for the "two stores, one rollback" inflation bug.
+    #[opcode(35)]
+    TestArbitraryMintAndSelfOne { alkane: AlkaneId, amount: u128 },
+
     #[opcode(31)]
     TestExtCall { target: AlkaneId, inputs: Vec<u128> },
 
@@ -283,6 +287,24 @@ impl LoggerAlkane {
             value: amount,
         });
 
+        Ok(response)
+    }
+
+    fn test_arbitrary_mint_and_self_one(
+        &self,
+        alkane: AlkaneId,
+        amount: u128,
+    ) -> Result<CallResponse> {
+        let context = self.context()?;
+        let mut response = CallResponse::forward(&context.incoming_alkanes);
+        response.alkanes.pay(AlkaneTransfer {
+            id: alkane,
+            value: amount,
+        });
+        response.alkanes.pay(AlkaneTransfer {
+            id: context.myself,
+            value: 1u128,
+        });
         Ok(response)
     }
 
