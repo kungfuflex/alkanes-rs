@@ -225,7 +225,27 @@ pub trait BalanceSheetOperations: Sized {
     }
 
     // pipes a balancesheet onto itself
+    //
+    // SECURITY: this MUST be all-or-nothing. `sheet` is frequently the
+    // NON-transactional in-memory `proto_balances_by_output` map that
+    // `atomic.rollback()` does NOT unwind. If we mutated in place and a
+    // later (higher-id) rune overflowed after an earlier (lower-id) rune was
+    // already credited, the aborted message would leave the earlier credit
+    // committed while its KV-side debit is rolled back — duplicating that
+    // rune ("two stores, one rollback" inflation). Validate every
+    // `checked_add` first; only apply once the whole sheet is known to fit.
     fn pipe(&self, sheet: &mut Self) -> Result<()> {
+        // Pass 1: validate all additions without mutating `sheet`.
+        for (rune, balance) in self.balances() {
+            let current = sheet.get(rune);
+            current.checked_add(*balance).ok_or("").map_err(|_| {
+                anyhow!(format!(
+                    "overflow error during balance sheet increase, current({}) + additional({})",
+                    current, balance
+                ))
+            })?;
+        }
+        // Pass 2: apply — cannot overflow now, so no partial credit is possible.
         for (rune, balance) in self.balances() {
             sheet.increase(rune, *balance)?;
         }

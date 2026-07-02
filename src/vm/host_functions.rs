@@ -541,6 +541,14 @@ impl AlkanesHostFunctionsImpl {
             checkpoint_ptr,
         ) {
             Ok((cellpack, incoming_alkanes, storage_map, storage_map_len)) => {
+                // SECURITY (poison-block freeze): the special-precompile path
+                // (target.block == 800000000) returns BEFORE pushing an atomic
+                // checkpoint, and returns Err for unhandled tx (>= 4). Rolling
+                // back in that case pops a checkpoint belonging to a parent /
+                // message frame, underflowing the checkpoint stack and panicking
+                // index_block forever (a poison block). Only roll back when a
+                // checkpoint was actually pushed — i.e. the non-precompile path.
+                let pushed_checkpoint = cellpack.target.block != 800000000;
                 match Self::extcall::<T>(
                     caller,
                     cellpack,
@@ -549,7 +557,7 @@ impl AlkanesHostFunctionsImpl {
                     storage_map_len,
                 ) {
                     Ok(v) => v,
-                    Err(e) => Self::_handle_extcall_abort::<T>(caller, e, true),
+                    Err(e) => Self::_handle_extcall_abort::<T>(caller, e, pushed_checkpoint),
                 }
             }
             Err(e) => Self::_handle_extcall_abort::<T>(caller, e, false),
