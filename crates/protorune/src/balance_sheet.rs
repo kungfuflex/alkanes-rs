@@ -156,6 +156,30 @@ impl<P: KeyValuePointer + Clone + std::fmt::Debug> OutgoingRunes<P>
 
         // now lets update balances_by_output to correct values
 
+        // SECURITY: `balances_by_output` is the NON-transactional in-memory map;
+        // `atomic.rollback()` does NOT unwind it. Forwarding `outgoing` onto the
+        // `pointer` output (below) can overflow when `pointer` already holds a
+        // near-MAX balance of a rune `outgoing` also carries. If we `remove(&vout)`
+        // FIRST and then overflowed, `process_message`'s reconcile-Err branch would
+        // call `refund_to_refund_pointer` against an already-removed `vout`, refund
+        // nothing, and silently BURN the caller's incoming balance. Validate the
+        // whole forward up front — before any mutation — so an overflow leaves the
+        // map (incl. `vout`) untouched and the refund path stays whole. `pipe` is
+        // itself all-or-nothing, so this pre-check never rejects a case that would
+        // otherwise have succeeded; the success-path ordering is unchanged.
+        {
+            let target = balances_by_output.get(&pointer);
+            for (rune, amount) in outgoing.balances() {
+                let current = target.map(|s| s.get(rune)).unwrap_or(0);
+                current.checked_add(*amount).ok_or("").map_err(|_| {
+                    anyhow!(format!(
+                        "overflow error during balance sheet increase, current({}) + additional({})",
+                        current, amount
+                    ))
+                })?;
+            }
+        }
+
         // first remove the protomessage vout balances
         balances_by_output.remove(&vout);
 
