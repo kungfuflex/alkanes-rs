@@ -69,3 +69,5 @@ pub mod freeze_poc;
 pub mod reconcile_refund_poc;
 #[cfg(test)]
 pub mod transfer_overflow_poc;
+#[cfg(test)]
+pub mod storage_alloc_poc;
