@@ -86,6 +86,19 @@ pub fn get_alkane_binary_from_context(
     context: Arc<Mutex<AlkanesRuntimeContext>>,
     alkane_id: &AlkaneId,
 ) -> Result<Arc<Vec<u8>>> {
+    // Precompiled height-versioned load path: frBTC (`32:0`) resolves its code
+    // from the static in-binary version map by the current block height rather
+    // than from indexed state. `frbtc_wasm_for_height` returns byte-identical
+    // code to state for every height < FRBTC_V130_FORK_HEIGHT (its `>=`
+    // boundaries mirror the one-shot swaps in `check_and_upgrade_precompiled`,
+    // which runs before tx indexing), so there is no divergence on the pre-fork
+    // range; at/after the fork the new version activates directly from the
+    // binary on every node — no state migration, and immune to the
+    // rolled-pod-inert-swap failure mode.
+    if *alkane_id == (AlkaneId { block: 32, tx: 0 }) {
+        let height = context.lock().unwrap().message.height as u32;
+        return Ok(Arc::new(crate::network::frbtc_wasm_for_height(height)));
+    }
     let ptr = context.lock().unwrap().message.atomic.keyword("/alkanes/");
     get_alkane_binary(ptr, alkane_id)
 }
