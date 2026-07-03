@@ -58,6 +58,10 @@ fn test_infinite_loop() -> Result<()> {
 #[wasm_bindgen_test]
 fn test_infinite_extcall_loop() -> Result<()> {
     clear();
+    // The consensus depth limit (75) can't be reached under wasm-bindgen-test:
+    // V8's call stack overflows around depth 68 before the limit fires. Lower
+    // the limit for this test so the depth-check revert path is exercised.
+    crate::vm::constants::set_max_checkpoint_depth(30);
     let block_height = 0;
 
     // Create a cellpack to call the process_numbers method (opcode 11)
@@ -79,18 +83,12 @@ fn test_infinite_extcall_loop() -> Result<()> {
         vout: 3,
     };
 
-    let trace_data: Trace = view::trace(&outpoint)?.try_into()?;
-    let trace_events = trace_data.0.lock().expect("Mutex poisoned");
-    let last_trace_event = trace_events[trace_events.len() - 1].clone();
-    match last_trace_event {
-        TraceEvent::RevertContext(trace_response) => {
-            // Now we have the TraceResponse, access the data field
-            let data = String::from_utf8_lossy(&trace_response.inner.data);
-            assert!(data
-                .contains("Possible infinite recursion encountered: checkpoint depth too large"));
-        }
-        _ => panic!("Expected RevertContext variant, but got a different variant"),
-    }
+    alkane_helpers::assert_revert_context(
+        &outpoint,
+        "Possible infinite recursion encountered: checkpoint depth too large",
+    )?;
 
+    // Restore the consensus limit so other tests in this process see the default.
+    crate::vm::constants::set_max_checkpoint_depth(crate::vm::constants::MAX_CHECKPOINT_DEPTH);
     Ok(())
 }
