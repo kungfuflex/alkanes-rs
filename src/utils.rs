@@ -135,7 +135,16 @@ pub fn transfer_from(
         from_pointer.set_value::<u128>(checked_debit_with_minting(transfer, from, balance)?);
         let mut to_pointer =
             balance_pointer(atomic, &to.clone().into(), &transfer.id.clone().into());
-        to_pointer.set_value::<u128>(to_pointer.get_value::<u128>() + transfer.value);
+        // INVARIANT: a stored balance must never exceed u128::MAX. Credit with a
+        // checked add (matching `credit_balances`) so an overflow becomes a
+        // graceful per-tx revert instead of a panic (which wedges the block in a
+        // checked build) or a silent wrap (which corrupts the ledger in release).
+        let to_balance = to_pointer.get_value::<u128>();
+        to_pointer.set_value::<u128>(
+            to_balance
+                .checked_add(transfer.value)
+                .ok_or_else(|| anyhow!("balance overflow during transfer_from"))?,
+        );
     }
     Ok(())
 }
