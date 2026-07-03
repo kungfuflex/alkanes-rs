@@ -71,3 +71,5 @@ pub mod reconcile_refund_poc;
 pub mod transfer_overflow_poc;
 #[cfg(test)]
 pub mod storage_alloc_poc;
+#[cfg(test)]
+pub mod view_flag_leak_poc;

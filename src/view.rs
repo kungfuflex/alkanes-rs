@@ -917,6 +917,23 @@ fn touched_storage_for_protostone(
         .collect()
 }
 
+/// RAII guard for the four process-global view-mode collectors. Disabling on
+/// `Drop` guarantees they are turned off on EVERY exit from
+/// `simulate_protostones` — the happy path, an early `?` return (e.g. a failing
+/// `seed_input_balances`), or a panic unwind inside `index_protostones`. Without
+/// this, a leaked `SKIP_PROTOSTONE_PERSISTENCE = true` would make the next real
+/// `index_block` skip `save_balances`/`clear_balances` and silently corrupt the
+/// index. Disable is idempotent, so it composes with the explicit drains below.
+struct ViewCollectorGuard;
+impl Drop for ViewCollectorGuard {
+    fn drop(&mut self) {
+        crate::trace::disable_view_trace_collector();
+        protorune::disable_skip_protostone_persistence();
+        protorune::disable_final_balances_sink();
+        disable_touched_storage_collector();
+    }
+}
+
 /// Lower-level entry point. Caller supplies the alkane inputs +
 /// protostones directly. See the module doc above for the full design.
 pub fn simulate_protostones(
@@ -1013,11 +1030,15 @@ pub fn simulate_protostones(
     use crate::vm::fuel::FuelTank;
     FuelTank::initialize(&block, height as u32);
 
-    // Activate the view-mode collectors.
+    // Activate the view-mode collectors. The guard disables them on ANY exit
+    // (early `?` return / panic / normal), so they can never leak into the
+    // indexer. The explicit drains + disables below still run on the normal
+    // path to capture data; the guard is the safety net for the other paths.
     crate::trace::enable_view_trace_collector();
     protorune::enable_skip_protostone_persistence();
     protorune::enable_final_balances_sink();
     enable_touched_storage_collector();
+    let _view_guard = ViewCollectorGuard;
 
     let mut sandbox_atomic = AtomicPointer::default();
 
