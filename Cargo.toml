@@ -14,7 +14,7 @@ crate-type = ["cdylib", "rlib"]
 members = [".", "crates/*"]
 
 [workspace.package]
-version = "2.2.1-alpha.2"
+version = "2.2.1-alpha.3"
 edition = "2021"
 description = "ALKANES metaprotocol indexer"
 license = "MIT"

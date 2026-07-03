@@ -1,6 +1,7 @@
 use crate::message::AlkaneMessageContext;
 use crate::precompiled::fr_btc_build_v1_1_0;
 use crate::precompiled::fr_btc_build_v1_2_0;
+use crate::precompiled::fr_btc_build_v1_3_0;
 #[allow(unused_imports)]
 use crate::precompiled::{
     alkanes_std_genesis_alkane_dogecoin_build, alkanes_std_genesis_alkane_fractal_build,
@@ -46,9 +47,41 @@ pub fn fr_btc_bytes() -> Vec<u8> {
     // For mainnet (V220_FORK_HEIGHT=950_000 > 0), this returns bulky to
     // replicate the historical setup at block 880_000.
     if genesis::V220_FORK_HEIGHT == 0 {
-        fr_btc_build_v1_2_0::get_bytes()
+        // Genesis-coincident chains (regtest + alt-coins): deploy the latest
+        // slim build straight away. v1.3.0 is storage-init compatible with the
+        // v1.2.0 slim build these chains already ran against, so this preserves
+        // their post-V220 behaviour.
+        fr_btc_build_v1_3_0::get_bytes()
     } else {
         fr_btc_build::get_bytes()
+    }
+}
+
+/// Height-versioned static frBTC (`32:0`) code map — the "load a precompiled
+/// built-in directly from static program storage" path.
+///
+/// frBTC code is resolved by block height from bytes compiled into this binary,
+/// instead of read from indexed state. A binary upgrade that adds a new version
+/// + fork height therefore activates on every node at that height without a
+/// state migration, and can never be left inert on a rolled pod whose one-shot
+/// `check_and_upgrade_precompiled` swap already fired.
+///
+/// Boundaries are `>=` and MUST match the one-shot swaps in
+/// `check_and_upgrade_precompiled` (which runs *before* tx indexing each block),
+/// so the bytes returned here are byte-identical to indexed state for every
+/// height `< FRBTC_V130_FORK_HEIGHT` — i.e. no divergence on the pre-fork range.
+/// The `else` arm reuses `fr_btc_bytes()`: bulky at mainnet genesis, and the
+/// unreachable-on-genesis-coincident-chains fallback (there `FRBTC_V130 == 0`
+/// so the first arm always matches).
+pub fn frbtc_wasm_for_height(height: u32) -> Vec<u8> {
+    if height >= genesis::FRBTC_V130_FORK_HEIGHT {
+        fr_btc_build_v1_3_0::get_bytes()
+    } else if height >= genesis::V220_FORK_HEIGHT {
+        fr_btc_build_v1_2_0::get_bytes()
+    } else if height >= genesis::GENESIS_UPGRADE_EOA_BLOCK_HEIGHT {
+        fr_btc_build_v1_1_0::get_bytes()
+    } else {
+        fr_btc_bytes()
     }
 }
 
@@ -147,6 +180,10 @@ pub mod genesis {
     /// kungfuflex/v2.1.8-slim-frbtc). On regtest the fork is genesis-coincident
     /// so all tests run against the post-fork behaviour by default.
     pub const V220_FORK_HEIGHT: u32 = 0;
+    /// v2.2.1-alpha.3 fork: activates fr_btc v1.3.0. Genesis-coincident on
+    /// non-mainnet chains, so the static frBTC version map resolves to v1.3.0
+    /// from genesis here.
+    pub const FRBTC_V130_FORK_HEIGHT: u32 = 0;
 }
 
 #[cfg(feature = "mainnet")]
@@ -160,6 +197,10 @@ pub mod genesis {
     pub const GENESIS_UPGRADE_EOA_BLOCK_HEIGHT: u32 = 917_888;
     /// v2.2.0 mainnet fork: slim fr_btc.wasm + extcall revert containment.
     pub const V220_FORK_HEIGHT: u32 = 950_000;
+    /// v2.2.1-alpha.3 mainnet fork: activates fr_btc v1.3.0. Future block —
+    /// coordinated hard fork; all indexers MUST ship this activation (roll
+    /// v2.2.1-alpha.3) before this height or they diverge at 32:0.
+    pub const FRBTC_V130_FORK_HEIGHT: u32 = 957_000;
 }
 
 #[cfg(feature = "fractal")]
@@ -171,6 +212,10 @@ pub mod genesis {
     pub const GENESIS_UPGRADE_BLOCK_HEIGHT: u32 = 228_194;
     pub const GENESIS_UPGRADE_EOA_BLOCK_HEIGHT: u32 = 228_194;
     pub const V220_FORK_HEIGHT: u32 = 0;
+    /// v2.2.1-alpha.3 fork: activates fr_btc v1.3.0. Genesis-coincident on
+    /// non-mainnet chains, so the static frBTC version map resolves to v1.3.0
+    /// from genesis here.
+    pub const FRBTC_V130_FORK_HEIGHT: u32 = 0;
 }
 
 #[cfg(feature = "dogecoin")]
@@ -182,6 +227,10 @@ pub mod genesis {
     pub const GENESIS_UPGRADE_BLOCK_HEIGHT: u32 = 872_101;
     pub const GENESIS_UPGRADE_EOA_BLOCK_HEIGHT: u32 = 872_101;
     pub const V220_FORK_HEIGHT: u32 = 0;
+    /// v2.2.1-alpha.3 fork: activates fr_btc v1.3.0. Genesis-coincident on
+    /// non-mainnet chains, so the static frBTC version map resolves to v1.3.0
+    /// from genesis here.
+    pub const FRBTC_V130_FORK_HEIGHT: u32 = 0;
 }
 
 #[cfg(feature = "luckycoin")]
@@ -193,6 +242,10 @@ pub mod genesis {
     pub const GENESIS_UPGRADE_BLOCK_HEIGHT: u32 = 872_101;
     pub const GENESIS_UPGRADE_EOA_BLOCK_HEIGHT: u32 = 872_101;
     pub const V220_FORK_HEIGHT: u32 = 0;
+    /// v2.2.1-alpha.3 fork: activates fr_btc v1.3.0. Genesis-coincident on
+    /// non-mainnet chains, so the static frBTC version map resolves to v1.3.0
+    /// from genesis here.
+    pub const FRBTC_V130_FORK_HEIGHT: u32 = 0;
 }
 
 #[cfg(feature = "bellscoin")]
@@ -204,6 +257,10 @@ pub mod genesis {
     pub const GENESIS_UPGRADE_BLOCK_HEIGHT: u32 = 288_906;
     pub const GENESIS_UPGRADE_EOA_BLOCK_HEIGHT: u32 = 288_906;
     pub const V220_FORK_HEIGHT: u32 = 0;
+    /// v2.2.1-alpha.3 fork: activates fr_btc v1.3.0. Genesis-coincident on
+    /// non-mainnet chains, so the static frBTC version map resolves to v1.3.0
+    /// from genesis here.
+    pub const FRBTC_V130_FORK_HEIGHT: u32 = 0;
 }
 
 pub fn is_active(height: u64) -> bool {
@@ -398,6 +455,22 @@ pub fn check_and_upgrade_precompiled(height: u32) -> Result<()> {
                 IndexPointer::from_keyword("/alkanes/")
                     .select(&(AlkaneId { block: 32, tx: 0 }).into())
                     .set(Arc::new(compress(fr_btc_build_v1_2_0::get_bytes())?));
+            }
+        }
+    }
+    // v2.2.1-alpha.3 fork: activate fr_btc v1.3.0. Keeps indexed state
+    // (read by `getbytecode`) in
+    // lock-step with the static `frbtc_wasm_for_height` execution map — both
+    // resolve `32:0` to v1.3.0 at/after this height. Genesis-coincident chains
+    // (V220==0) already deployed v1.3.0 via `setup_frbtc`, so record-only.
+    if height >= genesis::FRBTC_V130_FORK_HEIGHT {
+        let mut v130_upgrade_ptr = IndexPointer::from_keyword("/genesis-upgraded-frbtc-v130");
+        if v130_upgrade_ptr.get().len() == 0 {
+            v130_upgrade_ptr.set_value::<u8>(0x01);
+            if genesis::V220_FORK_HEIGHT > 0 {
+                IndexPointer::from_keyword("/alkanes/")
+                    .select(&(AlkaneId { block: 32, tx: 0 }).into())
+                    .set(Arc::new(compress(fr_btc_build_v1_3_0::get_bytes())?));
             }
         }
     }
