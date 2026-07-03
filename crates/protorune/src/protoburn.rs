@@ -96,6 +96,12 @@ impl Protoburns<Protoburn> for Vec<Protoburn> {
         default_output: u32,
         txid: Txid,
     ) -> Result<()> {
+        // No protoburns => nothing to burn. Returning early also avoids
+        // constructing a zero-`max` BurnCycle, whose `next()` would divide by
+        // zero the moment a leftover rune needs to be cycled.
+        if self.is_empty() {
+            return Ok(());
+        }
         let mut runestone_balance_sheet = BalanceSheet::new();
         if balances_by_output.contains_key(&runestone_output_index) {
             let sheet = balances_by_output
@@ -195,6 +201,12 @@ impl BurnCycle {
         }
     }
     pub fn next(&mut self, rune: &ProtoruneRuneId) -> Result<i32> {
+        // INVARIANT: `max` is the number of protoburns; with none there is no
+        // cycle to advance. Guard the modulo so `max == 0` is a graceful error
+        // instead of a division-by-zero panic.
+        if self.max == 0 {
+            return Err(anyhow!("BurnCycle: no protoburns to cycle through"));
+        }
         if !self.cycles.contains_key(rune) {
             self.cycles.insert(rune.clone(), 0);
         }

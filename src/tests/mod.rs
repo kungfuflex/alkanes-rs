@@ -73,3 +73,7 @@ pub mod transfer_overflow_poc;
 pub mod storage_alloc_poc;
 #[cfg(test)]
 pub mod view_flag_leak_poc;
+#[cfg(test)]
+pub mod view_dust_alloc_poc;
+#[cfg(test)]
+pub mod protoburn_divzero_poc;

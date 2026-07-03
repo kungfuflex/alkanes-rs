@@ -976,7 +976,14 @@ pub fn simulate_protostones(
             .filter_map(|p| p.pointer)
             .max()
             .unwrap_or(0);
-        let num_dust_outputs = (max_pointer as usize).saturating_add(1);
+        // INVARIANT: never allocate an attacker-sized output vector. `pointer`
+        // is an arbitrary u32, so an unclamped `max_pointer + 1` (up to ~4.29B)
+        // OOMs the process. Any pointer past this bound is an out-of-range vout
+        // that `process_message` rejects with "Invalid output pointer", so
+        // clamping only changes crashing into a graceful error response.
+        const MAX_SYNTH_DUST_OUTPUTS: usize = 4096;
+        let num_dust_outputs =
+            std::cmp::min((max_pointer as usize).saturating_add(1), MAX_SYNTH_DUST_OUTPUTS);
         synth_tx_carrying_protostones(
             synth_input_outpoint,
             num_dust_outputs,
