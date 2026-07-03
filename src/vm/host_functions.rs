@@ -1,3 +1,4 @@
+use super::constants::max_checkpoint_depth;
 use super::fuel::compute_extcall_fuel;
 use super::{
     get_memory, read_arraybuffer, send_to_arraybuffer, sequence_pointer, AlkanesState, Extcall,
@@ -490,7 +491,7 @@ impl AlkanesHostFunctionsImpl {
         checkpoint_ptr: i32,
     ) -> Result<(Cellpack, AlkaneTransferParcel, StorageMap, u64)> {
         let current_depth = AlkanesHostFunctionsImpl::get_checkpoint_depth(caller);
-        if current_depth >= 75 {
+        if current_depth >= max_checkpoint_depth() {
             return Err(anyhow!(format!(
                 "Possible infinite recursion encountered: checkpoint depth too large({})",
                 current_depth

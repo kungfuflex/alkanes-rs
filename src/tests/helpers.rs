@@ -641,8 +641,39 @@ fn get_trace_event_at_index(outpoint: &OutPoint, index: Option<isize>) -> Result
 }
 
 pub fn assert_revert_context(outpoint: &OutPoint, expected_error_message: &str) -> Result<()> {
-    // This is a convenience wrapper around assert_revert_context_at_index that checks the last event
-    assert_revert_context_at_index(outpoint, expected_error_message, None)
+    // Assert the last event reverted, but search every event for the error message,
+    // since inner revert messages don't always propagate to the outermost context.
+    let trace_data: Trace = view::trace(outpoint)?.try_into()?;
+    let trace_events = trace_data.0.lock().expect("Mutex poisoned");
+
+    let last_event = trace_events.last().expect("No trace events found");
+    if !matches!(last_event, TraceEvent::RevertContext(_)) {
+        panic!(
+            "Expected RevertContext variant, but got a different variant: {:?}",
+            last_event
+        );
+    }
+
+    let all_data: Vec<String> = trace_events
+        .iter()
+        .filter_map(|event| match event {
+            TraceEvent::RevertContext(trace_response)
+            | TraceEvent::ReturnContext(trace_response) => {
+                Some(String::from_utf8_lossy(&trace_response.inner.data).into_owned())
+            }
+            _ => None,
+        })
+        .collect();
+
+    assert!(
+        all_data
+            .iter()
+            .any(|data| data.contains(expected_error_message)),
+        "Expected error message '{}' not found in any trace event: {:?}",
+        expected_error_message,
+        all_data
+    );
+    Ok(())
 }
 
 pub fn assert_revert_context_at_index(

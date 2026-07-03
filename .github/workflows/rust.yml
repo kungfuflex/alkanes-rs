@@ -33,6 +33,6 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
       - name: Install test runner
-        run: cargo install wasm-bindgen-cli --version 0.2.100
+        run: cargo install wasm-bindgen-cli --version 0.2.100 --locked
       - name: ${{ matrix.test-config.name }}
         run: ${{ matrix.test-config.command }}

@@ -388,7 +388,7 @@ fn test_fr_btc_unwrap_more() -> Result<()> {
 #[wasm_bindgen_test]
 fn test_set_signer_no_auth() -> Result<()> {
     clear();
-    let set_signer_tx = set_signer(OutPoint::default(), 0)?;
+    let set_signer_tx = set_signer(OutPoint::default(), 1)?;
     let outpoint = OutPoint {
         txid: set_signer_tx.compute_txid(),
         vout: 3,
@@ -567,7 +567,13 @@ fn test_fr_btc_unwrap_with_multiple_protostones_and_late_op_return() -> Result<(
             sequence: Sequence::MAX,
             witness: Witness::default(),
         }],
-        output: vec![signer_output, dummy_output1, dummy_output2, dummy_output3, op_return],
+        output: vec![
+            signer_output,
+            dummy_output1,
+            dummy_output2,
+            dummy_output3,
+            op_return,
+        ],
     };
 
     let mut block = create_block_with_coinbase_tx(height);
