@@ -364,6 +364,41 @@ fn test_fr_btc_wrap_correct_signer() -> Result<()> {
     Ok(())
 }
 
+/// Fuel regression guard for the fr_btc v1.3.0 precompile. The slim build the
+/// static version map resolves to (`frbtc_wasm_for_height`) must keep a
+/// wrap/unwrap well under the wasmi fuel ceiling — a wrap that spent millions
+/// of fuel could not complete inside a multi-protostone tx budget. Measured via
+/// `fuel_probe`, which records `gas_used` per contract call in test builds.
+#[wasm_bindgen_test]
+fn test_fr_btc_v130_wrap_unwrap_fuel_bounded() -> Result<()> {
+    let fr_btc = AlkaneId { block: 32, tx: 0 };
+    let max_op = |op: u128| -> u64 {
+        crate::fuel_probe::snapshot()
+            .iter()
+            .filter(|r| r.target == fr_btc && r.opcode == op)
+            .map(|r| r.gas_used)
+            .max()
+            .unwrap_or(0)
+    };
+    // fr_btc v1.3.0 caches the tap-tweaked signer P2TR (`/signer_script_cached`)
+    // on the first wrap, so the ~2.0M-fuel tap_tweak is paid once, not per wrap.
+    // The FIRST wrap is the cold path (~2.29M — derive + cache); every wrap after
+    // reads the cache. This guard pins the warm (steady-state) wrap under 300k.
+    clear();
+    crate::fuel_probe::clear();
+    let _ = wrap_btc()?; // cold: derives + caches the signer script
+    crate::fuel_probe::clear();
+    let _ = wrap_btc()?; // warm: reads the cached signer script
+    let warm_wrap = max_op(77);
+    assert!(warm_wrap > 0, "no fr_btc (32:0) wrap (op77) call was recorded");
+    assert!(
+        warm_wrap < 300_000,
+        "fr_btc v1.3.0 warm-wrap fuel regressed (signer cache not hit?): {} >= 300000",
+        warm_wrap
+    );
+    Ok(())
+}
+
 #[wasm_bindgen_test]
 fn test_fr_btc_unwrap() -> Result<()> {
     clear();
