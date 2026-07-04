@@ -72,12 +72,27 @@ fn set_alkane_id_to_tx_id(
     Ok(())
 }
 
-pub fn get_alkane_binary<T: KeyValuePointer>(ptr: T, alkane_id: &AlkaneId) -> Result<Arc<Vec<u8>>> {
+pub fn get_alkane_binary<T: KeyValuePointer>(
+    ptr: T,
+    alkane_id: &AlkaneId,
+    height: u32,
+) -> Result<Arc<Vec<u8>>> {
+    // Precompiled height-versioned load path: the built-ins (DIESEL `2:0`,
+    // frBTC `32:0`, frSIGIL `32:1`) resolve their code from the static
+    // in-binary version maps by block height rather than from indexed state.
+    // The maps' `>=` boundaries mirror the historical one-shot byte-swaps that
+    // used to rewrite indexed state, so there is no divergence on any indexed
+    // range; a new version + fork height activates directly from the binary on
+    // every node — no state migration, and immune to the
+    // rolled-pod-inert-swap failure mode.
+    if let Some(bytes) = crate::network::precompiled_alkane_wasm_for_height(alkane_id, height) {
+        return Ok(Arc::new(bytes));
+    }
     let wasm_payload_arc = ptr.select(&alkane_id.clone().into()).get();
     let wasm_payload = wasm_payload_arc.as_ref();
     if wasm_payload.len() == 32 {
         let factory_id = wasm_payload.to_vec().try_into()?;
-        return get_alkane_binary(ptr, &factory_id);
+        return get_alkane_binary(ptr, &factory_id, height);
     }
     Ok(Arc::new(decompress(wasm_payload.clone())?))
 }
@@ -86,21 +101,14 @@ pub fn get_alkane_binary_from_context(
     context: Arc<Mutex<AlkanesRuntimeContext>>,
     alkane_id: &AlkaneId,
 ) -> Result<Arc<Vec<u8>>> {
-    // Precompiled height-versioned load path: frBTC (`32:0`) resolves its code
-    // from the static in-binary version map by the current block height rather
-    // than from indexed state. `frbtc_wasm_for_height` returns byte-identical
-    // code to state for every height < FRBTC_V130_FORK_HEIGHT (its `>=`
-    // boundaries mirror the one-shot swaps in `check_and_upgrade_precompiled`,
-    // which runs before tx indexing), so there is no divergence on the pre-fork
-    // range; at/after the fork the new version activates directly from the
-    // binary on every node — no state migration, and immune to the
-    // rolled-pod-inert-swap failure mode.
-    if *alkane_id == (AlkaneId { block: 32, tx: 0 }) {
-        let height = context.lock().unwrap().message.height as u32;
-        return Ok(Arc::new(crate::network::frbtc_wasm_for_height(height)));
-    }
-    let ptr = context.lock().unwrap().message.atomic.keyword("/alkanes/");
-    get_alkane_binary(ptr, alkane_id)
+    let (ptr, height) = {
+        let guard = context.lock().unwrap();
+        (
+            guard.message.atomic.keyword("/alkanes/"),
+            guard.message.height as u32,
+        )
+    };
+    get_alkane_binary(ptr, alkane_id, height)
 }
 
 pub fn run_special_cellpacks(
