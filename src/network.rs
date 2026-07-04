@@ -16,7 +16,6 @@ use crate::utils::pipe_storagemap_to;
 use crate::view::simulate_parcel;
 use crate::vm::utils::sequence_pointer;
 use alkanes_support::cellpack::Cellpack;
-use alkanes_support::gz::compress;
 use alkanes_support::id::AlkaneId;
 use alkanes_support::parcel::AlkaneTransferParcel;
 use anyhow::Result;
@@ -39,15 +38,14 @@ use {
 
 pub fn fr_btc_bytes() -> Vec<u8> {
     // On chains where V220 is active from genesis (regtest + alt-coin
-    // networks where V220_FORK_HEIGHT=0), `setup_frbtc` must deploy and
-    // initialize the slim binary directly. If we deploy bulky here and
-    // later swap to slim via `check_and_upgrade_precompiled`, the swap
-    // overwrites bytes but preserves bulky's init storage — slim then
-    // executes against an unfamiliar storage layout and fuel-exhausts.
+    // networks where V220_FORK_HEIGHT=0), `setup_frbtc` must initialize
+    // against the slim binary directly — initializing bulky and then
+    // executing slim would leave slim running against an unfamiliar
+    // storage layout, and it fuel-exhausts.
     // For mainnet (V220_FORK_HEIGHT=950_000 > 0), this returns bulky to
     // replicate the historical setup at block 880_000.
     if genesis::V220_FORK_HEIGHT == 0 {
-        // Genesis-coincident chains (regtest + alt-coins): deploy the latest
+        // Genesis-coincident chains (regtest + alt-coins): use the latest
         // slim build straight away. v1.3.0 is storage-init compatible with the
         // v1.2.0 slim build these chains already ran against, so this preserves
         // their post-V220 behaviour.
@@ -63,13 +61,13 @@ pub fn fr_btc_bytes() -> Vec<u8> {
 /// frBTC code is resolved by block height from bytes compiled into this binary,
 /// instead of read from indexed state. A binary upgrade that adds a new version
 /// + fork height therefore activates on every node at that height without a
-/// state migration, and can never be left inert on a rolled pod whose one-shot
-/// `check_and_upgrade_precompiled` swap already fired.
+/// state migration, and can never be left inert on a rolled pod that already
+/// indexed past the fork height.
 ///
-/// Boundaries are `>=` and MUST match the one-shot swaps in
-/// `check_and_upgrade_precompiled` (which runs *before* tx indexing each block),
-/// so the bytes returned here are byte-identical to indexed state for every
-/// height `< FRBTC_V130_FORK_HEIGHT` — i.e. no divergence on the pre-fork range.
+/// Boundaries are `>=` and mirror the historical one-shot byte-swaps that used
+/// to rewrite indexed state at these heights (each swap ran *before* tx
+/// indexing of its activation block), so the bytes returned here are
+/// byte-identical to what execution historically saw at every height.
 /// The `else` arm reuses `fr_btc_bytes()`: bulky at mainnet genesis, and the
 /// unreachable-on-genesis-coincident-chains fallback (there `FRBTC_V130 == 0`
 /// so the first arm always matches).
@@ -158,6 +156,39 @@ pub fn genesis_alkane_upgrade_bytes_eoa() -> Vec<u8> {
 ))]
 pub fn genesis_alkane_upgrade_bytes_eoa() -> Vec<u8> {
     alkanes_std_genesis_alkane_upgraded_eoa_regtest_build::get_bytes()
+}
+
+/// Height-versioned static genesis-alkane / DIESEL (`2:0`) code map.
+///
+/// Boundaries are `>=` and mirror the historical one-shot byte-swaps that used
+/// to rewrite indexed state at `GENESIS_UPGRADE_BLOCK_HEIGHT` and
+/// `GENESIS_UPGRADE_EOA_BLOCK_HEIGHT` (each ran *before* tx indexing of its
+/// activation block), so the bytes returned here are byte-identical to what
+/// execution historically saw at every height.
+pub fn genesis_alkane_wasm_for_height(height: u32) -> Vec<u8> {
+    if height >= genesis::GENESIS_UPGRADE_EOA_BLOCK_HEIGHT {
+        genesis_alkane_upgrade_bytes_eoa()
+    } else if height >= genesis::GENESIS_UPGRADE_BLOCK_HEIGHT {
+        genesis_alkane_upgrade_bytes()
+    } else {
+        genesis_alkane_bytes()
+    }
+}
+
+/// The single load path for precompiled built-ins: resolves the alkane's code
+/// for `height` from the static in-binary version maps, or `None` when the id
+/// is not a precompile. Precompiled code is never read from (or written to)
+/// the `/alkanes/` bytecode table.
+pub fn precompiled_alkane_wasm_for_height(id: &AlkaneId, height: u32) -> Option<Vec<u8>> {
+    if *id == (AlkaneId { block: 2, tx: 0 }) {
+        Some(genesis_alkane_wasm_for_height(height))
+    } else if *id == (AlkaneId { block: 32, tx: 0 }) {
+        Some(frbtc_wasm_for_height(height))
+    } else if *id == (AlkaneId { block: 32, tx: 1 }) {
+        Some(fr_sigil_bytes())
+    } else {
+        None
+    }
 }
 
 //use if regtest
@@ -294,13 +325,17 @@ pub fn is_genesis(height: u64) -> bool {
 }
 
 pub fn setup_frsigil(block: &Block) -> Result<()> {
-    let mut ptr =
+    // Run the init simulation exactly once. frSIGIL code itself is never
+    // stored — execution resolves `32:1` via `precompiled_alkane_wasm_for_height`.
+    // DBs written by older releases stored the wasm bytes at /alkanes/32:1 and
+    // already ran the init, so treat those as done too.
+    let mut done_ptr = IndexPointer::from_keyword("/precompiled-initialized/frsigil");
+    let legacy_bytes =
         IndexPointer::from_keyword("/alkanes/").select(&(AlkaneId { block: 32, tx: 1 }).into());
-    if ptr.get().len() == 0 {
-        ptr.set(Arc::new(compress(fr_sigil_bytes())?));
-    } else {
+    if done_ptr.get().len() != 0 || legacy_bytes.get().len() != 0 {
         return Ok(());
     }
+    done_ptr.set_value::<u8>(0x01);
     let mut atomic: AtomicPointer = AtomicPointer::default();
     let fr_sigil = AlkaneId { block: 32, tx: 1 };
 
@@ -359,13 +394,17 @@ pub fn setup_frsigil(block: &Block) -> Result<()> {
 }
 
 pub fn setup_frbtc(block: &Block) -> Result<()> {
-    let mut ptr =
+    // Run the init simulation exactly once. frBTC code itself is never
+    // stored — execution resolves `32:0` via `precompiled_alkane_wasm_for_height`.
+    // DBs written by older releases stored the wasm bytes at /alkanes/32:0 and
+    // already ran the init, so treat those as done too.
+    let mut done_ptr = IndexPointer::from_keyword("/precompiled-initialized/frbtc");
+    let legacy_bytes =
         IndexPointer::from_keyword("/alkanes/").select(&(AlkaneId { block: 32, tx: 0 }).into());
-    if ptr.get().len() == 0 {
-        ptr.set(Arc::new(compress(fr_btc_bytes())?));
-    } else {
+    if done_ptr.get().len() != 0 || legacy_bytes.get().len() != 0 {
         return Ok(());
     }
+    done_ptr.set_value::<u8>(0x01);
     let mut atomic: AtomicPointer = AtomicPointer::default();
     let fr_btc = AlkaneId { block: 32, tx: 0 };
     let parcel2 = MessageContextParcel {
@@ -406,85 +445,18 @@ pub fn setup_frbtc(block: &Block) -> Result<()> {
     Ok(())
 }
 
-pub fn check_and_upgrade_precompiled(height: u32) -> Result<()> {
-    if height >= genesis::GENESIS_UPGRADE_BLOCK_HEIGHT {
-        let mut upgrade_ptr = IndexPointer::from_keyword("/genesis-upgraded");
-        if upgrade_ptr.get().len() == 0 {
-            upgrade_ptr.set_value::<u8>(0x01);
-            IndexPointer::from_keyword("/alkanes/")
-                .select(&(AlkaneId { block: 2, tx: 0 }).into())
-                .set(Arc::new(compress(genesis_alkane_upgrade_bytes())?));
-        }
-    }
-    if height >= genesis::GENESIS_UPGRADE_EOA_BLOCK_HEIGHT {
-        let mut eoa_upgrade_ptr = IndexPointer::from_keyword("/genesis-upgraded-eoa");
-        if eoa_upgrade_ptr.get().len() == 0 {
-            eoa_upgrade_ptr.set_value::<u8>(0x01);
-            IndexPointer::from_keyword("/alkanes/")
-                .select(&(AlkaneId { block: 2, tx: 0 }).into())
-                .set(Arc::new(compress(genesis_alkane_upgrade_bytes_eoa())?));
-            // Only swap fr_btc to bulky v1.1.0 when V220 has not yet
-            // activated. On chains where V220 is genesis-coincident
-            // (V220_FORK_HEIGHT=0), `setup_frbtc` already deployed slim and
-            // overwriting it here would leak bulky storage semantics back in.
-            if genesis::V220_FORK_HEIGHT > genesis::GENESIS_UPGRADE_EOA_BLOCK_HEIGHT {
-                IndexPointer::from_keyword("/alkanes/")
-                    .select(&(AlkaneId { block: 32, tx: 0 }).into())
-                    .set(Arc::new(compress(fr_btc_build_v1_1_0::get_bytes())?));
-            }
-        }
-    }
-    // v2.2.0 fork: replace the fr_btc precompile bytes (alkane id 32:0) with
-    // the slim 281 KB build. The v1.1.0 (1.5 MB) bytes deployed at
-    // GENESIS_UPGRADE_EOA_BLOCK_HEIGHT remain canonical pre-fork; nodes
-    // re-syncing from before that height still walk through the same
-    // historical wasm blobs in order. Behaviour is interface-compatible —
-    // tap_tweak was restored in fr_btc_v1.2.0 so the slim build is a drop-in
-    // at the precompile boundary.
-    if height >= genesis::V220_FORK_HEIGHT {
-        let mut v220_upgrade_ptr = IndexPointer::from_keyword("/genesis-upgraded-v220");
-        if v220_upgrade_ptr.get().len() == 0 {
-            v220_upgrade_ptr.set_value::<u8>(0x01);
-            // When V220 is genesis-coincident, `setup_frbtc` already deployed
-            // slim with the correct init storage; skip the byte-swap and just
-            // record the upgrade in the pointer. For real fork heights
-            // (V220_FORK_HEIGHT>0), perform the swap as normal — it replaces
-            // the bulky v1.1.0 bytes with slim, leaving the historical
-            // bulky-derived storage in place (slim is interface-compatible).
-            if genesis::V220_FORK_HEIGHT > 0 {
-                IndexPointer::from_keyword("/alkanes/")
-                    .select(&(AlkaneId { block: 32, tx: 0 }).into())
-                    .set(Arc::new(compress(fr_btc_build_v1_2_0::get_bytes())?));
-            }
-        }
-    }
-    // v2.2.1-alpha.3 fork: activate fr_btc v1.3.0. Keeps indexed state
-    // (read by `getbytecode`) in
-    // lock-step with the static `frbtc_wasm_for_height` execution map — both
-    // resolve `32:0` to v1.3.0 at/after this height. Genesis-coincident chains
-    // (V220==0) already deployed v1.3.0 via `setup_frbtc`, so record-only.
-    if height >= genesis::FRBTC_V130_FORK_HEIGHT {
-        let mut v130_upgrade_ptr = IndexPointer::from_keyword("/genesis-upgraded-frbtc-v130");
-        if v130_upgrade_ptr.get().len() == 0 {
-            v130_upgrade_ptr.set_value::<u8>(0x01);
-            if genesis::V220_FORK_HEIGHT > 0 {
-                IndexPointer::from_keyword("/alkanes/")
-                    .select(&(AlkaneId { block: 32, tx: 0 }).into())
-                    .set(Arc::new(compress(fr_btc_build_v1_3_0::get_bytes())?));
-            }
-        }
-    }
-    Ok(())
-}
-
 pub fn setup_diesel(block: &Block) -> Result<()> {
-    let mut ptr =
+    // Run the init simulation exactly once. Genesis-alkane code itself is never
+    // stored — execution resolves `2:0` via `precompiled_alkane_wasm_for_height`.
+    // DBs written by older releases stored the wasm bytes at /alkanes/2:0 and
+    // already ran the init, so treat those as done too.
+    let mut done_ptr = IndexPointer::from_keyword("/precompiled-initialized/diesel");
+    let legacy_bytes =
         IndexPointer::from_keyword("/alkanes/").select(&(AlkaneId { block: 2, tx: 0 }).into());
-    if ptr.get().len() == 0 {
-        ptr.set(Arc::new(compress(genesis_alkane_bytes())?));
-    } else {
+    if done_ptr.get().len() != 0 || legacy_bytes.get().len() != 0 {
         return Ok(());
     }
+    done_ptr.set_value::<u8>(0x01);
     let mut atomic: AtomicPointer = AtomicPointer::default();
     let myself = AlkaneId { block: 2, tx: 0 };
     let parcel = MessageContextParcel {
