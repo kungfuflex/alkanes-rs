@@ -16,6 +16,7 @@ use crate::utils::pipe_storagemap_to;
 use crate::view::simulate_parcel;
 use crate::vm::utils::sequence_pointer;
 use alkanes_support::cellpack::Cellpack;
+use alkanes_support::gz::compress;
 use alkanes_support::id::AlkaneId;
 use alkanes_support::parcel::AlkaneTransferParcel;
 use anyhow::Result;
@@ -325,17 +326,17 @@ pub fn is_genesis(height: u64) -> bool {
 }
 
 pub fn setup_frsigil(block: &Block) -> Result<()> {
-    // Run the init simulation exactly once. frSIGIL code itself is never
-    // stored — execution resolves `32:1` via `precompiled_alkane_wasm_for_height`.
-    // DBs written by older releases stored the wasm bytes at /alkanes/32:1 and
-    // already ran the init, so treat those as done too.
-    let mut done_ptr = IndexPointer::from_keyword("/precompiled-initialized/frsigil");
-    let legacy_bytes =
+    // Byte presence at /alkanes/32:1 is the deployed-detection marker (kept
+    // for backwards compatibility with already-synced DBs). Execution never
+    // reads these bytes — `get_alkane_binary` resolves `32:1` from the static
+    // in-binary code via `precompiled_alkane_wasm_for_height`.
+    let mut ptr =
         IndexPointer::from_keyword("/alkanes/").select(&(AlkaneId { block: 32, tx: 1 }).into());
-    if done_ptr.get().len() != 0 || legacy_bytes.get().len() != 0 {
+    if ptr.get().len() == 0 {
+        ptr.set(Arc::new(compress(fr_sigil_bytes())?));
+    } else {
         return Ok(());
     }
-    done_ptr.set_value::<u8>(0x01);
     let mut atomic: AtomicPointer = AtomicPointer::default();
     let fr_sigil = AlkaneId { block: 32, tx: 1 };
 
@@ -394,17 +395,17 @@ pub fn setup_frsigil(block: &Block) -> Result<()> {
 }
 
 pub fn setup_frbtc(block: &Block) -> Result<()> {
-    // Run the init simulation exactly once. frBTC code itself is never
-    // stored — execution resolves `32:0` via `precompiled_alkane_wasm_for_height`.
-    // DBs written by older releases stored the wasm bytes at /alkanes/32:0 and
-    // already ran the init, so treat those as done too.
-    let mut done_ptr = IndexPointer::from_keyword("/precompiled-initialized/frbtc");
-    let legacy_bytes =
+    // Byte presence at /alkanes/32:0 is the deployed-detection marker (kept
+    // for backwards compatibility with already-synced DBs). Execution never
+    // reads these bytes — `get_alkane_binary` resolves `32:0` from the static
+    // in-binary version map via `precompiled_alkane_wasm_for_height`.
+    let mut ptr =
         IndexPointer::from_keyword("/alkanes/").select(&(AlkaneId { block: 32, tx: 0 }).into());
-    if done_ptr.get().len() != 0 || legacy_bytes.get().len() != 0 {
+    if ptr.get().len() == 0 {
+        ptr.set(Arc::new(compress(fr_btc_bytes())?));
+    } else {
         return Ok(());
     }
-    done_ptr.set_value::<u8>(0x01);
     let mut atomic: AtomicPointer = AtomicPointer::default();
     let fr_btc = AlkaneId { block: 32, tx: 0 };
     let parcel2 = MessageContextParcel {
@@ -446,17 +447,17 @@ pub fn setup_frbtc(block: &Block) -> Result<()> {
 }
 
 pub fn setup_diesel(block: &Block) -> Result<()> {
-    // Run the init simulation exactly once. Genesis-alkane code itself is never
-    // stored — execution resolves `2:0` via `precompiled_alkane_wasm_for_height`.
-    // DBs written by older releases stored the wasm bytes at /alkanes/2:0 and
-    // already ran the init, so treat those as done too.
-    let mut done_ptr = IndexPointer::from_keyword("/precompiled-initialized/diesel");
-    let legacy_bytes =
+    // Byte presence at /alkanes/2:0 is the deployed-detection marker (kept
+    // for backwards compatibility with already-synced DBs). Execution never
+    // reads these bytes — `get_alkane_binary` resolves `2:0` from the static
+    // in-binary version map via `precompiled_alkane_wasm_for_height`.
+    let mut ptr =
         IndexPointer::from_keyword("/alkanes/").select(&(AlkaneId { block: 2, tx: 0 }).into());
-    if done_ptr.get().len() != 0 || legacy_bytes.get().len() != 0 {
+    if ptr.get().len() == 0 {
+        ptr.set(Arc::new(compress(genesis_alkane_bytes())?));
+    } else {
         return Ok(());
     }
-    done_ptr.set_value::<u8>(0x01);
     let mut atomic: AtomicPointer = AtomicPointer::default();
     let myself = AlkaneId { block: 2, tx: 0 };
     let parcel = MessageContextParcel {
