@@ -375,6 +375,20 @@ export type {
   WalletOption,
 } from './client';
 
+// BIP-322 message signing / verification (simple format; P2WPKH + P2TR)
+export {
+  signMessageSimple,
+  verifyMessageSimple,
+  bip322MessageHash,
+  buildToSpend,
+  buildToSign,
+} from './bip322';
+export type {
+  Bip322AddressType,
+  SignMessageParams as Bip322SignMessageParams,
+  VerifyMessageParams as Bip322VerifyMessageParams,
+} from './bip322';
+
 // Storage and backup exports
 export {
   KeystoreStorage,
