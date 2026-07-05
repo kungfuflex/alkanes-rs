@@ -33,6 +33,7 @@ import {
 import { Keystore, NetworkType } from '../types';
 import { KeystoreManager, DERIVATION_PATHS } from '../keystore';
 import { AddressType } from '../wallet';
+import { signMessageSimple } from '../bip322';
 
 // Initialize ECC
 bitcoin.initEccLib(ecc);
@@ -172,7 +173,35 @@ export class KeystoreSigner extends AlkanesSigner {
     return account.publicKey;
   }
 
+  /**
+   * Sign a message.
+   *
+   * `options.protocol`:
+   *   - `'bip322'` / `'bip322-simple'` — BIP-322 simple signature over the
+   *     signer's address (P2WPKH or P2TR key-path). Interoperable with
+   *     UniSat / Xverse / Sparrow and verifiable via `verifyMessageSimple`.
+   *   - `'ecdsa'` (default) — legacy raw ECDSA over sha256(message), base64.
+   *     NOT a standard Bitcoin signed message; kept for backward compat.
+   */
   async signMessage(message: string, options?: SignMessageOptions): Promise<string> {
+    const protocol = options?.protocol ?? 'ecdsa';
+
+    if (protocol === 'bip322' || protocol === 'bip322-simple') {
+      // Sign against the signer's own address so the script type matches.
+      const { address } = this.deriveAddressInfo(
+        this.addressType,
+        this.addressIndex,
+        0,
+      );
+      const node = this.getSigningNode(options?.address);
+      return signMessageSimple({
+        message,
+        address: options?.address ?? address,
+        privateKey: node.privateKey!,
+        network: this.bitcoinNetwork,
+      });
+    }
+
     const node = this.getSigningNode(options?.address);
     const keyPair = ECPair.fromPrivateKey(node.privateKey!, { network: this.bitcoinNetwork });
 
