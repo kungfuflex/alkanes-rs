@@ -1717,15 +1717,17 @@ pub fn simulate_block_proto(input: &[u8]) -> Result<Vec<u8>> {
     Ok(resp.encode_to_vec())
 }
 
-pub fn getbytecode(input: &Vec<u8>) -> Result<Vec<u8>> {
+pub fn getbytecode(input: &Vec<u8>, height: u32) -> Result<Vec<u8>> {
     let request = alkanes_support::proto::alkanes::BytecodeRequest::decode(&**input)?;
     let alkane_id = request.id.clone().unwrap();
     let alkane_id = crate::utils::from_protobuf(alkane_id);
 
-    // Get the bytecode from the storage
+    // Get the bytecode from storage; precompiled built-ins resolve from the
+    // static in-binary version maps at `height`.
     let bytecode = get_alkane_binary(
         metashrew_core::index_pointer::IndexPointer::from_keyword("/alkanes/"),
         &alkane_id,
+        height,
     )?;
 
     // Return the uncompressed bytecode. Note that gzip bomb is not possible since these bytecodes are upper bound by the size of the Witness
