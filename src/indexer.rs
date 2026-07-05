@@ -1,16 +1,10 @@
 use crate::message::AlkaneMessageContext;
-use crate::network::{
-    check_and_upgrade_precompiled, genesis, genesis_alkane_upgrade_bytes, is_active, is_genesis,
-    setup_diesel, setup_frbtc, setup_frsigil,
-};
+use crate::network::{genesis, is_active, is_genesis, setup_diesel, setup_frbtc, setup_frsigil};
 use crate::unwrap;
 use crate::vm::fuel::FuelTank;
 use crate::vm::host_functions::clear_diesel_mints_cache;
-use alkanes_support::gz::compress;
-use alkanes_support::id::AlkaneId;
 use anyhow::Result;
 use bitcoin::blockdata::block::Block;
-use metashrew_core::index_pointer::IndexPointer;
 #[allow(unused_imports)]
 use metashrew_core::{
     println,
@@ -20,7 +14,6 @@ use metashrew_core::{
 use metashrew_support::index_pointer::KeyValuePointer;
 use protorune::Protorune;
 use protorune_support::network::{set_network, NetworkParams};
-use std::sync::Arc;
 
 #[cfg(all(
     not(feature = "mainnet"),
@@ -100,7 +93,6 @@ pub fn index_block(block: &Block, height: u32) -> Result<()> {
         setup_diesel(block)?;
         setup_frbtc(block)?;
         setup_frsigil(block)?;
-        check_and_upgrade_precompiled(height)?;
         FuelTank::initialize(&block, height);
     }
     // Get the set of updated addresses from the indexing process
