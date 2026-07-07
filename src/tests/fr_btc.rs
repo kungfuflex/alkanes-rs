@@ -364,13 +364,44 @@ fn test_fr_btc_wrap_correct_signer() -> Result<()> {
     Ok(())
 }
 
-/// Fuel regression guard for the fr_btc v1.3.0 precompile. The slim build the
-/// static version map resolves to (`frbtc_wasm_for_height`) must keep a
-/// wrap/unwrap well under the wasmi fuel ceiling — a wrap that spent millions
-/// of fuel could not complete inside a multi-protostone tx budget. Measured via
-/// `fuel_probe`, which records `gas_used` per contract call in test builds.
+/// Env-independent guard: the fr_btc build the version map resolves to for
+/// the OPTIMIZED era MUST embed the `/signer_script_cached` fast path. This is
+/// a pure byte check — no VM, no fuel_probe — so it runs and fails even in a
+/// stripped CI env, unlike the execution test below. It exists because the
+/// v1.3.0 precompile shipped (commit f9cba53e) WITHOUT the cache: the
+/// optimization was sitting uncommitted in the subfrost-alkanes working tree,
+/// so the built wasm was the old uncached code, and every mainnet wrap after
+/// height 957_000 re-paid the ~2.0M-fuel tap_tweak — starving chained
+/// wrap+swap txs. v1.3.1 (mainnet fork 960_000) carries the fix.
 #[wasm_bindgen_test]
-fn test_fr_btc_v130_wrap_unwrap_fuel_bounded() -> Result<()> {
+fn test_fr_btc_v131_wasm_embeds_signer_cache() {
+    let needle = b"/signer_script_cached";
+    let contains = |w: &[u8]| w.windows(needle.len()).any(|c| c == needle);
+
+    let v131 = crate::precompiled::fr_btc_build_v1_3_1::get_bytes();
+    assert!(
+        contains(&v131),
+        "fr_btc v1.3.1 wasm is MISSING the /signer_script_cached optimization — \
+         rebuild fr-btc from a tree with the caching committed (this is the exact \
+         regression that shipped in v1.3.0)."
+    );
+    // v1.3.1 must actually differ from the un-optimized v1.3.0.
+    let v130 = crate::precompiled::fr_btc_build_v1_3_0::get_bytes();
+    assert_ne!(v131, v130, "fr_btc v1.3.1 must differ from the un-cached v1.3.0");
+    // Document the historical fact: v1.3.0 did NOT have the cache.
+    assert!(!contains(&v130), "fr_btc v1.3.0 was the un-cached build (historical)");
+}
+
+/// Fuel regression guard for the OPTIMIZED fr_btc (v1.3.1, mainnet fork
+/// 960_000). In the default/regtest test config `FRBTC_V131_FORK_HEIGHT=0`, so
+/// `frbtc_wasm_for_height` resolves every height to v1.3.1 — the wasm this test
+/// executes. v1.3.1 caches the tap-tweaked signer P2TR (`/signer_script_cached`)
+/// on the first wrap, so the ~2.0M-fuel tap_tweak is paid once, not per wrap.
+/// The FIRST wrap is the cold path (~2.29M — derive + cache); every wrap after
+/// reads the cache. This guard pins the warm (steady-state) wrap under 300k.
+/// Measured via `fuel_probe`, which records `gas_used` per contract call.
+#[wasm_bindgen_test]
+fn test_fr_btc_v131_wrap_unwrap_fuel_bounded() -> Result<()> {
     let fr_btc = AlkaneId { block: 32, tx: 0 };
     let max_op = |op: u128| -> u64 {
         crate::fuel_probe::snapshot()
@@ -380,21 +411,26 @@ fn test_fr_btc_v130_wrap_unwrap_fuel_bounded() -> Result<()> {
             .max()
             .unwrap_or(0)
     };
-    // fr_btc v1.3.0 caches the tap-tweaked signer P2TR (`/signer_script_cached`)
-    // on the first wrap, so the ~2.0M-fuel tap_tweak is paid once, not per wrap.
-    // The FIRST wrap is the cold path (~2.29M — derive + cache); every wrap after
-    // reads the cache. This guard pins the warm (steady-state) wrap under 300k.
     clear();
     crate::fuel_probe::clear();
     let _ = wrap_btc()?; // cold: derives + caches the signer script
+    let cold_wrap = max_op(77);
     crate::fuel_probe::clear();
     let _ = wrap_btc()?; // warm: reads the cached signer script
     let warm_wrap = max_op(77);
     assert!(warm_wrap > 0, "no fr_btc (32:0) wrap (op77) call was recorded");
     assert!(
         warm_wrap < 300_000,
-        "fr_btc v1.3.0 warm-wrap fuel regressed (signer cache not hit?): {} >= 300000",
+        "fr_btc v1.3.1 warm-wrap fuel regressed (signer cache not hit?): {} >= 300000",
         warm_wrap
+    );
+    // The cache must actually save fuel: the warm wrap should be a fraction of
+    // the cold (tap_tweak) wrap. Guards against a no-op cache.
+    assert!(
+        warm_wrap * 4 < cold_wrap,
+        "warm wrap ({}) not materially cheaper than cold ({}) — cache ineffective",
+        warm_wrap,
+        cold_wrap
     );
     Ok(())
 }
