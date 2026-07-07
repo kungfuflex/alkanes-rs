@@ -18,5 +18,6 @@ pub mod fr_btc_build;
 pub mod fr_btc_build_v1_1_0;
 pub mod fr_btc_build_v1_2_0;
 pub mod fr_btc_build_v1_3_0;
+pub mod fr_btc_build_v1_3_1;
 pub mod fr_sigil_build;
 pub mod free_mint_build;
