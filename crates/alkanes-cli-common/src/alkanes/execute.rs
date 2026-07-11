@@ -2310,16 +2310,75 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             // Skipped in qubitcoin mode (espo/lua aren't available there
             // anyway, and protorunesbyaddress is the canonical path).
             if !self.provider.is_qubitcoin_mode() {
-                let dust_utxos: Vec<&(OutPoint, UtxoInfo)> = spendable_utxos
-                    .iter()
-                    .filter(|(_, u)| u.amount <= 1000) // alkanes live on dust
-                    .collect();
+                // Do the balances discovered so far satisfy every alkane
+                // requirement? Drives the two-pass probe below.
+                let requirements_covered =
+                    |utxo_balances: &alloc::collections::BTreeMap<String, serde_json::Value>|
+                     -> bool {
+                        let mut totals: alloc::collections::BTreeMap<(u64, u64), u64> =
+                            alloc::collections::BTreeMap::new();
+                        for utxo_data in utxo_balances.values() {
+                            let Some(arr) = utxo_data.get("balances").and_then(|v| v.as_array()) else {
+                                continue;
+                            };
+                            for b in arr {
+                                let block = b.get("block").and_then(|v| {
+                                    v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok()))
+                                });
+                                let tx = b.get("tx").and_then(|v| {
+                                    v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok()))
+                                });
+                                let amount = b.get("amount").and_then(|v| {
+                                    v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok()))
+                                });
+                                if let (Some(block), Some(tx), Some(amount)) = (block, tx, amount) {
+                                    let e = totals.entry((block, tx)).or_insert(0);
+                                    *e = e.saturating_add(amount);
+                                }
+                            }
+                        }
+                        alkanes_needed
+                            .iter()
+                            .all(|(key, needed)| totals.get(key).copied().unwrap_or(0) >= *needed)
+                    };
 
-                if !dust_utxos.is_empty() {
-                    log::info!(
-                        "Primary discovery: per-outpoint protorunesbyoutpoint for {} dust UTXOs",
-                        dust_utxos.len()
-                    );
+                // PASS 0: dust UTXOs (≤1000 sats). Alkanes CONVENTIONALLY ride dust
+                // outputs, so this covers almost every wallet with minimal RPC fan-out.
+                //
+                // PASS 1 (only when pass 0 leaves a requirement unmet): every remaining
+                // spendable UTXO. Nothing on-chain enforces the dust convention —
+                // mainnet counter-example (2026-07-11, borrower of lending child
+                // 2:92269): three 2916-sat UTXOs carrying 2000 frBTC each were
+                // invisible to the dust-only probe, and because a non-empty primary
+                // result skips the address-keyed fallbacks entirely, a 21864
+                // repayment failed "Insufficient alkanes: … have 18739" out of a
+                // real 24739 balance. Prefetched assertions still short-circuit in
+                // pass 1, so callers that assert every outpoint (e.g. subfrost-app's
+                // wallet-state snapshot) pay zero extra RPC for the extension.
+                let mut probed: alloc::collections::BTreeSet<OutPoint> =
+                    alloc::collections::BTreeSet::new();
+                for pass in 0..2u8 {
+                    if pass == 1 && requirements_covered(&utxo_balances) {
+                        break;
+                    }
+                    let candidates: Vec<&(OutPoint, UtxoInfo)> = spendable_utxos
+                        .iter()
+                        .filter(|(op, u)| !probed.contains(op) && (pass == 1 || u.amount <= 1000))
+                        .collect();
+                    if candidates.is_empty() {
+                        continue;
+                    }
+                    if pass == 0 {
+                        log::info!(
+                            "Primary discovery: per-outpoint protorunesbyoutpoint for {} dust UTXOs",
+                            candidates.len()
+                        );
+                    } else {
+                        log::info!(
+                            "Extended discovery: requirements unmet after dust pass — probing {} non-dust UTXOs",
+                            candidates.len()
+                        );
+                    }
 
                     // Counters for the prefetched-vs-RPC observability log
                     // emitted at the bottom of this loop. Cheap to maintain
@@ -2327,7 +2386,8 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                     let mut prefetched_count: usize = 0;
                     let mut rpc_count: usize = 0;
 
-                    for (outpoint, _utxo) in &dust_utxos {
+                    for (outpoint, _utxo) in &candidates {
+                        probed.insert(*outpoint);
                         // Short-circuit: if the caller has asserted balances
                         // for this outpoint via `prefetched_utxos[i].alkanes`,
                         // use them and skip the RPC. Empty Vec is authoritative
@@ -2414,7 +2474,8 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                     }
 
                     log::info!(
-                        "Primary discovery: {} prefetched, {} via RPC",
+                        "{} discovery: {} prefetched, {} via RPC",
+                        if pass == 0 { "Primary" } else { "Extended" },
                         prefetched_count, rpc_count
                     );
                 }
@@ -2766,76 +2827,73 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             // had been silently spent for fees.
             //
             // Skipped on qubitcoin (no protorunesbyoutpoint there).
-            let mut alkane_carriers: alloc::collections::BTreeSet<String> =
-                alloc::collections::BTreeSet::new();
-            if !self.provider.is_qubitcoin_mode() {
-                let dust_candidates: Vec<&(OutPoint, UtxoInfo)> = spendable_utxos
-                    .iter()
-                    .filter(|(_, u)| u.amount <= 1000)
-                    .collect();
-                let mut prefetched_count: usize = 0;
-                let mut rpc_count: usize = 0;
-                for (outpoint, _) in &dust_candidates {
-                    // Same short-circuit shape as the primary-discovery
-                    // branch: caller-asserted balances skip the RPC. An
-                    // empty Vec means "asserted clean — not a carrier."
-                    if let Some(balances) = prefetched_alkanes
-                        .as_ref()
-                        .and_then(|m| m.get(outpoint))
-                    {
-                        prefetched_count += 1;
-                        let has_alkane = balances.iter().any(|(_, amt)| *amt > 0);
-                        if has_alkane {
-                            alkane_carriers
-                                .insert(format!("{}:{}", outpoint.txid, outpoint.vout));
-                        }
-                        continue;
-                    }
-
+            //
+            // 2026-07-11: the carrier check covers EVERY candidate, not just dust.
+            // Alkanes can ride outputs above the 1000-sat convention (mainnet:
+            // 2916-sat UTXOs carrying 2000 frBTC each) — the old dust-only
+            // pre-scan would have selected exactly such a carrier as a plain fee
+            // input and burned its tokens, the same failure class as the
+            // 2026-05-03 incident this exclusion was built for. The check is
+            // LAZY — performed per candidate as the selector reaches it and
+            // stopping once bitcoin_needed is met — so the RPC cost is bounded
+            // by the number of UTXOs actually walked (prefetched assertions,
+            // dust or not, still answer for free).
+            let mut prefetched_count: usize = 0;
+            let mut rpc_count: usize = 0;
+            let mut carriers_skipped: usize = 0;
+            for (outpoint, utxo) in spendable_utxos {
+                if bitcoin_collected >= bitcoin_needed {
+                    break;
+                }
+                let is_carrier = if self.provider.is_qubitcoin_mode() {
+                    false
+                } else if let Some(balances) =
+                    prefetched_alkanes.as_ref().and_then(|m| m.get(&outpoint))
+                {
+                    // Same short-circuit shape as the primary-discovery branch:
+                    // caller-asserted balances skip the RPC. An empty Vec means
+                    // "asserted clean — not a carrier."
+                    prefetched_count += 1;
+                    balances.iter().any(|(_, amt)| *amt > 0)
+                } else {
                     rpc_count += 1;
                     let txid_str = outpoint.txid.to_string();
-                    if let Ok(response) = self
+                    match self
                         .provider
                         .get_protorunes_by_outpoint(&txid_str, outpoint.vout, None, 1)
                         .await
                     {
-                        let has_alkane = response
+                        Ok(response) => response
                             .balance_sheet
                             .cached
                             .balances
                             .values()
-                            .any(|amt| *amt > 0);
-                        if has_alkane {
-                            alkane_carriers
-                                .insert(format!("{}:{}", outpoint.txid, outpoint.vout));
-                        }
+                            .any(|amt| *amt > 0),
+                        // Unverifiable — keep the pre-existing behavior (select).
+                        Err(_) => false,
                     }
-                }
-                if !alkane_carriers.is_empty() {
-                    log::info!(
-                        "Excluding {} alkane-carrying UTXO(s) from BTC-only selection",
-                        alkane_carriers.len()
+                };
+                if is_carrier {
+                    carriers_skipped += 1;
+                    log::debug!(
+                        "Skipping alkane carrier {}:{} (no alkanes needed)",
+                        outpoint.txid, outpoint.vout
                     );
-                }
-                log::info!(
-                    "BTC-only exclusion: {} prefetched, {} via RPC",
-                    prefetched_count, rpc_count
-                );
-            }
-
-            for (outpoint, utxo) in spendable_utxos {
-                let key = format!("{}:{}", outpoint.txid, outpoint.vout);
-                if alkane_carriers.contains(&key) {
-                    log::debug!("Skipping alkane carrier {}:{} (no alkanes needed)", outpoint.txid, outpoint.vout);
                     continue;
                 }
-                if bitcoin_collected < bitcoin_needed {
-                    bitcoin_collected += utxo.amount;
-                    selected_outpoints.push(outpoint);
-                } else {
-                    break;
-                }
+                bitcoin_collected += utxo.amount;
+                selected_outpoints.push(outpoint);
             }
+            if carriers_skipped > 0 {
+                log::info!(
+                    "Excluded {} alkane-carrying UTXO(s) from BTC-only selection",
+                    carriers_skipped
+                );
+            }
+            log::info!(
+                "BTC-only exclusion: {} prefetched, {} via RPC",
+                prefetched_count, rpc_count
+            );
         }
 
         if bitcoin_collected < bitcoin_needed {
@@ -5463,6 +5521,155 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(result.outpoints.len(), 1, "UTXO selectable without filter");
+    }
+
+    // ────────────────────────────────────────────────────────────────────
+    // Non-dust alkane carriers (2026-07-11 mainnet incident, lending child
+    // 2:92269). Alkanes conventionally ride ≤1000-sat outputs, but nothing
+    // enforces that on-chain: the borrower held three 2916-sat UTXOs
+    // carrying 2000 frBTC each. The dust-only discovery pass made his
+    // 21864 repayment fail "Insufficient alkanes: … have 18739" out of a
+    // real 24739 balance, and the dust-only BTC carrier-exclusion would
+    // happily have burned those carriers as fee inputs. Both tests replay
+    // the incident's exact numbers.
+    // ────────────────────────────────────────────────────────────────────
+
+    /// Shared fixture: taproot wallet with the incident's UTXO set.
+    /// vouts 0-2: 546-sat dust carrying 17823 / 915 / 1 of alkane 32:0.
+    /// vouts 3-5: 2916-sat NON-DUST UTXOs carrying 2000 of 32:0 each.
+    /// vout  6:   50_000-sat clean BTC.
+    fn incident_wallet(mock: &MockProvider, script: &bitcoin::ScriptBuf) -> bitcoin::Txid {
+        use std::str::FromStr;
+        let txid = bitcoin::Txid::from_str(
+            "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef",
+        )
+        .unwrap();
+        let entries: [(u64, u64); 7] = [
+            (546, 17_823),
+            (546, 915),
+            (546, 1),
+            (2_916, 2_000),
+            (2_916, 2_000),
+            (2_916, 2_000),
+            (50_000, 0),
+        ];
+        let mut utxos = mock.utxos.lock().unwrap();
+        let mut balances = mock.alkane_balances.lock().unwrap();
+        for (vout, (sats, alkane_amt)) in entries.iter().enumerate() {
+            utxos.push((
+                bitcoin::OutPoint::new(txid, vout as u32),
+                bitcoin::TxOut {
+                    value: bitcoin::Amount::from_sat(*sats),
+                    script_pubkey: script.clone(),
+                },
+            ));
+            if *alkane_amt > 0 {
+                balances.insert(format!("{}:{}", txid, vout), vec![(32, 0, *alkane_amt)]);
+            }
+        }
+        txid
+    }
+
+    #[tokio::test]
+    async fn select_utxos_aggregates_alkanes_on_non_dust_utxos() {
+        use crate::mock_provider::MockProvider;
+        use bitcoin::address::Address;
+        use bitcoin::key::Secp256k1;
+
+        let mut mock = MockProvider::new(bitcoin::Network::Regtest);
+        let secp = Secp256k1::new();
+        let (sk, pk) = secp.generate_keypair(&mut rand::thread_rng());
+        let (xonly, _) = pk.x_only_public_key();
+        let addr = Address::p2tr(&secp, xonly, None, bitcoin::Network::Regtest);
+        mock.set_keypair(sk, bitcoin::PublicKey::new(pk));
+        // Standard-bitcoin mode: exercise the per-outpoint primary discovery
+        // (dust pass + extended non-dust pass), NOT the qubitcoin
+        // protorunesbyaddress path (which never had the dust filter).
+        mock.qubitcoin_mode = false;
+        let txid = incident_wallet(&mock, &addr.script_pubkey());
+
+        let mut executor = EnhancedAlkanesExecutor::new(&mut mock);
+        // The incident's repayment: 21864 of 32:0. Dust UTXOs alone hold
+        // 18739 — satisfying this REQUIRES the extended (non-dust) pass.
+        let requirements = vec![InputRequirement::Alkanes { block: 32, tx: 0, amount: 21_864 }];
+
+        let result = executor
+            .select_utxos(
+                &requirements,
+                &Some(vec![addr.to_string()]),
+                &[],
+                None,
+                &[],
+                UtxoDataSource::Metashrew,
+            )
+            .await
+            .expect("selection must aggregate across dust AND non-dust alkane carriers");
+
+        let found = result
+            .alkanes_found
+            .iter()
+            .find(|(id, _)| id.block == 32 && id.tx == 0)
+            .map(|(_, amt)| *amt)
+            .unwrap_or(0);
+        assert!(
+            found >= 21_864,
+            "collected {found} of 32:0 — must cover the 21864 requirement (dust holds only 18739)"
+        );
+        assert!(
+            result
+                .outpoints
+                .iter()
+                .any(|op| op.txid == txid && (3..=5).contains(&op.vout)),
+            "at least one 2916-sat carrier must be selected — dust alone cannot cover the ask"
+        );
+    }
+
+    #[tokio::test]
+    async fn btc_only_selection_skips_non_dust_alkane_carriers() {
+        use crate::mock_provider::MockProvider;
+        use bitcoin::address::Address;
+        use bitcoin::key::Secp256k1;
+
+        let mut mock = MockProvider::new(bitcoin::Network::Regtest);
+        let secp = Secp256k1::new();
+        let (sk, pk) = secp.generate_keypair(&mut rand::thread_rng());
+        let (xonly, _) = pk.x_only_public_key();
+        let addr = Address::p2tr(&secp, xonly, None, bitcoin::Network::Regtest);
+        mock.set_keypair(sk, bitcoin::PublicKey::new(pk));
+        // Standard-bitcoin mode: the carrier exclusion is skipped entirely on
+        // qubitcoin (no protorunesbyoutpoint there).
+        mock.qubitcoin_mode = false;
+        let txid = incident_wallet(&mock, &addr.script_pubkey());
+
+        let mut executor = EnhancedAlkanesExecutor::new(&mut mock);
+        // BTC-only ask (no alkane requirements) — must be funded from the
+        // clean 50k UTXO; every carrier (dust or 2916-sat) must be skipped,
+        // otherwise this tx burns the user's tokens as fees.
+        let requirements = vec![InputRequirement::Bitcoin { amount: 5_000 }];
+
+        let result = executor
+            .select_utxos(
+                &requirements,
+                &Some(vec![addr.to_string()]),
+                &[],
+                None,
+                &[],
+                UtxoDataSource::Metashrew,
+            )
+            .await
+            .expect("clean 50k UTXO covers the ask");
+
+        for op in &result.outpoints {
+            assert!(
+                !(op.txid == txid && op.vout <= 5),
+                "selected {}:{} — an alkane carrier must NEVER fund a BTC-only tx (token burn)",
+                op.txid, op.vout
+            );
+        }
+        assert!(
+            result.outpoints.iter().any(|op| op.txid == txid && op.vout == 6),
+            "the clean 50k UTXO is the only legitimate funding source"
+        );
     }
 
     // ────────────────────────────────────────────────────────────────────

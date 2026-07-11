@@ -59,6 +59,12 @@ pub struct MockProvider {
     pub internal_key: XOnlyPublicKey,
     /// Mock alkane balances per outpoint: (txid_hex, vout) → Vec<(block, tx, amount)>
     pub alkane_balances: Arc<Mutex<HashMap<String, Vec<(u64, u64, u64)>>>>,
+    /// Reported by `is_qubitcoin_mode()`. Defaults to `true` (legacy tests rely on
+    /// the protorunesbyaddress-only discovery path). Set `false` to exercise the
+    /// standard bitcoin paths: per-outpoint primary discovery (dust + extended
+    /// non-dust pass) and the BTC-only alkane-carrier exclusion — both read
+    /// `alkane_balances` through `get_protorunes_by_outpoint`.
+    pub qubitcoin_mode: bool,
     /// Session-scoped pending-tx store. Provided so integration tests
     /// can wire chained-broadcast scenarios without spinning up an
     /// `Arc<dyn PendingTxStore>` of their own. `Some` by default so
@@ -87,6 +93,7 @@ impl MockProvider {
             secret_key,
             internal_key,
             alkane_balances: Arc::new(Mutex::new(HashMap::new())),
+            qubitcoin_mode: true,
             pending_tx_store: crate::pending_tx_store::MemoryPendingTxStore::new(),
         }
     }
@@ -1163,10 +1170,12 @@ impl DeezelProvider for MockProvider {
     }
 
     fn is_qubitcoin_mode(&self) -> bool {
-        // Enable qubitcoin mode so alkane UTXO selection uses
+        // Defaults to true so alkane UTXO selection uses
         // get_protorunes_by_address (which reads from alkane_balances)
         // instead of espo/lua paths that require network access.
-        true
+        // Tests for the standard-bitcoin selection paths set this false
+        // (per-outpoint discovery also reads alkane_balances).
+        self.qubitcoin_mode
     }
 
     fn secp(&self) -> &Secp256k1<All> {

@@ -1313,3 +1313,37 @@ export function get_alkane_meta(network: string, block: number, tx: number, bloc
 export function init_panic_hook(): void;
 
 export function simulate_alkane_call(alkane_id_str: string, wasm_hex: string, cellpack_hex: string): Promise<any>;
+
+export function wcBuildGetAccountsRequest(sym_key_b64: string, origin: string, request_id: string): any;
+
+export function wcBuildPairingUri(cli_peer: string, dapp_pub_b64: string, pairing_code: string, bridge_url: string, origin: string, mode: string): string;
+
+export function wcBuildSignMessageRequest(sym_key_b64: string, message: string, address: string, origin: string, request_id: string): any;
+
+export function wcBuildSignPsbtRequest(sym_key_b64: string, psbt_hex: string, addresses_json: string, origin: string, request_id: string): any;
+
+/**
+ * Decrypt + parse a response envelope. Returns the Plaintext JSON
+ * string for the JS side to `JSON.parse`.
+ */
+export function wcDecryptEnvelope(sym_key_b64: string, ciphertext_b64: string, nonce_b64: string): string;
+
+export function wcDefaultBridgeUrl(): string;
+
+/**
+ * Derive the shared 32-byte symKey from (own_priv_b64, peer_pub_b64,
+ * info). Returns base64url(32B). `info` for the new protocol is
+ * `<phone_peer>:<pairing_code>`.
+ */
+export function wcDeriveSymKey(own_priv_b64: string, peer_pub_b64: string, info: string): string;
+
+export function wcGenerateCliPeerName(): string;
+
+/**
+ * Mint a fresh X25519 keypair, return `{pub_b64, priv_b64}` as JS.
+ */
+export function wcGenerateDappKeypair(): any;
+
+export function wcGeneratePairingCode(): string;
+
+export function wcParsePairingUri(uri: string): any;

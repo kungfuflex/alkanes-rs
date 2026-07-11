@@ -7,6 +7,11 @@ on:
     paths:
       - 'ts-sdk/**'
       - 'crates/alkanes-web-sys/**'
+      # alkanes-cli-common is compiled INTO the web-sys WASM (provider, UTXO
+      # selection, execute) — changes to it change the published artifact.
+      # Missing from these triggers until 2026-07-11, so pure cli-common fixes
+      # silently shipped no new SDK.
+      - 'crates/alkanes-cli-common/**'
       - 'prod_wasms/**'
       - '.github/workflows/publish-npm.yml'
   pull_request:
@@ -17,6 +22,7 @@ on:
     paths:
       - 'ts-sdk/**'
       - 'crates/alkanes-web-sys/**'
+      - 'crates/alkanes-cli-common/**'
       - 'prod_wasms/**'
       - '.github/workflows/publish-npm.yml'
 
