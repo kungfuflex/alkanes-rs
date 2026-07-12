@@ -2011,6 +2011,7 @@ impl DeezelProvider for BrowserWalletProvider {
             split_transactions: false,
                 known_pending_tx_hexes: Vec::new(),
                 prefetched_utxos: Vec::new(),
+            excluded_utxos: Vec::new(),
         max_indexed_height: None,
         utxo_source: Default::default(),
         };
@@ -2057,6 +2058,7 @@ impl DeezelProvider for BrowserWalletProvider {
             split_transactions: false,
                 known_pending_tx_hexes: Vec::new(),
                 prefetched_utxos: Vec::new(),
+            excluded_utxos: Vec::new(),
         max_indexed_height: None,
         utxo_source: Default::default(),
         };

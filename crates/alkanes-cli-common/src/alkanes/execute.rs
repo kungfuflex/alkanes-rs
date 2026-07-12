@@ -1293,7 +1293,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         required_reveal_amount += params.to_addresses.len() as u64 * 546;
 
         let utxo_selection = self
-            .select_utxos(&[InputRequirement::Bitcoin { amount: required_reveal_amount }], &params.from_addresses, &params.known_pending_tx_hexes, params.max_indexed_height, &params.prefetched_utxos, params.utxo_source)
+            .select_utxos(&[InputRequirement::Bitcoin { amount: required_reveal_amount }], &params.from_addresses, &params.known_pending_tx_hexes, params.max_indexed_height, &params.prefetched_utxos, &params.excluded_utxos, params.utxo_source)
             .await?;
         let funding_utxos = utxo_selection.outpoints.clone();
 
@@ -1458,7 +1458,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                    total_bitcoin_needed, fee_with_buffer, bitcoin_requirement);
         
         final_requirements.push(InputRequirement::Bitcoin { amount: bitcoin_requirement });
-        let mut utxo_selection = self.select_utxos(&final_requirements, &params.from_addresses, &params.known_pending_tx_hexes, params.max_indexed_height, &params.prefetched_utxos, params.utxo_source).await?;
+        let mut utxo_selection = self.select_utxos(&final_requirements, &params.from_addresses, &params.known_pending_tx_hexes, params.max_indexed_height, &params.prefetched_utxos, &params.excluded_utxos, params.utxo_source).await?;
 
         // Check selected UTXOs for ordinal inscriptions based on strategy
         // We need to get TxOut data for each selected UTXO to check for inscriptions
@@ -1887,7 +1887,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
     /// without going through `execute_full`. The test in
     /// `pending_tx_store::tests` uses MockProvider's `alkane_balances`
     /// + utxo set to assert the skip-non-needed-alkane-carrier path.
-    pub(crate) async fn select_utxos(&mut self, requirements: &[InputRequirement], from_addresses: &Option<Vec<String>>, known_pending_tx_hexes: &[String], max_indexed_height: Option<u64>, prefetched_utxos: &[PrefetchedUtxo], utxo_source: UtxoDataSource) -> Result<UtxoSelectionResult> {
+    pub(crate) async fn select_utxos(&mut self, requirements: &[InputRequirement], from_addresses: &Option<Vec<String>>, known_pending_tx_hexes: &[String], max_indexed_height: Option<u64>, prefetched_utxos: &[PrefetchedUtxo], excluded_utxos: &[String], utxo_source: UtxoDataSource) -> Result<UtxoSelectionResult> {
         use crate::traits::AddressResolver;
 
         log::info!("Selecting UTXOs for {} requirements", requirements.len());
@@ -1897,6 +1897,22 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         }
         if let Some(h) = max_indexed_height {
             log::info!("max_indexed_height = {} (skipping confirmed UTXOs above this)", h);
+        }
+
+        // Caller-supplied soft locks ("txid:vout") — e.g. UTXOs committed to open
+        // lending offers. Parsed once; malformed entries are logged and ignored.
+        let excluded_set: alloc::collections::BTreeSet<OutPoint> = excluded_utxos
+            .iter()
+            .filter_map(|s| match OutPoint::from_str(s) {
+                Ok(op) => Some(op),
+                Err(_) => {
+                    log::warn!("Ignoring malformed excluded_utxos entry: {}", s);
+                    None
+                }
+            })
+            .collect();
+        if !excluded_set.is_empty() {
+            log::info!("Excluding {} caller-locked UTXO(s) from selection", excluded_set.len());
         }
 
         // Resolve address identifiers like p2tr:0 to actual addresses before passing to get_utxos
@@ -2049,6 +2065,13 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         // (frozen / immature-coinbase / unindexed-height). Logs structured
         // skip reasons so operators can tell *why* a UTXO was excluded.
         let mut spendable_utxos: Vec<(OutPoint, UtxoInfo)> = utxos.into_iter()
+            .filter(|(outpoint, info)| {
+                if excluded_set.contains(outpoint) {
+                    log::debug!("Skipping caller-excluded UTXO: {}:{}", info.txid, info.vout);
+                    return false;
+                }
+                true
+            })
             .filter(|(_, info)| {
                 match check_utxo_eligibility(info, max_indexed_height) {
                     Ok(()) => true,
@@ -2668,6 +2691,10 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                     Err(_) => continue,
                 };
                 let outpoint = OutPoint { txid, vout };
+                if excluded_set.contains(&outpoint) {
+                    log::debug!("Skipping caller-excluded espo alkane UTXO: {}", utxo_key);
+                    continue;
+                }
 
                 // Try to get output info from the protorunesbyaddress response (already in memory)
                 // The response is stored in utxo_balances but we need the TxOut data.
@@ -3957,7 +3984,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         if commit_output_value < total_bitcoin_needed {
             let additional_needed = total_bitcoin_needed - commit_output_value;
             let additional_reqs = vec![InputRequirement::Bitcoin { amount: additional_needed }];
-            let utxo_selection = self.select_utxos(&additional_reqs, &params.from_addresses, &params.known_pending_tx_hexes, params.max_indexed_height, &params.prefetched_utxos, params.utxo_source).await?;
+            let utxo_selection = self.select_utxos(&additional_reqs, &params.from_addresses, &params.known_pending_tx_hexes, params.max_indexed_height, &params.prefetched_utxos, &params.excluded_utxos, params.utxo_source).await?;
             selected_txouts.extend(utxo_selection.txouts);
             selected_utxos.extend(utxo_selection.outpoints);
         }
@@ -4279,7 +4306,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
 
         // Select UTXOs for commit
         let utxo_selection = self
-            .select_utxos(&[InputRequirement::Bitcoin { amount: required_reveal_amount }], &params.from_addresses, &params.known_pending_tx_hexes, params.max_indexed_height, &params.prefetched_utxos, params.utxo_source)
+            .select_utxos(&[InputRequirement::Bitcoin { amount: required_reveal_amount }], &params.from_addresses, &params.known_pending_tx_hexes, params.max_indexed_height, &params.prefetched_utxos, &params.excluded_utxos, params.utxo_source)
             .await?;
         let funding_utxos = utxo_selection.outpoints.clone();
 
@@ -5182,6 +5209,7 @@ mod tests {
                 &[],
                 None,
                 &[],
+                &[],
                 UtxoDataSource::Metashrew,
             )
             .await
@@ -5414,6 +5442,7 @@ mod tests {
                 &[],
                 Some(100),
                 &[],
+                &[],
                 UtxoDataSource::Metashrew,
             )
             .await
@@ -5428,6 +5457,7 @@ mod tests {
                 &[],
                 Some(200),
                 &[],
+                &[],
                 UtxoDataSource::Metashrew,
             )
             .await
@@ -5441,6 +5471,7 @@ mod tests {
                 &Some(vec![addr.to_string()]),
                 &[],
                 None,
+                &[],
                 &[],
                 UtxoDataSource::Metashrew,
             )
@@ -5492,6 +5523,7 @@ mod tests {
                 &[],
                 Some(99),
                 &[],
+                &[],
                 UtxoDataSource::Metashrew,
             )
             .await;
@@ -5515,6 +5547,7 @@ mod tests {
                 &Some(vec![addr.to_string()]),
                 &[],
                 None,
+                &[],
                 &[],
                 UtxoDataSource::Metashrew,
             )
@@ -5600,6 +5633,7 @@ mod tests {
                 &[],
                 None,
                 &[],
+                &[],
                 UtxoDataSource::Metashrew,
             )
             .await
@@ -5654,6 +5688,7 @@ mod tests {
                 &[],
                 None,
                 &[],
+                &[],
                 UtxoDataSource::Metashrew,
             )
             .await
@@ -5670,6 +5705,98 @@ mod tests {
             result.outpoints.iter().any(|op| op.txid == txid && op.vout == 6),
             "the clean 50k UTXO is the only legitimate funding source"
         );
+    }
+
+    // ────────────────────────────────────────────────────────────────────
+    // excluded_utxos — caller-locked outpoints (2026-07-12). subfrost-app
+    // passes the UTXOs committed to its open lending offers here: each
+    // offer's pre-signed prep tx spends specific outpoints, so ANY other
+    // flow spending one silently invalidates the offer.
+    // ────────────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn select_utxos_never_spends_caller_excluded_outpoints() {
+        use crate::mock_provider::MockProvider;
+        use bitcoin::address::Address;
+        use bitcoin::key::Secp256k1;
+
+        let mut mock = MockProvider::new(bitcoin::Network::Regtest);
+        let secp = Secp256k1::new();
+        let (sk, pk) = secp.generate_keypair(&mut rand::thread_rng());
+        let (xonly, _) = pk.x_only_public_key();
+        let addr = Address::p2tr(&secp, xonly, None, bitcoin::Network::Regtest);
+        mock.set_keypair(sk, bitcoin::PublicKey::new(pk));
+        mock.qubitcoin_mode = false;
+        let script = addr.script_pubkey();
+        let txid = incident_wallet(&mock, &script); // vouts 0-5 alkane carriers, vout 6 = 50k clean
+        // Second clean BTC UTXO so an exclusion of the first still leaves funding.
+        {
+            let txid2 = bitcoin::Txid::from_str(
+                "abababababababababababababababababababababababababababababababab",
+            ).unwrap();
+            let mut utxos = mock.utxos.lock().unwrap();
+            utxos.push((
+                bitcoin::OutPoint::new(txid2, 0),
+                bitcoin::TxOut { value: bitcoin::Amount::from_sat(40_000), script_pubkey: script.clone() },
+            ));
+        }
+
+        let mut executor = EnhancedAlkanesExecutor::new(&mut mock);
+
+        // BTC-only: exclude the 50k UTXO (as if a lending prep commits it) —
+        // the ask must be funded from the 40k one instead.
+        let requirements = vec![InputRequirement::Bitcoin { amount: 5_000 }];
+        let result = executor
+            .select_utxos(
+                &requirements,
+                &Some(vec![addr.to_string()]),
+                &[],
+                None,
+                &[],
+                &[format!("{}:{}", txid, 6)],
+                UtxoDataSource::Metashrew,
+            )
+            .await
+            .expect("selection must fund from the non-excluded UTXO");
+        assert!(
+            !result.outpoints.iter().any(|op| op.txid == txid && op.vout == 6),
+            "caller-excluded UTXO must never be selected"
+        );
+
+        // Alkane requirement: exclude the 17823 carrier (vout 0) — the remaining
+        // carriers (915 + 1 + 3×2000) cover a 6000 ask without it.
+        let requirements = vec![InputRequirement::Alkanes { block: 32, tx: 0, amount: 6_000 }];
+        let result = executor
+            .select_utxos(
+                &requirements,
+                &Some(vec![addr.to_string()]),
+                &[],
+                None,
+                &[],
+                &[format!("{}:{}", txid, 0)],
+                UtxoDataSource::Metashrew,
+            )
+            .await
+            .expect("alkane ask must aggregate from non-excluded carriers");
+        assert!(
+            !result.outpoints.iter().any(|op| op.txid == txid && op.vout == 0),
+            "excluded alkane carrier must never be selected"
+        );
+
+        // Malformed entries are ignored (fail-open per entry), valid ones still apply.
+        let result = executor
+            .select_utxos(
+                &vec![InputRequirement::Bitcoin { amount: 5_000 }],
+                &Some(vec![addr.to_string()]),
+                &[],
+                None,
+                &[],
+                &["not-an-outpoint".to_string(), format!("{}:{}", txid, 6)],
+                UtxoDataSource::Metashrew,
+            )
+            .await
+            .expect("malformed exclusion entry must not fail the selection");
+        assert!(!result.outpoints.iter().any(|op| op.txid == txid && op.vout == 6));
     }
 
     // ────────────────────────────────────────────────────────────────────
