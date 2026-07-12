@@ -106,6 +106,7 @@ impl<'a> WrapBtcExecutor<'a> {
             split_transactions: false,
             known_pending_tx_hexes: Vec::new(),
             prefetched_utxos: Vec::new(),
+        excluded_utxos: Vec::new(),
             max_indexed_height,
             utxo_source: Default::default(),
         };

@@ -1087,7 +1087,7 @@ impl WebProvider {
             };
 
             // Parse options (from_addresses, change_address, etc.)
-            let (trace_enabled, mine_enabled, auto_confirm, raw_output, from_addresses, change_address, alkanes_change_address, ordinals_strategy, mempool_indexer, split_transactions, known_pending_tx_hexes, prefetched_utxos, max_indexed_height, utxo_source) = if let Some(opts_json) = &options_json {
+            let (trace_enabled, mine_enabled, auto_confirm, raw_output, from_addresses, change_address, alkanes_change_address, ordinals_strategy, mempool_indexer, split_transactions, known_pending_tx_hexes, prefetched_utxos, excluded_utxos, max_indexed_height, utxo_source) = if let Some(opts_json) = &options_json {
                 let opts: serde_json::Value = serde_json::from_str(opts_json)
                     .map_err(|e| JsValue::from_str(&format!("Invalid options JSON: {}", e)))?;
 
@@ -1139,6 +1139,14 @@ impl WebProvider {
                 // `max_indexed_height` are skipped because metashrew can't yet
                 // read their alkane balance sheets. See EnhancedExecuteParams
                 // doc for full rationale.
+                // Caller-locked outpoints ("txid:vout") the selector must never
+                // spend — e.g. UTXOs committed to open lending offers. See
+                // EnhancedExecuteParams::excluded_utxos.
+                let excluded: Vec<String> = opts.get("excluded_utxos")
+                    .or_else(|| opts.get("excludedUtxos"))
+                    .and_then(|v| serde_json::from_value(v.clone()).ok())
+                    .unwrap_or_default();
+
                 let max_idx: Option<u64> = opts.get("max_indexed_height")
                     .or_else(|| opts.get("maxIndexedHeight"))
                     .and_then(|v| v.as_u64());
@@ -1161,11 +1169,12 @@ impl WebProvider {
                     split_tx,
                     known_pending,
                     prefetched,
+                    excluded,
                     max_idx,
                     utxo_src,
                 )
             } else {
-                (false, false, true, false, None, None, None, Default::default(), false, false, Vec::new(), Vec::new(), None, Default::default())
+                (false, false, true, false, None, None, None, Default::default(), false, false, Vec::new(), Vec::new(), Vec::new(), None, Default::default())
             };
 
             let params = EnhancedExecuteParams {
@@ -1186,6 +1195,7 @@ impl WebProvider {
                 split_transactions,
                 known_pending_tx_hexes,
                 prefetched_utxos,
+                excluded_utxos,
                 max_indexed_height,
                 utxo_source,
             };
@@ -1241,7 +1251,7 @@ impl WebProvider {
             };
 
             // Parse options
-            let (trace_enabled, mine_enabled, auto_confirm, raw_output, from_addresses, change_address, alkanes_change_address, ordinals_strategy, mempool_indexer, split_transactions, known_pending_tx_hexes, prefetched_utxos, max_indexed_height, utxo_source) = if let Some(opts_json) = &options_json {
+            let (trace_enabled, mine_enabled, auto_confirm, raw_output, from_addresses, change_address, alkanes_change_address, ordinals_strategy, mempool_indexer, split_transactions, known_pending_tx_hexes, prefetched_utxos, excluded_utxos, max_indexed_height, utxo_source) = if let Some(opts_json) = &options_json {
                 let opts: serde_json::Value = serde_json::from_str(opts_json)
                     .map_err(|e| JsValue::from_str(&format!("Invalid options JSON: {}", e)))?;
 
@@ -1284,6 +1294,14 @@ impl WebProvider {
                         .unwrap_or_default();
 
                 // Indexer-aware UTXO height filter. See EnhancedExecuteParams::max_indexed_height.
+                // Caller-locked outpoints ("txid:vout") the selector must never
+                // spend — e.g. UTXOs committed to open lending offers. See
+                // EnhancedExecuteParams::excluded_utxos.
+                let excluded: Vec<String> = opts.get("excluded_utxos")
+                    .or_else(|| opts.get("excludedUtxos"))
+                    .and_then(|v| serde_json::from_value(v.clone()).ok())
+                    .unwrap_or_default();
+
                 let max_idx: Option<u64> = opts.get("max_indexed_height")
                     .or_else(|| opts.get("maxIndexedHeight"))
                     .and_then(|v| v.as_u64());
@@ -1306,11 +1324,12 @@ impl WebProvider {
                     split_tx,
                     known_pending,
                     prefetched,
+                    excluded,
                     max_idx,
                     utxo_src,
                 )
             } else {
-                (false, false, true, false, None, None, None, Default::default(), false, false, Vec::new(), Vec::new(), None, Default::default())
+                (false, false, true, false, None, None, None, Default::default(), false, false, Vec::new(), Vec::new(), Vec::new(), None, Default::default())
             };
 
             let params = EnhancedExecuteParams {
@@ -1331,6 +1350,7 @@ impl WebProvider {
                 split_transactions,
                 known_pending_tx_hexes,
                 prefetched_utxos,
+                excluded_utxos,
                 max_indexed_height,
                 utxo_source,
             };
@@ -9748,6 +9768,7 @@ impl DeezelProvider for WebProvider {
             split_transactions: false,
                 known_pending_tx_hexes: Vec::new(),
                 prefetched_utxos: Vec::new(),
+                excluded_utxos: Vec::new(),
                 max_indexed_height: None,
                 utxo_source: Default::default(),
         };
@@ -9792,6 +9813,7 @@ impl DeezelProvider for WebProvider {
             split_transactions: false,
                 known_pending_tx_hexes: Vec::new(),
                 prefetched_utxos: Vec::new(),
+                excluded_utxos: Vec::new(),
                 max_indexed_height: None,
                 utxo_source: Default::default(),
         };

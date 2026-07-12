@@ -373,6 +373,14 @@ pub struct EnhancedExecuteParams {
     /// on every block-tip change.
     #[serde(default)]
     pub prefetched_utxos: Vec<PrefetchedUtxo>,
+    /// Outpoints (`"txid:vout"`) the selector must NEVER spend, regardless of
+    /// their balance or eligibility. Wallet-level soft locks: e.g. subfrost-app
+    /// excludes UTXOs committed to its open lending offers — each offer's
+    /// pre-signed prep tx spends specific outpoints, so spending one from any
+    /// other flow silently invalidates the offer (2026-07-12). Malformed
+    /// entries are logged and ignored (fail-open per entry).
+    #[serde(default)]
+    pub excluded_utxos: Vec<String>,
     /// Maximum block height the alkanes indexer (metashrew) has finished
     /// indexing. When set, `select_utxos` skips any confirmed UTXO mined
     /// into a block whose height is greater than `max_indexed_height` —
