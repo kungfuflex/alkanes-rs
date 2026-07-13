@@ -244,12 +244,31 @@ export const OUTPUT_VSIZE: Record<string, number> = {
 export const TX_OVERHEAD_VSIZE = 10.5;
 
 /**
- * Compute accurate BTC send fee accounting for dust threshold on the change output.
+ * Minimum fee RATE (sat/vB) the send-fee model will ever charge. Set to 1.1 —
+ * not bitcoind's raw 1.0 minrelaytxfee — because 1.0-sat/vB txs repeatedly got
+ * stuck in the mempool; a hair above min-relay keeps sends reliably relaying.
+ * This is the SAME floor the alkanes execute path uses (subfrost-app
+ * lib/alkanes/execute.ts feeRateFloor). It is a RATE floor ONLY — never an
+ * absolute-sat floor — and is overridable per call via `minFeeRate` (pass 0 to
+ * disable).
+ */
+export const MIN_RELAY_FEE_RATE = 1.1;
+
+/**
+ * Compute accurate BTC send fee, accounting for the min-relay rate floor and the
+ * dust threshold on the change output.
  *
- * When change would be below the dust threshold, it is absorbed into the miner fee,
- * which raises the effective fee rate above the requested rate. This function handles
- * both cases (2-output with change, 1-output with dust absorbed) and returns full
- * details for UI display.
+ * - Charged rate = `max(feeRate, minFeeRate)` (default MIN_RELAY_FEE_RATE). The
+ *   caller's selected rate is honored whenever it is at/above the floor.
+ * - change > dust  → 2 outputs, proportional fee.
+ * - change <= dust → 1 output. By value conservation a single-output send's fee
+ *   is exactly `totalInput - sendAmount` (there is no change output to hold the
+ *   sub-dust leftover), so the <dust remainder is unavoidably absorbed. We never
+ *   inflate the fee beyond that.
+ * - If the inputs can't cover even the minimum 1-output fee, the send is
+ *   genuinely unaffordable: `sufficient: false`. Consumers MUST branch on
+ *   `sufficient` — never on `fee > balance` — so an affordable send is never
+ *   falsely blocked.
  */
 export function computeSendFee(params: {
   inputCount: number;
@@ -260,6 +279,7 @@ export function computeSendFee(params: {
   recipientType?: 'legacy' | 'segwit' | 'taproot';
   changeType?: 'legacy' | 'segwit' | 'taproot';
   dustThreshold?: number;
+  minFeeRate?: number;
 }): FeeEstimation {
   const {
     inputCount,
@@ -269,8 +289,11 @@ export function computeSendFee(params: {
     inputType = 'segwit',
     recipientType = 'segwit',
     dustThreshold = DUST_THRESHOLD,
+    minFeeRate = MIN_RELAY_FEE_RATE,
   } = params;
   const changeType = params.changeType ?? inputType;
+  // Honor the user's rate, floored ONLY at the min-relay rate — never below.
+  const rate = Math.max(feeRate, minFeeRate);
 
   const inVsize = INPUT_VSIZE[inputType] ?? INPUT_VSIZE.segwit;
   const recipientOutVsize = OUTPUT_VSIZE[recipientType] ?? OUTPUT_VSIZE.segwit;
@@ -278,25 +301,27 @@ export function computeSendFee(params: {
 
   // Try with 2 outputs (recipient + change)
   const vsize2 = inputCount * inVsize + recipientOutVsize + changeOutVsize + TX_OVERHEAD_VSIZE;
-  const fee2 = Math.ceil(vsize2 * feeRate);
+  const fee2 = Math.ceil(vsize2 * rate);
   const change = totalInputValue - sendAmount - fee2;
 
   if (change > dustThreshold) {
-    return { fee: fee2, numOutputs: 2, change, vsize: vsize2, effectiveFeeRate: feeRate };
+    return { fee: fee2, numOutputs: 2, change, vsize: vsize2, effectiveFeeRate: rate, sufficient: true };
   }
 
-  // Change is dust or negative — use 1 output, remainder becomes fee
+  // Change is dust or negative → 1 output. fee = remainder is FORCED by value
+  // conservation (no change output can hold the sub-dust leftover) — not an
+  // inflation. If the inputs can't cover even the proportional 1-output fee, the
+  // send is unaffordable → sufficient:false (never block an affordable send).
   const vsize1 = inputCount * inVsize + recipientOutVsize + TX_OVERHEAD_VSIZE;
-  const minFee1 = Math.ceil(vsize1 * feeRate);
+  const minFee1 = Math.ceil(vsize1 * rate);
   const remainder = totalInputValue - sendAmount;
 
   if (remainder < minFee1) {
-    // Not enough to cover even 1-output fee
-    return { fee: minFee1, numOutputs: 1, change: 0, vsize: vsize1, effectiveFeeRate: feeRate };
+    return { fee: minFee1, numOutputs: 1, change: 0, vsize: vsize1, effectiveFeeRate: rate, sufficient: false };
   }
 
   // Dust absorbed into fee — effective rate is higher than selected
-  return { fee: remainder, numOutputs: 1, change: 0, vsize: vsize1, effectiveFeeRate: remainder / vsize1 };
+  return { fee: remainder, numOutputs: 1, change: 0, vsize: vsize1, effectiveFeeRate: remainder / vsize1, sufficient: true };
 }
 
 /**
@@ -315,7 +340,8 @@ export function estimateSelectionFee(
   const inVsize = INPUT_VSIZE[inputType] ?? INPUT_VSIZE.segwit;
   const outVsize = OUTPUT_VSIZE[outputType] ?? OUTPUT_VSIZE.segwit;
   const vsize = inputCount * inVsize + outputCount * outVsize + TX_OVERHEAD_VSIZE;
-  return Math.ceil(vsize * feeRate);
+  // Same min-relay floor as computeSendFee so selection never under-estimates.
+  return Math.ceil(vsize * Math.max(feeRate, MIN_RELAY_FEE_RATE));
 }
 
 // Re-export WASM utilities

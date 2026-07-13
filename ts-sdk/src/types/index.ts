@@ -214,6 +214,8 @@ export interface FeeEstimation {
   change: number;           // Change amount in sats (0 if absorbed into fee)
   vsize: number;            // Estimated vsize in vbytes
   effectiveFeeRate: number; // Actual sat/vB (higher than requested when dust is absorbed)
+  sufficient: boolean;      // false ONLY when inputs can't cover the minimum 1-output fee.
+                            // Consumers MUST branch on this, not on fee > balance.
 }
 
 /**
