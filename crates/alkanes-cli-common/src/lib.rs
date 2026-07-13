@@ -56,6 +56,7 @@ pub mod address;
 pub mod commands;
 pub mod traits;
 pub mod pending_tx_store;
+pub mod broadcast_result;
 pub mod network;
 pub mod rpc;
 pub mod alkanes;

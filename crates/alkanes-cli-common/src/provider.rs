@@ -4720,9 +4720,28 @@ impl BitcoinRpcProvider for ConcreteProvider {
         // Only pass maxfeerate - maxburnamount is not supported in Bitcoin Core < 26.0
         let params = json!([tx_hex, maxfeerate]);
         let result = self.call(&rpc_url, "sendrawtransaction", params, 1).await?;
-        result.as_str()
-            .ok_or_else(|| AlkanesError::RpcError("Invalid sendrawtransaction response".to_string()))
-            .map(|s| s.to_string())
+
+        // Gateway-stripped-error hardening, same as the alkanes-web-sys impl:
+        // when the CLI points at a subfrost gateway (tlsd-edge), bitcoind
+        // rejections are stripped to {"result": null} and `_call_inner`
+        // surfaces Ok(Null) — the old `.as_str()` check collapsed every
+        // reject reason into "Invalid sendrawtransaction response". On a
+        // non-txid result, probe testmempoolaccept (whose verdict survives
+        // the stripping) and let the shared pure interpreter produce either
+        // the real reject reason or the txid for the already-in-mempool
+        // success-in-disguise case. See crate::broadcast_result.
+        if let Some(txid) = crate::broadcast_result::sendraw_txid(&result) {
+            return Ok(txid);
+        }
+        log::warn!(
+            "send_raw_transaction: non-txid result {result:?} (gateway stripped the node error) — probing testmempoolaccept"
+        );
+        let probe = self
+            .call(&rpc_url, "testmempoolaccept", json!([[tx_hex]]), 1)
+            .await
+            .ok();
+        crate::broadcast_result::interpret_broadcast_response(&result, probe.as_ref())
+            .map_err(AlkanesError::RpcError)
     }
 
     async fn send_raw_transactions(&self, tx_hexes: &[String]) -> Result<Vec<String>> {

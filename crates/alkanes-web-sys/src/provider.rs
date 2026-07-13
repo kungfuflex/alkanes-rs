@@ -8573,13 +8573,43 @@ impl BitcoinRpcProvider for WebProvider {
     }
     
     async fn send_raw_transaction(&self, tx_hex: &str) -> Result<String> {
-        self.logger.info("[DEBUG] send_raw_transaction: before call");
+        // Gateway-stripped-error hardening (SDK-side counterpart of subfrost-app
+        // PR #370): the subfrost RPC gateway (tlsd-edge alkanes-jsonrpc WASM)
+        // strips bitcoind error envelopes — every rejection reaches us as
+        // HTTP 200 {"result": null}, which `call()` surfaces as Ok(Null).
+        // The old `.as_str()` check therefore collapsed EVERY reject reason
+        // into "Invalid txid response". This path matters because the
+        // keystore/autoConfirm flows broadcast inside this WASM, out of reach
+        // of the frontend's #370 fix. See
+        // alkanes_cli_common::broadcast_result for the full decision table.
         let params = serde_json::json!([tx_hex]);
         let result = self.call(&self.sandshrew_rpc_url(), "sendrawtransaction", params, 1).await?;
-        self.logger.info(&format!("[DEBUG] send_raw_transaction: after call, result type: {:?}", result));
-        let txid = result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid txid response".to_string()))?;
-        self.logger.info(&format!("[DEBUG] send_raw_transaction: returning txid: {}", txid));
-        Ok(txid)
+
+        // Fast path: success envelopes pass through the gateway intact, so a
+        // 64-hex txid string is trustworthy as-is.
+        if let Some(txid) = alkanes_cli_common::broadcast_result::sendraw_txid(&result) {
+            return Ok(txid);
+        }
+
+        // Stripped-error signature — probe testmempoolaccept for the real
+        // verdict (its verdict rides INSIDE `result`, so it survives the
+        // stripping; verified live 2026-07-13). Probe failure is folded into
+        // the interpretation (None -> generic gateway-stripped error) rather
+        // than propagated, because the sendraw failure is the story here.
+        self.logger.warn(&format!(
+            "[send_raw_transaction] non-txid result {result:?} (gateway stripped the node error) — probing testmempoolaccept for the real verdict"
+        ));
+        let probe = self
+            .call(
+                &self.sandshrew_rpc_url(),
+                "testmempoolaccept",
+                serde_json::json!([[tx_hex]]),
+                1,
+            )
+            .await
+            .ok();
+        alkanes_cli_common::broadcast_result::interpret_broadcast_response(&result, probe.as_ref())
+            .map_err(AlkanesError::RpcError)
     }
 
     async fn send_raw_transactions(&self, tx_hexes: &[String]) -> Result<Vec<String>> {
@@ -8608,6 +8638,16 @@ impl BitcoinRpcProvider for WebProvider {
             // Note: send_raw_transaction is the lower-level RPC that does
             // NOT push to the pending-tx store on its own; the caller-
             // visible push happens via this method's tail pass below.
+            //
+            // Gateway-stripped batch errors land here too: when the gateway
+            // strips a `sendrawtransactions` node error, `call()` returns
+            // Ok(Null), `as_array()` fails, and we fall through to this loop
+            // ON PURPOSE — each per-tx send_raw_transaction now carries the
+            // testmempoolaccept probe, so (a) txs the batch DID accept
+            // resolve via the txn-already-in-mempool verdict to their txids
+            // instead of erroring, and (b) the first genuinely-rejected tx
+            // surfaces bitcoind's real reject reason instead of "Invalid
+            // txid response". See alkanes_cli_common::broadcast_result.
             let mut txids = Vec::new();
             for tx_hex in tx_hexes {
                 let txid = self.send_raw_transaction(tx_hex).await?;
