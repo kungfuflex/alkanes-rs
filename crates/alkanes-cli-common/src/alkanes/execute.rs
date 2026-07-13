@@ -4682,10 +4682,12 @@ mod tests {
 
         let outputs = executor.create_outputs(&to_addresses, &None, &input_requirements, &[]).await.unwrap();
 
-        assert_eq!(outputs.len(), 2);
-        for output in outputs {
-            assert_eq!(output.value, Amount::from_sat(546));
-        }
+        // 2 recipient (dust) outputs + 1 always-appended BTC change output (0,
+        // filled in later).
+        assert_eq!(outputs.len(), 3);
+        assert_eq!(outputs[0].value, Amount::from_sat(546));
+        assert_eq!(outputs[1].value, Amount::from_sat(546));
+        assert_eq!(outputs[2].value, Amount::from_sat(0));
     }
 
     #[tokio::test]
@@ -4698,10 +4700,11 @@ mod tests {
 
         let outputs = executor.create_outputs(&to_addresses, &None, &input_requirements, &[]).await.unwrap();
 
-        assert_eq!(outputs.len(), 2);
-        for output in outputs {
-            assert_eq!(output.value, Amount::from_sat(10000));
-        }
+        // 20000 sats split across 2 recipients (10000 each) + 1 change output (0).
+        assert_eq!(outputs.len(), 3);
+        assert_eq!(outputs[0].value, Amount::from_sat(10000));
+        assert_eq!(outputs[1].value, Amount::from_sat(10000));
+        assert_eq!(outputs[2].value, Amount::from_sat(0));
     }
 
     /// The split-tx CPFP child fee rate must (a) never drop below the network

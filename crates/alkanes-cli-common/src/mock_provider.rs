@@ -501,17 +501,20 @@ impl WalletProvider for MockProvider {
 #[async_trait(?Send)]
 impl AddressResolver for MockProvider {
     async fn resolve_all_identifiers(&self, input: &str) -> Result<String> {
-        // Replace identifiers with actual addresses
-        let result = input.replace("p2tr:0", "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4");
+        // Replace identifiers with a NETWORK-CORRECT address (regtest → bcrt1p…,
+        // mainnet → bc1p…). A hardcoded mainnet address fails `require_network`
+        // on a regtest provider (broke create_outputs tests).
+        let addr = Address::p2tr(&self.secp, self.internal_key, None, self.network).to_string();
+        let result = input.replace("p2tr:0", &addr);
         Ok(result)
     }
-    
+
     fn contains_identifiers(&self, input: &str) -> bool {
         input.contains("p2tr:") || input.contains("p2wpkh:")
     }
-    
+
     async fn get_address(&self, _address_type: &str, _index: u32) -> Result<String> {
-        Ok("bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4".to_string())
+        Ok(Address::p2tr(&self.secp, self.internal_key, None, self.network).to_string())
     }
     
     async fn list_identifiers(&self) -> Result<Vec<String>> {

@@ -8,8 +8,30 @@ use alkanes_support::{cellpack::Cellpack, id::AlkaneId, parcel::{AlkaneTransfer,
 
 /// Parse the params string into Cellpack (calldata) and AlkaneTransferParcel (alkanes)
 /// Format: [block,tx,inputs...]:[block:tx:value]:[block:tx:value]
+/// Split on top-level `:` only — colons INSIDE `[...]` (e.g. an alkane transfer
+/// `[2:0:4000000]`) are part of that element, not separators. A naive
+/// `split(':')` shreds `[block:tx:value]` transfers.
+fn split_top_level_colon(s: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut depth: i32 = 0;
+    let mut start = 0;
+    for (i, c) in s.char_indices() {
+        match c {
+            '[' => depth += 1,
+            ']' => depth -= 1,
+            ':' if depth == 0 => {
+                parts.push(&s[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    parts.push(&s[start..]);
+    parts
+}
+
 pub fn parse_params(params: &str) -> Result<(Cellpack, AlkaneTransferParcel)> {
-    let parts: Vec<&str> = params.split(':').collect();
+    let parts: Vec<&str> = split_top_level_colon(params);
     if parts.is_empty() {
         return Err(AlkanesError::InvalidParameters(
             "Empty params string".to_string(),

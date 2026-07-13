@@ -417,7 +417,7 @@ mod unit_tests {
     fn test_version_info() {
         // The version is a constant and will never be empty.
         // This assert is for demonstration purposes.
-        assert_eq!(NAME, "alkanes-common");
+        assert_eq!(NAME, "alkanes-cli-common");
     }
     
     #[test]

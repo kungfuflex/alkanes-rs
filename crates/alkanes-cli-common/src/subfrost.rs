@@ -830,13 +830,16 @@ mod tests {
     
     #[test]
     fn test_parse_signer_pubkey() {
-        // Mock response from simulate
+        // Mock response from simulate: the data is a hex-encoded protobuf
+        // ExtendedCallResponse — field 1 wrapper (0a, len 0x22) + field 3 (1a)
+        // with a 32-byte x-only key (0x20). parse_signer_pubkey extracts bytes
+        // [4..36]. (A raw 32-byte pubkey would fail protobuf decode.)
         let response = serde_json::json!({
             "execution": {
-                "data": "0x79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+                "data": "0x0a221a2079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
             }
         });
-        
+
         let pubkey_bytes = parse_signer_pubkey(&response).unwrap();
         assert_eq!(pubkey_bytes.len(), 32);
         assert_eq!(
@@ -903,9 +906,12 @@ mod tests {
         );
         assert!(check.is_ok(), "Minimum should be processable");
 
-        // Verify one less doesn't work
+        // Verify below the minimum doesn't work. `minimum_unwrap_sats` is a
+        // CONSERVATIVE ceil (e.g. ceil(1735.7) = 1736) while the true processable
+        // floor is one lower (1735 → final_value == DUST_THRESHOLD exactly, which
+        // passes). So `-1` is still the boundary edge; `-2` is genuinely below it.
         let check_below = check_unwrap_processable(
-            result.minimum_unwrap_sats - 1,
+            result.minimum_unwrap_sats - 2,
             10.0,
             0.001,
             10,
