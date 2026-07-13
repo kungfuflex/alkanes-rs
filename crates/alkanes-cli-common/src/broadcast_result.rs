@@ -62,6 +62,7 @@
 // lib.rs, so `alloc::` paths work everywhere.
 use alloc::format;
 use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 
 use serde_json::Value as JsonValue;
 
@@ -88,6 +89,23 @@ pub fn sendraw_txid(result: &JsonValue) -> Option<String> {
     } else {
         None
     }
+}
+
+/// Interpret a batch `sendrawtransactions` result. Returns `Some(txids)`
+/// ONLY when the result is the canonical success shape — a JSON array in
+/// which EVERY entry is a string. Returns `None` for the gateway-stripped
+/// signature (`Null`), a non-array, or an array with a non-string entry —
+/// the caller then falls back to the sequential per-tx broadcast path,
+/// which probes each tx via the hardened single-tx broadcast (FIX #3).
+///
+/// Note: unlike `submitpackage`, bitcoind's `sendrawtransactions` success
+/// result is a bare array of txid strings, so there is no wtxid→txid
+/// indirection to resolve here — the strings ARE the txids.
+pub fn batch_result_txids(batch_result: &JsonValue) -> Option<Vec<String>> {
+    let arr = batch_result.as_array()?;
+    arr.iter()
+        .map(|v| v.as_str().map(|s| s.to_string()))
+        .collect()
 }
 
 /// Interpret a `sendrawtransaction` result together with an optional
@@ -253,5 +271,53 @@ mod tests {
         let err = interpret_broadcast_response(&json!(null), Some(&probe)).unwrap_err();
         assert!(err.contains("may not have propagated"), "got: {err}");
         assert!(err.contains(TXID), "anomaly message should carry the txid: {err}");
+    }
+
+    // --- batch sendrawtransactions decision (FIX #3) ----------------------
+    // These pin the Null-batch → sequential-probe fallback decision: the
+    // provider treats `None` from `batch_result_txids` as "not a usable
+    // batch result, fall through to the hardened per-tx sequential path".
+
+    const TXID_B: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+    #[test]
+    fn batch_array_of_strings_is_usable() {
+        let result = json!([TXID, TXID_B]);
+        assert_eq!(
+            batch_result_txids(&result),
+            Some(vec![TXID.to_string(), TXID_B.to_string()])
+        );
+    }
+
+    #[test]
+    fn batch_stripped_null_is_not_usable_triggers_sequential() {
+        // THE FIX #3 CASE: a rejected batch is stripped to Ok(Null), NOT an
+        // Err. `None` here is what makes the provider fall through to the
+        // sequential per-tx probe instead of throwing an opaque error.
+        assert_eq!(batch_result_txids(&json!(null)), None);
+    }
+
+    #[test]
+    fn batch_non_array_shapes_are_not_usable() {
+        // An object (e.g. a stray submitpackage-style envelope) or a bare
+        // string is not the sendrawtransactions success shape → sequential.
+        assert_eq!(batch_result_txids(&json!({ "package_msg": "success" })), None);
+        assert_eq!(batch_result_txids(&json!("not-an-array")), None);
+    }
+
+    #[test]
+    fn batch_array_with_non_string_entry_is_not_usable() {
+        // A malformed array (one entry isn't a txid string) must not be
+        // half-trusted — fall back to the per-tx path so each is probed.
+        assert_eq!(batch_result_txids(&json!([TXID, 42])), None);
+        assert_eq!(batch_result_txids(&json!([TXID, null])), None);
+    }
+
+    #[test]
+    fn batch_empty_array_is_usable_but_empty() {
+        // An empty array is technically well-shaped (zero txids); the caller
+        // only reaches the batch path with >1 hex, so this is a defensive
+        // edge — it is NOT the stripped-null signature, so returns Some([]).
+        assert_eq!(batch_result_txids(&json!([])), Some(Vec::<String>::new()));
     }
 }
