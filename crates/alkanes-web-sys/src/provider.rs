@@ -2775,18 +2775,22 @@ impl WebProvider {
 
     #[wasm_bindgen(js_name = esploraBroadcastTx)]
     pub fn esplora_broadcast_tx_js(&self, tx_hex: String) -> js_sys::Promise {
+        // Broadcasting is never an esplora operation. Route through bitcoind
+        // `sendrawtransaction` (WalletProvider::broadcast_transaction) so there
+        // is a single relay path with a real reject envelope. The former
+        // `POST {esplora}/tx` path is removed: esplora/electrs broadcast has no
+        // relay guarantee, and the gateway maps the JSON-RPC `esplora_tx::broadcast`
+        // form onto a bogus route that wedges electrs. Kept as a compat alias for
+        // callers that still invoke `esploraBroadcastTx` — it now returns the
+        // sendrawtransaction txid.
+        use alkanes_cli_common::traits::WalletProvider;
         use wasm_bindgen_futures::future_to_promise;
         let provider = self.clone();
         future_to_promise(async move {
-            let esplora_url = provider.esplora_rpc_url()
-                .ok_or_else(|| JsValue::from_str("Esplora URL not configured"))?;
-            
-            // POST to /tx endpoint
-            let url = format!("{}/tx", esplora_url);
-            let response = crate::platform::fetch(&url, "POST", Some(&tx_hex), vec![("Content-Type", "text/plain")]).await
+            let txid = provider.broadcast_transaction(tx_hex)
+                .await
                 .map_err(|e| JsValue::from_str(&format!("Broadcast failed: {}", e)))?;
-            
-            Ok(JsValue::from_str(&response))
+            Ok(JsValue::from_str(&txid))
         })
     }
 
@@ -3047,18 +3051,16 @@ impl WebProvider {
 
     #[wasm_bindgen(js_name = esploraPostTx)]
     pub fn esplora_post_tx_js(&self, tx_hex: String) -> js_sys::Promise {
+        // Alias of `esploraBroadcastTx`: broadcasting is never an esplora op.
+        // Route through bitcoind `sendrawtransaction` (no `POST {esplora}/tx`).
+        use alkanes_cli_common::traits::WalletProvider;
         use wasm_bindgen_futures::future_to_promise;
         let provider = self.clone();
         future_to_promise(async move {
-            let esplora_url = provider.esplora_rpc_url()
-                .ok_or_else(|| JsValue::from_str("Esplora URL not configured"))?;
-
-            // POST to /tx endpoint (same as broadcast, just different name)
-            let url = format!("{}/tx", esplora_url);
-            let response = crate::platform::fetch(&url, "POST", Some(&tx_hex), vec![("Content-Type", "text/plain")]).await
+            let txid = provider.broadcast_transaction(tx_hex)
+                .await
                 .map_err(|e| JsValue::from_str(&format!("Post tx failed: {}", e)))?;
-
-            Ok(JsValue::from_str(&response))
+            Ok(JsValue::from_str(&txid))
         })
     }
 
