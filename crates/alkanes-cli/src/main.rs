@@ -3634,6 +3634,8 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes, fr
                 split_transactions: false,
                 known_pending_tx_hexes: Vec::new(),
                 prefetched_utxos: Vec::new(),
+                excluded_utxos: Vec::new(),
+                skip_diesel_mint: false,
                 max_indexed_height,
                 utxo_source: alkanes_cli_common::alkanes::types::UtxoDataSource::default(),
             };
@@ -4366,6 +4368,8 @@ fn to_enhanced_execute_params(
         split_transactions: false,
         known_pending_tx_hexes: Vec::new(),
         prefetched_utxos: Vec::new(),
+        excluded_utxos: Vec::new(),
+        skip_diesel_mint: false,
         max_indexed_height,
         utxo_source: alkanes::types::UtxoDataSource::default(),
     })

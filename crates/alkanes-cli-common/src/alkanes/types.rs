@@ -381,6 +381,18 @@ pub struct EnhancedExecuteParams {
     /// entries are logged and ignored (fail-open per entry).
     #[serde(default)]
     pub excluded_utxos: Vec<String>,
+    /// Skip the DIESEL mint protostone (2026-07-13). By DEFAULT every runestone
+    /// this executor builds gets one extra protostone appended LAST:
+    /// `Protostone { protocol_tag: 1, message: [2,0,77], pointer/refund = runestone pointer }`
+    /// — the cellpack minting the per-block DIESEL emission on alkane [2:0] to the
+    /// tx's first output. Appending last preserves protorune auto-allocation
+    /// (input alkanes still bind to the caller's first tag-1 protostone) and all
+    /// caller-visible shadow-vout indices. The mint carries no incoming alkanes,
+    /// so a revert (block already claimed / no [2:0] on the network) is a no-op
+    /// for its siblings. Set `true` to restore the exact caller-specified
+    /// protostone list (byte-stable encodings, size-sensitive protocols).
+    #[serde(default)]
+    pub skip_diesel_mint: bool,
     /// Maximum block height the alkanes indexer (metashrew) has finished
     /// indexing. When set, `select_utxos` skips any confirmed UTXO mined
     /// into a block whose height is greater than `max_indexed_height` —
