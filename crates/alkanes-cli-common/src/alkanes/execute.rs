@@ -1718,7 +1718,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         // Use final_funding_outpoints which may have inscribed UTXOs replaced with clean ones from split
         // When alkane inputs are specified, route them to the first protomessage (not output 0)
         let has_alkane_inputs = params.input_requirements.iter().any(|r| matches!(r, InputRequirement::Alkanes { .. }));
-        let runestone_script = self.construct_runestone_script_with_alkane_routing(&final_protostones, outputs.len(), has_alkane_inputs)?;
+        let runestone_script = self.construct_runestone_script_with_alkane_routing(&final_protostones, outputs.len(), has_alkane_inputs, params.skip_diesel_mint)?;
         let prefetched_for_build = build_effective_txouts_map(params, &utxo_selection.txouts)?;
         let (psbt, fee, estimated_vsize) = self.build_psbt_and_fee(final_funding_outpoints.clone(), outputs, Some(runestone_script), params.fee_rate, None, None, prefetched_for_build.as_ref()).await?;
 
@@ -3337,16 +3337,63 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         }).collect()
     }
 
-    fn construct_runestone_script(&self, protostones: &[ProtostoneSpec], num_outputs: usize) -> Result<ScriptBuf> {
-        self.construct_runestone_script_with_alkane_routing(protostones, num_outputs, false)
+    /// The DIESEL mint protostone appended (by default) to every runestone this
+    /// executor builds: cellpack `[2,0,77]` — alkane [2:0] opcode 77 — claiming
+    /// the per-block DIESEL emission to `pointer` (2026-07-13). It carries no
+    /// incoming alkanes, so a revert (block already claimed / no [2:0] on the
+    /// network) is a no-op for sibling protostones. Same template as the
+    /// brc20-prog executor's opt-in `create_diesel_mint_outputs`.
+    fn diesel_mint_protostone(pointer: u32) -> Protostone {
+        Protostone {
+            protocol_tag: 1,
+            message: vec![2u8, 0u8, 77u8],
+            pointer: Some(pointer),
+            refund: Some(pointer),
+            burn: None,
+            from: None,
+            edicts: vec![],
+        }
     }
 
-    fn construct_runestone_script_with_alkane_routing(&self, protostones: &[ProtostoneSpec], num_outputs: usize, has_alkane_inputs: bool) -> Result<ScriptBuf> {
+    /// True when a protostone's message is a DIESEL mint cellpack — target [2:0]
+    /// opcode 77 (LEB bytes `2,0,77` prefix; trailing args still hit the same
+    /// opcode). Used to guarantee ONE mint per tx: the auto-append is skipped
+    /// when the caller already mints explicitly.
+    fn is_diesel_mint_protostone(p: &Protostone) -> bool {
+        p.protocol_tag == 1 && p.message.len() >= 3 && p.message[0..3] == [2u8, 0u8, 77u8]
+    }
+
+    fn construct_runestone_script(&self, protostones: &[ProtostoneSpec], num_outputs: usize, skip_diesel_mint: bool) -> Result<ScriptBuf> {
+        self.construct_runestone_script_with_alkane_routing(protostones, num_outputs, false, skip_diesel_mint)
+    }
+
+    fn construct_runestone_script_with_alkane_routing(&self, protostones: &[ProtostoneSpec], num_outputs: usize, has_alkane_inputs: bool, skip_diesel_mint: bool) -> Result<ScriptBuf> {
         log::info!("Constructing runestone with {} protostones and {} outputs (before OP_RETURN), alkane_inputs={}", protostones.len(), num_outputs, has_alkane_inputs);
         log::info!("  After OP_RETURN is added, tx.output.len() = {} + 1 = {}", num_outputs, num_outputs + 1);
         log::info!("  Formula: pN -> vout = {} + 1 + N = {} + N", num_outputs, num_outputs + 1);
 
-        let converted_protostones = self.convert_protostone_specs_with_output_count(protostones, num_outputs as u32)?;
+        let mut converted_protostones = self.convert_protostone_specs_with_output_count(protostones, num_outputs as u32)?;
+
+        // Runestone pointer: always 0 (first --to output).
+        //
+        // Extended pointers (shadow vouts for protomessage routing) cause issues
+        // with contracts that call Runestone::decipher internally (e.g. frBTC).
+        // The protorune indexer routes alkane tokens to protostones based on the
+        // protostone's own pointer field, not the Runestone pointer.
+        let pointer = 0u32;
+
+        // DIESEL mint (default-on, 2026-07-13): appended LAST so protorune
+        // auto-allocation (input alkanes → first tag-1 protostone) and every
+        // caller-specified pN/shadow-vout index stay untouched. Pointer follows
+        // the runestone pointer above → minted DIESEL lands on the first --to
+        // output (the alkanes change address for typical app mutations).
+        //
+        // ONE MINT PER TX: a tx can only claim the DIESEL emission once, so when
+        // the caller's protostones already carry a [2,0,77] mint cellpack (e.g.
+        // an explicit `alkanes execute '[2,0,77]:v0:v0'` mint) nothing is added.
+        if !skip_diesel_mint && !converted_protostones.iter().any(Self::is_diesel_mint_protostone) {
+            converted_protostones.push(Self::diesel_mint_protostone(pointer));
+        }
 
         // Debug logging
         for (i, p) in converted_protostones.iter().enumerate() {
@@ -3356,14 +3403,6 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         // Use the Protostones trait to properly encode the protocol field
         let protocol_values = converted_protostones.encipher()?;
         log::info!("Encoded protocol values: {} u128 values", protocol_values.len());
-
-        // Runestone pointer: always 0 (first --to output).
-        //
-        // Extended pointers (shadow vouts for protomessage routing) cause issues
-        // with contracts that call Runestone::decipher internally (e.g. frBTC).
-        // The protorune indexer routes alkane tokens to protostones based on the
-        // protostone's own pointer field, not the Runestone pointer.
-        let pointer = 0u32;
 
         let runestone = Runestone {
             protocol: Some(protocol_values),
@@ -3721,8 +3760,14 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                 burn: None,
             };
 
-            // Encode the protostone into a Runestone OP_RETURN script
-            let protocol_values = vec![split_protostone].encipher()?;
+            // Encode the protostone into a Runestone OP_RETURN script. The split tx
+            // gets the default DIESEL mint too (pointer = the split protostone's own
+            // clean alkane output), unless the caller opted out.
+            let mut split_protostones = vec![split_protostone];
+            if !params.skip_diesel_mint {
+                split_protostones.push(Self::diesel_mint_protostone(alkane_output_index));
+            }
+            let protocol_values = split_protostones.encipher()?;
             let runestone = Runestone {
                 protocol: Some(protocol_values),
                 pointer: Some(alkane_output_index),
@@ -3993,9 +4038,9 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         
         // Validate protostones against the ACTUAL number of outputs created
         self.validate_protostones(&params.protostones, outputs.len())?;
-        
-        let runestone_script = self.construct_runestone_script(&params.protostones, outputs.len())?;
-        
+
+        let runestone_script = self.construct_runestone_script(&params.protostones, outputs.len(), params.skip_diesel_mint)?;
+
         // Create the commit output TxOut (it may not be indexed yet if still in mempool)
         let commit_address = self.create_commit_address_for_envelope(envelope, commit_internal_key).await?;
         let commit_txout = TxOut {
@@ -4561,7 +4606,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             // Validate protostones against the actual number of outputs created
             self.validate_protostones(&params.protostones, outputs.len())?;
 
-            let runestone_script = self.construct_runestone_script(&params.protostones, outputs.len())?;
+            let runestone_script = self.construct_runestone_script(&params.protostones, outputs.len(), params.skip_diesel_mint)?;
             outputs.push(bitcoin::TxOut {
                 value: bitcoin::Amount::ZERO,
                 script_pubkey: runestone_script,
@@ -6166,5 +6211,89 @@ mod tests {
             max_non_op_return_value,
             total_explicit_output,
         );
+    }
+}
+
+#[cfg(test)]
+mod diesel_mint_tests {
+    //! The default-on DIESEL mint protostone (2026-07-13): every runestone this
+    //! executor builds gets `[2,0,77] → pointer 0` appended LAST, unless the
+    //! caller opts out (`skip_diesel_mint`) or already mints in the same tx
+    //! (one mint per tx — an explicit `[2,0,77]` cellpack suppresses the append).
+    use super::*;
+    use crate::mock_provider::MockProvider;
+    use crate::runestone_enhanced::format_runestone;
+    use crate::alkanes::parsing::parse_protostones;
+    use bitcoin::Network;
+
+    /// Decoded protostone messages come back zero-padded to u128 chunks —
+    /// compare the cellpack prefix.
+    fn is_mint_message(msg: &[u8]) -> bool {
+        msg.len() >= 3 && msg[0..3] == [2u8, 0u8, 77u8] && msg[3..].iter().all(|b| *b == 0)
+    }
+
+    fn decode(script: bitcoin::ScriptBuf) -> Vec<crate::alkanes::protostone::Protostone> {
+        let tx = bitcoin::Transaction {
+            version: bitcoin::transaction::Version::TWO,
+            lock_time: bitcoin::absolute::LockTime::ZERO,
+            input: vec![],
+            output: vec![bitcoin::TxOut { value: bitcoin::Amount::ZERO, script_pubkey: script }],
+        };
+        format_runestone(&tx).expect("runestone decodes")
+    }
+
+    #[test]
+    fn appends_diesel_mint_last_by_default() {
+        let mut provider = MockProvider::new(Network::Regtest);
+        let executor = EnhancedAlkanesExecutor::new(&mut provider);
+        let specs = parse_protostones("[3,797,101]:v0:v0").unwrap();
+        let stones = decode(executor.construct_runestone_script(&specs, 2, false).unwrap());
+        assert_eq!(stones.len(), 2, "caller stone + appended mint");
+        // Caller's stone first (auto-allocation target unchanged).
+        assert!(!is_mint_message(&stones[0].message));
+        // Appended mint: [2,0,77] cellpack, pointer/refund = runestone pointer (0).
+        let mint = &stones[1];
+        assert_eq!(mint.protocol_tag, 1);
+        assert!(is_mint_message(&mint.message));
+        assert_eq!(mint.pointer, Some(0));
+        assert_eq!(mint.refund, Some(0));
+        assert!(mint.edicts.is_empty());
+    }
+
+    #[test]
+    fn skip_flag_restores_exact_caller_protostones() {
+        let mut provider = MockProvider::new(Network::Regtest);
+        let executor = EnhancedAlkanesExecutor::new(&mut provider);
+        let specs = parse_protostones("[3,797,101]:v0:v0").unwrap();
+        let stones = decode(executor.construct_runestone_script(&specs, 2, true).unwrap());
+        assert_eq!(stones.len(), 1, "skip_diesel_mint → caller stones only");
+        assert!(!is_mint_message(&stones[0].message));
+    }
+
+    #[test]
+    fn one_mint_per_tx_explicit_mint_suppresses_append() {
+        let mut provider = MockProvider::new(Network::Regtest);
+        let executor = EnhancedAlkanesExecutor::new(&mut provider);
+        // An explicit DIESEL mint (e.g. devnet boot's `[2,0,77]:v0:v0`) must not
+        // be doubled — a tx can only claim the emission once.
+        let specs = parse_protostones("[2,0,77]:v0:v0").unwrap();
+        let stones = decode(executor.construct_runestone_script(&specs, 2, false).unwrap());
+        assert_eq!(stones.len(), 1, "explicit mint present → nothing appended");
+        assert!(is_mint_message(&stones[0].message));
+    }
+
+    #[test]
+    fn multi_protostone_shifter_layout_keeps_caller_indices() {
+        let mut provider = MockProvider::new(Network::Regtest);
+        let executor = EnhancedAlkanesExecutor::new(&mut provider);
+        // Two-protostone shifter (subfrost swap shape): edict stone + cellpack stone.
+        let specs = parse_protostones("[2:1:100:p1]:v0,[4,65498,13,2,2,1,32,0,100,95,1000]:v1:v0").unwrap();
+        let stones = decode(executor.construct_runestone_script(&specs, 2, false).unwrap());
+        assert_eq!(stones.len(), 3, "p0 shifter + p1 cellpack + appended mint");
+        assert!(is_mint_message(&stones[2].message));
+        // Caller stones keep their positions — protorune auto-allocation still
+        // binds input alkanes to p0, and p1's shadow-vout reference is untouched.
+        assert!(stones[0].message.is_empty());
+        assert!(!stones[1].message.is_empty());
     }
 }

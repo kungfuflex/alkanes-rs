@@ -1087,7 +1087,7 @@ impl WebProvider {
             };
 
             // Parse options (from_addresses, change_address, etc.)
-            let (trace_enabled, mine_enabled, auto_confirm, raw_output, from_addresses, change_address, alkanes_change_address, ordinals_strategy, mempool_indexer, split_transactions, known_pending_tx_hexes, prefetched_utxos, excluded_utxos, max_indexed_height, utxo_source) = if let Some(opts_json) = &options_json {
+            let (trace_enabled, mine_enabled, auto_confirm, raw_output, from_addresses, change_address, alkanes_change_address, ordinals_strategy, mempool_indexer, split_transactions, known_pending_tx_hexes, prefetched_utxos, excluded_utxos, skip_diesel_mint, max_indexed_height, utxo_source) = if let Some(opts_json) = &options_json {
                 let opts: serde_json::Value = serde_json::from_str(opts_json)
                     .map_err(|e| JsValue::from_str(&format!("Invalid options JSON: {}", e)))?;
 
@@ -1147,6 +1147,13 @@ impl WebProvider {
                     .and_then(|v| serde_json::from_value(v.clone()).ok())
                     .unwrap_or_default();
 
+                // Opt-out of the default DIESEL mint protostone — see
+                // EnhancedExecuteParams::skip_diesel_mint.
+                let skip_diesel: bool = opts.get("skip_diesel_mint")
+                    .or_else(|| opts.get("skipDieselMint"))
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+
                 let max_idx: Option<u64> = opts.get("max_indexed_height")
                     .or_else(|| opts.get("maxIndexedHeight"))
                     .and_then(|v| v.as_u64());
@@ -1170,11 +1177,12 @@ impl WebProvider {
                     known_pending,
                     prefetched,
                     excluded,
+                    skip_diesel,
                     max_idx,
                     utxo_src,
                 )
             } else {
-                (false, false, true, false, None, None, None, Default::default(), false, false, Vec::new(), Vec::new(), Vec::new(), None, Default::default())
+                (false, false, true, false, None, None, None, Default::default(), false, false, Vec::new(), Vec::new(), Vec::new(), false, None, Default::default())
             };
 
             let params = EnhancedExecuteParams {
@@ -1196,6 +1204,7 @@ impl WebProvider {
                 known_pending_tx_hexes,
                 prefetched_utxos,
                 excluded_utxos,
+                skip_diesel_mint,
                 max_indexed_height,
                 utxo_source,
             };
@@ -1251,7 +1260,7 @@ impl WebProvider {
             };
 
             // Parse options
-            let (trace_enabled, mine_enabled, auto_confirm, raw_output, from_addresses, change_address, alkanes_change_address, ordinals_strategy, mempool_indexer, split_transactions, known_pending_tx_hexes, prefetched_utxos, excluded_utxos, max_indexed_height, utxo_source) = if let Some(opts_json) = &options_json {
+            let (trace_enabled, mine_enabled, auto_confirm, raw_output, from_addresses, change_address, alkanes_change_address, ordinals_strategy, mempool_indexer, split_transactions, known_pending_tx_hexes, prefetched_utxos, excluded_utxos, skip_diesel_mint, max_indexed_height, utxo_source) = if let Some(opts_json) = &options_json {
                 let opts: serde_json::Value = serde_json::from_str(opts_json)
                     .map_err(|e| JsValue::from_str(&format!("Invalid options JSON: {}", e)))?;
 
@@ -1302,6 +1311,13 @@ impl WebProvider {
                     .and_then(|v| serde_json::from_value(v.clone()).ok())
                     .unwrap_or_default();
 
+                // Opt-out of the default DIESEL mint protostone — see
+                // EnhancedExecuteParams::skip_diesel_mint.
+                let skip_diesel: bool = opts.get("skip_diesel_mint")
+                    .or_else(|| opts.get("skipDieselMint"))
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+
                 let max_idx: Option<u64> = opts.get("max_indexed_height")
                     .or_else(|| opts.get("maxIndexedHeight"))
                     .and_then(|v| v.as_u64());
@@ -1325,11 +1341,12 @@ impl WebProvider {
                     known_pending,
                     prefetched,
                     excluded,
+                    skip_diesel,
                     max_idx,
                     utxo_src,
                 )
             } else {
-                (false, false, true, false, None, None, None, Default::default(), false, false, Vec::new(), Vec::new(), Vec::new(), None, Default::default())
+                (false, false, true, false, None, None, None, Default::default(), false, false, Vec::new(), Vec::new(), Vec::new(), false, None, Default::default())
             };
 
             let params = EnhancedExecuteParams {
@@ -1351,6 +1368,7 @@ impl WebProvider {
                 known_pending_tx_hexes,
                 prefetched_utxos,
                 excluded_utxos,
+                skip_diesel_mint,
                 max_indexed_height,
                 utxo_source,
             };
@@ -9771,6 +9789,7 @@ impl DeezelProvider for WebProvider {
                 known_pending_tx_hexes: Vec::new(),
                 prefetched_utxos: Vec::new(),
                 excluded_utxos: Vec::new(),
+                skip_diesel_mint: false,
                 max_indexed_height: None,
                 utxo_source: Default::default(),
         };
@@ -9816,6 +9835,7 @@ impl DeezelProvider for WebProvider {
                 known_pending_tx_hexes: Vec::new(),
                 prefetched_utxos: Vec::new(),
                 excluded_utxos: Vec::new(),
+                skip_diesel_mint: false,
                 max_indexed_height: None,
                 utxo_source: Default::default(),
         };
