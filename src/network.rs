@@ -338,6 +338,15 @@ pub fn is_genesis(height: u64) -> bool {
     is_genesis
 }
 
+/// On the `regtest_frsigil` build the 1-unit frSIGIL auth-token premine is
+/// deferred out of genesis and re-homed onto the coinbase of this height — a
+/// b8-controlled, bitcoin-spendable regtest outpoint (driven from
+/// `index_block` via `premine_frsigil`). Stock builds premine at genesis to
+/// the fixed `GENESIS_OUTPOINT`, which is a phantom (unspendable) outpoint on
+/// regtest, so frSIGIL can never be moved to authorize `set_signer`.
+#[cfg(feature = "regtest_frsigil")]
+pub const FRSIGIL_PREMINE_HEIGHT: u32 = 1;
+
 pub fn setup_frsigil(block: &Block) -> Result<()> {
     // Byte presence at /alkanes/32:1 is the deployed-detection marker (kept
     // for backwards compatibility with already-synced DBs). Execution never
@@ -348,6 +357,31 @@ pub fn setup_frsigil(block: &Block) -> Result<()> {
     if ptr.get().len() == 0 {
         ptr.set(Arc::new(compress(fr_sigil_bytes())?));
     } else {
+        return Ok(());
+    }
+    // Stock: premine the frSIGIL auth token to the fixed genesis outpoint
+    // immediately. On `regtest_frsigil` the premine is deferred to
+    // `FRSIGIL_PREMINE_HEIGHT`'s coinbase (a spendable regtest UTXO b8 owns),
+    // done from `index_block` after protorune's own block indexing.
+    #[cfg(not(feature = "regtest_frsigil"))]
+    {
+        let outpoint = OutPoint {
+            txid: tx_hex_to_txid(genesis::GENESIS_OUTPOINT)?,
+            vout: 0,
+        };
+        premine_frsigil(block, outpoint)?;
+    }
+    let _ = block;
+    Ok(())
+}
+
+/// Mint the single frSIGIL (32:1) auth-token unit and premine it to
+/// `outpoint`. Idempotent: a `/frsigil/premined` flag guards double-premine
+/// across re-scans. Split out of `setup_frsigil` so the `regtest_frsigil`
+/// build can point the premine at a b8-controlled coinbase outpoint.
+pub fn premine_frsigil(block: &Block, outpoint: OutPoint) -> Result<()> {
+    let mut flag = IndexPointer::from_keyword("/frsigil/premined");
+    if flag.get().len() != 0 {
         return Ok(());
     }
     let mut atomic: AtomicPointer = AtomicPointer::default();
@@ -383,10 +417,7 @@ pub fn setup_frsigil(block: &Block) -> Result<()> {
             Err(e)
         }
     })?;
-    let outpoint_bytes = outpoint_encode(&OutPoint {
-        txid: tx_hex_to_txid(genesis::GENESIS_OUTPOINT)?,
-        vout: 0,
-    })?;
+    let outpoint_bytes = outpoint_encode(&outpoint)?;
     <AlkaneTransferParcel as TryInto<BalanceSheet<AtomicPointer>>>::try_into(
         response2.alkanes.into(),
     )?
@@ -403,6 +434,7 @@ pub fn setup_frsigil(block: &Block) -> Result<()> {
         &mut atomic
             .derive(&IndexPointer::from_keyword("/alkanes/").select(&fr_sigil.clone().into())),
     );
+    flag.set_value::<u8>(1);
     atomic.commit();
     Ok(())
 }

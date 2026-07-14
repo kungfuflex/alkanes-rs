@@ -39,6 +39,8 @@ pub mod factory;
 pub mod forge;
 #[cfg(test)]
 pub mod fr_btc;
+#[cfg(all(test, feature = "regtest_frsigil"))]
+pub mod frsigil_regtest;
 #[cfg(test)]
 pub mod fuel;
 #[cfg(test)]
