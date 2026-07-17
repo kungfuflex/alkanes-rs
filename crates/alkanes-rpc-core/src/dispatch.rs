@@ -228,6 +228,156 @@ where
     // Alkanes (encode → metashrew_view → decode)
     // -----------------------------------------------------------------------
 
+    /// Shared fan-out: enrich an address's UNSPENT outpoints with their
+    /// protorune balances via a PARALLEL `protorunesbyoutpoint` fan-out. Each
+    /// sub-call routes through `metashrew_view` → the edge's Redis view cache,
+    /// so repeated outpoints (across addresses / repeat queries) dedupe for
+    /// free. Returns only outpoints that carry protorunes, each shaped as a
+    /// WalletResponse outpoint entry.
+    ///
+    /// Backs both `protorunesbyaddress` and `sandshrew_balances`
+    /// (`handle_balances`), replacing the O(full-address-history) view walk
+    /// with an O(current-UTXOs) parallel fan-out.
+    async fn address_protorune_outpoints(
+        &self,
+        address: &str,
+        protocol_tag: &str,
+        request_id: &Value,
+    ) -> Result<Vec<Value>> {
+        // 1. Current unspent outpoints — protorune balances live on unspent
+        //    outputs, so esplora_address::utxo is the semantic match (one
+        //    bounded call vs the view's full-history walk).
+        let utxo_req = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            method: "esplora_address::utxo".to_string(),
+            params: vec![Value::String(address.to_string())],
+            id: request_id.clone(),
+        };
+        let utxos = match self.dispatch(&utxo_req).await? {
+            JsonRpcResponse::Success { result, .. } => {
+                result.as_array().cloned().unwrap_or_default()
+            }
+            JsonRpcResponse::Error { error, .. } => {
+                return Err(anyhow::anyhow!("esplora utxo fetch failed: {}", error.message));
+            }
+        };
+
+        // 2. Parallel protorunesbyoutpoint over every outpoint (mirrors the
+        //    join_all in sandshrew_multicall). Each dispatch → metashrew_view →
+        //    cached; the fan-out latency is the slowest single cached call, not
+        //    the sum.
+        let poi_reqs: Vec<JsonRpcRequest> = utxos.iter().map(|u| {
+            let txid = u.get("txid").and_then(|v| v.as_str()).unwrap_or("");
+            let vout = u.get("vout").and_then(|v| v.as_u64()).unwrap_or(0);
+            JsonRpcRequest {
+                jsonrpc: "2.0".to_string(),
+                method: "alkanes_protorunesbyoutpoint".to_string(),
+                params: vec![json!({ "txid": txid, "vout": vout, "protocolTag": protocol_tag })],
+                id: Value::Number(0.into()),
+            }
+        }).collect();
+        let futs: Vec<_> = poi_reqs.iter().map(|r| self.dispatch(r)).collect();
+        let results = futures::future::join_all(futs).await;
+
+        // 3. Keep only outpoints carrying protorunes; shape each into a
+        //    WalletResponse outpoint entry. The view sets each outpoint's
+        //    height/txindex to the (block, tx) of its PRIMARY balance — mirror
+        //    that from the first balance entry.
+        let mut outpoints = Vec::with_capacity(utxos.len());
+        for (u, res) in utxos.iter().zip(results.into_iter()) {
+            let poi = match res {
+                Ok(JsonRpcResponse::Success { result, .. }) => result,
+                _ => continue, // probe failed / no data → not included, like the view
+            };
+            let balances = poi.pointer("/balance_sheet/cached/balances")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+            if balances.is_empty() {
+                continue; // no protorunes on this outpoint → excluded
+            }
+            let (height, txindex) = balances.first()
+                .map(|b| (
+                    b.get("block").and_then(|v| v.as_u64()).unwrap_or(0),
+                    b.get("tx").and_then(|v| v.as_u64()).unwrap_or(0),
+                ))
+                .unwrap_or((0, 0));
+            // Prefer the decoded outpoint/output (txid already reversed to
+            // display form, value from the indexer's stored output); fall back
+            // to esplora fields if absent.
+            let outpoint = poi.get("outpoint").cloned().unwrap_or_else(|| json!({
+                "txid": u.get("txid").cloned().unwrap_or(Value::Null),
+                "vout": u.get("vout").cloned().unwrap_or(Value::Null),
+            }));
+            let output = poi.get("output").cloned().unwrap_or_else(|| json!({
+                "value": u.get("value").cloned().unwrap_or(Value::Null),
+            }));
+            outpoints.push(json!({
+                "balance_sheet": { "cached": { "balances": balances } },
+                "outpoint": outpoint,
+                "output": output,
+                "height": height,
+                "txindex": txindex,
+            }));
+        }
+        Ok(outpoints)
+    }
+
+    /// `alkanes_protorunesbyaddress` (and the metashrew_view equivalent):
+    /// assemble the WalletResponse from the shared fan-out.
+    async fn handle_protorunesbyaddress(
+        &self,
+        params: &[Value],
+        request_id: &Value,
+    ) -> Result<JsonRpcResponse> {
+        let input = params.get(0);
+        let (address, protocol_tag) = match input {
+            Some(Value::String(addr)) => {
+                let pt = params.get(2)
+                    .and_then(|v| v.as_u64().map(|n| n.to_string())
+                        .or_else(|| v.as_str().map(|s| s.to_string())))
+                    .unwrap_or_else(|| "1".to_string());
+                (addr.clone(), pt)
+            }
+            Some(Value::Object(obj)) => {
+                let addr = match obj.get("address").and_then(|v| v.as_str()) {
+                    Some(a) => a.to_string(),
+                    None => return Ok(JsonRpcResponse::error(
+                        INVALID_PARAMS,
+                        "protorunesbyaddress object must have 'address' field".to_string(),
+                        request_id.clone(),
+                    )),
+                };
+                let pt = obj.get("protocolTag")
+                    .and_then(|v| v.as_u64().map(|n| n.to_string())
+                        .or_else(|| v.as_str().map(|s| s.to_string())))
+                    .unwrap_or_else(|| "1".to_string());
+                (addr, pt)
+            }
+            _ => return Ok(JsonRpcResponse::error(
+                INVALID_PARAMS,
+                "protorunesbyaddress: first param must be an address string or {address, protocolTag} object".to_string(),
+                request_id.clone(),
+            )),
+        };
+
+        let outpoints = match self.address_protorune_outpoints(&address, &protocol_tag, request_id).await {
+            Ok(o) => o,
+            Err(e) => return Ok(JsonRpcResponse::error(
+                INTERNAL_ERROR,
+                format!("protorunesbyaddress fan-out failed: {}", e),
+                request_id.clone(),
+            )),
+        };
+
+        // Aggregate `balances.entries` matches the view: it leaves the wallet-
+        // level aggregate empty (per-outpoint balance_sheets carry the data).
+        Ok(JsonRpcResponse::success(json!({
+            "outpoints": outpoints,
+            "balances": { "entries": [] },
+        }), request_id.clone()))
+    }
+
     async fn handle_alkanes_method(
         &self,
         method: &str,
@@ -235,6 +385,18 @@ where
         request_id: &Value,
     ) -> Result<JsonRpcResponse> {
         let input = params.get(0).cloned().unwrap_or(Value::Null);
+
+        // protorunesbyaddress: reimplemented as a parallel esplora-UTXO +
+        // protorunesbyoutpoint fan-out instead of the single
+        // `metashrew_view "protorunesbyaddress"` view call. The view walks the
+        // FULL address history server-side — O(history), unbounded — and times
+        // out on heavy addresses (the 15s-cutoff timeout reports). The fan-out
+        // is O(current UTXOs), runs in parallel, and each per-outpoint call is
+        // served from the edge's Redis view cache. Output is byte-identical to
+        // the view's decoded WalletResponse. See `address_protorune_outpoints`.
+        if method == "protorunesbyaddress" {
+            return self.handle_protorunesbyaddress(params, request_id).await;
+        }
 
         // For protorunesbyoutpoint with positional params, block_tag is at index 2
         let block_tag = if method == "protorunesbyoutpoint" {
@@ -1095,10 +1257,16 @@ where
             id: Value::Number(0.into()),
         });
 
-        let mut results = Vec::new();
-        for req in &rpc_calls {
-            let response = self.dispatch(req).await?;
-            match response {
+        // Execute all sub-calls in parallel (was a serial await loop — every
+        // address paid esplora + protorunes + ord_outputs latency in series).
+        // join_all preserves order, so the `results[i*3 + k]` indexing below
+        // still lines up. The protorunes sub-call is itself the cached
+        // `address_protorune_outpoints` fan-out.
+        let futs: Vec<_> = rpc_calls.iter().map(|req| self.dispatch(req)).collect();
+        let responses = futures::future::join_all(futs).await;
+        let mut results = Vec::with_capacity(responses.len());
+        for response in responses {
+            match response? {
                 JsonRpcResponse::Success { result, .. } => results.push(result),
                 JsonRpcResponse::Error { error, .. } => {
                     return Ok(JsonRpcResponse::error(
