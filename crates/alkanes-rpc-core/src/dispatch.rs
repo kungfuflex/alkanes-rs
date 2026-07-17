@@ -274,31 +274,50 @@ where
             .filter(|u| u.get("value").and_then(|v| v.as_u64()).unwrap_or(0) <= ALKANE_DUST_MAX)
             .collect();
 
-        // Parallel protorunesbyoutpoint over every dust outpoint (mirrors the
-        //    join_all in sandshrew_multicall). Each dispatch → metashrew_view →
-        //    cached; on a concurrency-capable backend the latency is the
-        //    slowest single cached call, not the sum.
-        let poi_reqs: Vec<JsonRpcRequest> = dust.iter().map(|u| {
-            let txid = u.get("txid").and_then(|v| v.as_str()).unwrap_or("");
+        // protorunesbyoutpoint over every dust outpoint, issued as a single
+        //    batched metashrew_view fan-out. Encoding + decoding stay per-item
+        //    here (codec), but the transport round-trips go through
+        //    `forward_batch` so a concurrency-capable backend runs them in
+        //    parallel and serves cache hits without any HTTP — the fan-out
+        //    costs one round-trip, not N. Each metashrew_view result is the
+        //    cached OutpointResponse hex.
+        // Pair each probeable dust outpoint with its encoded metashrew_view
+        // request so the responses stay 1:1 aligned (an outpoint that fails to
+        // encode is simply not probed and not paired).
+        let mut probe: Vec<(&Value, JsonRpcRequest)> = Vec::with_capacity(dust.len());
+        for u in &dust {
+            let Some(txid) = u.get("txid").and_then(|v| v.as_str()) else { continue };
             let vout = u.get("vout").and_then(|v| v.as_u64()).unwrap_or(0);
-            JsonRpcRequest {
+            let poi_params = vec![json!({ "txid": txid, "vout": vout, "protocolTag": protocol_tag })];
+            let Ok(hex) = codec::encode_protorunesbyoutpoint_request(&poi_params) else { continue };
+            probe.push((*u, JsonRpcRequest {
                 jsonrpc: "2.0".to_string(),
-                method: "alkanes_protorunesbyoutpoint".to_string(),
-                params: vec![json!({ "txid": txid, "vout": vout, "protocolTag": protocol_tag })],
+                method: "metashrew_view".to_string(),
+                params: vec![
+                    Value::String("protorunesbyoutpoint".to_string()),
+                    Value::String(hex),
+                    Value::String("latest".to_string()),
+                ],
                 id: Value::Number(0.into()),
-            }
-        }).collect();
-        let futs: Vec<_> = poi_reqs.iter().map(|r| self.dispatch(r)).collect();
-        let results = futures::future::join_all(futs).await;
+            }));
+        }
+        let mv_reqs: Vec<JsonRpcRequest> = probe.iter().map(|(_, r)| r.clone()).collect();
+        let responses = self.metashrew.forward_batch(&mv_reqs).await?;
 
         // 3. Keep only outpoints carrying protorunes; shape each into a
         //    WalletResponse outpoint entry. The view sets each outpoint's
         //    height/txindex to the (block, tx) of its PRIMARY balance — mirror
         //    that from the first balance entry.
-        let mut outpoints = Vec::with_capacity(dust.len());
-        for (u, res) in dust.iter().zip(results.into_iter()) {
-            let poi = match res {
-                Ok(JsonRpcResponse::Success { result, .. }) => result,
+        let mut outpoints = Vec::with_capacity(probe.len());
+        for ((u, _), resp) in probe.iter().zip(responses.into_iter()) {
+            let poi = match resp {
+                JsonRpcResponse::Success { result, .. } => match result.as_str() {
+                    Some(hex) => match codec::decode_outpoint_response(hex) {
+                        Ok(p) => p,
+                        Err(_) => continue,
+                    },
+                    None => continue,
+                },
                 _ => continue, // probe failed / no data → not included, like the view
             };
             let balances = poi.pointer("/balance_sheet/cached/balances")

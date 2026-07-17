@@ -16,6 +16,23 @@ pub trait BitcoinBackend {
 pub trait MetashrewBackend {
     /// Forward a full JSON-RPC request to metashrew.
     async fn forward(&self, request: &JsonRpcRequest) -> Result<JsonRpcResponse>;
+
+    /// Forward many requests, ideally CONCURRENTLY, returning results in the
+    /// same order. The default is a serial fallback (correct but not
+    /// parallel); backends whose transport can issue concurrent outbound
+    /// requests (e.g. the edge's wasi:http client) override this so a fan-out
+    /// costs one round-trip instead of N. Used by the `protorunesbyaddress` /
+    /// `sandshrew_balances` per-outpoint fan-out.
+    async fn forward_batch(
+        &self,
+        requests: &[JsonRpcRequest],
+    ) -> Result<Vec<JsonRpcResponse>> {
+        let mut out = Vec::with_capacity(requests.len());
+        for r in requests {
+            out.push(self.forward(r).await?);
+        }
+        Ok(out)
+    }
 }
 
 /// Backend for Esplora REST API calls.
