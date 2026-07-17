@@ -262,11 +262,23 @@ where
             }
         };
 
-        // 2. Parallel protorunesbyoutpoint over every outpoint (mirrors the
+        // 2. Restrict the fan-out to dust outpoints. Protorunes/alkanes/frBTC
+        //    live exclusively on ≤1000-sat outputs by the subfrost convention
+        //    (mirrors `fetch_wallet_state`'s ALKANE_DUST_MAX and the mobile
+        //    reference impl) — non-dust outputs are plain BTC change and never
+        //    carry protorunes. This bounds the probe set to the alkane-bearing
+        //    outpoints (e.g. an address with 9455 UTXOs but 755 dust probes
+        //    755, not 9455) and keeps the result identical for the asset model.
+        const ALKANE_DUST_MAX: u64 = 1000;
+        let dust: Vec<&Value> = utxos.iter()
+            .filter(|u| u.get("value").and_then(|v| v.as_u64()).unwrap_or(0) <= ALKANE_DUST_MAX)
+            .collect();
+
+        // Parallel protorunesbyoutpoint over every dust outpoint (mirrors the
         //    join_all in sandshrew_multicall). Each dispatch → metashrew_view →
-        //    cached; the fan-out latency is the slowest single cached call, not
-        //    the sum.
-        let poi_reqs: Vec<JsonRpcRequest> = utxos.iter().map(|u| {
+        //    cached; on a concurrency-capable backend the latency is the
+        //    slowest single cached call, not the sum.
+        let poi_reqs: Vec<JsonRpcRequest> = dust.iter().map(|u| {
             let txid = u.get("txid").and_then(|v| v.as_str()).unwrap_or("");
             let vout = u.get("vout").and_then(|v| v.as_u64()).unwrap_or(0);
             JsonRpcRequest {
@@ -283,8 +295,8 @@ where
         //    WalletResponse outpoint entry. The view sets each outpoint's
         //    height/txindex to the (block, tx) of its PRIMARY balance — mirror
         //    that from the first balance entry.
-        let mut outpoints = Vec::with_capacity(utxos.len());
-        for (u, res) in utxos.iter().zip(results.into_iter()) {
+        let mut outpoints = Vec::with_capacity(dust.len());
+        for (u, res) in dust.iter().zip(results.into_iter()) {
             let poi = match res {
                 Ok(JsonRpcResponse::Success { result, .. }) => result,
                 _ => continue, // probe failed / no data → not included, like the view
