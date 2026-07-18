@@ -1,5 +1,9 @@
-[build]
-target = "wasm32-unknown-unknown"
-
+# align-main: the workspace defaults to the native host target so the portable
+# crates (alkanes-cli, alkanes-jsonrpc, alkanes-data-api, …) build with a bare
+# `cargo build`. The reproducible indexer wasm build passes
+# `--target wasm32-unknown-unknown` explicitly (scripts/Dockerfile.wasm), and
+# the indexer's build.rs nested std-contract builds pick up per-crate
+# `crates/alkanes-std-*/.cargo/config.toml` (wasm target), so the shipped
+# indexer build is unchanged. Matches develop's native-default .cargo/config.
 [target.wasm32-unknown-unknown]
 runner = "wasm-bindgen-test-runner"
