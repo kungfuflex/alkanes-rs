@@ -472,6 +472,18 @@ where
                     }
                 }
             }
+            "getdeployment" => {
+                match codec::encode_alkanes_id_to_outpoint_request(&input) {
+                    Ok(hex) => ("getdeployment", Value::String(hex), "alkanesidtooutpoint"),
+                    Err(e) => {
+                        return Ok(JsonRpcResponse::error(
+                            INTERNAL_ERROR,
+                            format!("Failed to encode getdeployment request: {}", e),
+                            request_id.clone(),
+                        ));
+                    }
+                }
+            }
             "alkanesidtooutpoint" | "alkanes_id_to_outpoint" => {
                 match codec::encode_alkanes_id_to_outpoint_request(&input) {
                     Ok(hex) => ("alkanes_id_to_outpoint", Value::String(hex), "alkanesidtooutpoint"),

@@ -362,7 +362,12 @@ pub fn protorunes_by_height(
     })
 }
 
-pub fn alkanes_id_to_outpoint(input: &Vec<u8>) -> Result<AlkaneIdToOutpointResponse> {
+/// Deployment outpoint for an alkane: given an `AlkaneId`, return the outpoint
+/// that deployed it — `txid` plus `vout` (the vout of the deploying protostone).
+/// Reads the already-maintained `/alkanes_id_to_outpoint/` index, so it needs no
+/// extra indexing or reindex. (Formerly `alkanes_id_to_outpoint`, kept as an
+/// alias for backward compatibility.)
+pub fn getdeployment(input: &Vec<u8>) -> Result<AlkaneIdToOutpointResponse> {
     let request = AlkaneIdToOutpointRequest::decode(&**input)?;
     let mut response = AlkaneIdToOutpointResponse::default();
     let outpoint = alkane_id_to_outpoint(&request.id.clone().unwrap().into())?;
