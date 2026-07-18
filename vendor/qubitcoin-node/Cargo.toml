@@ -1,0 +1,37 @@
+[package]
+name = "qubitcoin-node"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Node implementation for Qubitcoin: validation, ChainstateManager, mempool, block storage"
+
+[features]
+default = ["filesystem", "parallel", "native-deps"]
+filesystem = ["memmap2"]
+parallel = ["rayon", "crossbeam-channel"]
+native-deps = ["qubitcoin-common/native", "qubitcoin-storage/rocksdb-backend", "qubitcoin-util/native", "qubitcoin-crypto/native"]
+wasm = ["qubitcoin-common/wasm", "qubitcoin-util/wasm"]
+
+[dependencies]
+qubitcoin-common = { path = "../qubitcoin-common" }
+qubitcoin-consensus = { path = "../qubitcoin-consensus" }
+qubitcoin-storage = { path = "../qubitcoin-storage" }
+qubitcoin-serialize = { path = "../qubitcoin-serialize" }
+qubitcoin-primitives = { path = "../qubitcoin-primitives" }
+qubitcoin-crypto = { path = "../qubitcoin-crypto" }
+qubitcoin-script = { path = "../qubitcoin-script" }
+qubitcoin-util = { path = "../qubitcoin-util" }
+thiserror = "1"
+parking_lot = "0.12"
+crossbeam-channel = { version = "0.5", optional = true }
+tracing = "0.1"
+rayon = { version = "1.10", optional = true }
+memmap2 = { version = "0.9", optional = true }
+
+[dev-dependencies]
+tempfile = "3"
+serde_json = "1"
+qubitcoin-consensus = { path = "../qubitcoin-consensus" }
+qubitcoin-common = { path = "../qubitcoin-common" }
+qubitcoin-primitives = { path = "../qubitcoin-primitives" }
+qubitcoin-script = { path = "../qubitcoin-script" }

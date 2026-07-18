@@ -1,0 +1,46 @@
+[package]
+name        = "subfrost-wc"
+version     = "0.1.0"
+edition     = "2021"
+description = "Subfrost custom WalletConnect client — pairing, encryption, relay wire format. Vendored from subfrost-mobile/crates/subfrost-mobile-wc; renamed to subfrost-wc so the alkanes-rs workspace doesn't collide with the mobile crate when the two are sibling-built."
+license     = "MIT OR Apache-2.0"
+publish     = false
+
+[lib]
+# Source files still live under `src/` with their original names.
+path = "src/lib.rs"
+
+[features]
+default = []
+# Native dapp-side relay client (tokio-tungstenite WSS + reqwest HTTP).
+# Off by default so the pure crypto/wire types stay no-deps for embedded
+# callers; alkanes-cli flips it on.
+relay-client = ["dep:tokio", "dep:tokio-tungstenite", "dep:reqwest", "dep:futures-util", "dep:async-trait", "dep:log"]
+
+[dependencies]
+# Workspace-shared
+serde            = { workspace = true, features = ["derive"] }
+serde_json       = { workspace = true }
+thiserror        = { workspace = true }
+sha2             = { workspace = true }
+url              = { workspace = true }
+
+# Crypto pin: same versions subfrost-mobile uses. Sync manually on upstream bumps.
+hkdf             = "0.12"
+chacha20poly1305 = "0.10"
+x25519-dalek     = { version = "2", features = ["static_secrets"] }
+rand_core        = { version = "0.6", features = ["std"] }
+base64           = "0.22"
+uuid             = { version = "1", features = ["v4"] }
+
+# Optional — only when `relay-client` is enabled.
+tokio             = { workspace = true, features = ["sync", "rt", "time", "macros", "net"], optional = true }
+tokio-tungstenite = { version = "0.23", default-features = false, features = ["connect", "rustls-tls-webpki-roots"], optional = true }
+reqwest           = { workspace = true, features = ["json", "rustls-tls"], default-features = false, optional = true }
+futures-util      = { version = "0.3", optional = true }
+async-trait       = { workspace = true, optional = true }
+log               = { workspace = true, optional = true }
+
+[dev-dependencies]
+hex = "0.4"
+tokio = { workspace = true, features = ["macros", "rt", "sync", "time", "test-util"] }

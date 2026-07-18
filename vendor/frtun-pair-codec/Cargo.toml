@@ -1,0 +1,30 @@
+[package]
+name        = "frtun-pair-codec"
+version     = "0.1.0"
+edition     = "2021"
+license     = "MIT OR Apache-2.0"
+description = "Wasm-clean carve-out of the frtun-pair handshake codec. Vendored from ~/frtun/crates/frtun-pair-codec; sync via the same flow as frtun-pair."
+
+[lib]
+path = "src/lib.rs"
+
+[features]
+default = []
+# Enable the typed `frame` layer (DATA/PING/PONG). Wire-shape change:
+# every payload framed [type|len|body]. Default OFF — flip on both
+# peers simultaneously.
+icmp = ["dep:rand"]
+
+[dependencies]
+serde       = { workspace = true, features = ["derive"] }
+serde_json  = { workspace = true }
+async-trait = { workspace = true }
+bytes       = { workspace = true }
+thiserror   = { workspace = true }
+
+# Only pulled in under the `icmp` feature for the ping nonce.
+rand        = { workspace = true, optional = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies.getrandom]
+version  = "0.2"
+features = ["js"]

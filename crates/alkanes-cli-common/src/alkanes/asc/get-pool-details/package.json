@@ -1,0 +1,16 @@
+{
+  "name": "get-pool-details",
+  "version": "0.1.0",
+  "description": "Fetch AMM pool details in batch",
+  "scripts": {
+    "asbuild:release": "asc assembly/index.ts --target release && node strip-start.js build/release.wasm build/release.wasm",
+    "asbuild:debug": "asc assembly/index.ts --target debug",
+    "build": "npm run asbuild:release"
+  },
+  "devDependencies": {
+    "assemblyscript": "^0.27.0"
+  },
+  "dependencies": {
+    "as-bignum": "^0.2.0"
+  }
+}

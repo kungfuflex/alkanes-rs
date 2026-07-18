@@ -1,0 +1,20 @@
+[package]
+name = "qubitcoin-util"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Utility functions for Qubitcoin: logging, time, fs, args, thread names"
+
+[features]
+default = ["native"]
+native = ["tracing-subscriber"]
+wasm = []
+
+[dependencies]
+log = "0.4"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"], optional = true }
+parking_lot = "0.12"
+thiserror = "1"
+
+[dev-dependencies]

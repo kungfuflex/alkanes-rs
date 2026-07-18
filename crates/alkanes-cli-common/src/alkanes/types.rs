@@ -1,0 +1,813 @@
+//! Types for alkanes smart contract operations
+
+use serde::{Deserialize, Serialize};
+use alkanes_support::cellpack::Cellpack;
+use serde_json::Value as JsonValue;
+use bitcoin::{
+    bip32::{DerivationPath, Fingerprint},
+    XOnlyPublicKey,
+};
+
+#[cfg(not(target_arch = "wasm32"))]
+use std::{fmt, string::String, vec::Vec};
+#[cfg(target_arch = "wasm32")]
+use alloc::{string::String, vec::Vec, fmt};
+
+/// Custom deserializer that accepts both string and number
+fn deserialize_string_or_number<'de, D>(deserializer: D) -> Result<u64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::{self, Deserialize as _};
+    
+    struct StringOrNumber;
+    
+    impl<'de> de::Visitor<'de> for StringOrNumber {
+        type Value = u64;
+        
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("a string or number")
+        }
+        
+        fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(value)
+        }
+        
+        fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            value.parse::<u64>().map_err(de::Error::custom)
+        }
+        
+        fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            value.parse::<u64>().map_err(de::Error::custom)
+        }
+    }
+    
+    deserializer.deserialize_any(StringOrNumber)
+}
+
+/// Alkane ID representing a smart contract or token
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Hash)]
+pub struct AlkaneId {
+    #[serde(deserialize_with = "deserialize_string_or_number")]
+    pub block: u64,
+    #[serde(deserialize_with = "deserialize_string_or_number")]
+    pub tx: u64,
+}
+
+/// Alkanes balance information for UTXO selection
+#[derive(Debug, Clone)]
+pub struct AlkanesBalance {
+    pub alkane_id: AlkaneId,
+    pub amount: u64,
+}
+
+impl fmt::Display for AlkaneId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}:{}", self.block, self.tx)
+    }
+}
+
+/// Strategy for handling UTXOs that contain ordinal inscriptions
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum OrdinalsStrategy {
+    /// Exclude inscribed UTXOs from selection (default)
+    /// Fails if no clean UTXOs are available to satisfy requirements
+    #[default]
+    Exclude,
+    /// Preserve inscriptions by splitting UTXOs before spending
+    /// Creates a split transaction that sends inscribed sats to a safe output
+    /// Uses sendrawtransactions to atomically broadcast split + main transaction
+    Preserve,
+    /// Allow spending inscribed UTXOs without protection (burns the inscription)
+    /// Use with caution - this will destroy any inscriptions on spent UTXOs
+    Burn,
+}
+
+/// Input requirement specification
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum InputRequirement {
+    /// Alkanes token requirement: (block, tx, amount) where 0 means ALL
+    Alkanes { block: u64, tx: u64, amount: u64 },
+    /// Bitcoin requirement: amount in satoshis
+    Bitcoin { amount: u64 },
+    /// Bitcoin output assignment: amount in satoshis to specific output target
+    BitcoinOutput { amount: u64, target: OutputTarget },
+}
+
+/// Output target specification for protostones
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum OutputTarget {
+    /// Target specific output index (vN)
+    Output(u32),
+    /// Target specific protostone (pN)
+    Protostone(u32),
+    /// Split across all spendable outputs
+    Split,
+}
+
+/// Protostone edict specification
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProtostoneEdict {
+    pub alkane_id: AlkaneId,
+    pub amount: u64,
+    pub target: OutputTarget,
+}
+
+/// Protostone specification
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProtostoneSpec {
+    /// Optional cellpack message (using alkanes_support::cellpack::Cellpack)
+    #[serde(skip)]
+    pub cellpack: Option<Cellpack>,
+    /// List of edicts for this protostone
+    pub edicts: Vec<ProtostoneEdict>,
+    /// Bitcoin transfer specification (for B: transfers)
+    pub bitcoin_transfer: Option<BitcoinTransfer>,
+    /// Pointer target (where the protostone result should go)
+    /// Can be v{N} for physical output N or p{N} for shadow protostone output N
+    pub pointer: Option<OutputTarget>,
+    /// Refund pointer target (where refunds should go)
+    /// Can be v{N} for physical output N or p{N} for shadow protostone output N
+    pub refund: Option<OutputTarget>,
+}
+
+/// Bitcoin transfer specification
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BitcoinTransfer {
+    pub amount: u64,
+    pub target: OutputTarget,
+}
+
+/// Alkane balance information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AlkaneBalance {
+    pub alkane_id: AlkaneId,
+    pub name: String,
+    pub symbol: String,
+    pub balance: u64,
+}
+
+/// Token information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TokenInfo {
+    pub alkane_id: AlkaneId,
+    pub name: String,
+    pub symbol: String,
+    pub total_supply: u64,
+    pub cap: u64,
+    pub amount_per_mint: u64,
+    pub minted: u64,
+}
+
+/// Contract deployment parameters
+#[derive(Debug, Clone)]
+pub struct ContractDeployParams {
+    pub wasm_file: String,
+    pub calldata: Vec<String>,
+    pub tokens: Vec<TokenAmount>,
+    pub fee_rate: Option<f32>,
+}
+
+/// Contract execution parameters
+#[derive(Debug, Clone)]
+pub struct ContractExecuteParams {
+    pub target: AlkaneId,
+    pub calldata: Vec<String>,
+    pub edicts: Vec<Edict>,
+    pub tokens: Vec<TokenAmount>,
+    pub fee_rate: Option<f32>,
+}
+
+/// Token deployment parameters
+#[derive(Debug, Clone)]
+pub struct TokenDeployParams {
+    pub name: String,
+    pub symbol: String,
+    pub cap: u64,
+    pub amount_per_mint: u64,
+    pub reserve_number: u64,
+    pub premine: Option<u64>,
+    pub image: Option<String>,
+    pub fee_rate: Option<f32>,
+}
+
+/// Token send parameters
+#[derive(Debug, Clone)]
+pub struct TokenSendParams {
+    pub token: AlkaneId,
+    pub amount: u64,
+    pub to: String,
+    pub from: Option<String>,
+    pub fee_rate: Option<f32>,
+}
+
+/// Pool creation parameters
+#[derive(Debug, Clone)]
+pub struct PoolCreateParams {
+    pub calldata: Vec<String>,
+    pub tokens: Vec<TokenAmount>,
+    pub fee_rate: Option<f32>,
+}
+
+/// Liquidity addition parameters
+#[derive(Debug, Clone)]
+pub struct LiquidityAddParams {
+    pub pool: AlkaneId,
+    pub calldata: Vec<String>,
+    pub tokens: Vec<TokenAmount>,
+    pub fee_rate: Option<f32>,
+}
+
+/// Liquidity removal parameters
+#[derive(Debug, Clone)]
+pub struct LiquidityRemoveParams {
+    pub calldata: Vec<String>,
+    pub token: AlkaneId,
+    pub amount: u64,
+    pub fee_rate: Option<f32>,
+}
+
+/// Swap parameters
+#[derive(Debug, Clone)]
+pub struct SwapParams {
+    pub pool: AlkaneId,
+    pub calldata: Vec<String>,
+    pub token: AlkaneId,
+    pub amount: u64,
+    pub fee_rate: Option<f32>,
+}
+
+/// Advanced simulation parameters
+#[derive(Debug, Clone)]
+pub struct SimulationParams {
+    pub target: AlkaneId,
+    pub inputs: Vec<String>,
+    pub tokens: Option<Vec<TokenAmount>>,
+    pub decoder: Option<String>,
+}
+
+/// Token amount for operations
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TokenAmount {
+    pub alkane_id: AlkaneId,
+    pub amount: u64,
+}
+
+/// Edict for protostone operations
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Edict {
+    pub alkane_id: AlkaneId,
+    pub amount: u64,
+    pub output: u32,
+}
+
+/// Liquidity removal preview result
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LiquidityRemovalPreview {
+    pub token_a_amount: u64,
+    pub token_b_amount: u64,
+    pub lp_tokens_burned: u64,
+}
+
+/// Contract deployment result
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContractDeployResult {
+    pub contract_id: AlkaneId,
+    pub txid: String,
+    pub fee: u64,
+}
+
+/// Token deployment result
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TokenDeployResult {
+    pub token_id: AlkaneId,
+    pub txid: String,
+    pub fee: u64,
+}
+
+/// Transaction result
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TransactionResult {
+    pub txid: String,
+    pub fee: u64,
+}
+
+/// Enhanced execute parameters
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnhancedExecuteParams {
+    pub fee_rate: Option<f32>,
+    pub to_addresses: Vec<String>,
+    pub from_addresses: Option<Vec<String>>,
+    pub change_address: Option<String>,
+    pub alkanes_change_address: Option<String>,
+    pub input_requirements: Vec<InputRequirement>,
+    pub protostones: Vec<ProtostoneSpec>,
+    pub envelope_data: Option<Vec<u8>>,
+    pub raw_output: bool,
+    pub trace_enabled: bool,
+    pub mine_enabled: bool,
+    pub auto_confirm: bool,
+    /// Strategy for handling UTXOs that contain ordinal inscriptions
+    /// - exclude: Fail if we must spend inscribed UTXOs (default)
+    /// - preserve: Split UTXOs to protect inscriptions, use sendrawtransactions
+    /// - burn: Allow spending inscribed UTXOs without protection
+    #[serde(default)]
+    pub ordinals_strategy: OrdinalsStrategy,
+    /// Enable mempool indexer for tracing inscription state of pending UTXOs
+    /// When enabled, if we must use pending (unconfirmed) UTXOs, we'll trace back
+    /// through parent transactions to determine inscription state from settled UTXOs
+    #[serde(default)]
+    pub mempool_indexer: bool,
+    /// When true and `protostones[0]` is a wrap (target=(32,N) opcode=77), the
+    /// builder splits the request into a parent wrap-only tx (Tx A) and a
+    /// child execute tx (Tx B) that spends Tx A's outputs (alkane carrier at
+    /// v1 + BTC change at v2 — CPFP chain). Each tx then sees its own per-tx
+    /// fuel budget instead of sharing the atomic single-tx budget. Use this
+    /// when the combined wrap + execute exceeds `MINIMUM_FUEL_CHANGE1`
+    /// (3,500,000 fuel) and risks OOG when the per-tx fuel allocation falls
+    /// to the floor (e.g., late-in-block landings on busy mainnet).
+    #[serde(default)]
+    pub split_transactions: bool,
+    /// Synthetic mempool transactions to feed into UTXO selection alongside
+    /// whatever the indexer's mempool view returns. Used by `execute_split`
+    /// to hand the freshly-broadcast Tx A's hex to Tx B's `select_utxos`,
+    /// closing the indexer-propagation timing window where Tx A's outputs
+    /// aren't yet visible via `address/{addr}/txs/mempool` (observed ~325ms
+    /// indexer lag on mainnet, longer than the gap between Tx A's broadcast
+    /// and Tx B's coin selection).
+    ///
+    /// Each entry is the raw transaction hex (same format as the
+    /// `sendrawtransaction` argument). The selector parses each one and
+    /// uses it the same way it would use a real mempool entry: strip its
+    /// prevouts from the candidate set, add its pay-to-us outputs as
+    /// candidates.
+    #[serde(default)]
+    pub known_pending_tx_hexes: Vec<String>,
+    /// Caller-provided per-outpoint TxOut metadata used to short-circuit
+    /// `provider.get_utxo()` calls inside `validate_transaction` and
+    /// `build_psbt_and_fee`. Each call to `get_utxo` otherwise fetches the
+    /// full prev-tx hex via `getrawtransaction` and slices to one vout —
+    /// for a 32-UTXO selected set that's ~64 sequential RPCs in the swap
+    /// critical path between click and signing modal.
+    ///
+    /// When a wallet UI already maintains a UTXO cache (e.g. subfrost-app's
+    /// HeightPoller-invalidated `useWalletUtxoCache`), it can pass the same
+    /// data here and the SDK skips the redundant fetch. Outpoints not present
+    /// in this list fall back to the slow path, so partial coverage is safe.
+    ///
+    /// Trust contract (mirrors `OrdinalsStrategy::Burn`): the SDK trusts
+    /// the caller-provided `value` and `script_pubkey_hex` and does not
+    /// re-verify against chain state. A stale or malformed entry will cause
+    /// PSBT signing to fail downstream with a sighash mismatch — loud, but
+    /// after the wallet popup appears. Callers should invalidate this cache
+    /// on every block-tip change.
+    #[serde(default)]
+    pub prefetched_utxos: Vec<PrefetchedUtxo>,
+    /// Outpoints (`"txid:vout"`) the selector must NEVER spend, regardless of
+    /// their balance or eligibility. Wallet-level soft locks: e.g. subfrost-app
+    /// excludes UTXOs committed to its open lending offers — each offer's
+    /// pre-signed prep tx spends specific outpoints, so spending one from any
+    /// other flow silently invalidates the offer (2026-07-12). Malformed
+    /// entries are logged and ignored (fail-open per entry).
+    #[serde(default)]
+    pub excluded_utxos: Vec<String>,
+    /// Skip the DIESEL mint protostone (2026-07-13). By DEFAULT every runestone
+    /// this executor builds gets one extra protostone appended LAST:
+    /// `Protostone { protocol_tag: 1, message: [2,0,77], pointer/refund = runestone pointer }`
+    /// — the cellpack minting the per-block DIESEL emission on alkane [2:0] to the
+    /// tx's first output. Appending last preserves protorune auto-allocation
+    /// (input alkanes still bind to the caller's first tag-1 protostone) and all
+    /// caller-visible shadow-vout indices. The mint carries no incoming alkanes,
+    /// so a revert (block already claimed / no [2:0] on the network) is a no-op
+    /// for its siblings. Set `true` to restore the exact caller-specified
+    /// protostone list (byte-stable encodings, size-sensitive protocols).
+    #[serde(default)]
+    pub skip_diesel_mint: bool,
+    /// Maximum block height the alkanes indexer (metashrew) has finished
+    /// indexing. When set, `select_utxos` skips any confirmed UTXO mined
+    /// into a block whose height is greater than `max_indexed_height` —
+    /// metashrew can't yet read the alkane balance sheet on those outpoints,
+    /// so spending them risks underspending alkanes (the indexer hasn't
+    /// caught up to know the protorune contents).
+    ///
+    /// Why this matters: esplora indexes new blocks faster than metashrew
+    /// (esplora is just BIP125/UTXO bookkeeping; metashrew runs the alkanes
+    /// WASM runtime over every indexed block). The steady-state on mainnet
+    /// has esplora 1+ blocks ahead. Without this filter the SDK would pull
+    /// fresh UTXOs from esplora that metashrew can't yet introspect; safer
+    /// to wait until they're indexed.
+    ///
+    /// Alkane balance sheets are *immutable* per-outpoint once written, so
+    /// any UTXO whose creating block is `<= max_indexed_height` is safe to
+    /// query and spend.
+    ///
+    /// Caller is responsible for fetching `metashrew_height` and passing it.
+    /// `None` (default) disables the filter — back-compat for environments
+    /// without a synced indexer notion (devnet/regtest).
+    #[serde(default)]
+    pub max_indexed_height: Option<u64>,
+    /// Data source used by the PSBT builder for spendable UTXO discovery and
+    /// alkane-carrier annotations. Defaults to the historical metashrew/Lua
+    /// path. `espo` uses `essentials.get_address_spendable_outpoints`.
+    #[serde(default, alias = "utxoSource")]
+    pub utxo_source: UtxoDataSource,
+}
+
+/// UTXO data source for EnhancedExecuteParams.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UtxoDataSource {
+    Metashrew,
+    Espo,
+}
+
+impl Default for UtxoDataSource {
+    fn default() -> Self {
+        Self::Metashrew
+    }
+}
+
+/// Caller-supplied per-outpoint TxOut data for `EnhancedExecuteParams::prefetched_utxos`.
+/// Mirrors the shape `provider.get_utxo()` would otherwise fetch via RPC.
+///
+/// The `alkanes` field is the second-pass extension (added after the initial
+/// `getrawtransaction` short-circuit shipped). When present, it short-circuits
+/// the per-outpoint `protorunesbyoutpoint` fanout in alkane-aware coin
+/// selection (~40s on a 30+ dust-UTXO wallet, observed mainnet 2026-05-09).
+/// Same trust contract as `value` / `script_pubkey_hex`: the SDK does not
+/// re-verify chain state.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrefetchedUtxo {
+    /// Outpoint as `txid:vout` (e.g. `"abc...:0"`). Parsed via `OutPoint::from_str`.
+    pub outpoint: String,
+    /// Output value in sats.
+    pub value: u64,
+    /// `scriptPubKey` as lowercase hex (no `0x` prefix). Decoded into `bitcoin::ScriptBuf`.
+    pub script_pubkey_hex: String,
+    /// Caller-asserted alkane balances on this outpoint.
+    ///
+    /// `Some(vec)` = authoritative; an empty Vec means "no alkanes here, do not
+    /// query." `None` (the default) = caller has no assertion and the SDK should
+    /// fall back to `get_protorunes_by_outpoint` for this outpoint.
+    ///
+    /// The Option discriminates "not provided" from "empty / clean," which is
+    /// load-bearing: if a stale cache hasn't yet seen a freshly-confirmed alkane
+    /// UTXO, returning `Some(vec![])` would mislead the selector into burning
+    /// it as a fee input. Callers should pass `None` whenever the cache hasn't
+    /// covered an outpoint (e.g., the cache index is keyed and this outpoint
+    /// is missing from the index).
+    #[serde(default)]
+    pub alkanes: Option<Vec<PrefetchedAlkane>>,
+}
+
+/// One alkane-balance entry on a `PrefetchedUtxo`. Wire shape mirrors the
+/// JSON the existing `protorunesbyoutpoint` consumer at
+/// `execute.rs::cached.balances` produces — `(block, tx, amount)` triples,
+/// `amount` as a decimal string to round-trip u128 cleanly through JSON.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrefetchedAlkane {
+    /// AlkaneId block component.
+    pub block: u128,
+    /// AlkaneId tx component.
+    pub tx: u128,
+    /// Amount in sub-units, as a decimal string (u128 doesn't round-trip
+    /// safely through JSON numbers above 2^53).
+    pub amount: String,
+}
+
+/// Enhanced execute result for commit/reveal pattern
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnhancedExecuteResult {
+    /// Split transaction ID (if inscribed UTXOs were split to protect inscriptions)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub split_txid: Option<String>,
+    /// Split transaction fee (if split was needed)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub split_fee: Option<u64>,
+    pub commit_txid: Option<String>,
+    pub reveal_txid: String,
+    pub commit_fee: Option<u64>,
+    pub reveal_fee: u64,
+    pub inputs_used: Vec<String>,
+    pub outputs_created: Vec<String>,
+    pub traces: Option<Vec<JsonValue>>,
+    /// Wrap-only tx id (Tx A) when split_transactions=true. Tx A wraps BTC →
+    /// frBTC; the alkane carrier at A:1 is then spent by `reveal_txid` (Tx B)
+    /// which executes the remaining protostones. Set when the split path was
+    /// taken; None for normal atomic flows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wrap_txid: Option<String>,
+    /// Wrap tx fee (Tx A) when split_transactions=true.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wrap_fee: Option<u64>,
+    /// Raw signed transaction hex for the broadcast tx (`reveal_txid`).
+    /// Populated for the simple-execute path; used by `execute_split` to
+    /// hand Tx A's hex into Tx B's `select_utxos` so the indexer-
+    /// propagation timing window can't drop the strip pass on Tx A's
+    /// just-broadcast prevouts. None for paths that don't construct a
+    /// reveal tx directly (e.g. commit/reveal envelope deploys at the
+    /// commit phase).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reveal_tx_hex: Option<String>,
+}
+
+/// Represents the state of a pausable transaction execution.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ExecutionState {
+    /// The transaction is ready to be signed and broadcast.
+    ReadyToSign(ReadyToSignTx),
+    /// The commit transaction for a commit/reveal pattern is ready to be signed.
+    ReadyToSignCommit(ReadyToSignCommitTx),
+    /// The reveal transaction for a commit/reveal pattern is ready to be signed.
+    ReadyToSignReveal(ReadyToSignRevealTx),
+    /// The execution is complete.
+    Complete(EnhancedExecuteResult),
+}
+
+/// Contains the PSBT and analysis for a transaction that is ready to be signed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReadyToSignTx {
+    #[serde(with = "serde_psbt")]
+    pub psbt: bitcoin::psbt::Psbt,
+    pub analysis: crate::transaction::TransactionAnalysis,
+    pub fee: u64,
+    /// Estimated virtual size in vbytes (includes witness data)
+    pub estimated_vsize: usize,
+    pub inspection_result: Option<AlkanesInspectResult>,
+    /// Optional split transaction PSBT for protecting inscribed UTXOs
+    /// When present, this should be signed and broadcast atomically with the main tx
+    #[serde(default, skip_serializing_if = "Option::is_none", with = "serde_psbt_option")]
+    pub split_psbt: Option<bitcoin::psbt::Psbt>,
+    /// Fee for the split transaction (if any)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub split_fee: Option<u64>,
+}
+
+/// Contains the necessary information for signing a commit transaction.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReadyToSignCommitTx {
+    #[serde(with = "serde_psbt")]
+    pub psbt: bitcoin::psbt::Psbt,
+    pub fee: u64,
+    pub required_reveal_amount: u64,
+    pub params: EnhancedExecuteParams,
+    #[serde(with = "serde_envelope")]
+    pub envelope: super::envelope::AlkanesEnvelope,
+    #[serde(with = "serde_xonly_public_key")]
+    pub commit_internal_key: XOnlyPublicKey,
+    #[serde(with = "serde_fingerprint")]
+    pub commit_internal_key_fingerprint: Fingerprint,
+    #[serde(with = "serde_derivation_path")]
+    pub commit_internal_key_path: DerivationPath,
+}
+
+/// Contains the necessary information for signing a reveal transaction.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReadyToSignRevealTx {
+    #[serde(with = "serde_psbt")]
+    pub psbt: bitcoin::psbt::Psbt,
+    pub fee: u64,
+    /// Estimated virtual size in vbytes (includes witness data)
+    pub estimated_vsize: usize,
+    pub analysis: crate::transaction::TransactionAnalysis,
+    pub commit_txid: String,
+    pub commit_fee: u64,
+    pub params: EnhancedExecuteParams,
+    pub inspection_result: Option<AlkanesInspectResult>,
+    #[serde(with = "serde_xonly_public_key")]
+    pub commit_internal_key: XOnlyPublicKey,
+    #[serde(with = "serde_fingerprint")]
+    pub commit_internal_key_fingerprint: Fingerprint,
+    #[serde(with = "serde_derivation_path")]
+    pub commit_internal_key_path: DerivationPath,
+}
+
+mod serde_psbt {
+    use bitcoin::psbt::Psbt;
+    use serde::{self, Deserializer, Serializer, de::Error};
+    use alloc::vec::Vec;
+
+    pub fn serialize<S>(psbt: &Psbt, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_bytes(&psbt.serialize())
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Psbt, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let bytes: Vec<u8> = serde::de::Deserialize::deserialize(deserializer)?;
+        Psbt::deserialize(&bytes).map_err(Error::custom)
+    }
+}
+
+mod serde_psbt_option {
+    use bitcoin::psbt::Psbt;
+    use serde::{self, Deserializer, Serializer, de::Error};
+    use alloc::vec::Vec;
+
+    pub fn serialize<S>(psbt_opt: &Option<Psbt>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match psbt_opt {
+            Some(psbt) => serializer.serialize_some(&psbt.serialize()),
+            None => serializer.serialize_none(),
+        }
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<Psbt>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let opt: Option<Vec<u8>> = serde::de::Deserialize::deserialize(deserializer)?;
+        match opt {
+            Some(bytes) => Ok(Some(Psbt::deserialize(&bytes).map_err(Error::custom)?)),
+            None => Ok(None),
+        }
+    }
+}
+
+mod serde_envelope {
+    use crate::alkanes::envelope::AlkanesEnvelope;
+    use serde::{self, Deserializer, Serializer};
+    use alloc::vec::Vec;
+
+    pub fn serialize<S>(envelope: &AlkanesEnvelope, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_bytes(&envelope.payload)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<AlkanesEnvelope, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let bytes: Vec<u8> = serde::de::Deserialize::deserialize(deserializer)?;
+        Ok(AlkanesEnvelope::for_contract(bytes))
+    }
+}
+
+mod serde_xonly_public_key {
+    use bitcoin::XOnlyPublicKey;
+    use serde::{self, Deserializer, Serializer, de::Error};
+    use alloc::vec::Vec;
+
+    pub fn serialize<S>(key: &XOnlyPublicKey, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_bytes(&key.serialize())
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<XOnlyPublicKey, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let bytes: Vec<u8> = serde::de::Deserialize::deserialize(deserializer)?;
+        XOnlyPublicKey::from_slice(&bytes).map_err(Error::custom)
+    }
+}
+
+mod serde_fingerprint {
+    use bitcoin::bip32::Fingerprint;
+    use serde::{self, Deserializer, Serializer, de::Error, Deserialize};
+    use alloc::string::ToString;
+    use core::str::FromStr;
+
+    pub fn serialize<S>(fingerprint: &Fingerprint, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&fingerprint.to_string())
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Fingerprint, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = alloc::string::String::deserialize(deserializer)?;
+        Fingerprint::from_str(&s).map_err(Error::custom)
+    }
+}
+
+mod serde_derivation_path {
+    use bitcoin::bip32::DerivationPath;
+    use serde::{self, Deserializer, Serializer, de::Error, Deserialize};
+    use alloc::string::ToString;
+    use core::str::FromStr;
+
+    pub fn serialize<S>(path: &DerivationPath, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&path.to_string())
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<DerivationPath, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = alloc::string::String::deserialize(deserializer)?;
+        DerivationPath::from_str(&s).map_err(Error::custom)
+    }
+}
+
+
+/// Alkanes inspect configuration
+#[derive(Debug, Clone, serde::Serialize, Deserialize)]
+pub struct AlkanesInspectConfig {
+    pub disasm: bool,
+    pub fuzz: bool,
+    pub fuzz_ranges: Option<String>,
+    pub meta: bool,
+    pub codehash: bool,
+    pub raw: bool,
+}
+
+/// Alkanes inspect result
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AlkanesInspectResult {
+    pub alkane_id: AlkaneId,
+    pub bytecode_length: usize,
+    pub disassembly: Option<String>,
+    pub metadata: Option<AlkaneMetadata>,
+    pub metadata_error: Option<String>,
+    pub codehash: Option<String>,
+    pub fuzzing_results: Option<FuzzingResults>,
+}
+
+/// Alkane metadata
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AlkaneMetadata {
+    pub name: String,
+    pub version: String,
+    pub description: Option<String>,
+    pub methods: Vec<AlkaneMethod>,
+}
+
+/// Alkane method
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AlkaneMethod {
+    pub name: String,
+    pub opcode: u128,
+    pub params: Vec<String>,
+    pub returns: String,
+}
+
+/// Fuzzing results
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FuzzingResults {
+    pub total_opcodes_tested: usize,
+    pub opcodes_filtered_out: usize,
+    pub successful_executions: usize,
+    pub failed_executions: usize,
+    pub implemented_opcodes: Vec<u128>,
+    pub opcode_results: Vec<ExecutionResult>,
+}
+
+
+/// Execution result
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExecutionResult {
+    pub success: bool,
+    pub return_value: Option<i32>,
+    pub return_data: Vec<u8>,
+    pub error: Option<String>,
+    pub execution_time_micros: u128,
+    pub opcode: u128,
+    pub host_calls: Vec<HostCall>,
+}
+
+/// Host call
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HostCall {
+    pub function_name: String,
+    pub parameters: Vec<String>,
+    pub result: String,
+    pub timestamp_micros: u128,
+}
+
+/// Pending unwrap payment information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PendingUnwrap {
+    pub txid: String,
+    pub vout: u32,
+    pub amount: u64,
+    pub address: Option<String>,
+    pub fulfilled: bool,
+}

@@ -1,0 +1,40 @@
+[package]
+name = "alkanes-jsonrpc"
+version.workspace = true
+edition = "2021"
+authors = ["Alkanes Team"]
+description = "Unified JSON-RPC reverse proxy server for alkanes ecosystem"
+license = "MIT"
+
+[[bin]]
+name = "alkanes-jsonrpc"
+path = "src/main.rs"
+
+[dependencies]
+actix-web = "4.8"
+actix-cors = "0.7"
+tokio = { workspace = true, features = ["full"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }
+env_logger = { workspace = true }
+reqwest = { workspace = true, features = ["json", "rustls-tls"] }
+url = { workspace = true }
+futures = { workspace = true }
+base64 = { workspace = true }
+hex = { workspace = true }
+bitcoin = { workspace = true }
+alkanes-support = { workspace = true }
+alkanes-cli-common = { path = "../alkanes-cli-common", features = ["std"] }
+alkanes-rpc-core = { path = "../alkanes-rpc-core", features = ["std"] }
+async-trait = { workspace = true }
+prost = { workspace = true }
+bytes = { workspace = true }
+mlua = { version = "0.9", features = ["lua54", "async", "send", "vendored"] }
+sha2 = { workspace = true }
+moka = { version = "0.12", features = ["sync"] }
+
+[dev-dependencies]
+tempfile = "3.0"

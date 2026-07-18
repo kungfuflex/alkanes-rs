@@ -1,0 +1,845 @@
+// This file is part of the deezel project.
+// Copyright (c) 2023, Casey Rodarmor, all rights reserved.
+// Copyright (c) 2024, The Deezel Developers, all rights reserved.
+// Deezel is licensed under the MIT license.
+// See LICENSE file in the project root for full license information.
+
+//! This module defines the structures for representing and displaying alkanes transaction traces.
+//! It provides a native Rust representation of the trace data returned by the indexer,
+//! along with implementations for serialization, deserialization, and pretty-printing.
+//!
+//! # Conversion Pattern
+//!
+//! This module implements `From` traits for converting between protobuf types
+//! and domain types. For a more general set of conversion utilities that can be
+//! used to avoid orphan rule violations, see the `conversion` module.
+//!
+//! The conversions here are specific to trace display formatting, while the
+//! `conversion` module provides utilities for working with alkanes-support types
+//! in a more general context.
+
+use serde::{Deserialize, Serialize};
+use serde_json::Value as JsonValue;
+#[cfg(not(feature = "std"))]
+use alloc::{vec::Vec, string::{String, ToString}, format};
+#[cfg(feature = "std")]
+use std::vec::Vec;
+use core::fmt;
+
+/// Represents a complete execution trace of a transaction, containing multiple calls.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Trace {
+    #[serde(rename = "trace")]
+    pub calls: Vec<Call>,
+}
+
+/// Represents a single call within a transaction trace.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Call {
+    pub caller: ContractId,
+    #[serde(rename = "id")]
+    pub contract_id: Option<ContractId>,
+    #[serde(rename = "inputData", with = "hex_serde")]
+    pub input_data: Vec<u8>,
+    #[serde(rename = "value")]
+    pub value: Option<U128>,
+    pub events: Vec<Event>,
+}
+
+/// Represents a contract identifier (block and transaction index).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct ContractId {
+    pub block: Option<U128>,
+    pub tx: Option<U128>,
+}
+
+/// Represents an event emitted during a call.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(untagged)]
+pub enum Event {
+    Enter(EnterContext),
+    Exit(ExitContext),
+    Create(Create),
+    ReceiveIntent(ReceiveIntentEvent),
+    ValueTransfer(ValueTransferEvent),
+    Unknown,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct EnterContext {
+    pub call_type: String,
+    pub context: TraceContext,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ExitContext {
+    pub status: String,
+    // Omitting response for now as it's complex and not immediately needed for display
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Create {
+    pub new_alkane: ContractId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ReceiveIntentEvent {
+    pub incoming_alkanes: Vec<AlkaneTransfer>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ValueTransferEvent {
+    pub transfers: Vec<AlkaneTransfer>,
+    pub redirect_to: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TraceContext {
+    pub inner: Context,
+    pub fuel: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Context {
+    pub myself: ContractId,
+    pub caller: ContractId,
+    pub inputs: Vec<U128>,
+    pub vout: u32,
+    pub incoming_alkanes: Vec<AlkaneTransfer>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AlkaneTransfer {
+    pub id: ContractId,
+    pub value: U128,
+}
+
+/// Represents a 64-bit unsigned integer, used for block and tx numbers.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct U64 {
+    pub lo: u64,
+}
+
+/// Represents a 128-bit unsigned integer, used for token values.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct U128 {
+    pub lo: u64,
+    pub hi: u64,
+}
+
+impl fmt::Display for Trace {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for (i, call) in self.calls.iter().enumerate() {
+            writeln!(f, "Call {i}:")?;
+            if let (Some(b), Some(t)) = (call.caller.block.as_ref(), call.caller.tx.as_ref()) {
+                writeln!(f, "  Caller: {}.{}", b.lo, t.lo)?;
+            }
+            if let Some(id) = &call.contract_id {
+                 if let (Some(b), Some(t)) = (id.block.as_ref(), id.tx.as_ref()) {
+                    writeln!(f, "  Contract: {}.{}", b.lo, t.lo)?;
+                }
+            }
+            writeln!(f, "  Input Data: {}", hex::encode(&call.input_data))?;
+            if let Some(value) = &call.value {
+                 writeln!(f, "  Value: hi: {}, lo: {}", value.hi, value.lo)?;
+            }
+            writeln!(f, "  Events:")?;
+            for (j, event) in call.events.iter().enumerate() {
+                writeln!(f, "    Event {j}: {event:?}")?;
+            }
+        }
+        Ok(())
+    }
+}
+
+impl From<alkanes_support::proto::alkanes::Trace> for Trace {
+    fn from(trace: alkanes_support::proto::alkanes::Trace) -> Self {
+        let calls = trace.trace.iter().map(|c| c.clone().into()).collect();
+        Self { calls }
+    }
+}
+
+impl From<alkanes_support::proto::alkanes::AlkanesTrace> for Call {
+    fn from(trace: alkanes_support::proto::alkanes::AlkanesTrace) -> Self {
+        let mut caller = ContractId::default();
+        let mut contract_id = None;
+        let mut input_data = Vec::new();
+        let mut value = None;
+
+        // The first event is expected to be EnterContext, which contains the call details
+        if let Some(first_event) = trace.events.first() {
+            if let Some(alkanes_support::proto::alkanes::alkanes_trace_event::Event::EnterContext(enter_context)) = &first_event.event {
+                let trace_ctx = enter_context.context.as_ref().cloned().unwrap_or_default();
+                let ctx = trace_ctx.inner.as_ref().cloned().unwrap_or_default();
+                caller = ctx.caller.unwrap_or_default().into();
+                contract_id = Some(ctx.myself.unwrap_or_default().into());
+                
+                // Extract input data
+                input_data = ctx.inputs.iter().flat_map(|u| {
+                    let val: u128 = (u.hi as u128) << 64 | u.lo as u128;
+                    val.to_le_bytes().to_vec()
+                }).collect();
+
+                // Extract value from the first incoming alkane transfer
+                if let Some(transfer) = ctx.incoming_alkanes.first() {
+                    value = transfer.value.clone().map(|v| v.into());
+                }
+            }
+        }
+
+
+        Self {
+            caller,
+            contract_id,
+            input_data,
+            value,
+            events: trace.events.into_iter().filter_map(|e| e.event).map(Into::into).collect(),
+        }
+    }
+}
+
+#[allow(unreachable_patterns)]
+impl From<alkanes_support::proto::alkanes::alkanes_trace_event::Event> for Event {
+    fn from(event: alkanes_support::proto::alkanes::alkanes_trace_event::Event) -> Self {
+        match event {
+            alkanes_support::proto::alkanes::alkanes_trace_event::Event::EnterContext(e) => Event::Enter(e.into()),
+            alkanes_support::proto::alkanes::alkanes_trace_event::Event::ExitContext(e) => Event::Exit(e.into()),
+            alkanes_support::proto::alkanes::alkanes_trace_event::Event::CreateAlkane(e) => Event::Create(e.into()),
+            alkanes_support::proto::alkanes::alkanes_trace_event::Event::ReceiveIntent(e) => Event::ReceiveIntent(e.into()),
+            alkanes_support::proto::alkanes::alkanes_trace_event::Event::ValueTransfer(e) => Event::ValueTransfer(e.into()),
+            _ => Event::Unknown,
+        }
+    }
+}
+
+impl From<alkanes_support::proto::alkanes::AlkanesEnterContext> for EnterContext {
+    fn from(e: alkanes_support::proto::alkanes::AlkanesEnterContext) -> Self {
+        Self {
+            call_type: format!("{:?}", e.call_type),
+            context: e.context.unwrap().into(),
+        }
+    }
+}
+
+impl From<alkanes_support::proto::alkanes::AlkanesExitContext> for ExitContext {
+    fn from(e: alkanes_support::proto::alkanes::AlkanesExitContext) -> Self {
+        Self {
+            status: format!("{:?}", e.status),
+        }
+    }
+}
+
+impl From<alkanes_support::proto::alkanes::AlkanesReceiveIntent> for ReceiveIntentEvent {
+    fn from(e: alkanes_support::proto::alkanes::AlkanesReceiveIntent) -> Self {
+        Self {
+            incoming_alkanes: e.incoming_alkanes.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<alkanes_support::proto::alkanes::AlkanesValueTransfer> for ValueTransferEvent {
+    fn from(e: alkanes_support::proto::alkanes::AlkanesValueTransfer) -> Self {
+        Self {
+            transfers: e.transfers.into_iter().map(Into::into).collect(),
+            redirect_to: e.redirect_to,
+        }
+    }
+}
+
+impl From<alkanes_support::proto::alkanes::AlkanesCreate> for Create {
+    fn from(e: alkanes_support::proto::alkanes::AlkanesCreate) -> Self {
+        Self {
+            new_alkane: e.new_alkane.unwrap().into(),
+        }
+    }
+}
+
+impl From<alkanes_support::proto::alkanes::TraceContext> for TraceContext {
+    fn from(t: alkanes_support::proto::alkanes::TraceContext) -> Self {
+        Self {
+            inner: t.inner.unwrap().into(),
+            fuel: t.fuel,
+        }
+    }
+}
+
+impl From<alkanes_support::proto::alkanes::Context> for Context {
+    fn from(c: alkanes_support::proto::alkanes::Context) -> Self {
+        Self {
+            myself: c.myself.unwrap().into(),
+            caller: c.caller.unwrap().into(),
+            inputs: c.inputs.into_iter().map(Into::into).collect(),
+            vout: c.vout,
+            incoming_alkanes: c.incoming_alkanes.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<alkanes_support::proto::alkanes::AlkaneTransfer> for AlkaneTransfer {
+    fn from(t: alkanes_support::proto::alkanes::AlkaneTransfer) -> Self {
+        Self {
+            id: t.id.unwrap().into(),
+            value: t.value.unwrap().into(),
+        }
+    }
+}
+
+
+impl From<alkanes_support::proto::alkanes::AlkaneId> for ContractId {
+    fn from(id: alkanes_support::proto::alkanes::AlkaneId) -> Self {
+        Self {
+            block: id.block.map(Into::into),
+            tx: id.tx.map(Into::into),
+        }
+    }
+}
+
+impl From<alkanes_support::proto::alkanes::Uint128> for U128 {
+    fn from(u: alkanes_support::proto::alkanes::Uint128) -> Self {
+        Self { lo: u.lo, hi: u.hi }
+    }
+}
+
+/// Converts a Trace object to a raw JSON value.
+pub fn to_raw_json(trace: &Trace) -> JsonValue {
+    serde_json::to_value(trace).unwrap_or_else(|_| serde_json::json!({ "error": "Failed to serialize trace" }))
+}
+
+/// Format a trace for pretty printing with colorful emojis and YAML-like tree structure
+/// This function works with alkanes_support::trace::Trace
+pub fn format_trace_pretty(trace: &alkanes_support::trace::Trace) -> String {
+    let events = trace.0.lock().unwrap();
+    let mut output = String::new();
+    
+    // Header with colorful styling
+    output.push_str("🔍 ═══════════════════════════════════════════════════════════════\n");
+    output.push_str("🧪                    ALKANES EXECUTION TRACE                    🧪\n");
+    output.push_str("🔍 ═══════════════════════════════════════════════════════════════\n\n");
+    
+    if events.is_empty() {
+        output.push_str("📭 trace:\n");
+        output.push_str("    events: []\n");
+        output.push_str("    status: ✅ parsed_successfully\n");
+        output.push_str("    note: \"No execution events found\"\n");
+    } else {
+        output.push_str("📊 trace:\n");
+        output.push_str(&format!("    total_events: {}\n", events.len()));
+        output.push_str("    events:\n");
+        
+        for (i, event) in events.iter().enumerate() {
+            let is_last = i == events.len() - 1;
+            let tree_prefix = if is_last { "    └─" } else { "    ├─" };
+            let indent_prefix = if is_last { "      " } else { "    │ " };
+            
+            match event {
+                alkanes_support::trace::TraceEvent::ReceiveIntent { incoming_alkanes } => {
+                    output.push_str(&format!("{} 📬 receive_intent:\n", tree_prefix));
+                    if !incoming_alkanes.0.is_empty() {
+                        output.push_str(&format!("{}    🪙 incoming_transfers: []\n", indent_prefix));
+                        for (j, transfer) in incoming_alkanes.0.iter().enumerate() {
+                            let transfer_tree = if j == incoming_alkanes.0.len() - 1 { "└─" } else { "├─" };
+                            output.push_str(&format!("{}      {} transfer_{}:\n", indent_prefix, transfer_tree, j));
+                            output.push_str(&format!("{}      {}   alkane_id:\n", indent_prefix, if j == incoming_alkanes.0.len() - 1 { " " } else { "│" }));
+                            output.push_str(&format!("{}      {}     block: {}\n", indent_prefix, if j == incoming_alkanes.0.len() - 1 { " " } else { "│" }, transfer.id.block));
+                            output.push_str(&format!("{}      {}     tx: {}\n", indent_prefix, if j == incoming_alkanes.0.len() - 1 { " " } else { "│" }, transfer.id.tx));
+                            output.push_str(&format!("{}      {}   amount: {}\n", indent_prefix, if j == incoming_alkanes.0.len() - 1 { " " } else { "│" }, transfer.value));
+                        }
+                    } else {
+                        output.push_str(&format!("{}    🪙 incoming_transfers: []\n", indent_prefix));
+                    }
+                },
+                alkanes_support::trace::TraceEvent::ValueTransfer { transfers, redirect_to } => {
+                    output.push_str(&format!("{} 💸 value_transfer:\n", tree_prefix));
+                    output.push_str(&format!("{}    redirect_to: vout {}\n", indent_prefix, redirect_to));
+                    if !transfers.is_empty() {
+                        output.push_str(&format!("{}    🪙 transfers:\n", indent_prefix));
+                        for (j, transfer) in transfers.iter().enumerate() {
+                            let transfer_tree = if j == transfers.len() - 1 { "└─" } else { "├─" };
+                            output.push_str(&format!("{}      {} transfer_{}:\n", indent_prefix, transfer_tree, j));
+                            output.push_str(&format!("{}      {}   alkane_id:\n", indent_prefix, if j == transfers.len() - 1 { " " } else { "│" }));
+                            output.push_str(&format!("{}      {}     block: {}\n", indent_prefix, if j == transfers.len() - 1 { " " } else { "│" }, transfer.id.block));
+                            output.push_str(&format!("{}      {}     tx: {}\n", indent_prefix, if j == transfers.len() - 1 { " " } else { "│" }, transfer.id.tx));
+                            output.push_str(&format!("{}      {}   amount: {}\n", indent_prefix, if j == transfers.len() - 1 { " " } else { "│" }, transfer.value));
+                        }
+                    } else {
+                        output.push_str(&format!("{}    🪙 transfers: []\n", indent_prefix));
+                    }
+                },
+                alkanes_support::trace::TraceEvent::CreateAlkane(id) => {
+                    output.push_str(&format!("{} 🏗️  create_alkane:\n", tree_prefix));
+                    output.push_str(&format!("{}    alkane_id:\n", indent_prefix));
+                    output.push_str(&format!("{}      block: {}\n", indent_prefix, id.block));
+                    output.push_str(&format!("{}      tx: {}\n", indent_prefix, id.tx));
+                    output.push_str(&format!("{}    status: ✅ created\n", indent_prefix));
+                },
+                alkanes_support::trace::TraceEvent::EnterCall(ctx) => {
+                    output.push_str(&format!("{} 📞 call:\n", tree_prefix));
+                    output.push_str(&format!("{}    target:\n", indent_prefix));
+                    output.push_str(&format!("{}      block: {}\n", indent_prefix, ctx.target.block));
+                    output.push_str(&format!("{}      tx: {}\n", indent_prefix, ctx.target.tx));
+                    output.push_str(&format!("{}    caller:\n", indent_prefix));
+                    output.push_str(&format!("{}      block: {}\n", indent_prefix, ctx.inner.caller.block));
+                    output.push_str(&format!("{}      tx: {}\n", indent_prefix, ctx.inner.caller.tx));
+                    output.push_str(&format!("{}    ⛽ fuel_allocated: {}\n", indent_prefix, ctx.fuel));
+                    
+                    if !ctx.inner.inputs.is_empty() {
+                        output.push_str(&format!("{}    📥 inputs:\n", indent_prefix));
+                        for (j, input) in ctx.inner.inputs.iter().enumerate() {
+                            let input_tree = if j == ctx.inner.inputs.len() - 1 { "└─" } else { "├─" };
+                            output.push_str(&format!("{}      {} [{}]: {}\n", indent_prefix, input_tree, j, input));
+                        }
+                    } else {
+                        output.push_str(&format!("{}    📥 inputs: []\n", indent_prefix));
+                    }
+                },
+                alkanes_support::trace::TraceEvent::EnterDelegatecall(ctx) => {
+                    output.push_str(&format!("{} 🔄 delegatecall:\n", tree_prefix));
+                    output.push_str(&format!("{}    target:\n", indent_prefix));
+                    output.push_str(&format!("{}      block: {}\n", indent_prefix, ctx.target.block));
+                    output.push_str(&format!("{}      tx: {}\n", indent_prefix, ctx.target.tx));
+                    output.push_str(&format!("{}    caller:\n", indent_prefix));
+                    output.push_str(&format!("{}      block: {}\n", indent_prefix, ctx.inner.caller.block));
+                    output.push_str(&format!("{}      tx: {}\n", indent_prefix, ctx.inner.caller.tx));
+                    output.push_str(&format!("{}    ⛽ fuel_allocated: {}\n", indent_prefix, ctx.fuel));
+                },
+                alkanes_support::trace::TraceEvent::EnterStaticcall(ctx) => {
+                    output.push_str(&format!("{} 🔒 staticcall:\n", tree_prefix));
+                    output.push_str(&format!("{}    target:\n", indent_prefix));
+                    output.push_str(&format!("{}      block: {}\n", indent_prefix, ctx.target.block));
+                    output.push_str(&format!("{}      tx: {}\n", indent_prefix, ctx.target.tx));
+                    output.push_str(&format!("{}    caller:\n", indent_prefix));
+                    output.push_str(&format!("{}      block: {}\n", indent_prefix, ctx.inner.caller.block));
+                    output.push_str(&format!("{}      tx: {}\n", indent_prefix, ctx.inner.caller.tx));
+                    output.push_str(&format!("{}    ⛽ fuel_allocated: {}\n", indent_prefix, ctx.fuel));
+                },
+                alkanes_support::trace::TraceEvent::ReturnContext(resp) => {
+                    output.push_str(&format!("{} ✅ return:\n", tree_prefix));
+                    output.push_str(&format!("{}    ⛽ fuel_used: {}\n", indent_prefix, resp.fuel_used));
+                    
+                    if !resp.inner.data.is_empty() {
+                        output.push_str(&format!("{}    📤 return_data:\n", indent_prefix));
+                        output.push_str(&format!("{}      hex: \"{}\"\n", indent_prefix, hex::encode(&resp.inner.data)));
+                        output.push_str(&format!("{}      length: {} bytes\n", indent_prefix, resp.inner.data.len()));
+                    } else {
+                        output.push_str(&format!("{}    📤 return_data: null\n", indent_prefix));
+                    }
+                    
+                    if !resp.inner.alkanes.0.is_empty() {
+                        output.push_str(&format!("{}    🪙 alkane_transfers:\n", indent_prefix));
+                        for (j, transfer) in resp.inner.alkanes.0.iter().enumerate() {
+                            let transfer_tree = if j == resp.inner.alkanes.0.len() - 1 { "└─" } else { "├─" };
+                            output.push_str(&format!("{}      {} transfer_{}:\n", indent_prefix, transfer_tree, j));
+                            output.push_str(&format!("{}      {}   alkane_id:\n", indent_prefix, if j == resp.inner.alkanes.0.len() - 1 { " " } else { "│" }));
+                            output.push_str(&format!("{}      {}     block: {}\n", indent_prefix, if j == resp.inner.alkanes.0.len() - 1 { " " } else { "│" }, transfer.id.block));
+                            output.push_str(&format!("{}      {}     tx: {}\n", indent_prefix, if j == resp.inner.alkanes.0.len() - 1 { " " } else { "│" }, transfer.id.tx));
+                            output.push_str(&format!("{}      {}   amount: {}\n", indent_prefix, if j == resp.inner.alkanes.0.len() - 1 { " " } else { "│" }, transfer.value));
+                        }
+                    } else {
+                        output.push_str(&format!("{}    🪙 alkane_transfers: []\n", indent_prefix));
+                    }
+                },
+                alkanes_support::trace::TraceEvent::RevertContext(resp) => {
+                    output.push_str(&format!("{} ❌ revert:\n", tree_prefix));
+                    output.push_str(&format!("{}    ⛽ fuel_used: {}\n", indent_prefix, resp.fuel_used));
+                    
+                    if !resp.inner.data.is_empty() {
+                        output.push_str(&format!("{}    🚨 error_data:\n", indent_prefix));
+                        output.push_str(&format!("{}      hex: \"{}\"\n", indent_prefix, hex::encode(&resp.inner.data)));
+                        output.push_str(&format!("{}      length: {} bytes\n", indent_prefix, resp.inner.data.len()));
+                        
+                        // If error_data has more than 4 bytes, try to decode error message
+                        if resp.inner.data.len() > 4 {
+                            let message_bytes = &resp.inner.data[4..];
+                            if let Ok(error_message) = core::str::from_utf8(message_bytes) {
+                                let trimmed = error_message.trim_end_matches('\0');
+                                if !trimmed.is_empty() {
+                                    output.push_str(&format!("{}      💬 decoded_message: \"{}\"\n", indent_prefix, trimmed));
+                                }
+                            }
+                        }
+                    } else {
+                        output.push_str(&format!("{}    🚨 error_data: null\n", indent_prefix));
+                    }
+                },
+            }
+            
+            // Add spacing between events except for the last one
+            if !is_last {
+                output.push_str("    │\n");
+            }
+        }
+    }
+    
+    output.push_str("\n🎯 ═══════════════════════════════════════════════════════════════\n");
+    output.push_str("✨                      TRACE COMPLETE                         ✨\n");
+    output.push_str("🎯 ═══════════════════════════════════════════════════════════════\n");
+    output
+}
+
+/// Convert a trace to JSON format for raw output
+pub fn trace_to_json(trace: &alkanes_support::trace::Trace) -> JsonValue {
+    use serde_json::json;
+    
+    let events = trace.0.lock().unwrap();
+    let mut json_events = Vec::new();
+    
+    for event in events.iter() {
+        let json_event = match event {
+            alkanes_support::trace::TraceEvent::ReceiveIntent { incoming_alkanes } => {
+                let alkane_transfers: Vec<JsonValue> = incoming_alkanes.0.iter().map(|transfer| {
+                    json!({
+                        "alkane_id": {
+                            "block": transfer.id.block,
+                            "tx": transfer.id.tx
+                        },
+                        "amount": transfer.value
+                    })
+                }).collect();
+                
+                json!({
+                    "type": "receive_intent",
+                    "incoming_alkanes": alkane_transfers
+                })
+            },
+            alkanes_support::trace::TraceEvent::ValueTransfer { transfers, redirect_to } => {
+                let alkane_transfers: Vec<JsonValue> = transfers.iter().map(|transfer| {
+                    json!({
+                        "alkane_id": {
+                            "block": transfer.id.block,
+                            "tx": transfer.id.tx
+                        },
+                        "amount": transfer.value
+                    })
+                }).collect();
+                
+                json!({
+                    "type": "value_transfer",
+                    "transfers": alkane_transfers,
+                    "redirect_to": redirect_to
+                })
+            },
+            alkanes_support::trace::TraceEvent::CreateAlkane(id) => {
+                json!({
+                    "type": "create_alkane",
+                    "alkane_id": {
+                        "block": id.block,
+                        "tx": id.tx
+                    }
+                })
+            },
+            alkanes_support::trace::TraceEvent::EnterCall(ctx) => {
+                json!({
+                    "type": "call",
+                    "target": {
+                        "block": ctx.target.block,
+                        "tx": ctx.target.tx
+                    },
+                    "caller": {
+                        "block": ctx.inner.caller.block,
+                        "tx": ctx.inner.caller.tx
+                    },
+                    "fuel_allocated": ctx.fuel,
+                    "inputs": ctx.inner.inputs
+                })
+            },
+            alkanes_support::trace::TraceEvent::EnterDelegatecall(ctx) => {
+                json!({
+                    "type": "delegatecall",
+                    "target": {
+                        "block": ctx.target.block,
+                        "tx": ctx.target.tx
+                    },
+                    "caller": {
+                        "block": ctx.inner.caller.block,
+                        "tx": ctx.inner.caller.tx
+                    },
+                    "fuel_allocated": ctx.fuel
+                })
+            },
+            alkanes_support::trace::TraceEvent::EnterStaticcall(ctx) => {
+                json!({
+                    "type": "staticcall",
+                    "target": {
+                        "block": ctx.target.block,
+                        "tx": ctx.target.tx
+                    },
+                    "caller": {
+                        "block": ctx.inner.caller.block,
+                        "tx": ctx.inner.caller.tx
+                    },
+                    "fuel_allocated": ctx.fuel
+                })
+            },
+            alkanes_support::trace::TraceEvent::ReturnContext(resp) => {
+                let alkane_transfers: Vec<JsonValue> = resp.inner.alkanes.0.iter().map(|transfer| {
+                    json!({
+                        "alkane_id": {
+                            "block": transfer.id.block,
+                            "tx": transfer.id.tx
+                        },
+                        "amount": transfer.value
+                    })
+                }).collect();
+                
+                json!({
+                    "type": "return",
+                    "fuel_used": resp.fuel_used,
+                    "return_data": if resp.inner.data.is_empty() { json!(null) } else { json!(hex::encode(&resp.inner.data)) },
+                    "alkane_transfers": alkane_transfers
+                })
+            },
+            alkanes_support::trace::TraceEvent::RevertContext(resp) => {
+                let mut revert_json = json!({
+                    "type": "revert",
+                    "fuel_used": resp.fuel_used,
+                    "error_data": if resp.inner.data.is_empty() { json!(null) } else { json!(hex::encode(&resp.inner.data)) }
+                });
+                
+                // If error_data exists and has more than 4 bytes, try to decode error message
+                if resp.inner.data.len() > 4 {
+                    // Strip first 4 bytes (function selector) and try to decode as UTF-8
+                    let message_bytes = &resp.inner.data[4..];
+                    if let Ok(error_message) = core::str::from_utf8(message_bytes) {
+                        revert_json["error_message"] = json!(error_message.trim_end_matches('\0'));
+                    }
+                }
+                
+                revert_json
+            },
+        };
+        json_events.push(json_event);
+    }
+    
+    json!({
+        "trace": json_events
+    })
+}
+
+mod hex_serde {
+    use serde::{Serializer, Deserializer, de::Error, Deserialize};
+    #[cfg(not(feature = "std"))]
+    use alloc::{string::String, vec::Vec};
+    #[cfg(feature = "std")]
+    use std::{string::String, vec::Vec};
+
+    pub fn serialize<S>(bytes: &Vec<u8>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&hex::encode(bytes))
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        hex::decode(s).map_err(Error::custom)
+    }
+}
+
+/// Format trace JSON (as returned by trace_to_json) into a pretty tree-view string.
+/// This is used when we have the JSON representation and need to display it nicely.
+pub fn format_trace_json_pretty(trace_json: &JsonValue) -> String {
+    #[cfg(not(feature = "std"))]
+    use alloc::{string::String, format, vec::Vec};
+
+    let mut output = String::new();
+
+    // Try both "trace" (from trace_to_json) and "events" (legacy format)
+    let events = trace_json.get("trace").and_then(|e| e.as_array())
+        .or_else(|| trace_json.get("events").and_then(|e| e.as_array()));
+
+    let events = match events {
+        Some(events) => events,
+        None => {
+            output.push_str("📭 trace:\n");
+            output.push_str("    events: []\n");
+            output.push_str("    note: \"No events array found in trace\"\n");
+            return output;
+        }
+    };
+
+    if events.is_empty() {
+        output.push_str("📭 trace:\n");
+        output.push_str("    events: []\n");
+        output.push_str("    status: ✅ parsed_successfully\n");
+        output.push_str("    note: \"No execution events found\"\n");
+    } else {
+        output.push_str("📊 trace:\n");
+        output.push_str(&format!("    total_events: {}\n", events.len()));
+        output.push_str("    events:\n");
+
+        for (i, event) in events.iter().enumerate() {
+            let is_last = i == events.len() - 1;
+            let tree_prefix = if is_last { "    └─" } else { "    ├─" };
+            let indent_prefix = if is_last { "      " } else { "    │ " };
+
+            let event_type = event.get("type").and_then(|t| t.as_str()).unwrap_or("unknown");
+
+            match event_type {
+                "receive_intent" => {
+                    output.push_str(&format!("{} 📬 receive_intent:\n", tree_prefix));
+                    let alkanes = event.get("incoming_alkanes").and_then(|a| a.as_array());
+                    format_alkane_transfers(&mut output, alkanes, indent_prefix, "incoming_transfers");
+                },
+                "value_transfer" => {
+                    output.push_str(&format!("{} 💸 value_transfer:\n", tree_prefix));
+                    if let Some(redirect) = event.get("redirect_to") {
+                        output.push_str(&format!("{}    redirect_to: vout {}\n", indent_prefix, redirect));
+                    }
+                    let transfers = event.get("transfers").and_then(|t| t.as_array());
+                    format_alkane_transfers(&mut output, transfers, indent_prefix, "transfers");
+                },
+                "create_alkane" => {
+                    output.push_str(&format!("{} 🏗️  create_alkane:\n", tree_prefix));
+                    if let Some(id) = event.get("alkane_id") {
+                        output.push_str(&format!("{}    alkane_id:\n", indent_prefix));
+                        output.push_str(&format!("{}      block: {}\n", indent_prefix, id.get("block").unwrap_or(&JsonValue::Null)));
+                        output.push_str(&format!("{}      tx: {}\n", indent_prefix, id.get("tx").unwrap_or(&JsonValue::Null)));
+                    }
+                    output.push_str(&format!("{}    status: ✅ created\n", indent_prefix));
+                },
+                "call" => {
+                    output.push_str(&format!("{} 📞 call:\n", tree_prefix));
+                    format_call_context(&mut output, event, indent_prefix);
+                },
+                "delegatecall" => {
+                    output.push_str(&format!("{} 🔄 delegatecall:\n", tree_prefix));
+                    format_call_context(&mut output, event, indent_prefix);
+                },
+                "staticcall" => {
+                    output.push_str(&format!("{} 🔒 staticcall:\n", tree_prefix));
+                    format_call_context(&mut output, event, indent_prefix);
+                },
+                "return" => {
+                    output.push_str(&format!("{} ✅ return:\n", tree_prefix));
+                    if let Some(fuel) = event.get("fuel_used") {
+                        output.push_str(&format!("{}    ⛽ fuel_used: {}\n", indent_prefix, fuel));
+                    }
+                    format_return_data(&mut output, event, indent_prefix);
+                    let alkanes = event.get("alkane_transfers").and_then(|a| a.as_array());
+                    format_alkane_transfers(&mut output, alkanes, indent_prefix, "alkane_transfers");
+                },
+                "revert" => {
+                    output.push_str(&format!("{} ❌ revert:\n", tree_prefix));
+                    if let Some(fuel) = event.get("fuel_used") {
+                        output.push_str(&format!("{}    ⛽ fuel_used: {}\n", indent_prefix, fuel));
+                    }
+                    format_error_data(&mut output, event, indent_prefix);
+                },
+                _ => {
+                    output.push_str(&format!("{} ❓ {}:\n", tree_prefix, event_type));
+                    output.push_str(&format!("{}    raw: {}\n", indent_prefix, event));
+                }
+            }
+
+            // Add spacing between events except for the last one
+            if !is_last {
+                output.push_str("    │\n");
+            }
+        }
+    }
+
+    output
+}
+
+fn format_alkane_transfers(output: &mut String, transfers: Option<&Vec<JsonValue>>, indent_prefix: &str, label: &str) {
+    #[cfg(not(feature = "std"))]
+    use alloc::format;
+
+    match transfers {
+        Some(transfers) if !transfers.is_empty() => {
+            output.push_str(&format!("{}    🪙 {}:\n", indent_prefix, label));
+            for (j, transfer) in transfers.iter().enumerate() {
+                let transfer_tree = if j == transfers.len() - 1 { "└─" } else { "├─" };
+                let sub_indent = if j == transfers.len() - 1 { " " } else { "│" };
+                output.push_str(&format!("{}      {} transfer_{}:\n", indent_prefix, transfer_tree, j));
+                if let Some(id) = transfer.get("alkane_id") {
+                    output.push_str(&format!("{}      {}   alkane_id:\n", indent_prefix, sub_indent));
+                    output.push_str(&format!("{}      {}     block: {}\n", indent_prefix, sub_indent, id.get("block").unwrap_or(&JsonValue::Null)));
+                    output.push_str(&format!("{}      {}     tx: {}\n", indent_prefix, sub_indent, id.get("tx").unwrap_or(&JsonValue::Null)));
+                }
+                if let Some(amount) = transfer.get("amount") {
+                    output.push_str(&format!("{}      {}   amount: {}\n", indent_prefix, sub_indent, amount));
+                }
+            }
+        },
+        _ => {
+            output.push_str(&format!("{}    🪙 {}: []\n", indent_prefix, label));
+        }
+    }
+}
+
+fn format_call_context(output: &mut String, event: &JsonValue, indent_prefix: &str) {
+    #[cfg(not(feature = "std"))]
+    use alloc::format;
+
+    if let Some(target) = event.get("target") {
+        output.push_str(&format!("{}    target:\n", indent_prefix));
+        output.push_str(&format!("{}      block: {}\n", indent_prefix, target.get("block").unwrap_or(&JsonValue::Null)));
+        output.push_str(&format!("{}      tx: {}\n", indent_prefix, target.get("tx").unwrap_or(&JsonValue::Null)));
+    }
+    if let Some(caller) = event.get("caller") {
+        output.push_str(&format!("{}    caller:\n", indent_prefix));
+        output.push_str(&format!("{}      block: {}\n", indent_prefix, caller.get("block").unwrap_or(&JsonValue::Null)));
+        output.push_str(&format!("{}      tx: {}\n", indent_prefix, caller.get("tx").unwrap_or(&JsonValue::Null)));
+    }
+    if let Some(fuel) = event.get("fuel_allocated") {
+        output.push_str(&format!("{}    ⛽ fuel_allocated: {}\n", indent_prefix, fuel));
+    }
+    if let Some(inputs) = event.get("inputs").and_then(|i| i.as_array()) {
+        if !inputs.is_empty() {
+            output.push_str(&format!("{}    📥 inputs:\n", indent_prefix));
+            for (j, input) in inputs.iter().enumerate() {
+                let input_tree = if j == inputs.len() - 1 { "└─" } else { "├─" };
+                output.push_str(&format!("{}      {} [{}]: {}\n", indent_prefix, input_tree, j, input));
+            }
+        } else {
+            output.push_str(&format!("{}    📥 inputs: []\n", indent_prefix));
+        }
+    }
+}
+
+fn format_return_data(output: &mut String, event: &JsonValue, indent_prefix: &str) {
+    #[cfg(not(feature = "std"))]
+    use alloc::format;
+
+    if let Some(data) = event.get("return_data") {
+        if data.is_null() || (data.is_string() && data.as_str().map(|s| s.is_empty()).unwrap_or(false)) {
+            output.push_str(&format!("{}    📤 return_data: null\n", indent_prefix));
+        } else {
+            output.push_str(&format!("{}    📤 return_data:\n", indent_prefix));
+            output.push_str(&format!("{}      hex: \"{}\"\n", indent_prefix, data));
+        }
+    }
+}
+
+fn format_error_data(output: &mut String, event: &JsonValue, indent_prefix: &str) {
+    #[cfg(not(feature = "std"))]
+    use alloc::format;
+
+    if let Some(data) = event.get("error_data") {
+        if data.is_null() || (data.is_string() && data.as_str().map(|s| s.is_empty()).unwrap_or(false)) {
+            output.push_str(&format!("{}    🚨 error_data: null\n", indent_prefix));
+        } else {
+            let data_str = data.as_str().unwrap_or("");
+            output.push_str(&format!("{}    🚨 error_data:\n", indent_prefix));
+            output.push_str(&format!("{}      hex: \"{}\"\n", indent_prefix, data_str));
+
+            // Try to decode error message if it's hex and long enough
+            if data_str.len() > 8 {
+                if let Ok(bytes) = hex::decode(data_str) {
+                    if bytes.len() > 4 {
+                        if let Ok(msg) = core::str::from_utf8(&bytes[4..]) {
+                            let trimmed = msg.trim_end_matches('\0');
+                            if !trimmed.is_empty() {
+                                output.push_str(&format!("{}      💬 decoded_message: \"{}\"\n", indent_prefix, trimmed));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,31 @@
+[package]
+name = "alkanes-web-leptos"
+version.workspace = true
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+leptos = { workspace = true }
+leptos_router = { workspace = true }
+alkanes-cli-common = { path = "../alkanes-cli-common", default-features = false, features = ["web-compat"] }
+alkanes-web-sys = { path = "../alkanes-web-sys" }
+futures = { workspace = true }
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+gloo-storage = "0.3.0"
+gloo-timers = { version = "0.3.0", features = ["futures"] }
+serde-wasm-bindgen = "0.6"
+js-sys = "0.3"
+serde_json = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+web-sys = { workspace = true }
+bitcoin = { workspace = true }
+bip39 = { workspace = true }
+getrandom = { workspace = true }
+log = { workspace = true }
+
+[features]
+hydrate = ["leptos/hydrate", "leptos_router/hydrate"]
+ssr = ["leptos/ssr"]

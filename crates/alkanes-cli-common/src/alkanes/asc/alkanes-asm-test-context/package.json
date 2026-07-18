@@ -1,0 +1,16 @@
+{
+  "name": "alkanes-asm-test-context",
+  "version": "0.1.0",
+  "description": "Test WASM for context loading and input serialization",
+  "scripts": {
+    "asbuild:release": "asc assembly/index.ts --target release --exportStart _start",
+    "asbuild:debug": "asc assembly/index.ts --target debug --exportStart _start",
+    "build": "npm run asbuild:release"
+  },
+  "devDependencies": {
+    "assemblyscript": "^0.27.0"
+  },
+  "dependencies": {
+    "as-bignum": "^0.2.0"
+  }
+}

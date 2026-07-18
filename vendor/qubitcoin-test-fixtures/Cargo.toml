@@ -1,0 +1,40 @@
+# Declares its own [workspace] so it can be path-dep'd from outside
+# the parent qubitcoin workspace (mirroring qubitcoin-indexer-fork's
+# self-contained pattern) — the parent has a pinned set of test-time
+# deps that we don't want to leak in here.
+[workspace]
+
+[package]
+name        = "qubitcoin-test-fixtures"
+version     = "0.1.0"
+edition     = "2021"
+rust-version = "1.74"
+license     = "MIT"
+description = "In-process TestChain + reorg helpers + UTXO snapshot iterator for qubitcoin-based test harnesses. Standalone, no node binary required — projects ranging from subfrost-mobile-integ-tests to the alkanes-rs reorg suite share this surface so a regtest-style invariant can be exercised in `cargo test`."
+
+[dependencies]
+# Internal deps via path. Self-contained workspace means we can't use
+# `workspace = true` resolution from the parent — these path-deps
+# point straight at the sibling crate dirs.
+qubitcoin-primitives = { path = "../qubitcoin-primitives" }
+qubitcoin-script     = { path = "../qubitcoin-script" }
+qubitcoin-serialize  = { path = "../qubitcoin-serialize" }
+
+# External — kept light: TestChain mutates an in-memory state, no
+# RocksDB / network / wasm stack pulled in unless callers opt in via
+# the `wasm-fork` feature (which wires qubitcoin-indexer-fork into
+# the harness for end-to-end alkane-aware tests).
+bitcoin       = "0.32"
+hex           = "0.4"
+serde         = { version = "1", features = ["derive"], optional = true }
+serde_json    = { version = "1", optional = true }
+thiserror     = "1"
+
+[features]
+default     = []
+# Pulls in qubitcoin-indexer-fork so TestChain can host an alkanes
+# WASM and answer simulate / trace queries during the same regtest
+# session. Off by default to keep the dep graph small for callers
+# that only need UTXO + reorg primitives.
+wasm-fork   = []
+serde       = ["dep:serde", "dep:serde_json"]

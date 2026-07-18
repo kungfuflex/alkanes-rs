@@ -1,0 +1,41 @@
+[package]
+name = "tlsfetch-ws"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Cross-platform async WSS client. Native (tokio-tungstenite) for tick 1; wasm (web_sys::WebSocket) deferred to tick 3."
+
+# Vendored from ~/tlsfetch/crates/tlsfetch-ws on 2026-06-09 as part of
+# the TLSFETCH-WS-2 tick. Differences vs upstream:
+#   * tokio-tungstenite uses alkanes-rs-develop's workspace dep (0.23),
+#     not the upstream 0.21 pin. src/native.rs adjusted for the
+#     Bytes-vs-Vec<u8> Message API shift; backport to upstream when its
+#     workspace bumps tungstenite past 0.21.
+#   * futures-util / futures-core / futures-io use direct version
+#     specs because alkanes-rs-develop's workspace doesn't expose them.
+
+[features]
+default = ["native"]
+# Native (tokio-tungstenite + rustls) backend. Off when targeting
+# `wasm32-unknown-unknown`.
+native = [
+    "dep:tokio",
+    "dep:tokio-tungstenite",
+]
+# Wasm web_sys::WebSocket backend lands in tick 3.
+
+[dependencies]
+# Always-on (works on native and wasm32-unknown-unknown).
+bytes = { workspace = true }
+futures-util = "0.3"
+log = { workspace = true }
+thiserror = { workspace = true }
+url = { workspace = true }
+tlsfetch-transport = { path = "../tlsfetch-transport", default-features = false }
+
+# native-only — gated behind the `native` feature.
+tokio = { workspace = true, features = ["time"], optional = true }
+tokio-tungstenite = { workspace = true, optional = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "net", "io-util"] }

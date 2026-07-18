@@ -1,0 +1,55 @@
+[package]
+name        = "frtun-pair"
+version     = "0.1.0"
+edition     = "2021"
+license     = "MIT OR Apache-2.0"
+description = "Stream-only frtun overlay client + bridge logic for the Subfrost mobile-as-signer pair flow. Vendored from subzero-rs into subfrost-mobile (2026-05-23) — drops the native tokio-tungstenite connector (callers wrap the existing wss-tls/wt-tls tunnel transport as a BinaryDuplex) and the standalone bridge daemon (axum-route hosted in subfrost-mobile-api). Just the transport-agnostic protocol + stream + handshake + registry."
+
+[lib]
+path = "src/lib.rs"
+
+[features]
+default = []
+# Enable the tokio-tungstenite WSS client adapter — needed by the
+# dapp CLI + the mobile FFI to DIAL the bridge endpoint. Server-side
+# code (subfrost-mobile-api's /v1/pair handler) uses axum's WS layer
+# instead, so it doesn't need this feature.
+#
+# Canonical (~/frtun) ships this under `native`; matched here so the
+# `pub mod native` gate in `lib.rs` actually activates.
+native = ["dep:tokio-tungstenite"]
+# Enable the typed [`frame`] layer + `PairStream::ping`. **Wire-shape
+# change**: every payload wrapped in `[type|len|body]`. Default OFF so
+# we stay byte-identical to the current (raw-bytes) interop with the
+# mobile-side phone vendor copy. Flip on both sides simultaneously in
+# a follow-up ship.
+icmp = ["dep:rand", "frtun-pair-codec/icmp"]
+
+[dependencies]
+# Codec carve-out (tick-#618). frtun-pair re-exports the protocol +
+# BinaryDuplex + spawn-free handshake from here so the wasm side can
+# speak the same Listen/Dial JSON without linking tokio.
+frtun-pair-codec   = { path = "../frtun-pair-codec" }
+
+# Pinned at vendor time; the alkanes-rs workspace doesn't expose
+# tokio-tungstenite / parking_lot / tracing yet, so this crate keeps its
+# own version discipline. Sync these manually if upstream subfrost-mobile
+# bumps them and we want to lift the change.
+tokio              = { workspace = true, features = ["sync", "rt", "time", "io-util", "macros", "net"] }
+serde              = { workspace = true, features = ["derive"] }
+serde_json         = { workspace = true }
+thiserror          = { workspace = true }
+async-trait        = { workspace = true }
+bytes              = "1.6.1"
+futures            = { workspace = true }
+tracing            = "0.1"
+parking_lot        = "0.12"
+
+tokio-tungstenite  = { workspace = true, optional = true }
+
+# Only pulled in under the `icmp` feature for the ping nonce. Workspace
+# already exposes rand 0.8 — see ~/alkanes-rs-develop/Cargo.toml.
+rand               = { workspace = true, optional = true }
+
+[dev-dependencies]
+tokio              = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "sync", "time", "test-util", "io-util", "net"] }
