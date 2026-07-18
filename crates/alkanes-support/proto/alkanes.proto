@@ -86,7 +86,24 @@ message AlkanesTraceEvent {
     AlkanesEnterContext enter_context = 1;
     AlkanesExitContext exit_context = 2;
     AlkanesCreate create_alkane = 3;
+    // align-main additive: develop-only trace events consumed by the portable
+    // crates (alkanes-cli-common, alkanes-contract-indexer). Dead in the
+    // indexer path — the root src/** indexer never constructs these. Additive
+    // field numbers 4/5 do not renumber existing fields (wire-compatible).
+    AlkanesReceiveIntent receive_intent = 4;
+    AlkanesValueTransfer value_transfer = 5;
   }
+}
+
+// align-main additive (develop-only): backing messages for the receive_intent
+// and value_transfer trace events. Not emitted by the indexer.
+message AlkanesReceiveIntent {
+  repeated AlkaneTransfer incoming_alkanes = 1;
+}
+
+message AlkanesValueTransfer {
+  repeated AlkaneTransfer transfers = 1;
+  uint32 redirect_to = 2;
 }
 
 message AlkanesBlockEvent {
