@@ -12,3 +12,9 @@ memory-bank/progress.md
 dist/alkanes.wasm
 .verify-a/
 .verify-b/
+
+# align-main: native build artifact of the root indexer package. build.rs
+# derives its scratch output dir as <repo>/alkanes when the root `alkanes`
+# crate is built for the host target (e.g. `cargo check --workspace`). Not
+# source (this branch keeps std contracts under crates/alkanes-std-*).
+/alkanes/
