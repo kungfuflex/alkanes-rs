@@ -103,7 +103,14 @@ jobs:
           # Get base version from package.json
           BASE_VERSION=$(node -p "require('./ts-sdk/package.json').version")
           SHORT_SHA=$(git rev-parse --short=7 HEAD)
-          VERSION="${BASE_VERSION}-${SHORT_SHA}"
+          # IMMUTABLE PUBLISH (#286): the commit sha alone is NOT build-unique —
+          # rebuilding/republishing the same commit reused the SAME version tag
+          # (0.1.6-<sha>) with different bytes, so warm pnpm/CI caches served the
+          # stale artifact forever under an immutable-looking label. Append the
+          # monotonic CI run number so every publish is a DISTINCT tag that is
+          # never overwritten; a rebuild of the same source is opt-in via the new
+          # suffix (e.g. 0.1.6-<sha>.<run>). Consumers pin bytes, not a moving tag.
+          VERSION="${BASE_VERSION}-${SHORT_SHA}.${GITHUB_RUN_NUMBER}"
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "short_sha=${SHORT_SHA}" >> $GITHUB_OUTPUT
           echo "Generated version: ${VERSION}"
@@ -121,7 +128,9 @@ jobs:
       - name: Update package.json version
         working-directory: ts-sdk
         run: |
-          npm version ${{ steps.version.outputs.version }} --no-git-tag-version --allow-same-version
+          # No --allow-same-version: each version is build-unique (#286), so a
+          # collision here means an unexpected re-publish and SHOULD fail loudly.
+          npm version ${{ steps.version.outputs.version }} --no-git-tag-version
           echo "Updated package.json to version ${{ steps.version.outputs.version }}"
           cat package.json | grep '"version"'
 
@@ -178,6 +187,34 @@ jobs:
           echo "Publishing @alkanes/ts-sdk@${{ steps.version.outputs.version }}..."
           npm publish --registry=https://us-central1-npm.pkg.dev/pkg-alkanes-build/npm-packages/ --access=public
           echo "Package published successfully"
+
+      - name: Emit build manifest (content-address, #286)
+        working-directory: ts-sdk
+        run: |
+          # Content-address the published artifact so consumers can pin/verify
+          # BYTES, not just a tag (#286). npm pack reproduces the published tarball.
+          TARBALL=$(npm pack --silent | tail -1)
+          SHA256=$(sha256sum "$TARBALL" | cut -d' ' -f1)
+          mkdir -p ../pkg-manifests
+          cat > "../pkg-manifests/${{ steps.version.outputs.version }}.json" <<EOF
+          {
+            "package": "@alkanes/ts-sdk",
+            "version": "${{ steps.version.outputs.version }}",
+            "commit": "${{ github.sha }}",
+            "run": "${{ github.run_number }}",
+            "built_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "tarball": "${TARBALL}",
+            "sha256": "${SHA256}"
+          }
+          EOF
+          echo "== build manifest (tag -> commit -> sha256) =="
+          cat "../pkg-manifests/${{ steps.version.outputs.version }}.json"
+
+      - name: Upload build manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: pkg-manifest-${{ steps.version.outputs.version }}
+          path: pkg-manifests/*.json
 
       - name: Tag as latest-dev
         working-directory: ts-sdk
