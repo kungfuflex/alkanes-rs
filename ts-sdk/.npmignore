@@ -1,0 +1,37 @@
+# Source files
+src/
+scripts/
+examples/
+*.ts
+!*.d.ts
+tsconfig.json
+
+# Tests
+__tests__/
+*.test.ts
+*.spec.ts
+coverage/
+
+# Development files
+.github/
+.vscode/
+.idea/
+
+# Build files (except dist and build)
+node_modules/
+wasm-pkg/
+*.tsbuildinfo
+
+# Documentation
+docs/
+*.md
+!README.md
+!LICENSE
+
+# Config files
+.eslintrc*
+.prettierrc*
+jest.config.*
+build-and-link.sh
+esbuild.browser.mjs
+tsup.config.ts

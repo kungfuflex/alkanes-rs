@@ -1,0 +1,28 @@
+[package]
+name = "qubitcoin-indexer-fork"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "In-memory WASM indexer runtime with read-through upstream host functions for projected/pending state"
+
+[dependencies]
+qubitcoin-indexer-core = { path = "../qubitcoin-indexer-core" }
+wasmtime = "43"
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync"] }
+prost = "0.12"
+sha2 = "0.10"
+parking_lot = "0.12"
+tracing = "0.1"
+async-trait = "0.1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
+serde_json = { version = "1", optional = true }
+hex = { version = "0.4", optional = true }
+
+[features]
+default = ["http-upstream"]
+http-upstream = ["dep:reqwest", "dep:serde", "dep:serde_json", "dep:hex"]
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }
+wat = "1.0"

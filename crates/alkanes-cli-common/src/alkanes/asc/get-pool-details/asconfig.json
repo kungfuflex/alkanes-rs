@@ -1,0 +1,26 @@
+{
+  "targets": {
+    "release": {
+      "outFile": "build/release.wasm",
+      "textFile": "build/release.wat",
+      "sourceMap": false,
+      "optimize": true,
+      "optimizeLevel": 3,
+      "shrinkLevel": 2,
+      "runtime": "stub",
+      "explicitStart": true,
+      "use": "abort="
+    },
+    "debug": {
+      "outFile": "build/debug.wasm",
+      "textFile": "build/debug.wat",
+      "sourceMap": true,
+      "debug": true,
+      "runtime": "stub",
+      "use": "abort="
+    }
+  },
+  "options": {
+    "bindings": "esm"
+  }
+}

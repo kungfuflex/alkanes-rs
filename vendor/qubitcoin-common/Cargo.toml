@@ -1,0 +1,28 @@
+[package]
+name = "qubitcoin-common"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Common types for Qubitcoin: CoinsView, ChainParams, PoW, policy, keys, CBlockIndex"
+
+[features]
+default = ["native"]
+native = ["secp256k1/rand-std", "rand", "qubitcoin-crypto/native", "qubitcoin-util/native", "qubitcoin-storage/rocksdb-backend"]
+wasm = ["qubitcoin-util/wasm"]
+
+[dependencies]
+qubitcoin-consensus = { path = "../qubitcoin-consensus" }
+qubitcoin-storage = { path = "../qubitcoin-storage", default-features = false }
+qubitcoin-serialize = { path = "../qubitcoin-serialize" }
+qubitcoin-primitives = { path = "../qubitcoin-primitives" }
+qubitcoin-crypto = { path = "../qubitcoin-crypto" }
+qubitcoin-util = { path = "../qubitcoin-util", default-features = false }
+qubitcoin-script = { path = "../qubitcoin-script" }
+thiserror = "1"
+parking_lot = "0.12"
+secp256k1 = "0.29"
+rand = { version = "0.8", optional = true }
+tracing = "0.1"
+
+[dev-dependencies]
+hex = "0.4"

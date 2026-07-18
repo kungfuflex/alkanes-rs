@@ -1,0 +1,44 @@
+[package]
+name = "tlsfetch-transport"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Backend-agnostic Stream / Connection / Listener traits + composition adapters. Defines the contract every transport in the tlsfetch stack satisfies."
+
+[dependencies]
+# Always-on (works on native and wasm32-unknown-unknown).
+bytes = { workspace = true }
+futures-core = "0.3"
+futures-io = "0.3"
+futures-util = { version = "0.3", features = ["io"] }
+thiserror = { workspace = true }
+log = { workspace = true }
+# Used by the optional Profiled<C> wrapper. Pure types (no async
+# runtime), wasm-friendly.
+tlsfetch-events = { path = "../tlsfetch-events" }
+
+[dependencies.tokio]
+workspace = true
+optional = true
+features = ["macros", "rt", "rt-multi-thread", "time"]
+
+[dependencies.wasm-bindgen-test]
+version = "0.3"
+optional = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "io-util", "time"] }
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+# Wasm test runner. The conformance harness runs the same suite under
+# `wasm-pack test --node` so trait portability is enforced by CI.
+wasm-bindgen-test = "0.3"
+
+[features]
+default = []
+# `testing` exposes the conformance harness at
+# `tlsfetch_transport::testing` — the TransportFactory trait + the
+# generic test-body fns + the `tlsfetch_transport_contract!` macro.
+# Concrete transport impls (tlsfetch-inmemory, tlsfetch-wt, ...)
+# enable this on their dev-dependency to inherit the whole suite.
+testing = ["dep:tokio", "dep:wasm-bindgen-test"]

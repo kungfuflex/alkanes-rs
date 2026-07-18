@@ -1,0 +1,19 @@
+[package]
+name = "qubitcoin-serialize"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Serialization framework for Qubitcoin: Encodable/Decodable, CompactSize, VarInt, DataStream"
+
+[dependencies]
+qubitcoin-primitives = { path = "../qubitcoin-primitives" }
+byteorder = "1"
+thiserror = "1"
+
+[dev-dependencies]
+hex = "0.4"
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "serialize_bench"
+harness = false

@@ -1,0 +1,57 @@
+[package]
+name        = "wc-signer-core"
+version.workspace = true
+edition     = "2021"
+license.workspace = true
+repository.workspace = true
+description = "Wasm-clean carve-out of the SUBFROST WalletConnect signer driver. Was alkanes-cli-common::wc_signer; lifted into its own crate so subfrost-wallet-web-sys (browser extension) can reuse the same Rust state machine that alkanes-cli drives natively. Wire + crypto + pairing + storage trait + transport trait + signer driver — no tokio, no reqwest, no native I/O. Native consumers (alkanes-cli-common) carry their own NativeTransport + NativeFileStorage on top."
+
+[lib]
+path = "src/lib.rs"
+
+[features]
+# Default enables the `tokio` timer shim used by the signer's
+# `dial_with_wake` retry loop + `pair()` listen-bound timeout. Wasm
+# consumers disable default features and rely on the
+# `cfg(target_arch = "wasm32")` `gloo-timers` shim baked in below.
+default = ["native-time"]
+# `tokio::time::{sleep, timeout}` on the native shim. wasm32 builds
+# never enable this — they fall through to the gloo-timers path.
+native-time = ["dep:tokio"]
+# When the consuming workspace also enables `frtun-pair`'s `icmp`
+# feature, the signer adds a fast-fail PING gate at the front of
+# send_request. Wire-shape change: every payload framed [type|len|body].
+# Both peers must flip together.
+icmp = []
+
+[dependencies]
+serde            = { workspace = true, features = ["derive"] }
+serde_json       = { workspace = true }
+hkdf             = { version = "0.12" }
+sha2             = { workspace = true }
+chacha20poly1305 = { version = "0.10" }
+x25519-dalek     = { version = "2", features = ["static_secrets"] }
+base64           = { workspace = true }
+rand_core        = { workspace = true, features = ["getrandom"] }
+rand             = { workspace = true }
+thiserror        = { workspace = true }
+async-trait      = { workspace = true }
+chrono           = { workspace = true }
+bech32           = { workspace = true }
+url              = { version = "2.5.0" }
+# Native time shim — gated by the `native-time` feature. Wasm32 builds
+# disable default features and the cfg(target_arch = "wasm32") shim
+# below uses gloo-timers instead.
+tokio            = { workspace = true, features = ["time"], optional = true }
+
+# wasm32 timeout primitive — used by the signer driver's `sleep_compat`
+# on `cfg(target_arch = "wasm32")`. Native consumers shim with
+# tokio::time::sleep. `futures` brings `future::select` + `Either` +
+# `pin_mut!` for the `tokio_timeout` race shim.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+gloo-timers      = { version = "0.3", features = ["futures"] }
+futures          = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies.getrandom]
+version  = "0.2"
+features = ["js"]

@@ -1,0 +1,6299 @@
+//! The ConcreteProvider implementation for deezel.
+//!
+//! This module provides a concrete implementation of all provider traits
+//! using deezel-rpgp for PGP operations and other concrete implementations.
+
+use crate::traits::*;
+use crate::{
+    alkanes::types::{ExecutionState, ReadyToSignCommitTx, ReadyToSignRevealTx, ReadyToSignTx, OrdinalsStrategy},
+    ordinals::OrdinalsHandler,
+    AlkanesError, JsonValue, Result,
+};
+#[cfg(feature = "std")]
+use crate::cache::{AlkanesCache, BlockHash};
+#[cfg(feature = "std")]
+use std::sync::Arc;
+#[cfg(feature = "std")]
+use tokio::sync::RwLock;
+use serde_json::json;
+use crate::alkanes::execute::EnhancedAlkanesExecutor;
+use crate::alkanes::balance_sheet::BalanceSheetOperations;
+#[cfg(feature = "wasm-inspection")]
+use crate::alkanes::inspector::{AlkaneInspector, InspectionConfig};
+use crate::alkanes::types::{
+	EnhancedExecuteParams, EnhancedExecuteResult, AlkanesInspectConfig, AlkanesInspectResult,
+	AlkaneBalance, AlkaneId,
+};
+use crate::proto::alkanes as alkanes_pb;
+use crate::proto::protorune as protorune_pb;
+use std::collections::BTreeMap;
+use prost::Message;
+use log;
+use async_trait::async_trait;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec;
+use alloc::vec::Vec;
+use alloc::boxed::Box;
+#[cfg(not(target_arch = "wasm32"))]
+use std::path::PathBuf;
+use core::str::FromStr;
+use crate::keystore::Keystore;
+use crate::network::{NetworkParams, RpcConfig};
+use crate::rpc::get_rpc_url;
+use url::Url;
+use crate::rpc::{determine_rpc_call_type, RpcCallType};
+use crate::lua_script::{LuaScript, LuaScriptExecutor};
+
+fn url_encode(s: &str) -> String {
+    s.replace(":", "%3A")
+}
+
+// Import deezel-rpgp types for PGP functionality
+
+#[cfg(not(target_arch = "wasm32"))]
+use rand::thread_rng;
+#[cfg(target_arch = "wasm32")]
+use rand::rngs::OsRng;
+
+// Import Bitcoin and BIP39 for wallet functionality
+use bitcoin::Network;
+use bip39::Mnemonic;
+
+// Additional imports for wallet functionality
+use hex::{self, FromHex};
+use bitcoin::{
+    Address, Amount, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness,
+    bip32::{DerivationPath, Fingerprint, Xpriv},
+    key::{TapTweak, UntweakedKeypair},
+    secp256k1::{All, Secp256k1},
+    sighash::{EcdsaSighashType, Prevouts, SighashCache, TapSighashType},
+    taproot,
+};
+use bitcoin_hashes::Hash;
+use ordinals::{Runestone, Artifact};
+use serde::{Deserialize, Serialize};
+
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AssetBalance {
+    pub name: String,
+    pub symbol: String,
+    pub balance: u128,
+    }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnrichedUtxo {
+    pub utxo_info: UtxoInfo,
+    pub assets: Vec<AssetBalance>,
+    }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AllBalances {
+    pub btc: WalletBalance,
+    pub other: Vec<AssetBalance>,
+    }
+
+
+/// Represents the state of the wallet within the provider
+#[derive(Clone)]
+pub enum WalletState {
+    /// No wallet is loaded
+    None,
+    /// Keystore is loaded but locked (only public information is available)
+    Locked(Keystore),
+    /// Wallet is unlocked, with access to the decrypted mnemonic
+    Unlocked {
+        keystore: Keystore,
+        mnemonic: String,
+    },
+    /// Address-only mode (no keystore, only address for monitoring/building unsigned transactions)
+    AddressOnly {
+        address: String,
+        script_type: String,
+    },
+    /// External signing mode (private key loaded from file for signing)
+    ExternalKey {
+        private_key: String,
+        address: String,
+    },
+    }
+
+
+
+
+use crate::commands::Commands;
+
+#[derive(Clone)]
+pub struct ConcreteProvider {
+    pub rpc_config: RpcConfig,
+    command: Commands,
+    #[cfg(not(target_arch = "wasm32"))]
+    wallet_path: Option<PathBuf>,
+    #[cfg(target_arch = "wasm32")]
+    wallet_path: Option<String>,
+    passphrase: Option<String>,
+    wallet_state: WalletState,
+    #[cfg(feature = "native-deps")]
+    http_client: reqwest::Client,
+    secp: Secp256k1<All>,
+    /// Optional cache for metashrew_view results. When `Some`, immutable
+    /// methods (`getbytecode`, `meta`) are cached forever and tip-bound
+    /// methods are cached against the current tip hash (if known).
+    #[cfg(feature = "std")]
+    cache: Option<Arc<dyn AlkanesCache>>,
+    /// Current chain tip — populated by an optional background watcher
+    /// (see [`crate::cache::integration::scope_for_method`]). When `None`,
+    /// tip-bound methods bypass the cache.
+    #[cfg(feature = "std")]
+    current_tip: Arc<RwLock<Option<BlockHash>>>,
+    /// Optional remote signer. When `Some`, `WalletProvider::sign_psbt`
+    /// delegates to it instead of the local keystore. Powers the
+    /// `--use-walletconnect` flow.
+    #[cfg(feature = "std")]
+    pub(crate) remote_signer: Option<Arc<dyn crate::traits::RemoteSigner>>,
+    }
+
+
+impl ConcreteProvider {
+    /// Helper method to add custom headers to requests
+    /// Adds X-Subfrost-Api-Key header if URL is a subfrost.io domain, plus any --jsonrpc-header values
+    #[cfg(feature = "native-deps")]
+    fn add_custom_headers(&self, url: &str, mut builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        // Add X-Subfrost-Api-Key header if URL is a subfrost.io domain
+        if let Ok(parsed_url) = Url::parse(url) {
+            if let Some(host) = parsed_url.host_str() {
+                if host.ends_with(".subfrost.io") || host == "subfrost.io" {
+                    if let Some(api_key) = self.rpc_config.get_subfrost_api_key() {
+                        log::debug!("Adding X-Subfrost-Api-Key header for {}", host);
+                        builder = builder.header("X-Subfrost-Api-Key", api_key);
+                    }
+                }
+            }
+        }
+
+        // Add custom JSON-RPC headers from --jsonrpc-header flags
+        for (header_name, header_value) in self.rpc_config.get_jsonrpc_headers() {
+            log::debug!("Adding custom header: {}: {}", header_name, header_value);
+            builder = builder.header(&header_name, &header_value);
+        }
+
+        builder
+    }
+
+    /// Helper method to add X-Subfrost-Api-Key header if URL is a subfrost.io domain
+    /// @deprecated Use add_custom_headers instead
+    #[cfg(feature = "native-deps")]
+    fn add_subfrost_header(&self, url: &str, builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        self.add_custom_headers(url, builder)
+    }
+
+    #[cfg(feature = "std")]
+    #[cfg(not(target_arch = "wasm32"))]
+    pub async fn new(
+        bitcoin_rpc_url: Option<String>,
+        metashrew_rpc_url: String,
+        jsonrpc_url: Option<String>,
+        titan_api_url: Option<String>,
+        esplora_url: Option<String>,
+        brc20_prog_rpc_url: Option<String>,
+        provider: String,
+        wallet_path: Option<std::path::PathBuf>,
+    ) -> Result<Self> {
+        Self::new_with_headers(
+            bitcoin_rpc_url,
+            metashrew_rpc_url,
+            jsonrpc_url,
+            titan_api_url,
+            esplora_url,
+            brc20_prog_rpc_url,
+            provider,
+            wallet_path,
+            Vec::new(),
+        ).await
+    }
+
+    #[cfg(feature = "std")]
+    #[cfg(not(target_arch = "wasm32"))]
+    pub async fn new_with_headers(
+        bitcoin_rpc_url: Option<String>,
+        metashrew_rpc_url: String,
+        jsonrpc_url: Option<String>,
+        titan_api_url: Option<String>,
+        esplora_url: Option<String>,
+        brc20_prog_rpc_url: Option<String>,
+        provider: String,
+        wallet_path: Option<std::path::PathBuf>,
+        jsonrpc_headers: Vec<String>,
+    ) -> Result<Self> {
+        let rpc_config = RpcConfig {
+            provider,
+            bitcoin_rpc_url,
+            jsonrpc_url,
+            titan_api_url,
+            esplora_url,
+            ord_url: None,
+            metashrew_rpc_url: Some(metashrew_rpc_url),
+            brc20_prog_rpc_url,
+            data_api_url: None,
+            espo_rpc_url: None,
+            qubitcoin_rpc_url: None,
+            quzec_rpc_url: None,
+            subfrost_api_key: None,
+            timeout_seconds: 600,
+            jsonrpc_headers,
+        };
+
+        Ok(Self {
+            rpc_config,
+            command: Commands::Wallet {
+                command: crate::commands::WalletCommands::Info,
+            },
+            wallet_path,
+            passphrase: None,
+            wallet_state: WalletState::None,
+            #[cfg(feature = "native-deps")]
+            http_client: reqwest::Client::new(),
+            secp: Secp256k1::new(),
+            #[cfg(feature = "std")]
+            cache: None,
+            #[cfg(feature = "std")]
+            current_tip: Arc::new(RwLock::new(None)),
+            #[cfg(feature = "std")]
+            remote_signer: None,
+        })
+    }
+
+    #[cfg(feature = "std")]
+    #[cfg(target_arch = "wasm32")]
+    pub async fn new(
+        bitcoin_rpc_url: Option<String>,
+        metashrew_rpc_url: String,
+        jsonrpc_url: Option<String>,
+        titan_api_url: Option<String>,
+        esplora_url: Option<String>,
+        brc20_prog_rpc_url: Option<String>,
+        provider: String,
+        wallet_path: Option<std::path::PathBuf>,
+    ) -> Result<Self> {
+        Self::new_with_headers(
+            bitcoin_rpc_url,
+            metashrew_rpc_url,
+            jsonrpc_url,
+            titan_api_url,
+            esplora_url,
+            brc20_prog_rpc_url,
+            provider,
+            wallet_path,
+            Vec::new(),
+        ).await
+    }
+
+    #[cfg(feature = "std")]
+    #[cfg(target_arch = "wasm32")]
+    pub async fn new_with_headers(
+        bitcoin_rpc_url: Option<String>,
+        metashrew_rpc_url: String,
+        jsonrpc_url: Option<String>,
+        titan_api_url: Option<String>,
+        esplora_url: Option<String>,
+        brc20_prog_rpc_url: Option<String>,
+        provider: String,
+        wallet_path: Option<std::path::PathBuf>,
+        jsonrpc_headers: Vec<String>,
+    ) -> Result<Self> {
+        let rpc_config = RpcConfig {
+            provider,
+            bitcoin_rpc_url,
+            jsonrpc_url,
+            titan_api_url,
+            esplora_url,
+            ord_url: None,
+            metashrew_rpc_url: Some(metashrew_rpc_url),
+            brc20_prog_rpc_url,
+            data_api_url: None,
+            espo_rpc_url: None,
+            qubitcoin_rpc_url: None,
+            quzec_rpc_url: None,
+            subfrost_api_key: None,
+            timeout_seconds: 600,
+            jsonrpc_headers,
+        };
+
+        let wallet_path_str = wallet_path.and_then(|p| p.to_str().map(|s| s.to_string()));
+
+        Ok(Self {
+            rpc_config,
+            command: Commands::Wallet {
+                command: crate::commands::WalletCommands::Info,
+            },
+            wallet_path: wallet_path_str,
+            passphrase: None,
+            wallet_state: WalletState::None,
+            #[cfg(feature = "native-deps")]
+            http_client: reqwest::Client::new(),
+            secp: Secp256k1::new(),
+            #[cfg(feature = "std")]
+            cache: None,
+            #[cfg(feature = "std")]
+            current_tip: Arc::new(RwLock::new(None)),
+            #[cfg(feature = "std")]
+            remote_signer: None,
+        })
+    }
+
+    #[cfg(test)]
+    pub fn new_for_test(rpc_config: RpcConfig, command: Commands) -> Self {
+        Self {
+            rpc_config,
+            command,
+            wallet_path: None,
+            passphrase: None,
+            wallet_state: WalletState::None,
+            #[cfg(feature = "native-deps")]
+            http_client: reqwest::Client::new(),
+            secp: Secp256k1::new(),
+            #[cfg(feature = "std")]
+            cache: None,
+            #[cfg(feature = "std")]
+            current_tip: Arc::new(RwLock::new(None)),
+            #[cfg(feature = "std")]
+            remote_signer: None,
+        }
+    }
+
+    pub fn get_network(&self) -> bitcoin::Network {
+        match self.rpc_config.provider.as_str() { "mainnet" => bitcoin::Network::Bitcoin, "testnet" => bitcoin::Network::Testnet, "signet" => bitcoin::Network::Signet, _ => bitcoin::Network::Regtest }
+    }
+
+    /// Attach a cache backend. Callers in `alkanes-cli` typically pass a
+    /// [`crate::cache::sqlite::SqliteCache`] opened at `~/.alkanes/cache.sqlite3`;
+    /// callers in `subfrost-mobile` pass a [`crate::cache::grpc::GrpcCache`].
+    /// Tests use [`crate::cache::in_memory::InMemoryCache`].
+    #[cfg(feature = "std")]
+    pub fn with_cache(mut self, cache: Arc<dyn AlkanesCache>) -> Self {
+        self.cache = Some(cache);
+        self
+    }
+
+    /// Attach a remote signer. When present, `sign_psbt` delegates here
+    /// instead of consulting the local keystore — powers
+    /// `--use-walletconnect`. Pass `None` to clear.
+    #[cfg(feature = "std")]
+    pub fn with_remote_signer(
+        mut self,
+        signer: Option<Arc<dyn crate::traits::RemoteSigner>>,
+    ) -> Self {
+        self.remote_signer = signer;
+        self
+    }
+
+    /// True if a remote signer is configured. Useful for hint logging.
+    #[cfg(feature = "std")]
+    pub fn has_remote_signer(&self) -> bool {
+        self.remote_signer.is_some()
+    }
+
+    /// Manually record the current chain tip. Used by external callers
+    /// that already track height/hash, or by the optional tip-watcher
+    /// background task in [`crate::cache::tip_watcher`].
+    #[cfg(feature = "std")]
+    pub async fn set_current_tip(&self, tip: BlockHash) {
+        let prior = {
+            let mut guard = self.current_tip.write().await;
+            let prev = *guard;
+            *guard = Some(tip);
+            prev
+        };
+        // On real reorg (tip changed but wasn't None before), notify cache.
+        if let (Some(cache), Some(prev)) = (self.cache.as_ref(), prior) {
+            if prev != tip {
+                if let Err(e) = cache.on_reorg(tip).await {
+                    log::warn!("cache.on_reorg failed (ignored): {e}");
+                }
+            }
+        }
+    }
+
+    #[cfg(feature = "std")]
+    async fn current_tip_value(&self) -> Option<BlockHash> {
+        *self.current_tip.read().await
+    }
+
+    pub async fn metashrew_view_call(&self, method: &str, params: &str, height: &str) -> Result<Vec<u8>> {
+        // Use the centralized RPC target resolution
+        let target = self.rpc_config.get_metashrew_rpc_target();
+        let target_url = target.url.clone();
+
+        // In qubitcoin mode, translate metashrew_view → secondaryview
+        let (rpc_method, rpc_params) = if self.rpc_config.is_qubitcoin_mode() {
+            ("secondaryview", serde_json::json!(["alkanes", method, params]))
+        } else {
+            ("metashrew_view", serde_json::json!([method, params, height]))
+        };
+
+        // Cache-aware path: only when cache is configured AND we're not
+        // peeking at a non-`latest` height (historical-height queries are
+        // rare and not worth the extra key complexity yet).
+        #[cfg(feature = "std")]
+        {
+            if self.cache.is_some() && height == "latest" {
+                let tip = self.current_tip_value().await;
+                let network = self.rpc_config.provider.clone();
+                // Re-borrow to satisfy lifetime: extract the static label
+                let static_method: &'static str = match method {
+                    "getbytecode" => "getbytecode",
+                    "meta" => "meta",
+                    "simulate" => "simulate",
+                    "trace" => "trace",
+                    "traceblock" => "traceblock",
+                    "protorunesbyaddress" => "protorunesbyaddress",
+                    "protorunesbyoutpoint" => "protorunesbyoutpoint",
+                    "getbalance" => "getbalance",
+                    "getinventory" => "getinventory",
+                    "getstorageat" => "getstorageat",
+                    "txscript" => "txscript",
+                    "unwrap" => "unwrap",
+                    _ => "",
+                };
+                if !static_method.is_empty() {
+                    let cache = self.cache.clone();
+                    let rpc_method_owned = rpc_method.to_string();
+                    let rpc_params_clone = rpc_params.clone();
+                    let url_clone = target_url.clone();
+                    let result_bytes = crate::cache::integration::cached_view_call(
+                        cache.as_ref(),
+                        &network,
+                        tip,
+                        static_method,
+                        params,
+                        move || {
+                            let url = url_clone.clone();
+                            let rpc_method = rpc_method_owned.clone();
+                            let rpc_params = rpc_params_clone.clone();
+                            async move {
+                                let v = self.call(&url, &rpc_method, rpc_params, 1).await?;
+                                let s = v.as_str().ok_or_else(|| {
+                                    AlkanesError::RpcError(
+                                        "metashrew_view result is not a string".to_string(),
+                                    )
+                                })?;
+                                let s = s.strip_prefix("0x").unwrap_or(s);
+                                hex::decode(s).map_err(|e| {
+                                    AlkanesError::RpcError(format!(
+                                        "Failed to decode metashrew_view hex: {e}"
+                                    ))
+                                })
+                            }
+                        },
+                    )
+                    .await?;
+                    return Ok(result_bytes);
+                }
+            }
+        }
+
+        // Uncached / wasm / qubitcoin path: original behaviour.
+        let result = self.call(&target_url, rpc_method, rpc_params, 1).await?;
+
+        // The result should be a hex string starting with "0x"
+        let hex_str = result.as_str()
+            .ok_or_else(|| AlkanesError::RpcError("metashrew_view result is not a string".to_string()))?;
+
+        // Remove "0x" prefix if present
+        let hex_str = hex_str.strip_prefix("0x").unwrap_or(hex_str);
+
+        // Decode hex to bytes
+        let bytes = hex::decode(hex_str)
+            .map_err(|e| AlkanesError::RpcError(format!("Failed to decode metashrew_view hex response: {}", e)))?;
+
+        Ok(bytes)
+    }
+
+    /// Get storage value at a specific path for an alkane
+    pub async fn get_storage_at(&self, block: u64, tx: u64, path: &[u8]) -> Result<Vec<u8>> {
+        // Build the protobuf request
+        let request = crate::proto::alkanes::AlkaneStorageRequest {
+            id: Some(crate::proto::alkanes::AlkaneId {
+                block: Some(crate::proto::alkanes::Uint128 { lo: block, hi: 0 }),
+                tx: Some(crate::proto::alkanes::Uint128 { lo: tx, hi: 0 }),
+            }),
+            path: path.to_vec(),
+        };
+
+        // Encode to protobuf bytes
+        use prost::Message;
+        let encoded = request.encode_to_vec();
+        let hex_params = hex::encode(&encoded);
+
+        // Call metashrew_view with getstorageat method
+        let response_bytes = self.metashrew_view_call("getstorageat", &hex_params, "latest").await?;
+
+        // Decode the response protobuf
+        let response = crate::proto::alkanes::AlkaneStorageResponse::decode(response_bytes.as_slice())
+            .map_err(|e| AlkanesError::RpcError(format!("Failed to decode AlkaneStorageResponse: {}", e)))?;
+
+        Ok(response.value)
+    }
+
+    // Low-level Lua script execution methods (prefer using LuaScriptExecutor trait)
+    
+    async fn lua_evalscript_internal(&self, script_content: &str, args: Vec<JsonValue>) -> Result<JsonValue> {
+        let target = self.rpc_config.get_alkanes_rpc_target();
+        let mut params = vec![JsonValue::String(script_content.to_string())];
+        params.extend(args);
+        log::debug!("Calling lua_evalscript (script length: {} bytes)", script_content.len());
+        self.call(&target.url, "lua_evalscript", JsonValue::Array(params), 1).await
+    }
+
+    async fn lua_evalsaved_internal(&self, script_hash: &str, args: Vec<JsonValue>) -> Result<JsonValue> {
+        let target = self.rpc_config.get_alkanes_rpc_target();
+        let mut params = vec![JsonValue::String(script_hash.to_string())];
+        params.extend(args);
+        log::debug!("Calling lua_evalsaved (hash: {})", script_hash);
+        self.call(&target.url, "lua_evalsaved", JsonValue::Array(params), 1).await
+    }
+
+    // batch_fetch_utxo_balances is now provided by the DeezelProvider trait with a default implementation
+
+    /// Get keystore reference (works for both locked and unlocked keystores)
+    pub fn get_keystore(&self) -> Result<&Keystore> {
+        match &self.wallet_state {
+            WalletState::Unlocked { keystore, .. } => Ok(keystore),
+            WalletState::Locked(keystore) => Ok(keystore),
+            _ => Err(AlkanesError::Wallet("No keystore available - wallet is in address-only or external key mode".to_string())),
+        }
+    }
+
+    /// Check if wallet is unlocked (can sign transactions)
+    pub fn is_unlocked(&self) -> bool {
+        matches!(self.wallet_state, WalletState::Unlocked { .. } | WalletState::ExternalKey { .. })
+    }
+
+    #[cfg(feature = "std")]
+    pub fn set_passphrase(&mut self, passphrase: Option<String>) {
+        self.passphrase = passphrase;
+    }
+
+    /// Set wallet to address-only mode (no keystore required)
+    pub fn set_address_only_mode(&mut self, address: String, script_type: String) {
+        self.wallet_state = WalletState::AddressOnly { address, script_type };
+    }
+
+    /// Load external private key from file for signing
+    #[cfg(feature = "std")]
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn load_external_key(&mut self, key_file_path: &str) -> Result<()> {
+        let private_key = std::fs::read_to_string(key_file_path)
+            .map_err(|e| AlkanesError::Storage(format!("Failed to read key file: {}", e)))?
+            .trim()
+            .to_string();
+        
+        let network = self.get_network();
+        let secp = Secp256k1::new();
+        
+        let secret_key = bitcoin::secp256k1::SecretKey::from_str(&private_key)
+            .map_err(|e| AlkanesError::Wallet(format!("Invalid private key: {}", e)))?;
+        
+        let keypair = bitcoin::secp256k1::Keypair::from_secret_key(&secp, &secret_key);
+        let (xonly_pk, _parity) = keypair.x_only_public_key();
+        let address = bitcoin::Address::p2tr(&secp, xonly_pk, None, network);
+        
+        self.wallet_state = WalletState::ExternalKey {
+            private_key,
+            address: address.to_string(),
+        };
+        
+        Ok(())
+    }
+
+    /// Load external private key from hex string for signing
+    pub fn load_external_key_from_hex(&mut self, key_hex: &str) -> Result<()> {
+        let private_key = key_hex.trim().to_string();
+        let network = self.get_network();
+        let secp = Secp256k1::new();
+        
+        let secret_key = bitcoin::secp256k1::SecretKey::from_str(&private_key)
+            .map_err(|e| AlkanesError::Wallet(format!("Invalid private key: {}", e)))?;
+        
+        let keypair = bitcoin::secp256k1::Keypair::from_secret_key(&secp, &secret_key);
+        let (xonly_pk, _parity) = keypair.x_only_public_key();
+        let address = bitcoin::Address::p2tr(&secp, xonly_pk, None, network);
+        
+        self.wallet_state = WalletState::ExternalKey {
+            private_key,
+            address: address.to_string(),
+        };
+        
+        Ok(())
+    }
+
+    /// Load external private key from file for signing
+    #[cfg(feature = "std")]
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn load_external_key_from_file(&mut self, key_file_path: &str) -> Result<()> {
+        let private_key = std::fs::read_to_string(key_file_path)
+            .map_err(|e| AlkanesError::Storage(format!("Failed to read key file: {}", e)))?
+            .trim()
+            .to_string();
+        self.load_external_key_from_hex(&private_key)
+    }
+
+    #[cfg(feature = "std")]
+    pub async fn initialize(&mut self) -> Result<()> {
+        log::debug!("[ConcreteProvider] initialize() called");
+        // Load wallet if path is set
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(wallet_path) = &self.wallet_path {
+            log::debug!("[ConcreteProvider] Initializing wallet from path: {:?}", wallet_path);
+            log::debug!("[ConcreteProvider] Passphrase is_some: {}", self.passphrase.is_some());
+            if wallet_path.exists() {
+                if let Some(passphrase) = self.passphrase.clone() {
+                    log::debug!("[ConcreteProvider] Passphrase provided, unlocking wallet");
+                    self.unlock_wallet(&passphrase).await?;
+                    log::debug!("[ConcreteProvider] Wallet unlocked successfully");
+                } else {
+                    log::debug!("[ConcreteProvider] No passphrase provided, loading wallet as locked");
+                    // Load as locked
+                    let keystore_bytes = std::fs::read(wallet_path)
+                        .map_err(|e| AlkanesError::Storage(format!("Failed to read wallet: {}", e)))?;
+                    let keystore: crate::keystore::Keystore = serde_json::from_slice(&keystore_bytes)
+                        .map_err(|e| AlkanesError::Storage(format!("Failed to parse keystore: {}", e)))?;
+                    self.wallet_state = WalletState::Locked(keystore);
+                }
+            } else {
+                log::debug!("[ConcreteProvider] Wallet file does not exist: {:?}", wallet_path);
+            }
+        } else {
+            log::debug!("[ConcreteProvider] No wallet path set");
+        }
+        Ok(())
+    }
+
+    #[cfg(feature = "std")]
+    pub fn get_wallet_state(&self) -> &WalletState {
+        &self.wallet_state
+    }
+
+    #[cfg(feature = "std")]
+    pub async fn unlock_wallet(&mut self, passphrase: &str) -> Result<()> {
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(wallet_path) = &self.wallet_path {
+            if !wallet_path.exists() {
+                return Err(AlkanesError::Wallet("Wallet file does not exist".to_string()));
+            }
+            
+            let keystore_bytes = std::fs::read(wallet_path)
+                .map_err(|e| AlkanesError::Storage(format!("Failed to read wallet: {}", e)))?;
+            
+            let keystore: crate::keystore::Keystore = serde_json::from_slice(&keystore_bytes)
+                .map_err(|e| AlkanesError::Storage(format!("Failed to parse keystore: {}", e)))?;
+            
+            let mnemonic = keystore.decrypt_mnemonic(passphrase)
+                .map_err(|e| AlkanesError::Wallet(format!("Failed to decrypt wallet: {}", e)))?;
+            
+            self.wallet_state = WalletState::Unlocked {
+                keystore,
+                mnemonic,
+            };
+            self.passphrase = Some(passphrase.to_string());
+            
+            return Ok(());
+        }
+        
+        Err(AlkanesError::Wallet("No wallet path set".to_string()))
+    }
+
+    #[cfg(feature = "std")]
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn get_wallet_path(&self) -> Option<&std::path::PathBuf> {
+        self.wallet_path.as_ref()
+    }
+
+    #[cfg(feature = "std")]
+    #[cfg(target_arch = "wasm32")]
+    pub fn get_wallet_path(&self) -> Option<&String> {
+        self.wallet_path.as_ref()
+    }
+
+    /// A helper function to select coins for a transaction.
+    fn select_coins(&self, utxos: Vec<UtxoInfo>, target_amount: Amount) -> Result<(Vec<UtxoInfo>, Amount)> {
+        let mut selected_utxos = Vec::new();
+        let mut total_input_amount = Amount::ZERO;
+
+        for utxo in utxos {
+            if total_input_amount >= target_amount {
+                break;
+            }
+            if !utxo.frozen {
+                total_input_amount += Amount::from_sat(utxo.amount);
+                selected_utxos.push(utxo);
+            }
+        }
+
+        if total_input_amount < target_amount {
+            return Err(AlkanesError::Wallet("Insufficient funds".to_string()));
+        }
+
+        Ok((selected_utxos, total_input_amount))
+    }
+
+    /// A helper function to estimate the virtual size of a transaction.
+    /// 
+    /// For P2TR (Taproot) inputs, the witness discount significantly affects vSize:
+    /// - Non-witness data (full weight): 41 bytes × 4 = 164 WU
+    ///   * Outpoint (txid + vout): 36 bytes
+    ///   * Sequence: 4 bytes
+    ///   * Script length: 1 byte (0x00 for P2TR)
+    /// - Witness data (1x weight): ~65 bytes × 1 = 65 WU
+    ///   * Witness count: 1 byte
+    ///   * Signature: 64 bytes (Schnorr)
+    /// - Total weight per input: 164 + 65 = 229 WU
+    /// - vSize per input: 229 / 4 = 57.25 vbytes (rounds to 58)
+    fn estimate_tx_vsize(&self, tx: &Transaction, num_inputs: usize) -> u64 {
+        // Transaction overhead (version, locktime, counts)
+        let base_vsize = 10;
+        
+        // P2TR input: 229 WU = 57.25 vbytes (we use 58 to be conservative)
+        let input_weight = 229;
+        let input_vsize = (input_weight + 3) / 4; // = 58 vbytes
+        
+        // P2TR output: 43 bytes (no witness discount for outputs)
+        let output_vsize = 43;
+        
+        // Witness flag overhead: 2 bytes for witness marker/flag = 0.5 vbytes
+        let witness_overhead = 1;
+        
+        base_vsize + 
+        (num_inputs as u64 * input_vsize) + 
+        (tx.output.len() as u64 * output_vsize) +
+        witness_overhead
+    }
+
+    /// A helper function to find address info from the keystore.
+    fn find_address_info(keystore: &Keystore, address: &Address, network: Network) -> Result<AddressInfo> {
+        // Search across all address types since UTXOs can come from any address type
+        let script_types = ["p2tr", "p2wpkh", "p2sh", "p2pkh"];
+
+        for script_type in script_types {
+            for i in 0..1000 { // A reasonable search limit
+                for chain in 0..=1 { // Receive (0) and change (1) chains
+                    if let Ok(addrs) = keystore.get_addresses(network, script_type, chain, i, 1) {
+                        if let Some(info) = addrs.first() {
+                            if info.address == address.to_string() {
+                                return Ok(info.clone());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Err(AlkanesError::Wallet(format!("Address {} not found in keystore", address)))
+    }
+
+    /// Helper method to call Titan REST API
+    #[cfg(feature = "native-deps")]
+    async fn call_titan_rest_api(&self, path: &str) -> Result<serde_json::Value> {
+        if let Some(titan_url) = &self.rpc_config.titan_api_url {
+            let url = format!("{}{}", titan_url.trim_end_matches('/'), path);
+            log::debug!("Calling Titan REST API: {}", url);
+            
+            let response = self.http_client
+                .get(&url)
+                .timeout(std::time::Duration::from_secs(self.rpc_config.timeout_seconds))
+                .send()
+                .await
+                .map_err(|e| AlkanesError::Network(format!("Titan API request failed: {}", e)))?;
+            
+            if !response.status().is_success() {
+                return Err(AlkanesError::Network(format!(
+                    "Titan API returned error status: {}",
+                    response.status()
+                )));
+            }
+            
+            let json = response.json().await
+                .map_err(|e| AlkanesError::Serialization(format!("Failed to parse Titan API response: {}", e)))?;
+            
+            log::debug!("Titan REST API response: {:?}", json);
+            Ok(json)
+        } else {
+            Err(AlkanesError::Configuration("titan_api_url not configured".to_string()))
+        }
+    }
+
+    #[cfg(not(feature = "native-deps"))]
+    async fn call_titan_rest_api(&self, _path: &str) -> Result<serde_json::Value> {
+        Err(AlkanesError::NotImplemented("Titan API not available without native-deps".to_string()))
+    }
+
+    /// Helper method to POST to Titan REST API
+    #[cfg(feature = "native-deps")]
+    async fn post_titan_rest_api(&self, path: &str, body: serde_json::Value) -> Result<serde_json::Value> {
+        if let Some(titan_url) = &self.rpc_config.titan_api_url {
+            let url = format!("{}{}", titan_url.trim_end_matches('/'), path);
+            log::debug!("Calling Titan REST API (POST): {}", url);
+            
+            let response = self.http_client
+                .post(&url)
+                .json(&body)
+                .timeout(std::time::Duration::from_secs(self.rpc_config.timeout_seconds))
+                .send()
+                .await
+                .map_err(|e| AlkanesError::Network(format!("Titan API request failed: {}", e)))?;
+            
+            if !response.status().is_success() {
+                return Err(AlkanesError::Network(format!(
+                    "Titan API returned error status: {}",
+                    response.status()
+                )));
+            }
+            
+            let json = response.json().await
+                .map_err(|e| AlkanesError::Serialization(format!("Failed to parse Titan API response: {}", e)))?;
+            
+            log::debug!("Titan REST API response: {:?}", json);
+            Ok(json)
+        } else {
+            Err(AlkanesError::Configuration("titan_api_url not configured".to_string()))
+        }
+    }
+
+    #[cfg(not(feature = "native-deps"))]
+    async fn post_titan_rest_api(&self, _path: &str, _body: serde_json::Value) -> Result<serde_json::Value> {
+        Err(AlkanesError::NotImplemented("Titan API not available without native-deps".to_string()))
+    }
+}
+
+/// Translate a BRC20-Prog eth_* method to a qubitcoin secondaryview call for brc20shrew.
+///
+/// In qubitcoin mode (no explicit --brc20-prog-rpc-url), BRC20-prog queries are routed
+/// through the brc20shrew tertiary indexer's view functions:
+///   eth_call → secondaryview ["brc20shrew", "call", hex_encoded_json]
+///   eth_blockNumber → secondaryview ["brc20shrew", "getblockheight", ""]
+///   eth_chainId → returns hardcoded chain ID
+fn translate_brc20_prog_for_qubitcoin(method: &str, params: &serde_json::Value) -> Option<(String, serde_json::Value)> {
+    if !method.starts_with("eth_") {
+        return None;
+    }
+
+    match method {
+        "eth_call" => {
+            // Extract the call object from params[0]
+            let call_obj = params.get(0)?;
+            let to_hex = call_obj.get("to").and_then(|v| v.as_str()).unwrap_or("");
+            let data_hex = call_obj.get("data").and_then(|v| v.as_str()).unwrap_or("");
+
+            // Convert 0x-prefixed hex address to raw bytes for CallRequest
+            let to_bytes: Vec<u8> = hex::decode(to_hex.strip_prefix("0x").unwrap_or(to_hex)).unwrap_or_default();
+            let data_bytes: Vec<u8> = hex::decode(data_hex.strip_prefix("0x").unwrap_or(data_hex)).unwrap_or_default();
+
+            // Build the JSON CallRequest that brc20shrew expects
+            let call_request = serde_json::json!({
+                "to": to_bytes,
+                "data": data_bytes,
+            });
+            let request_json = serde_json::to_string(&call_request).unwrap_or_default();
+            let hex_input = hex::encode(request_json.as_bytes());
+
+            Some(("secondaryview".to_string(), serde_json::json!(["brc20shrew", "call", hex_input])))
+        }
+        "eth_blockNumber" => {
+            let hex_input = hex::encode("{}".as_bytes());
+            Some(("secondaryview".to_string(), serde_json::json!(["brc20shrew", "getblockheight", hex_input])))
+        }
+        "eth_chainId" => {
+            // BRC20-prog chain ID: 0x4252433230 ("BRC20" in ASCII)
+            Some(("secondaryview".to_string(), serde_json::json!(["brc20shrew", "getblockheight", ""])))
+        }
+        "eth_getBalance" => {
+            let address = params.get(0).and_then(|v| v.as_str()).unwrap_or("");
+            let request = serde_json::json!({ "address": address });
+            let hex_input = hex::encode(serde_json::to_string(&request).unwrap_or_default().as_bytes());
+            Some(("secondaryview".to_string(), serde_json::json!(["brc20shrew", "getbalance", hex_input])))
+        }
+        "eth_getCode" | "eth_getTransactionCount" | "eth_getTransactionReceipt"
+        | "eth_getTransactionByHash" | "eth_getBlockByNumber" | "eth_estimateGas" => {
+            // These methods are less critical for initial integration.
+            // Return None to let them fall through to the external RPC (if configured)
+            // or fail with a clear error.
+            None
+        }
+        _ => None,
+    }
+}
+
+/// Translate an ord JSON-RPC method to a qubitcoin secondaryview call for brc20shrew.
+/// Returns (method, params, is_json_response) if translation applies.
+fn translate_ord_for_qubitcoin(method: &str, params: &serde_json::Value) -> Option<(String, serde_json::Value)> {
+    if !method.starts_with("ord_") {
+        return None;
+    }
+    let view_fn = match method {
+        "ord_output" => "getutxo",
+        "ord_inscription" => "getinscription",
+        "ord_inscriptions" => "getinscriptions",
+        "ord_children" => "getchildren",
+        "ord_parents" => "getparents",
+        "ord_content" => "getcontent",
+        "ord_sat" => "getsat",
+        "ord_tx" => "gettransaction",
+        "ord_block" => "getblockinfo",
+        "ord_blockcount" => "getblockheight",
+        _ => return None,
+    };
+
+    // Build the JSON request that brc20shrew expects
+    let first_param = params.as_array()
+        .and_then(|a| a.first())
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    let json_request = match method {
+        "ord_output" => {
+            // Input: "txid:vout" → {"outpoint": {"txid": "<hex>", "vout": N}}
+            let parts: Vec<&str> = first_param.splitn(2, ':').collect();
+            if parts.len() == 2 {
+                let txid = parts[0];
+                let vout: u32 = parts[1].parse().unwrap_or(0);
+                // brc20shrew expects txid as bytes (vec), but serde_json serializes as array
+                let txid_bytes: Vec<u8> = (0..txid.len()).step_by(2)
+                    .filter_map(|i| u8::from_str_radix(&txid[i..i+2], 16).ok())
+                    .collect();
+                serde_json::json!({"outpoint": {"txid": txid_bytes, "vout": vout}})
+            } else {
+                serde_json::json!({})
+            }
+        }
+        "ord_inscription" | "ord_content" => {
+            // Input: inscription_id → {"id": "<inscription_id>"}
+            serde_json::json!({"id": first_param})
+        }
+        "ord_inscriptions" => {
+            // Input: could be various filters
+            serde_json::json!({"query": first_param})
+        }
+        "ord_sat" => {
+            serde_json::json!({"sat": first_param})
+        }
+        "ord_tx" => {
+            serde_json::json!({"txid": first_param})
+        }
+        "ord_block" | "ord_blockcount" => {
+            serde_json::json!({"height": first_param})
+        }
+        _ => serde_json::json!({}),
+    };
+
+    let input_hex = hex::encode(serde_json::to_vec(&json_request).unwrap_or_default());
+    Some(("secondaryview".to_string(), serde_json::json!(["brc20-prog", view_fn, input_hex])))
+}
+
+/// Translate an esplora JSON-RPC method to a qubitcoin secondaryview call.
+/// Returns (method, params) if translation applies, None otherwise.
+fn translate_esplora_for_qubitcoin(method: &str, params: &serde_json::Value) -> Option<(String, serde_json::Value)> {
+        if !method.starts_with("esplora_") {
+            return None;
+        }
+        // Map esplora JSON-RPC method names to esplorashrew view function names
+        let view_fn = match method {
+            "esplora_tx" => "tx",
+            "esplora_tx::hex" => "txhex",
+            "esplora_tx::raw" => "txraw",
+            "esplora_tx::status" => "txstatus",
+            "esplora_tx::outspend" => "txoutspend",
+            "esplora_tx::outspends" => "txoutspend",
+            "esplora_block" => "block",
+            "esplora_block::status" => "blockstatus",
+            "esplora_block::txids" => "blocktxids",
+            "esplora_block::header" => "blockheader",
+            "esplora_block::txid" => "blocktxids",
+            "esplora_block-height" => "blockheight",
+            "esplora_blocks:tip:height" => "tipheight",
+            "esplora_blocks:tip:hash" => "tiphash",
+            "esplora_address::utxo" => "utxosbyscripthash",
+            "esplora_broadcast" => return None, // broadcast goes to bitcoind
+            _ => return None,
+        };
+
+        // Build the input string from params (esplorashrew expects a plain string input)
+        let input_str = if let Some(arr) = params.as_array() {
+            arr.iter()
+                .filter_map(|v| v.as_str().or_else(|| v.as_u64().map(|_| "")).or(Some("")))
+                .map(|s| {
+                    if let Some(v) = params.as_array().and_then(|a| a.iter().find(|x| x.is_number())) {
+                        if s.is_empty() { return v.to_string(); }
+                    }
+                    s.to_string()
+                })
+                .collect::<Vec<_>>()
+                .join("/")
+        } else {
+            String::new()
+        };
+
+        let first_param = params.as_array()
+            .and_then(|a| a.first())
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        // For address::utxo, convert bech32 address to script hash
+        let input_hex = if view_fn == "utxosbyscripthash" {
+            // Decode bech32 address → scriptPubKey → SHA256 hash
+            if let Ok((_, witness_version, program)) = bech32::segwit::decode(first_param) {
+                use sha2::{Sha256, Digest};
+                let ver_op: u8 = match witness_version.to_u8() { 0 => 0x00, n => 0x50 + n };
+                let mut script = Vec::with_capacity(2 + program.len());
+                script.push(ver_op);
+                script.push(program.len() as u8);
+                script.extend_from_slice(&program);
+                let hash = Sha256::digest(&script);
+                // esplorashrew expects the script hash in reversed (display) hex order
+                let reversed: Vec<u8> = hash.iter().rev().cloned().collect();
+                hex::encode(hex::encode(reversed).as_bytes())
+            } else {
+                hex::encode(first_param.as_bytes())
+            }
+        } else {
+            // For other views, pass the first param as-is (hex-encoded string)
+            hex::encode(first_param.as_bytes())
+        };
+
+    Some(("secondaryview".to_string(), serde_json::json!(["esplora", view_fn, input_hex])))
+}
+
+#[async_trait(?Send)]
+impl JsonRpcProvider for ConcreteProvider {
+    async fn call(
+        &self,
+        url: &str,
+        method: &str,
+        params: serde_json::Value,
+        id: u64,
+    ) -> Result<serde_json::Value> {
+        // In qubitcoin mode, translate methods to qubitcoind's secondary indexer interface
+        #[allow(unused_mut)]
+        let mut is_esplora_view = false;
+        #[allow(unused_mut)]
+        let mut is_brc20_prog_view = false;
+        let (url, method, params) = if self.rpc_config.is_qubitcoin_mode() {
+            let qbc_url = self.rpc_config.qubitcoin_rpc_url.as_deref().unwrap();
+            if let Some((new_method, new_params)) = translate_esplora_for_qubitcoin(method, &params) {
+                log::info!("Qubitcoin translate: {} -> {}", method, new_method);
+                is_esplora_view = true;
+                (qbc_url, new_method, new_params)
+            } else if let Some((new_method, new_params)) = translate_ord_for_qubitcoin(method, &params) {
+                log::info!("Qubitcoin translate ord: {} -> {}", method, new_method);
+                is_esplora_view = true; // reuse the hex-decode path
+                (qbc_url, new_method, new_params)
+            } else if self.rpc_config.brc20_prog_rpc_url.is_none()
+                && method.starts_with("eth_")
+            {
+                if let Some((new_method, new_params)) = translate_brc20_prog_for_qubitcoin(method, &params) {
+                    log::info!("Qubitcoin translate brc20-prog: {} -> {}", method, new_method);
+                    is_brc20_prog_view = true;
+                    (qbc_url, new_method, new_params)
+                } else {
+                    (url, method.to_string(), params)
+                }
+            } else if method.starts_with("sandshrew_") || method.starts_with("btc_")
+                || matches!(method, "sendrawtransaction" | "sendrawtransactions"
+                    | "getblockcount" | "getblockhash" | "getblock" | "getrawtransaction"
+                    | "getbestblockhash" | "generatetoaddress" | "getblockchaininfo"
+                    | "gettxout" | "getmempoolinfo" | "getrawmempool") {
+                let btc_method = method
+                    .strip_prefix("sandshrew_").or_else(|| method.strip_prefix("btc_"))
+                    .unwrap_or(method);
+                log::info!("Qubitcoin bitcoind proxy: {} -> {}", method, btc_method);
+                (qbc_url, btc_method.to_string(), params)
+            } else {
+                (url, method.to_string(), params)
+            }
+        } else {
+            (url, method.to_string(), params)
+        };
+        let method = method.as_str();
+
+        // For esplora views in qubitcoin mode, secondaryview returns "0x<hex>"
+        // which contains JSON. We need to decode it before returning.
+        let result = self._call_inner(url, method, params, id).await;
+        if is_esplora_view {
+            return result.map(|v| {
+                if let Some(hex_str) = v.as_str().and_then(|s| s.strip_prefix("0x")) {
+                    match hex::decode(hex_str) {
+                        Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or(v),
+                        Err(_) => v,
+                    }
+                } else {
+                    v
+                }
+            });
+        }
+        if is_brc20_prog_view {
+            // secondaryview returns "0x<hex>" where hex decodes to JSON CallResponse:
+            // {"result": [byte_array], "success": bool, "error": "..."}
+            // eth_call callers expect "0x<hex_return_data>" so we extract result bytes.
+            return result.map(|v| {
+                if let Some(hex_str) = v.as_str().and_then(|s| s.strip_prefix("0x")) {
+                    match hex::decode(hex_str) {
+                        Ok(bytes) => {
+                            if let Ok(call_resp) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+                                // Extract "result" field (byte array) and re-encode as hex
+                                if let Some(result_arr) = call_resp.get("result").and_then(|v| v.as_array()) {
+                                    let result_bytes: Vec<u8> = result_arr.iter()
+                                        .filter_map(|b| b.as_u64().map(|n| n as u8))
+                                        .collect();
+                                    return serde_json::json!(format!("0x{}", hex::encode(&result_bytes)));
+                                }
+                                // If result is a string, pass through
+                                if let Some(s) = call_resp.get("result").and_then(|v| v.as_str()) {
+                                    return serde_json::json!(s);
+                                }
+                            }
+                            v
+                        }
+                        Err(_) => v,
+                    }
+                } else {
+                    v
+                }
+            });
+        }
+        result
+    }
+
+    // _call_inner is defined on ConcreteProvider (below the trait impl)
+}
+
+impl ConcreteProvider {
+    async fn _call_inner(
+        &self,
+        url: &str,
+        method: &str,
+        params: serde_json::Value,
+        id: u64,
+    ) -> Result<serde_json::Value> {
+        // Info logging for JsonRpcProvider call - logs all RPC payloads sent
+        log::info!(
+            "JsonRpcProvider::call -> URL: {}, Method: {}, Params: {}",
+            url,
+            method,
+            serde_json::to_string_pretty(&params).unwrap_or_else(|_| "INVALID_JSON".to_string()),
+        );
+        #[cfg(feature = "native-deps")]
+        {
+            use crate::rpc::RpcRequest;
+            let request = RpcRequest::new(method, params, id);
+
+            let mut parsed_url = Url::parse(url)
+                .map_err(|e| AlkanesError::InvalidParameters(format!("Invalid RPC URL in call: {e}")))?;
+
+            let username = parsed_url.username().to_string();
+            let password = parsed_url.password().map(|p| p.to_string());
+
+            // Remove user/pass from the URL before sending
+            parsed_url.set_username("").map_err(|_| AlkanesError::InvalidParameters("Failed to strip username".into()))?;
+            parsed_url.set_password(None).map_err(|_| AlkanesError::InvalidParameters("Failed to strip password".into()))?;
+
+            let mut request_builder = self.http_client.post(parsed_url.clone());
+
+            if !username.is_empty() {
+                request_builder = request_builder.basic_auth(username, password);
+            }
+
+            // Add X-Subfrost-Api-Key header if the URL is a subfrost.io domain
+            if let Some(host) = parsed_url.host_str() {
+                if host.ends_with(".subfrost.io") || host == "subfrost.io" {
+                    if let Some(api_key) = self.rpc_config.get_subfrost_api_key() {
+                        log::debug!("Adding X-Subfrost-Api-Key header for {}", host);
+                        request_builder = request_builder.header("X-Subfrost-Api-Key", api_key);
+                    }
+                }
+            }
+
+            // Add custom JSON-RPC headers from --jsonrpc-header flags
+            for (header_name, header_value) in self.rpc_config.get_jsonrpc_headers() {
+                log::debug!("Adding custom header: {}: {}", header_name, header_value);
+                request_builder = request_builder.header(&header_name, &header_value);
+            }
+
+            log::debug!("Request builder: {:?}", request_builder);
+            let response = request_builder
+                .json(&request)
+                .send()
+                .await
+                .map_err(|e| AlkanesError::Network(e.to_string()))?;
+            let response_text = response.text().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            
+            log::info!("JsonRpcProvider::call <- Raw RPC response: {response_text}");
+            
+            if response_text.starts_with("Json deserialize error") {
+                return Err(AlkanesError::RpcError(format!("Server-side JSON deserialization error: {}", response_text)));
+            }
+
+            // First, try to parse as a standard RpcResponse
+            // A more robust parsing logic that handles different RPC response structures.
+            if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(&response_text) {
+                // Check for a standard JSON-RPC error object.
+                if let Some(error_obj) = json_value.get("error") {
+                    if !error_obj.is_null() {
+                        let code = error_obj.get("code").and_then(|c| c.as_i64()).unwrap_or(0);
+                        let message = error_obj.get("message").and_then(|m| m.as_str()).unwrap_or("Unknown RPC error");
+                        return Err(AlkanesError::RpcError(format!("Code {}: {}", code, message)));
+                    }
+                }
+
+                // Check for a standard JSON-RPC result.
+                if let Some(result) = json_value.get("result") {
+                    return Ok(result.clone());
+                }
+                
+                // Fallback for non-standard responses that are just the result value.
+                return Ok(json_value);
+            }
+
+            // If that fails, try to parse as a raw JsonValue (for non-compliant servers)
+            if let Ok(mut raw_result) = serde_json::from_str::<serde_json::Value>(&response_text) {
+                // Handle cases where the actual result is nested inside a "result" field
+                if let Some(obj) = raw_result.as_object_mut() {
+                    if obj.contains_key("result") {
+                        if let Some(val) = obj.remove("result") {
+                            return Ok(val);
+                        }
+                    }
+                }
+                return Ok(raw_result);
+            }
+
+            // If that also fails, check if the response is just a plain string
+            // This is needed for some Esplora endpoints that return plain text
+            if !response_text.starts_with('{') && !response_text.starts_with('[') {
+                // It's likely a plain string, wrap it in a JsonValue
+                return Ok(serde_json::Value::String(response_text));
+            }
+
+            // If all attempts fail, return a generic error
+            Err(AlkanesError::Network(format!("Failed to decode RPC response: {response_text}")))
+        }
+        #[cfg(not(feature = "native-deps"))]
+        {
+            let _ = (url, method, params, id); // Suppress unused parameter warnings
+            Err(AlkanesError::NotImplemented("HTTP requests not available in WASM environment".to_string()))
+        }
+    }
+    
+    }
+
+#[async_trait(?Send)]
+impl StorageProvider for ConcreteProvider {
+    async fn read(&self, _key: &str) -> Result<Vec<u8>> {
+        unimplemented!()
+    }
+    
+    async fn write(&self, _key: &str, _data: &[u8]) -> Result<()> {
+        unimplemented!()
+    }
+    
+    async fn exists(&self, _key: &str) -> Result<bool> {
+        unimplemented!()
+    }
+    
+    async fn delete(&self, _key: &str) -> Result<()> {
+        unimplemented!()
+    }
+    
+    async fn list_keys(&self, _prefix: &str) -> Result<Vec<String>> {
+        unimplemented!()
+    }
+    
+    fn storage_type(&self) -> &'static str {
+        "placeholder"
+    }
+    }
+
+#[async_trait(?Send)]
+impl NetworkProvider for ConcreteProvider {
+    async fn get(&self, _url: &str) -> Result<Vec<u8>> {
+        unimplemented!()
+    }
+    
+    async fn post(&self, _url: &str, _body: &[u8], _content_type: &str) -> Result<Vec<u8>> {
+        unimplemented!()
+    }
+    
+    async fn is_reachable(&self, _url: &str) -> bool {
+        unimplemented!()
+    }
+    }
+
+#[async_trait(?Send)]
+impl CryptoProvider for ConcreteProvider {
+    fn random_bytes(&self, _len: usize) -> Result<Vec<u8>> {
+        unimplemented!()
+    }
+    
+    fn sha256(&self, _data: &[u8]) -> Result<[u8; 32]> {
+        unimplemented!()
+    }
+    
+    fn sha3_256(&self, _data: &[u8]) -> Result<[u8; 32]> {
+        unimplemented!()
+    }
+    
+    async fn encrypt_aes_gcm(&self, _data: &[u8], _key: &[u8], _nonce: &[u8]) -> Result<Vec<u8>> {
+        unimplemented!()
+    }
+    
+    async fn decrypt_aes_gcm(&self, _data: &[u8], _key: &[u8], _nonce: &[u8]) -> Result<Vec<u8>> {
+        unimplemented!()
+    }
+    
+    async fn pbkdf2_derive(&self, _password: &[u8], _salt: &[u8], _iterations: u32, _key_len: usize) -> Result<Vec<u8>> {
+        unimplemented!()
+    }
+    }
+
+
+
+#[async_trait(?Send)]
+impl TimeProvider for ConcreteProvider {
+    fn now_secs(&self) -> u64 {
+        unimplemented!()
+    }
+    
+    fn now_millis(&self) -> u64 {
+        unimplemented!()
+    }
+    
+    #[cfg(feature = "native-deps")]
+    async fn sleep_ms(&self, ms: u64) {
+        tokio::time::sleep(core::time::Duration::from_millis(ms)).await;
+    }
+
+    #[cfg(not(feature = "native-deps"))]
+    async fn sleep_ms(&self, ms: u64) {
+        #[cfg(target_arch = "wasm32")]
+        {
+            gloo_timers::future::sleep(core::time::Duration::from_millis(ms)).await;
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let _ = ms;
+            unimplemented!("sleep_ms is not implemented for non-wasm targets without native-deps feature")
+        }
+    }
+    }
+
+impl LogProvider for ConcreteProvider {
+    fn debug(&self, message: &str) {
+        log::debug!("{}", message);
+    }
+    
+    fn info(&self, message: &str) {
+        log::info!("{}", message);
+    }
+    
+    fn warn(&self, message: &str) {
+        log::warn!("{}", message);
+    }
+    
+    fn error(&self, message: &str) {
+        log::error!("{}", message);
+    }
+    }
+
+#[async_trait(?Send)]
+impl WalletProvider for ConcreteProvider {
+    async fn create_wallet(&mut self, config: WalletConfig, mnemonic: Option<String>, passphrase: Option<String>) -> Result<WalletInfo> {
+        let mnemonic = if let Some(m) = mnemonic {
+            Mnemonic::parse_in(bip39::Language::English, &m).map_err(|e| AlkanesError::Wallet(format!("Invalid mnemonic: {e}")))?
+        } else {
+            Mnemonic::from_entropy(&rand::random::<[u8; 32]>()).map_err(|e| AlkanesError::Wallet(format!("Failed to generate mnemonic: {e}")))?
+        };
+
+        let pass = passphrase.clone().unwrap_or_default();
+        let keystore = Keystore::new(&mnemonic, config.network, &pass, None)?;
+
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(path) = &self.wallet_path {
+            let timestamp = chrono::Utc::now().format("%Y%m%d%H%M%S").to_string();
+            let original_filename = path.file_stem().and_then(|s| s.to_str()).unwrap_or("keystore");
+            let extension = path.extension().and_then(|s| s.to_str()).unwrap_or("json");
+            let new_filename = format!("{}-{}.{}", original_filename, timestamp, extension);
+            let new_path = path.with_file_name(new_filename);
+            keystore.save_to_file(&new_path)?;
+        }
+
+        let addresses = keystore.get_addresses(config.network, "p2tr", 0, 0, 1)?;
+        let address = addresses.first().map(|a| a.address.clone()).unwrap_or_default();
+        
+        self.wallet_state = WalletState::Unlocked {
+            keystore,
+            mnemonic: mnemonic.to_string(),
+        };
+        self.passphrase = passphrase;
+
+        Ok(WalletInfo {
+            address,
+            network: config.network,
+            mnemonic: Some(mnemonic.to_string()),
+        })
+    }
+    
+    async fn load_wallet(&mut self, config: WalletConfig, passphrase: Option<String>) -> Result<WalletInfo> {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let path = PathBuf::from(config.wallet_path);
+            let keystore = Keystore::from_file(&path)?;
+            let pass = passphrase.as_deref().ok_or_else(|| AlkanesError::Wallet("Passphrase required to load wallet".to_string()))?;
+            let mnemonic = keystore.decrypt_mnemonic(pass)?;
+            let addresses = keystore.get_addresses(config.network, "p2tr", 0, 0, 1)?;
+            let address = addresses.first().map(|a| a.address.clone()).unwrap_or_default();
+
+            self.wallet_state = WalletState::Unlocked {
+                keystore,
+                mnemonic: mnemonic.clone(),
+            };
+            self.passphrase = passphrase;
+
+            Ok(WalletInfo {
+                address,
+                network: config.network,
+                mnemonic: Some(mnemonic),
+            })
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = (config, passphrase);
+            Err(AlkanesError::NotImplemented("File system not available in wasm".to_string()))
+        }
+    }
+    
+    async fn get_balance(&self, addresses: Option<Vec<String>>) -> Result<WalletBalance> {
+        log::info!("[WalletProvider] Calling get_balance for addresses: {:?}", addresses);
+
+        // Use the same UTXO scanning approach as get_utxos to compute balance
+        let utxos = self.get_utxos(false, addresses).await?;
+
+        let mut confirmed: u64 = 0;
+        let mut pending: u64 = 0;
+
+        for (_outpoint, info) in &utxos {
+            if info.confirmations > 0 {
+                confirmed += info.amount;
+            } else {
+                pending += info.amount;
+            }
+        }
+
+        log::info!("[WalletProvider] Balance from {} UTXOs: confirmed={}, pending={}", utxos.len(), confirmed, pending);
+
+        Ok(WalletBalance {
+            confirmed,
+            pending: pending as i64,
+        })
+    }
+    
+    async fn get_address(&self) -> Result<String> {
+        log::info!("[WalletProvider] Calling get_address");
+        match &self.wallet_state {
+            WalletState::AddressOnly { address, .. } => Ok(address.clone()),
+            WalletState::ExternalKey { address, .. } => Ok(address.clone()),
+            _ => {
+                let addresses = self.get_addresses(1).await?;
+                if let Some(address_info) = addresses.first() {
+                    Ok(address_info.address.clone())
+                } else {
+                    Err(AlkanesError::Wallet("No addresses found in wallet".to_string()))
+                }
+            }
+        }
+    }
+    
+    async fn get_addresses(&self, count: u32) -> Result<Vec<AddressInfo>> {
+        log::info!("[WalletProvider] Calling get_addresses with count: {}", count);
+        match &self.wallet_state {
+            WalletState::AddressOnly { address, script_type } => {
+                Ok(vec![AddressInfo {
+                    address: address.clone(),
+                    index: 0,
+                    derivation_path: "external".to_string(),
+                    script_type: script_type.clone(),
+                    used: false,
+                }])
+            },
+            WalletState::ExternalKey { address, .. } => {
+                Ok(vec![AddressInfo {
+                    address: address.clone(),
+                    index: 0,
+                    derivation_path: "external".to_string(),
+                    script_type: "p2tr".to_string(),
+                    used: false,
+                }])
+            },
+            _ => {
+                let keystore = self.get_keystore()?;
+                let addresses = keystore.get_addresses(self.get_network(), "p2tr", 0, 0, count)?;
+                Ok(addresses)
+            }
+        }
+    }
+    
+    async fn send(&mut self, params: SendParams) -> Result<String> {
+        log::info!("[WalletProvider] Calling send with params: {:?}", params);
+        let use_rebar = params.use_rebar;
+        let rebar_tier = params.rebar_tier;
+
+        // 1. Create the transaction
+        let tx_hex = self.create_transaction(params).await?;
+
+        // In address-only mode, just return the unsigned transaction hex
+        if matches!(self.wallet_state, WalletState::AddressOnly { .. }) {
+            log::info!("[WalletProvider] Address-only mode: returning unsigned transaction hex");
+            return Ok(tx_hex);
+        }
+
+        // 2. Sign the transaction
+        let signed_tx_hex = self.sign_transaction(tx_hex).await?;
+
+        // 3. Broadcast the transaction
+        // Only use Rebar Shield if explicitly requested AND on mainnet
+        let network = crate::network::get_network().network;
+        if use_rebar && network == bitcoin::Network::Bitcoin {
+            log::info!("[WalletProvider] Using Rebar Shield for broadcast (explicitly requested, tier {})", rebar_tier);
+            rebar::submit_transaction(&signed_tx_hex).await
+                .map_err(|e| AlkanesError::Other(format!("Rebar Shield error: {}", e)))
+        } else {
+            self.broadcast_transaction(signed_tx_hex).await
+        }
+    }
+    
+    async fn get_utxos(&self, _include_frozen: bool, addresses: Option<Vec<String>>) -> Result<Vec<(OutPoint, UtxoInfo)>> {
+        log::info!("[WalletProvider] Calling get_utxos for addresses: {:?}", addresses);
+
+        // If no addresses provided, get addresses from wallet state or keystore
+        let addresses_to_check = if addresses.is_none() || addresses.as_ref().unwrap().is_empty() {
+            match &self.wallet_state {
+                WalletState::AddressOnly { address, .. } | WalletState::ExternalKey { address, .. } => {
+                    vec![address.clone()]
+                }
+                _ => {
+                    // For keystore wallets, query addresses from the keystore
+                    // Get addresses for multiple script types that the wallet supports
+                    let mut all_addresses = Vec::new();
+
+                    if let Ok(keystore) = self.get_keystore() {
+                        let network = self.get_network();
+                        // Get p2tr addresses (most common for alkanes)
+                        if let Ok(addrs) = keystore.get_addresses(network, "p2tr", 0, 0, 20) {
+                            for addr_info in addrs {
+                                all_addresses.push(addr_info.address);
+                            }
+                        }
+                        // Also get p2wpkh addresses
+                        if let Ok(addrs) = keystore.get_addresses(network, "p2wpkh", 0, 0, 20) {
+                            for addr_info in addrs {
+                                all_addresses.push(addr_info.address);
+                            }
+                        }
+                        // Note: p2wsh is not supported by the keystore, so we skip it
+                    }
+
+                    if all_addresses.is_empty() {
+                        log::warn!("[WalletProvider] No addresses found in wallet");
+                        return Ok(Vec::new());
+                    }
+
+                    log::info!("[WalletProvider] Found {} addresses from keystore", all_addresses.len());
+                    all_addresses
+                }
+            }
+        } else {
+            addresses.unwrap()
+        };
+
+        let mut all_utxos = Vec::new();
+        let current_height = self.get_block_count().await.unwrap_or(0);
+
+        for address in addresses_to_check {
+            log::info!("[WalletProvider] Batching UTXO+transaction fetch for address: {}", address);
+            
+            // Try batched approach first using Lua script (skip in qubitcoin mode)
+            let lua_result = if self.rpc_config.is_qubitcoin_mode() {
+                Err(AlkanesError::NotImplemented("Lua scripts not available in qubitcoin mode".into()))
+            } else {
+                self.execute_lua_script(
+                    &crate::lua_script::scripts::ADDRESS_UTXOS_WITH_TXS,
+                    vec![json!(address)]
+                ).await
+            };
+            match lua_result {
+                Ok(result) => {
+                    log::info!("[WalletProvider] Successfully fetched UTXOs with transactions in batch");
+                    log::debug!("[WalletProvider] Lua script result: {:?}", result);
+                    
+                    // The server wraps the Lua result in {"calls": N, "returns": {...}, "runtime": N}
+                    // Extract the actual script return value from the "returns" field
+                    let script_result = result.get("returns").unwrap_or(&result);
+                    
+                    // Parse the batched result
+                    // Note: In Lua, an empty table `{}` serializes as an object {}, not an array []
+                    // So we need to handle both cases: array with items, or empty object (no UTXOs)
+                    let utxos_value = script_result.get("utxos");
+                    let utxos_array: Option<&Vec<serde_json::Value>> = utxos_value.and_then(|u| u.as_array());
+                    let is_empty_object = utxos_value.map(|u| u.is_object() && u.as_object().map(|o| o.is_empty()).unwrap_or(false)).unwrap_or(false);
+
+                    if is_empty_object {
+                        // Empty object {} from Lua means no UTXOs - this is valid, continue to next address
+                        log::info!("[WalletProvider] Found 0 UTXOs in batched result (empty object)");
+                        continue;
+                    } else if let Some(utxos_array) = utxos_array {
+                        log::info!("[WalletProvider] Found {} UTXOs in batched result", utxos_array.len());
+                        for utxo_entry in utxos_array {
+                            let txid = utxo_entry.get("txid").and_then(|t| t.as_str()).unwrap_or("");
+                            let vout = utxo_entry.get("vout").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                            let value = utxo_entry.get("value").and_then(|v| v.as_u64()).unwrap_or(0);
+                            
+                            let outpoint = OutPoint::from_str(&format!("{}:{}", txid, vout))?;
+                            
+                            // Get status info
+                            let status = utxo_entry.get("status");
+                            let block_height = status.and_then(|s| s.get("block_height")).and_then(|h| h.as_u64());
+                            let confirmations = if let Some(bh) = block_height {
+                                if current_height > 0 {
+                                    (current_height.saturating_sub(bh) + 1) as u32
+                                } else {
+                                    0
+                                }
+                            } else {
+                                0
+                            };
+                            
+                            // Check if coinbase from the included transaction data.
+                            // Detect via: explicit is_coinbase flag, OR null prevout (all-zero txid).
+                            let is_coinbase = if let Some(tx) = utxo_entry.get("tx") {
+                                if let Some(vin) = tx.get("vin").and_then(|v| v.as_array()) {
+                                    vin.len() == 1 && {
+                                        let input = &vin[0];
+                                        // Check explicit flag
+                                        input.get("is_coinbase").and_then(|c| c.as_bool()).unwrap_or(false)
+                                        // Also check for null prevout (universal coinbase indicator)
+                                        || input.get("txid").and_then(|t| t.as_str())
+                                            .map(|t| t.chars().all(|c| c == '0'))
+                                            .unwrap_or(false)
+                                        || input.get("prevout").is_none()
+                                            && input.get("scriptsig").map(|s| s.as_str().unwrap_or("").is_empty()).unwrap_or(false)
+                                    }
+                                } else {
+                                    false
+                                }
+                            } else {
+                                // No tx data included — can't determine coinbase status.
+                                // Only flag as potentially-coinbase if we have a real tip height
+                                // AND the UTXO has < 100 confirmations.
+                                // When tip height is 0 (chain syncing), don't filter anything.
+                                current_height > 0 && confirmations > 0 && confirmations < 100 && block_height.is_some()
+                            };
+                            
+                            let utxo_info = UtxoInfo {
+                                txid: txid.to_string(),
+                                vout,
+                                amount: value,
+                                address: address.clone(),
+                                script_pubkey: None,
+                                confirmations,
+                                frozen: false,
+                                freeze_reason: None,
+                                block_height,
+                                has_inscriptions: false,
+                                has_runes: false,
+                                has_alkanes: false,
+                                is_coinbase,
+                            };
+                            all_utxos.push((outpoint, utxo_info));
+                        }
+                        continue; // Successfully processed this address, move to next
+                    } else {
+                        log::warn!("[WalletProvider] Batched result did not contain 'utxos' array, falling back to individual calls");
+                        log::debug!("[WalletProvider] Result keys: {:?}", result.as_object().map(|o| o.keys().collect::<Vec<_>>()));
+                    }
+                }
+                Err(e) => {
+                    log::warn!("[WalletProvider] Batched fetch failed ({}), falling back to individual calls", e);
+                }
+            }
+            
+            // Fallback to original implementation if batched approach fails
+            log::debug!("Fetching UTXOs for address (fallback): {}", address);
+            let utxos_raw = self.get_address_utxo(&address).await?;
+            // In qubitcoin mode, secondaryview returns "0x<hex>" — decode to JSON
+            let utxos_json = if let Some(hex_str) = utxos_raw.as_str().and_then(|s| s.strip_prefix("0x")) {
+                match hex::decode(hex_str) {
+                    Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or(utxos_raw),
+                    Err(_) => utxos_raw,
+                }
+            } else {
+                utxos_raw
+            };
+            if let Ok(esplora_utxos) = serde_json::from_value::<Vec<crate::esplora::EsploraUtxo>>(utxos_json) {
+                for utxo in esplora_utxos {
+                    let outpoint = OutPoint::from_str(&format!("{}:{}", utxo.txid, utxo.vout))?;
+                    let confirmations = if let Some(block_height) = utxo.status.block_height {
+                        if current_height > 0 {
+                            current_height.saturating_sub(block_height as u64) + 1
+                        } else {
+                            0
+                        }
+                    } else {
+                        0
+                    };
+                    
+                    // Check if this UTXO is from a coinbase transaction.
+                    // Detect via: is_coinbase flag, null prevout txid, or no prevout.
+                    let is_coinbase = match self.get_tx(&utxo.txid).await {
+                        Ok(tx_json) => {
+                            if let Ok(tx) = serde_json::from_value::<crate::esplora::EsploraTransaction>(tx_json) {
+                                tx.vin.len() == 1 && {
+                                    let vin = &tx.vin[0];
+                                    vin.is_coinbase
+                                    || vin.txid.chars().all(|c| c == '0')
+                                    || vin.prevout.is_none()
+                                }
+                            } else {
+                                false
+                            }
+                        }
+                        Err(_) => {
+                            // Can't fetch tx — be conservative: treat recent UTXOs as possibly coinbase
+                            // But only when we have a real chain height (avoid filtering everything during sync)
+                            current_height > 0 && confirmations > 0 && confirmations < 100
+                        }
+                    };
+                    
+                    let utxo_info = UtxoInfo {
+                        txid: utxo.txid,
+                        vout: utxo.vout,
+                        amount: utxo.value,
+                        address: address.clone(),
+                        script_pubkey: None,
+                        confirmations: confirmations as u32,
+                        frozen: false,
+                        freeze_reason: None,
+                        block_height: utxo.status.block_height.map(|h| h as u64),
+                        has_inscriptions: false,
+                        has_runes: false,
+                        has_alkanes: false,
+                        is_coinbase,
+                    };
+                    all_utxos.push((outpoint, utxo_info));
+                }
+            }
+
+            // Note: alkane balance per-UTXO data is fetched in select_utxos via protorunesbyaddress.
+            // This fallback path only provides the UTXO list; balances are resolved later.
+        }
+
+        Ok(all_utxos)
+    }
+    
+    async fn get_history(&self, count: u32, address: Option<String>) -> Result<Vec<TransactionInfo>> {
+        log::info!("[WalletProvider] Calling get_history for address: {:?}, count: {}", address, count);
+        let addr = address.ok_or_else(|| AlkanesError::Wallet("get_history requires an address".to_string()))?;
+        let txs_json = self.get_address_txs(&addr).await?;
+        let mut transactions = Vec::new();
+
+        if let Some(txs_array) = txs_json.as_array() {
+            for tx in txs_array.iter().take(count as usize) {
+                if let Some(txid) = tx.get("txid").and_then(|t| t.as_str()) {
+                    let status = tx.get("status");
+                    let confirmed = status.and_then(|s| s.get("confirmed")).and_then(|c| c.as_bool()).unwrap_or(false);
+                    let block_height = status.and_then(|s| s.get("block_height")).and_then(|h| h.as_u64());
+                    let block_time = status.and_then(|s| s.get("block_time")).and_then(|t| t.as_u64());
+                    let fee = tx.get("fee").and_then(|f| f.as_u64());
+
+                    transactions.push(TransactionInfo {
+                        txid: txid.to_string(),
+                        block_height,
+                        block_time,
+                        confirmed,
+                        fee,
+                        weight: tx.get("weight").and_then(|w| w.as_u64()),
+                        inputs: vec![], // Requires parsing vin
+                        outputs: vec![], // Requires parsing vout
+                        is_op_return: false,
+                        has_protostones: false,
+                        is_rbf: false,
+                    });
+                }
+            }
+        }
+        Ok(transactions)
+    }
+    
+    async fn freeze_utxo(&self, _utxo: String, _reason: Option<String>) -> Result<()> {
+        unimplemented!()
+    }
+    
+    async fn unfreeze_utxo(&self, _utxo: String) -> Result<()> {
+        unimplemented!()
+    }
+    
+    async fn create_transaction(&self, params: SendParams) -> Result<String> {
+        log::info!("[WalletProvider] Calling create_transaction with params: {:?}", params);
+        // 1. Determine which addresses to use for sourcing UTXOs
+        let (address_strings, all_addresses) = if let Some(from_addresses) = &params.from {
+            (from_addresses.clone(), from_addresses.iter().map(|s| AddressInfo {
+                address: s.clone(),
+                index: 0, // Not relevant here
+                derivation_path: "".to_string(), // Not relevant here
+                script_type: "".to_string(), // Not relevant here
+                used: false, // Not relevant here
+            }).collect())
+        } else {
+            // Fallback to discovering addresses if --from is not provided
+            let discovered_addresses = self.get_addresses(100).await?; // A reasonable number for a simple wallet
+            (discovered_addresses.iter().map(|a| a.address.clone()).collect(), discovered_addresses)
+        };
+
+        // 2. Get UTXOs for the specified addresses
+        let utxos = self.get_utxos(false, Some(address_strings.clone())).await?;
+
+        // 3. If lock_alkanes is enabled, check each UTXO for alkanes using protorunesbyoutpoint
+        let mut utxos_with_alkanes_check = Vec::new();
+        if params.lock_alkanes {
+            log::info!("--lock-alkanes enabled: checking {} UTXOs for alkanes via protorunesbyoutpoint", utxos.len());
+            let mut failed_checks = 0;
+            let mut alkanes_found = 0;
+            
+            for (outpoint, mut info) in utxos {
+                // Query protorunesbyoutpoint to check if this UTXO has alkanes
+                match self.get_protorunes_by_outpoint(&info.txid, info.vout, None, 1).await {
+                    Ok(response) => {
+                        // If the response has any balances, this UTXO has alkanes
+                        let has_alkanes = !response.balance_sheet.balances().is_empty();
+                        if has_alkanes {
+                            alkanes_found += 1;
+                            log::info!("✓ UTXO {}:{} HAS {} alkane balance(s) - WILL BE LOCKED", 
+                                info.txid, info.vout, response.balance_sheet.balances().len());
+                        } else {
+                            log::debug!("✓ UTXO {}:{} has no alkanes - can be spent", info.txid, info.vout);
+                        }
+                        info.has_alkanes = has_alkanes;
+                    }
+                    Err(e) => {
+                        failed_checks += 1;
+                        // CONSERVATIVE: If we can't verify, assume it HAS alkanes to be safe
+                        log::warn!("⚠ Failed to check alkanes for UTXO {}:{}: {}. ASSUMING HAS ALKANES (will be locked).", 
+                            info.txid, info.vout, e);
+                        info.has_alkanes = true;
+                    }
+                }
+                utxos_with_alkanes_check.push((outpoint, info));
+            }
+            
+            log::info!("Alkanes check complete: {} UTXOs have alkanes (will be locked), {} checks failed (locked for safety)", 
+                alkanes_found, failed_checks);
+        } else {
+            utxos_with_alkanes_check = utxos;
+        }
+
+        // 4. Filter out UTXOs with inscriptions/runes/alkanes
+        let clean_utxos: Vec<UtxoInfo> = utxos_with_alkanes_check.into_iter()
+            .filter(|(_, info)| {
+                let is_clean = !info.has_inscriptions && !info.has_runes && !info.has_alkanes;
+                if !is_clean {
+                    log::info!("Filtering out UTXO {}:{} with inscriptions/runes/alkanes", info.txid, info.vout);
+                }
+                is_clean
+            })
+            .map(|(_, info)| info)
+            .collect();
+
+        if clean_utxos.is_empty() {
+            return Err(AlkanesError::Wallet("No clean UTXOs available (all have inscriptions/runes/alkanes)".to_string()));
+        }
+
+        log::info!("Found {} clean UTXOs for coin selection", clean_utxos.len());
+
+        // 5. Perform coin selection
+        let fee_rate = params.fee_rate.unwrap_or(1.0); // Default to 1 sat/vbyte
+
+        let (selected_utxos, total_input_amount) = if params.send_all {
+            // For --send-all, use ALL available clean UTXOs
+            log::info!("--send-all mode: selecting all {} clean UTXOs", clean_utxos.len());
+            let total: u64 = clean_utxos.iter().map(|u| u.amount).sum();
+            (clean_utxos, Amount::from_sat(total))
+        } else {
+            // Normal coin selection to meet target amount
+            let target_amount = Amount::from_sat(params.amount);
+            self.select_coins(clean_utxos, target_amount)?
+        };
+
+        // 5a. Check selected UTXOs for ordinal inscriptions using the ordinals handler
+        if params.ordinals_strategy != OrdinalsStrategy::Burn {
+            let ordinals_handler = OrdinalsHandler::new(self);
+
+            // Convert selected UTXOs to (OutPoint, TxOut) format for checking
+            let mut funding_utxos: Vec<(OutPoint, TxOut)> = Vec::new();
+            for utxo in &selected_utxos {
+                let outpoint = OutPoint {
+                    txid: bitcoin::Txid::from_str(&utxo.txid)?,
+                    vout: utxo.vout,
+                };
+                // Get the script pubkey for this UTXO
+                let script_pubkey = if let Some(ref sp) = utxo.script_pubkey {
+                    sp.clone()
+                } else {
+                    // Derive from address
+                    let network = self.get_network();
+                    let addr = Address::from_str(&utxo.address)?.require_network(network)?;
+                    addr.script_pubkey()
+                };
+                let txout = TxOut {
+                    value: Amount::from_sat(utxo.amount),
+                    script_pubkey,
+                };
+                funding_utxos.push((outpoint, txout));
+            }
+
+            // Check for inscriptions
+            let check_result = ordinals_handler.check_utxos_for_inscriptions(
+                &funding_utxos,
+                params.ordinals_strategy.clone(),
+                fee_rate,
+                params.mempool_indexer,
+            ).await?;
+
+            // If Preserve strategy detected inscriptions, we need to error for wallet send
+            // (split transaction support for wallet send is not yet implemented)
+            if let Some(split_plans) = check_result {
+                if !split_plans.is_empty() {
+                    return Err(AlkanesError::Wallet(format!(
+                        "Cannot proceed: {} UTXO(s) contain inscriptions and require splitting.\n\
+                        Wallet send does not yet support split transactions for inscription protection.\n\
+                        Options:\n\
+                        1. Use --ordinals-strategy exclude and specify --from with clean UTXOs\n\
+                        2. Use --ordinals-strategy burn to allow spending (destroys inscriptions)\n\
+                        3. Use 'alkanes execute' for complex operations with split transaction support",
+                        split_plans.len()
+                    )));
+                }
+            }
+            // If check_result is None or empty, no inscriptions found, proceed normally
+        }
+
+        // 6. Build the transaction skeleton
+        let mut tx = Transaction {
+            version: bitcoin::transaction::Version(2),
+            lock_time: bitcoin::absolute::LockTime::ZERO,
+            input: Vec::new(),
+            output: Vec::new(),
+        };
+
+        // Add inputs from selected UTXOs
+        for utxo in &selected_utxos {
+            tx.input.push(TxIn {
+                previous_output: OutPoint {
+                    txid: bitcoin::Txid::from_str(&utxo.txid)?,
+                    vout: utxo.vout,
+                },
+                script_sig: ScriptBuf::new(), // Empty for SegWit
+                sequence: Sequence::ENABLE_RBF_NO_LOCKTIME,
+                witness: Witness::new(), // Empty for now, will be added during signing
+            });
+        }
+
+        // Add the recipient's output
+        let network = self.get_network();
+        let recipient_address = Address::from_str(&params.address)?.require_network(network)?;
+        
+        // 6. Calculate fee and output amount
+        if params.send_all {
+            // For --send-all: calculate fee first, then output = input - fee (no change)
+            // Add a placeholder output to estimate size
+            tx.output.push(TxOut {
+                value: Amount::ZERO,
+                script_pubkey: recipient_address.script_pubkey(),
+            });
+            
+            let estimated_vsize = self.estimate_tx_vsize(&tx, selected_utxos.len());
+            let fee = Amount::from_sat((estimated_vsize as f32 * fee_rate).ceil() as u64);
+            
+            // Calculate output amount: total_input - fee
+            let output_amount = total_input_amount.checked_sub(fee)
+                .ok_or_else(|| AlkanesError::Wallet("Insufficient funds for fee".to_string()))?;
+            
+            // Update the output with the correct amount
+            tx.output[0].value = output_amount;
+            
+            log::info!("--send-all: input={} sats, fee={} sats, output={} sats", 
+                      total_input_amount.to_sat(), fee.to_sat(), output_amount.to_sat());
+        } else {
+            // Normal mode: use specified amount + change if needed
+            let target_amount = Amount::from_sat(params.amount);
+            tx.output.push(TxOut {
+                value: target_amount,
+                script_pubkey: recipient_address.script_pubkey(),
+            });
+
+            // Calculate fee and add change output if necessary
+            let change_address = Address::from_str(&all_addresses[0].address)?.require_network(network)?;
+            let change_script = change_address.script_pubkey();
+            let placeholder_change = TxOut { value: Amount::ZERO, script_pubkey: change_script.clone() };
+            tx.output.push(placeholder_change);
+
+            let estimated_vsize = self.estimate_tx_vsize(&tx, selected_utxos.len());
+            let fee = Amount::from_sat((estimated_vsize as f32 * fee_rate).ceil() as u64);
+
+            // Now that we have a good fee estimate, remove the placeholder and calculate the real change.
+            tx.output.pop();
+            let change_amount = total_input_amount.checked_sub(target_amount).and_then(|a| a.checked_sub(fee));
+
+            if let Some(change) = change_amount {
+                if change > bitcoin::Amount::from_sat(546) { // Dust limit
+                    tx.output.push(TxOut {
+                        value: change,
+                        script_pubkey: change_script,
+                    });
+                }
+                // If change is dust, it's not added, effectively becoming part of the fee.
+            }
+        }
+
+        // 7. Serialize the unsigned transaction to hex
+        Ok(bitcoin::consensus::encode::serialize_hex(&tx))
+    }
+
+    async fn sign_transaction(&mut self, tx_hex: String) -> Result<String> {
+        log::info!("[WalletProvider] Calling sign_transaction");
+        // 1. Deserialize the transaction
+        let hex_bytes = hex::decode(tx_hex)?;
+        let mut tx: Transaction = bitcoin::consensus::deserialize(&hex_bytes)?;
+
+        // 2. Setup for signing - gather immutable info first to avoid borrow checker issues.
+        let network = self.get_network();
+        let secp: Secp256k1<All> = Secp256k1::new();
+
+        // 3. Fetch the previous transaction outputs (prevouts) for signing.
+        //    Try get_tx first, fall back to gettxout for qubitcoin mode (no txindex).
+        let mut prevouts = Vec::new();
+        for input in &tx.input {
+            let txid_str = input.previous_output.txid.to_string();
+            let vout = input.previous_output.vout;
+
+            // Try get_tx first (works with txindex)
+            let (amount, script_pubkey_hex_str) = match self.get_tx(&txid_str).await {
+                Ok(tx_info) if tx_info.get("error").is_none() && tx_info.get("vout").is_some() => {
+                    let vout_info = tx_info["vout"].get(vout as usize)
+                        .ok_or_else(|| AlkanesError::Wallet(format!("Vout {} not found for tx {}", vout, txid_str)))?;
+                    let amount = vout_info["value"].as_u64()
+                        .ok_or_else(|| AlkanesError::Wallet("UTXO value not found".to_string()))?;
+                    let script = vout_info["scriptpubkey"].as_str()
+                        .ok_or_else(|| AlkanesError::Wallet("UTXO script pubkey not found".to_string()))?
+                        .to_string();
+                    (amount, script)
+                }
+                Ok(_) | Err(_) => {
+                    let e = "tx not found or missing vout";
+                    // Fallback: use gettxout via RPC (works without txindex, for unspent outputs)
+                    log::info!("get_tx failed for {} ({}), trying gettxout", &txid_str[..16.min(txid_str.len())], e);
+                    let gettxout_resp: serde_json::Value = serde_json::from_value(
+                        <Self as crate::traits::JsonRpcProvider>::call(
+                            self, "", "gettxout",
+                            serde_json::json!([txid_str, vout]), 1,
+                        ).await.unwrap_or(serde_json::Value::Null)
+                    ).unwrap_or(serde_json::Value::Null);
+
+                    let result = gettxout_resp.get("result").unwrap_or(&gettxout_resp);
+                    if result.is_null() {
+                        // UTXO not found — derive script from wallet address
+                        log::warn!("gettxout returned null for {}:{}, using wallet address for script", &txid_str[..16.min(txid_str.len())], vout);
+                        let wallet_addr = WalletProvider::get_address(self).await.unwrap_or_default();
+                        let script_hex = bitcoin::Address::from_str(&wallet_addr).ok()
+                            .and_then(|a| a.require_network(network).ok())
+                            .map(|a| hex::encode(a.script_pubkey().as_bytes()))
+                            .unwrap_or_default();
+                        (546u64, script_hex)  // assume dust
+                    } else {
+                        let value_btc = result["value"].as_f64().unwrap_or(0.0);
+                        let amount = (value_btc * 100_000_000.0) as u64;
+                        let script = result.get("scriptPubKey").and_then(|s| s.get("hex")).and_then(|h| h.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        if script.is_empty() {
+                            return Err(AlkanesError::Wallet(format!("Cannot get scriptPubKey for {}:{}", txid_str, vout)));
+                        }
+                        (amount, script)
+                    }
+                }
+            };
+            let script_pubkey = ScriptBuf::from(Vec::from_hex(&script_pubkey_hex_str)?);
+            prevouts.push(TxOut { value: Amount::from_sat(amount), script_pubkey });
+        }
+
+        // 4. Get signing key based on wallet state
+        match &mut self.wallet_state {
+            WalletState::ExternalKey { private_key, .. } => {
+                // Sign with external private key
+                let secret_key = bitcoin::secp256k1::SecretKey::from_str(private_key)?;
+                let keypair = bitcoin::secp256k1::Keypair::from_secret_key(&secp, &secret_key);
+                let public_key = bitcoin::PublicKey::from_private_key(&secp, &bitcoin::PrivateKey {
+                    compressed: true,
+                    network: network.into(),
+                    inner: secret_key,
+                });
+
+                let mut sighash_cache = SighashCache::new(&mut tx);
+                
+                for i in 0..prevouts.len() {
+                    let prev_txout = &prevouts[i];
+                    
+                    // Detect script type
+                    if prev_txout.script_pubkey.is_p2wpkh() {
+                        // P2WPKH: Use ECDSA signature with segwit v0 sighash
+                        let sighash = sighash_cache.p2wpkh_signature_hash(
+                            i,
+                            &prev_txout.script_pubkey,
+                            prev_txout.value,
+                            EcdsaSighashType::All,
+                        )?;
+
+                        let msg = bitcoin::secp256k1::Message::from(sighash);
+                        let signature = secp.sign_ecdsa(&msg, &secret_key);
+                        let ecdsa_signature = bitcoin::ecdsa::Signature {
+                            signature,
+                            sighash_type: EcdsaSighashType::All,
+                        };
+
+                        // P2WPKH witness: [signature, pubkey]
+                        let mut witness = Witness::new();
+                        witness.push(ecdsa_signature.serialize());
+                        witness.push(public_key.to_bytes());
+                        *sighash_cache.witness_mut(i).unwrap() = witness;
+                        
+                    } else if prev_txout.script_pubkey.is_p2tr() {
+                        // P2TR: Use Schnorr signature with taproot sighash
+                        let untweaked_keypair = UntweakedKeypair::from(keypair);
+                        let tweaked_keypair = untweaked_keypair.tap_tweak(&secp, None);
+                        
+                        let sighash = sighash_cache.taproot_key_spend_signature_hash(
+                            i,
+                            &Prevouts::All(&prevouts),
+                            TapSighashType::Default,
+                        )?;
+
+                        let msg = bitcoin::secp256k1::Message::from(sighash);
+                        #[cfg(not(target_arch = "wasm32"))]
+                        let signature = secp.sign_schnorr_with_rng(&msg, &tweaked_keypair.to_inner(), &mut thread_rng());
+                        #[cfg(target_arch = "wasm32")]
+                        let signature = secp.sign_schnorr_with_rng(&msg, &tweaked_keypair.to_inner(), &mut OsRng);
+                        
+                        let taproot_signature = taproot::Signature {
+                            signature,
+                            sighash_type: TapSighashType::Default,
+                        };
+
+                        *sighash_cache.witness_mut(i).unwrap() = Witness::p2tr_key_spend(&taproot_signature);
+                        
+                    } else {
+                        return Err(AlkanesError::Wallet(format!(
+                            "Unsupported script type for input {}: {}",
+                            i, prev_txout.script_pubkey
+                        )));
+                    }
+                }
+
+                let signed_tx = sighash_cache.into_transaction();
+                return Ok(bitcoin::consensus::encode::serialize_hex(&signed_tx));
+            },
+            WalletState::Unlocked { keystore, mnemonic } => {
+                // Original signing logic with keystore
+                let keystore = keystore.clone();
+                let mnemonic = mnemonic.clone();
+
+                // 5. Sign each input
+        let mut sighash_cache = SighashCache::new(&mut tx);
+        for i in 0..prevouts.len() {
+            let prev_txout = &prevouts[i];
+
+            // Find the address and its derivation path from our keystore
+            let address = Address::from_script(&prev_txout.script_pubkey, network)
+                .map_err(|e| AlkanesError::Wallet(format!("Failed to parse address from script: {e}")))?;
+
+            // This call now takes a mutable keystore and may cache the derived address info.
+            let addr_info = Self::find_address_info(&keystore, &address, network)?;
+            let path = DerivationPath::from_str(&addr_info.derivation_path)?;
+
+            // Derive the private key for this input
+            let mnemonic_obj = Mnemonic::parse_in(bip39::Language::English, &mnemonic)?;
+            let seed = mnemonic_obj.to_seed("");
+            let root_key = Xpriv::new_master(network, &seed)?;
+            let derived_xpriv = root_key.derive_priv(&secp, &path)?;
+            let keypair = derived_xpriv.to_keypair(&secp);
+
+            // Route to appropriate signing algorithm based on script type
+            match addr_info.script_type.as_str() {
+                "p2wpkh" => {
+                    // P2WPKH: Use ECDSA signature with segwit v0 sighash
+                    let public_key = bitcoin::PublicKey::from_private_key(&secp, &bitcoin::PrivateKey {
+                        compressed: true,
+                        network: network.into(),
+                        inner: keypair.secret_key(),
+                    });
+
+                    let sighash = sighash_cache.p2wpkh_signature_hash(
+                        i,
+                        &prev_txout.script_pubkey,
+                        prev_txout.value,
+                        EcdsaSighashType::All,
+                    )?;
+
+                    let msg = bitcoin::secp256k1::Message::from(sighash);
+                    let signature = secp.sign_ecdsa(&msg, &keypair.secret_key());
+                    let ecdsa_signature = bitcoin::ecdsa::Signature {
+                        signature,
+                        sighash_type: EcdsaSighashType::All,
+                    };
+
+                    // P2WPKH witness: [signature, pubkey]
+                    let mut witness = Witness::new();
+                    witness.push(ecdsa_signature.serialize());
+                    witness.push(public_key.to_bytes());
+                    *sighash_cache.witness_mut(i).unwrap() = witness;
+                }
+                "p2pkh" => {
+                    // P2PKH: Use ECDSA signature with legacy sighash
+                    let public_key = bitcoin::PublicKey::from_private_key(&secp, &bitcoin::PrivateKey {
+                        compressed: true,
+                        network: network.into(),
+                        inner: keypair.secret_key(),
+                    });
+
+                    let sighash = sighash_cache.legacy_signature_hash(
+                        i,
+                        &prev_txout.script_pubkey,
+                        EcdsaSighashType::All.to_u32(),
+                    ).map_err(|e| AlkanesError::Wallet(format!("Failed to compute P2PKH sighash: {e}")))?;
+
+                    let msg = bitcoin::secp256k1::Message::from(sighash);
+                    let signature = secp.sign_ecdsa(&msg, &keypair.secret_key());
+                    let ecdsa_signature = bitcoin::ecdsa::Signature {
+                        signature,
+                        sighash_type: EcdsaSighashType::All,
+                    };
+
+                    // P2PKH doesn't use witness, it uses scriptSig (handled by finalization)
+                    // For now, we set witness for compatibility
+                    let mut witness = Witness::new();
+                    witness.push(ecdsa_signature.serialize());
+                    witness.push(public_key.to_bytes());
+                    *sighash_cache.witness_mut(i).unwrap() = witness;
+                }
+                "p2sh" | "p2sh-p2wpkh" => {
+                    // P2SH wrapping P2WPKH
+                    let public_key = bitcoin::PublicKey::from_private_key(&secp, &bitcoin::PrivateKey {
+                        compressed: true,
+                        network: network.into(),
+                        inner: keypair.secret_key(),
+                    });
+
+                    let sighash = sighash_cache.p2wpkh_signature_hash(
+                        i,
+                        &prev_txout.script_pubkey,
+                        prev_txout.value,
+                        EcdsaSighashType::All,
+                    )?;
+
+                    let msg = bitcoin::secp256k1::Message::from(sighash);
+                    let signature = secp.sign_ecdsa(&msg, &keypair.secret_key());
+                    let ecdsa_signature = bitcoin::ecdsa::Signature {
+                        signature,
+                        sighash_type: EcdsaSighashType::All,
+                    };
+
+                    // P2SH-P2WPKH witness: [signature, pubkey]
+                    let mut witness = Witness::new();
+                    witness.push(ecdsa_signature.serialize());
+                    witness.push(public_key.to_bytes());
+                    *sighash_cache.witness_mut(i).unwrap() = witness;
+                }
+                "p2tr" => {
+                    // P2TR: Use Schnorr signature with tap_tweak
+                    let untweaked_keypair = UntweakedKeypair::from(keypair);
+                    let tweaked_keypair = untweaked_keypair.tap_tweak(&secp, None);
+
+                    let sighash = sighash_cache.taproot_key_spend_signature_hash(
+                        i,
+                        &Prevouts::All(&prevouts),
+                        TapSighashType::Default,
+                    )?;
+
+                    let msg = bitcoin::secp256k1::Message::from(sighash);
+                    #[cfg(not(target_arch = "wasm32"))]
+                    let signature = secp.sign_schnorr_with_rng(&msg, &tweaked_keypair.to_inner(), &mut thread_rng());
+                    #[cfg(target_arch = "wasm32")]
+                    let signature = secp.sign_schnorr_with_rng(&msg, &tweaked_keypair.to_inner(), &mut OsRng);
+
+                    let taproot_signature = taproot::Signature {
+                        signature,
+                        sighash_type: TapSighashType::Default,
+                    };
+
+                    sighash_cache.witness_mut(i).unwrap().clone_from(&Witness::p2tr_key_spend(&taproot_signature));
+                }
+                _ => {
+                    return Err(AlkanesError::Wallet(format!(
+                        "Unsupported script type for input {}: {}",
+                        i, addr_info.script_type
+                    )));
+                }
+            }
+        }
+
+        // 6. Serialize the signed transaction
+        let signed_tx = sighash_cache.into_transaction();
+        Ok(bitcoin::consensus::encode::serialize_hex(&signed_tx))
+            },
+            _ => return Err(AlkanesError::Wallet("Wallet must be unlocked or have external key to sign transactions".to_string())),
+        }
+    }
+    
+    async fn broadcast_transaction(&self, tx_hex: String) -> Result<String> {
+        log::info!("[WalletProvider] Calling broadcast_transaction");
+        self.send_raw_transaction(&tx_hex).await
+    }
+    
+    async fn estimate_fee(&self, target: u32) -> Result<FeeEstimate> {
+        let fee_estimates = self.get_fee_estimates().await?;
+        let fee_rate = fee_estimates
+            .get(target.to_string())
+            .and_then(|v| v.as_f64().map(|f| f as f32))
+            .unwrap_or(1.0);
+
+        Ok(FeeEstimate {
+            fee_rate,
+            target_blocks: target,
+        })
+    }
+    
+    async fn get_fee_rates(&self) -> Result<FeeRates> {
+        let fee_estimates = self.get_fee_estimates().await?;
+        
+        let fast = fee_estimates.get("1").and_then(|v| v.as_f64()).unwrap_or(10.0) as f32;
+        let medium = fee_estimates.get("6").and_then(|v| v.as_f64()).unwrap_or(5.0) as f32;
+        let slow = fee_estimates.get("144").and_then(|v| v.as_f64()).unwrap_or(1.0) as f32;
+
+        Ok(FeeRates {
+            fast,
+            medium,
+            slow,
+        })
+    }
+    
+    async fn sync(&self) -> Result<()> {
+        log::info!("Starting backend synchronization...");
+        let max_retries = 60; // ~2 minutes timeout
+        for i in 0..max_retries {
+            // 1. Get bitcoind height (source of truth)
+            let bitcoind_height = match self.get_block_count().await {
+                Ok(h) => h,
+                Err(e) => {
+                    log::warn!("Attempt {}: Failed to get bitcoind height: {}. Retrying...", i + 1, e);
+                    self.sleep_ms(2000).await;
+                    continue;
+                }
+            };
+
+            // 2. Get other service heights
+            let metashrew_height_res = self.get_metashrew_height().await;
+            let esplora_height_res = self.get_blocks_tip_height().await;
+            let ord_height_res = self.get_ord_block_count().await;
+
+            // 3. Check if services are synced
+            // All services should be at least at the same height as bitcoind.
+            let metashrew_synced = metashrew_height_res.as_ref().is_ok_and(|&h| h >= bitcoind_height);
+            let esplora_synced = esplora_height_res.as_ref().is_ok_and(|&h| h >= bitcoind_height);
+            // If no ord URL is configured, skip ord sync check
+            let ord_synced = if self.get_ord_server_url().is_none() {
+                true
+            } else {
+                ord_height_res.as_ref().is_ok_and(|&h| h >= bitcoind_height)
+            };
+
+            log::info!(
+                "Sync attempt {}/{}: bitcoind: {}, metashrew: {} (synced: {}), esplora: {} (synced: {}), ord: {} (synced: {})",
+                i + 1,
+                max_retries,
+                bitcoind_height,
+                metashrew_height_res.map_or_else(|e| format!("err ({e})"), |h| h.to_string()),
+                metashrew_synced,
+                esplora_height_res.map_or_else(|e| format!("err ({e})"), |h| h.to_string()),
+                esplora_synced,
+                ord_height_res.map_or_else(|e| format!("err ({e})"), |h| h.to_string()),
+                ord_synced
+            );
+
+            if metashrew_synced && esplora_synced && ord_synced {
+                log::info!("✅ All backends synchronized successfully!");
+                return Ok(());
+            }
+
+            self.sleep_ms(2000).await;
+        }
+
+        Err(AlkanesError::Other(format!("Timeout waiting for backends to sync after {max_retries} attempts")))
+    }
+    
+    async fn backup(&self) -> Result<String> {
+        unimplemented!()
+    }
+    
+    async fn get_mnemonic(&self) -> Result<Option<String>> {
+        match &self.wallet_state {
+            WalletState::Unlocked { mnemonic, .. } => Ok(Some(mnemonic.clone())),
+            _ => Ok(None),
+        }
+    }
+    
+    async fn get_master_public_key(&self) -> Result<Option<String>> {
+        match &self.wallet_state {
+            WalletState::Locked(keystore) | WalletState::Unlocked { keystore, .. } => {
+                Ok(Some(keystore.account_xpub.clone()))
+            }
+            WalletState::AddressOnly { .. } | WalletState::ExternalKey { .. } => {
+                Ok(None) // No keystore in these modes
+            }
+            WalletState::None => Ok(None),
+        }
+    }
+
+    fn get_network(&self) -> bitcoin::Network {
+        match self.rpc_config.provider.as_str() { "mainnet" => bitcoin::Network::Bitcoin, "testnet" => bitcoin::Network::Testnet, "signet" => bitcoin::Network::Signet, _ => bitcoin::Network::Regtest }
+    }
+    
+    async fn get_internal_key(&self) -> Result<(bitcoin::XOnlyPublicKey, (Fingerprint, DerivationPath))> {
+        // Use the wallet's deterministic key for the internal key
+        // This enables proper signing of reveal transactions
+        // NOTE: For production mainnet with high-value transactions, consider implementing
+        // ephemeral key support with proper secret key storage for anti-frontrunning protection
+
+        let network = self.get_network();
+        let (keystore, mnemonic) = match &self.wallet_state {
+            WalletState::Unlocked { keystore, mnemonic } => (keystore, mnemonic),
+            _ => return Err(AlkanesError::Wallet("Wallet must be unlocked to get internal key".to_string())),
+        };
+
+        // Use the first taproot address's derivation path for the internal key
+        // Standard BIP86 path: m/86'/0'/0'/0/0 for mainnet, m/86'/1'/0'/0/0 for testnet/regtest
+        let coin_type = match network {
+            bitcoin::Network::Bitcoin => 0,
+            _ => 1, // testnet/regtest/signet all use coin type 1
+        };
+        let path = DerivationPath::from_str(&format!("m/86'/{}'/{}'/{}/{}", coin_type, 0, 0, 0))?;
+
+        let mnemonic_obj = Mnemonic::parse_in(bip39::Language::English, mnemonic.as_str())?;
+        let seed = mnemonic_obj.to_seed("");
+        let root_key = Xpriv::new_master(network, &seed)?;
+        let derived_xpriv = root_key.derive_priv(&self.secp, &path)?;
+        let keypair = derived_xpriv.to_keypair(&self.secp);
+        let (internal_key, _) = keypair.x_only_public_key();
+
+        let fingerprint = Fingerprint::from_str(&keystore.master_fingerprint)?;
+
+        Ok((internal_key, (fingerprint, path)))
+    }
+
+    /// Get an ephemeral internal key with the secret key for signing
+    /// ANTI-FRONTRUNNING: Returns fresh random keypair for each inscription
+    async fn get_internal_key_with_secret(&self) -> Result<(bitcoin::XOnlyPublicKey, bitcoin::secp256k1::SecretKey, (Fingerprint, DerivationPath))> {
+        use bitcoin::secp256k1::rand::RngCore;
+
+        let mut secret_bytes = [0u8; 32];
+        #[cfg(not(target_arch = "wasm32"))]
+        rand::thread_rng().fill_bytes(&mut secret_bytes);
+        #[cfg(target_arch = "wasm32")]
+        {
+            use bitcoin::secp256k1::rand::rngs::OsRng;
+            OsRng.fill_bytes(&mut secret_bytes);
+        }
+
+        let secret_key = bitcoin::secp256k1::SecretKey::from_slice(&secret_bytes)?;
+        let keypair = bitcoin::secp256k1::Keypair::from_secret_key(&self.secp, &secret_key);
+        let (internal_key, _) = keypair.x_only_public_key();
+
+        let dummy_fingerprint = Fingerprint::from_str("00000000")?;
+        let dummy_path = DerivationPath::from_str("m/0")?;
+
+        Ok((internal_key, secret_key, (dummy_fingerprint, dummy_path)))
+    }
+    
+    async fn sign_psbt(&mut self, psbt: &bitcoin::psbt::Psbt) -> Result<bitcoin::psbt::Psbt> {
+        // Remote signer takes precedence — when --use-walletconnect is
+        // active, the local keystore path is never consulted.
+        if let Some(signer) = self.remote_signer.clone() {
+            log::info!("sign_psbt: delegating to remote signer [{}]", signer.backend_name());
+            let addresses = signer.get_addresses().await.unwrap_or_default();
+            return signer.sign_psbt(psbt, &addresses).await;
+        }
+        let mut psbt = psbt.clone();
+        let mut tx = psbt.clone().extract_tx().map_err(|e| AlkanesError::Other(e.to_string()))?;
+        let network = self.get_network();
+        let secp = Secp256k1::<All>::new();
+
+        let mut prevouts = Vec::new();
+        for (i, input) in tx.input.iter().enumerate() {
+            // First try to use witness_utxo from PSBT (for presigned transactions that don't exist on-chain yet)
+            let utxo = if let Some(ref witness_utxo) = psbt.inputs[i].witness_utxo {
+                witness_utxo.clone()
+            } else {
+                // Fallback to fetching from network
+                self.get_utxo(&input.previous_output).await?
+                    .ok_or_else(|| AlkanesError::Wallet(format!("UTXO not found: {}", input.previous_output)))?
+            };
+            prevouts.push(utxo);
+        }
+
+        // Handle signing based on wallet state
+        if let WalletState::ExternalKey { private_key, .. } = &self.wallet_state {
+            // Sign with external private key
+            let secret_key = bitcoin::secp256k1::SecretKey::from_str(private_key)?;
+            let keypair = bitcoin::secp256k1::Keypair::from_secret_key(&secp, &secret_key);
+
+            let mut sighash_cache = SighashCache::new(&mut tx);
+            for (i, psbt_input) in psbt.inputs.iter_mut().enumerate() {
+                let prev_txout = &prevouts[i];
+
+                log::info!("Signing input {} (ExternalKey): tap_scripts.is_empty()={}, tap_scripts.len()={}",
+                    i, psbt_input.tap_scripts.is_empty(), psbt_input.tap_scripts.len());
+
+                if !psbt_input.tap_scripts.is_empty() {
+                    // Script-path spend
+                    log::info!("Input {} is a script-path spend (ExternalKey)", i);
+                    let (control_block, (script, leaf_version)) = psbt_input.tap_scripts.iter().next().unwrap();
+                    let leaf_hash = taproot::TapLeafHash::from_script(script, *leaf_version);
+                    let sighash = sighash_cache.taproot_script_spend_signature_hash(
+                        i,
+                        &Prevouts::All(&prevouts),
+                        leaf_hash,
+                        TapSighashType::Default,
+                    )?;
+
+                    let msg = bitcoin::secp256k1::Message::from(sighash);
+
+                    #[cfg(not(target_arch = "wasm32"))]
+                    let signature = self.secp.sign_schnorr_with_rng(&msg, &keypair, &mut rand::thread_rng());
+                    #[cfg(target_arch = "wasm32")]
+                    let signature = self.secp.sign_schnorr_with_rng(&msg, &keypair, &mut OsRng);
+
+                    let taproot_signature = taproot::Signature { signature, sighash_type: TapSighashType::Default };
+
+                    let mut final_witness = Witness::new();
+                    final_witness.push(taproot_signature.to_vec());
+                    final_witness.push(script.as_bytes());
+                    final_witness.push(control_block.serialize());
+
+                    log::info!("Created script-path witness with {} items (ExternalKey):", final_witness.len());
+                    psbt_input.final_script_witness = Some(final_witness);
+
+                } else if prev_txout.script_pubkey.is_p2tr() {
+                    // P2TR key-path spend
+                    let untweaked_keypair = UntweakedKeypair::from(keypair);
+                    let tweaked_keypair = untweaked_keypair.tap_tweak(&secp, None);
+
+                    let sighash = sighash_cache.taproot_key_spend_signature_hash(
+                        i,
+                        &Prevouts::All(&prevouts),
+                        TapSighashType::Default,
+                    )?;
+
+                    let msg = bitcoin::secp256k1::Message::from(sighash);
+                    #[cfg(not(target_arch = "wasm32"))]
+                    let signature = secp.sign_schnorr_with_rng(&msg, &tweaked_keypair.to_inner(), &mut rand::thread_rng());
+                    #[cfg(target_arch = "wasm32")]
+                    let signature = secp.sign_schnorr_with_rng(&msg, &tweaked_keypair.to_inner(), &mut OsRng);
+
+                    let taproot_signature = taproot::Signature {
+                        signature,
+                        sighash_type: TapSighashType::Default,
+                    };
+
+                    psbt_input.tap_key_sig = Some(taproot_signature);
+
+                } else if prev_txout.script_pubkey.is_p2wpkh() {
+                    // P2WPKH key-path spend
+                    let public_key = bitcoin::PublicKey::from_private_key(&secp, &bitcoin::PrivateKey {
+                        compressed: true,
+                        network: network.into(),
+                        inner: secret_key,
+                    });
+
+                    let sighash = sighash_cache.p2wpkh_signature_hash(
+                        i,
+                        &prev_txout.script_pubkey,
+                        prev_txout.value,
+                        EcdsaSighashType::All,
+                    )?;
+
+                    let msg = bitcoin::secp256k1::Message::from(sighash);
+                    let signature = secp.sign_ecdsa(&msg, &secret_key);
+                    let ecdsa_signature = bitcoin::ecdsa::Signature {
+                        signature,
+                        sighash_type: EcdsaSighashType::All,
+                    };
+
+                    psbt_input.partial_sigs.insert(public_key, ecdsa_signature);
+
+                    let mut witness = Witness::new();
+                    witness.push(ecdsa_signature.serialize());
+                    witness.push(public_key.to_bytes());
+                    psbt_input.final_script_witness = Some(witness);
+
+                } else {
+                    return Err(AlkanesError::Wallet(format!(
+                        "Unsupported script type for ExternalKey input {}: {}",
+                        i, prev_txout.script_pubkey
+                    )));
+                }
+            }
+
+            return Ok(psbt);
+        }
+
+        let (keystore, mnemonic) = match &mut self.wallet_state {
+            WalletState::Unlocked { keystore, mnemonic } => (keystore, mnemonic),
+            _ => return Err(AlkanesError::Wallet("Wallet must be unlocked to sign transactions".to_string())),
+        };
+
+        let mut sighash_cache = SighashCache::new(&mut tx);
+        for (i, psbt_input) in psbt.inputs.iter_mut().enumerate() {
+            let prev_txout = &prevouts[i];
+
+            log::info!("Signing input {}: tap_scripts.is_empty()={}, tap_scripts.len()={}", 
+                i, psbt_input.tap_scripts.is_empty(), psbt_input.tap_scripts.len());
+
+            if !psbt_input.tap_scripts.is_empty() {
+                // Script-path spend
+                log::info!("Input {} is a script-path spend", i);
+                let (control_block, (script, leaf_version)) = psbt_input.tap_scripts.iter().next().unwrap();
+                let leaf_hash = taproot::TapLeafHash::from_script(script, *leaf_version);
+                let sighash = sighash_cache.taproot_script_spend_signature_hash(
+                    i,
+                    &Prevouts::All(&prevouts),
+                    leaf_hash,
+                    TapSighashType::Default,
+                )?;
+                
+                // Find the keypair corresponding to the internal public key from the PSBT's tap_key_origins.
+                // There should be exactly one entry for a script path spend.
+                let (internal_pk, (_leaf_hashes, (master_fingerprint, derivation_path))) = psbt_input.tap_key_origins.iter().next()
+                    .ok_or_else(|| AlkanesError::Wallet("tap_key_origins is empty for script spend".to_string()))?;
+
+                // Allow dummy fingerprint "00000000" for ephemeral keys (anti-frontrunning)
+                let dummy_fingerprint = Fingerprint::from_str("00000000")?;
+                let wallet_fingerprint = Fingerprint::from_str(&keystore.master_fingerprint)?;
+
+                if *master_fingerprint != wallet_fingerprint && *master_fingerprint != dummy_fingerprint {
+                    return Err(AlkanesError::Wallet(
+                        format!("Master fingerprint mismatch in tap_key_origins: expected {} or {}, got {}",
+                            wallet_fingerprint, dummy_fingerprint, master_fingerprint)
+                    ));
+                }
+
+                // Derive the private key for this input
+                let mnemonic_obj = Mnemonic::parse_in(bip39::Language::English, mnemonic.as_str())?;
+                let seed = mnemonic_obj.to_seed("");
+                let root_key = Xpriv::new_master(network, &seed)?;
+                let derived_xpriv = root_key.derive_priv(&secp, derivation_path)?;
+                let keypair = derived_xpriv.to_keypair(&secp);
+
+                // Verify that the derived key matches the public key from the PSBT
+                if keypair.public_key().x_only_public_key().0 != *internal_pk {
+                    return Err(AlkanesError::Wallet("Derived key does not match internal public key in PSBT".to_string()));
+                }
+
+                let msg = bitcoin::secp256k1::Message::from(sighash);
+                
+                #[cfg(not(target_arch = "wasm32"))]
+                let signature = self.secp.sign_schnorr_with_rng(&msg, &keypair, &mut rand::thread_rng());
+                #[cfg(target_arch = "wasm32")]
+                let signature = self.secp.sign_schnorr_with_rng(&msg, &keypair, &mut OsRng);
+
+                let taproot_signature = taproot::Signature { signature, sighash_type: TapSighashType::Default };
+                
+                let mut final_witness = Witness::new();
+                final_witness.push(taproot_signature.to_vec());
+                final_witness.push(script.as_bytes());
+                final_witness.push(control_block.serialize());
+                
+                log::info!("Created script-path witness with {} items:", final_witness.len());
+                log::info!("  Witness[0] (signature): {} bytes", taproot_signature.to_vec().len());
+                log::info!("  Witness[1] (script): {} bytes", script.as_bytes().len());
+                log::info!("  Witness[2] (control_block): {} bytes", control_block.serialize().len());
+                
+                psbt_input.final_script_witness = Some(final_witness);
+
+            } else {
+                // Key-path spend
+                let address = Address::from_script(&prev_txout.script_pubkey, network)
+                    .map_err(|e| AlkanesError::Wallet(format!("Failed to parse address from script: {e}")))?;
+
+                let addr_info = Self::find_address_info(keystore, &address, network)?;
+                let path = DerivationPath::from_str(&addr_info.derivation_path)?;
+
+                let mnemonic_obj = Mnemonic::parse_in(bip39::Language::English, mnemonic.as_str())?;
+                let seed = mnemonic_obj.to_seed("");
+                let root_key = Xpriv::new_master(network, &seed)?;
+                let derived_xpriv = root_key.derive_priv(&secp, &path)?;
+                let keypair = derived_xpriv.to_keypair(&secp);
+
+                // Route to appropriate signing algorithm based on script type
+                match addr_info.script_type.as_str() {
+                    "p2wpkh" => {
+                        // P2WPKH: Use ECDSA signature (no tap_tweak!)
+                        let public_key = bitcoin::PublicKey::from_private_key(&secp, &bitcoin::PrivateKey {
+                            compressed: true,
+                            network: network.into(),
+                            inner: keypair.secret_key(),
+                        });
+
+                        let sighash = sighash_cache.p2wpkh_signature_hash(
+                            i,
+                            &prev_txout.script_pubkey,
+                            prev_txout.value,
+                            EcdsaSighashType::All,
+                        )?;
+
+                        let msg = bitcoin::secp256k1::Message::from(sighash);
+                        let signature = secp.sign_ecdsa(&msg, &keypair.secret_key());
+                        let ecdsa_signature = bitcoin::ecdsa::Signature {
+                            signature,
+                            sighash_type: EcdsaSighashType::All,
+                        };
+
+                        // Set partial_sigs for PSBT compatibility
+                        psbt_input.partial_sigs.insert(public_key, ecdsa_signature);
+
+                        // Set final witness so PSBT can be extracted
+                        let mut witness = Witness::new();
+                        witness.push(ecdsa_signature.serialize());
+                        witness.push(public_key.to_bytes());
+                        psbt_input.final_script_witness = Some(witness);
+                    }
+                    "p2pkh" => {
+                        // P2PKH: Legacy signing (no witness, uses scriptSig)
+                        let public_key = bitcoin::PublicKey::from_private_key(&secp, &bitcoin::PrivateKey {
+                            compressed: true,
+                            network: network.into(),
+                            inner: keypair.secret_key(),
+                        });
+
+                        // For legacy P2PKH, we use the legacy sighash
+                        let sighash = sighash_cache.legacy_signature_hash(
+                            i,
+                            &prev_txout.script_pubkey,
+                            EcdsaSighashType::All.to_u32(),
+                        ).map_err(|e| AlkanesError::Wallet(format!("Failed to compute P2PKH sighash: {e}")))?;
+
+                        let msg = bitcoin::secp256k1::Message::from(sighash);
+                        let signature = secp.sign_ecdsa(&msg, &keypair.secret_key());
+                        let ecdsa_signature = bitcoin::ecdsa::Signature {
+                            signature,
+                            sighash_type: EcdsaSighashType::All,
+                        };
+
+                        psbt_input.partial_sigs.insert(public_key, ecdsa_signature);
+
+                        // P2PKH uses scriptSig, not witness, but PSBT might need witness set for extraction
+                        // Actually, P2PKH should not have a witness. Let's create the scriptSig instead.
+                        // For now, leave it with just partial_sigs - the PSBT finalizer should handle it
+                    }
+                    "p2sh" | "p2sh-p2wpkh" => {
+                        // P2SH wrapping P2WPKH: Use segwit v0 signing
+                        let public_key = bitcoin::PublicKey::from_private_key(&secp, &bitcoin::PrivateKey {
+                            compressed: true,
+                            network: network.into(),
+                            inner: keypair.secret_key(),
+                        });
+
+                        // For P2SH-P2WPKH, we use p2wpkh_signature_hash
+                        let sighash = sighash_cache.p2wpkh_signature_hash(
+                            i,
+                            &prev_txout.script_pubkey,
+                            prev_txout.value,
+                            EcdsaSighashType::All,
+                        )?;
+
+                        let msg = bitcoin::secp256k1::Message::from(sighash);
+                        let signature = secp.sign_ecdsa(&msg, &keypair.secret_key());
+                        let ecdsa_signature = bitcoin::ecdsa::Signature {
+                            signature,
+                            sighash_type: EcdsaSighashType::All,
+                        };
+
+                        psbt_input.partial_sigs.insert(public_key, ecdsa_signature);
+
+                        // Set final witness for P2SH-P2WPKH
+                        let mut witness = Witness::new();
+                        witness.push(ecdsa_signature.serialize());
+                        witness.push(public_key.to_bytes());
+                        psbt_input.final_script_witness = Some(witness);
+                    }
+                    "p2tr" => {
+                        // P2TR: Use Schnorr signature with tap_tweak
+                        let untweaked_keypair = UntweakedKeypair::from(keypair);
+                        let tweaked_keypair = untweaked_keypair.tap_tweak(&secp, None);
+
+                        let sighash = sighash_cache.taproot_key_spend_signature_hash(
+                            i,
+                            &Prevouts::All(&prevouts),
+                            TapSighashType::Default,
+                        )?;
+
+                        let msg = bitcoin::secp256k1::Message::from(sighash);
+                        #[cfg(not(target_arch = "wasm32"))]
+                        let signature = secp.sign_schnorr_with_rng(&msg, &tweaked_keypair.to_inner(), &mut thread_rng());
+                        #[cfg(target_arch = "wasm32")]
+                        let signature = secp.sign_schnorr_with_rng(&msg, &tweaked_keypair.to_inner(), &mut OsRng);
+
+                        let taproot_signature = taproot::Signature {
+                            signature,
+                            sighash_type: TapSighashType::Default,
+                        };
+
+                        psbt_input.tap_key_sig = Some(taproot_signature);
+                    }
+                    _ => {
+                        return Err(AlkanesError::Wallet(format!(
+                            "Unsupported script type: {}",
+                            addr_info.script_type
+                        )));
+                    }
+                }
+            }
+        }
+
+        Ok(psbt)
+    }
+    
+    async fn get_keypair(&self) -> Result<bitcoin::secp256k1::Keypair> {
+        let mnemonic = self.get_mnemonic().await?
+            .ok_or_else(|| AlkanesError::Wallet("Wallet must be unlocked to get keypair".to_string()))?;
+        let _mnemonic = bip39::Mnemonic::parse_in(bip39::Language::English, mnemonic.as_str())?;
+        let seed = Mnemonic::from_entropy(&rand::random::<[u8; 32]>()).map_err(|e| AlkanesError::Wallet(format!("{e}")))?.to_seed("");
+        let network = self.get_network();
+        let xpriv = bitcoin::bip32::Xpriv::new_master(network, &seed)?;
+        let secp = bitcoin::secp256k1::Secp256k1::new();
+        Ok(xpriv.to_keypair(&secp))
+    }
+
+    fn set_passphrase(&mut self, _passphrase: Option<String>) {
+    }
+
+    async fn get_last_used_address_index(&self) -> Result<u32> {
+        let keystore = self.get_keystore()?;
+        let network = self.get_network();
+        let mut last_used_index = 0;
+        let gap_limit = 20; // Standard gap limit
+
+        // We check both receive (0) and change (1) chains
+        for chain in 0..=1 {
+            let mut consecutive_unused = 0;
+            for index in 0.. {
+                // Derive one address at a time
+                let addresses = keystore.get_addresses(network, "p2tr", chain, index, 1)?;
+                if let Some(address_info) = addresses.first() {
+                    let txs = self.get_address_txs(&address_info.address).await?;
+                    if txs.as_array().is_none_or(|a| a.is_empty()) {
+                        consecutive_unused += 1;
+                    } else {
+                        last_used_index = core::cmp::max(last_used_index, index);
+                        consecutive_unused = 0;
+                    }
+                } else {
+                    // Should not happen if get_addresses works correctly
+                    break;
+                }
+
+                if consecutive_unused >= gap_limit {
+                    break;
+                }
+            }
+        }
+        Ok(last_used_index)
+    }
+
+    async fn get_enriched_utxos(&self, _addresses: Option<Vec<String>>) -> Result<Vec<EnrichedUtxo>> {
+        unimplemented!("get_enriched_utxos is not implemented for ConcreteProvider")
+    }
+
+    async fn get_all_balances(&self, _addresses: Option<Vec<String>>) -> Result<AllBalances> {
+        unimplemented!("get_all_balances is not implemented for ConcreteProvider")
+    }
+    }
+
+
+
+
+
+
+#[async_trait(?Send)]
+impl MetashrewRpcProvider for ConcreteProvider {
+    async fn get_metashrew_height(&self) -> Result<u64> {
+        let rpc_url = if let Some(ref url) = self.rpc_config.qubitcoin_rpc_url {
+            url.clone()
+        } else {
+            get_rpc_url(&self.rpc_config, &Commands::Metashrew {
+                command: crate::commands::MetashrewCommands::Height
+            })?
+        };
+        let (rpc_method, rpc_params) = if self.rpc_config.is_qubitcoin_mode() {
+            ("secondaryheight", json!(["alkanes"]))
+        } else {
+            ("metashrew_height", json!([]))
+        };
+        let json = self.call(&rpc_url, rpc_method, rpc_params, 1).await?;
+        log::debug!("get_metashrew_height response: {:?}", json);
+        if let Some(count) = json.as_u64() {
+            return Ok(count);
+        }
+        if let Some(count_str) = json.as_str() {
+            if let Ok(val) = count_str.parse::<u64>() {
+                return Ok(val);
+            }
+        }
+        if let Some(obj) = json.as_object() {
+            if let Some(result) = obj.get("result") {
+                if let Some(count) = result.as_u64() {
+                    return Ok(count);
+                }
+                if let Some(count_str) = result.as_str() {
+                    if let Ok(val) = count_str.parse::<u64>() {
+                        return Ok(val);
+                    }
+                }
+            }
+        }
+        Err(AlkanesError::RpcError(format!("Invalid metashrew height response: not a u64 or string, got: {}", json)))
+    }
+
+    async fn get_state_root(&self, height: JsonValue) -> Result<String> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Metashrew { 
+            command: crate::commands::MetashrewCommands::Height
+        })?;
+        let params = serde_json::json!([height]);
+        let (rpc_method, rpc_params) = if self.rpc_config.is_qubitcoin_mode() {
+            ("secondaryroot", serde_json::json!(["alkanes"]))
+        } else {
+            ("metashrew_stateroot", params)
+        };
+        let result = self.call(&rpc_url, rpc_method, rpc_params, 1).await?;
+        result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid state root response".to_string()))
+    }
+
+    async fn get_contract_meta(&self, block: &str, tx: &str) -> Result<serde_json::Value> {
+        let rpc_url = self.get_bitcoin_rpc_url().ok_or_else(|| AlkanesError::RpcError("Bitcoin RPC URL not configured".to_string()))?;
+        let params = serde_json::json!([block, tx]);
+        self.call(&rpc_url, "metashrew_view", params, 1).await
+    }
+
+    async fn metashrew_view_call(&self, method: &str, params_hex: &str, block_tag: &str) -> Result<Vec<u8>> {
+        // Forward to the inherent method, which has the full retry/timeout/qubitcoin logic.
+        ConcreteProvider::metashrew_view_call(self, method, params_hex, block_tag).await
+    }
+
+    async fn trace_outpoint(&self, txid: &str, vout: u32) -> Result<JsonValue> {
+        let txid_parsed = bitcoin::Txid::from_str(txid)?;
+        let mut outpoint_pb = protorune_pb::Outpoint::default();
+        // Note: bitcoin::Txid::to_byte_array() returns bytes in little-endian format
+        outpoint_pb.txid = txid_parsed.to_byte_array().to_vec();
+        outpoint_pb.vout = vout;
+
+        let hex_input = format!("0x{}", hex::encode(outpoint_pb.encode_to_vec()));
+        let response_bytes = self
+            .metashrew_view_call("trace", &hex_input, "latest")
+            .await?;
+        if response_bytes.is_empty() {
+            return Ok(JsonValue::Null);
+        }
+        // The response from `trace` is already JSON, so we parse it directly.
+        let trace_json: JsonValue = serde_json::from_slice(&response_bytes)?;
+        Ok(trace_json)
+    }
+    
+    async fn get_spendables_by_address(&self, address: &str) -> Result<serde_json::Value> {
+        let rpc_url = self.get_bitcoin_rpc_url().ok_or_else(|| AlkanesError::RpcError("Bitcoin RPC URL not configured".to_string()))?;
+        let params = serde_json::json!([address]);
+        self.call(&rpc_url, "spendablesbyaddress", params, 1).await
+    }
+    
+    async fn get_protorunes_by_address(
+        &self,
+        address: &str,
+        block_tag: Option<String>,
+        protocol_tag: u128,
+    ) -> Result<crate::alkanes::protorunes::ProtoruneWalletResponse> {
+        let mut request = protorune_pb::ProtorunesWalletRequest::default();
+        request.wallet = address.as_bytes().to_vec();
+        request.protocol_tag = Some(<u128 as Into<protorune_pb::Uint128>>::into(protocol_tag));
+        let hex_input = format!("0x{}", hex::encode(request.encode_to_vec()));
+        let response_bytes = self
+            .metashrew_view_call(
+                "protorunesbyaddress",
+                &hex_input,
+                block_tag.as_deref().unwrap_or("latest"),
+            )
+            .await?;
+        if response_bytes.is_empty() {
+            return Ok(crate::alkanes::protorunes::ProtoruneWalletResponse {
+                balances: vec![],
+            });
+        }
+        let wallet_response = protorune_pb::WalletResponse::decode(response_bytes.as_slice())?;
+        let mut balances = vec![];
+        for item in wallet_response.outpoints.into_iter() {
+            let outpoint = item.outpoint.ok_or_else(|| {
+                AlkanesError::Other("missing outpoint in wallet response".to_string())
+            })?;
+            let output = item.output.ok_or_else(|| {
+                AlkanesError::Other("missing output in wallet response".to_string())
+            })?;
+            let balance_sheet_pb = item.balances.ok_or_else(|| {
+                AlkanesError::Other("missing balance sheet in wallet response".to_string())
+            })?;
+            let mut txid_bytes: [u8; 32] = outpoint.txid.try_into().map_err(|_| {
+                AlkanesError::Other("invalid txid length in wallet response".to_string())
+            })?;
+            // Protobuf txid bytes are in internal byte order (from metashrew).
+            // bitcoin::Txid::from_byte_array expects internal byte order, so no
+            // reversal is needed. (Previously reversed in qubitcoin mode because
+            // qubitcoind stored display order, but our qubitcoin-jsonrpc proxy
+            // routes to metashrew which uses internal order.)
+            balances.push(crate::alkanes::protorunes::ProtoruneOutpointResponse {
+                output: TxOut {
+                    value: Amount::from_sat(output.value),
+                    script_pubkey: ScriptBuf::from_bytes(output.script),
+                },
+                outpoint: OutPoint {
+                    txid: bitcoin::Txid::from_byte_array(txid_bytes),
+                    vout: outpoint.vout,
+                },
+                balance_sheet: {
+                    let mut balances_map = BTreeMap::new();
+                    for entry in balance_sheet_pb.entries {
+                        if let Some(rune) = entry.rune {
+                            if let Some(rune_id) = rune.rune_id {
+                                if let (Some(height), Some(txindex), Some(balance)) = (
+                                    rune_id.height,
+                                    rune_id.txindex,
+                                    entry.balance,
+                                ) {
+                                    let protorune_id =
+                                        crate::alkanes::balance_sheet::ProtoruneRuneId {
+                                            block: height.lo as u128,
+                                            tx: txindex.lo as u128,
+                                        };
+                                    balances_map.insert(protorune_id, balance.lo as u128);
+                                }
+                            }
+                        }
+                    }
+                    crate::alkanes::balance_sheet::BalanceSheet {
+                        cached: crate::alkanes::balance_sheet::CachedBalanceSheet {
+                            balances: balances_map,
+                        },
+                        load_ptrs: vec![],
+                    }
+                },
+            });
+        }
+        Ok(crate::alkanes::protorunes::ProtoruneWalletResponse { balances })
+    }
+
+    async fn get_protorunes_by_outpoint(
+        &self,
+        txid: &str,
+        vout: u32,
+        block_tag: Option<String>,
+        protocol_tag: u128,
+    ) -> Result<crate::alkanes::protorunes::ProtoruneOutpointResponse> {
+        let txid = bitcoin::Txid::from_str(txid)?;
+        let outpoint = bitcoin::OutPoint { txid, vout };
+        let mut request = protorune_pb::OutpointWithProtocol::default();
+        // Note: bitcoin::Txid::to_byte_array() returns bytes in little-endian format,
+        // which is what the indexer expects (no need to reverse)
+        request.txid = txid.to_byte_array().to_vec();
+        request.vout = outpoint.vout;
+        
+        // Set the protocol field - required by the view function
+        request.protocol = Some(<u128 as Into<protorune_pb::Uint128>>::into(protocol_tag));
+        
+        let hex_input = format!("0x{}", hex::encode(request.encode_to_vec()));
+        let response_bytes = self
+            .metashrew_view_call(
+                "protorunesbyoutpoint",
+                &hex_input,
+                block_tag.as_deref().unwrap_or("latest"),
+            )
+            .await?;
+        if response_bytes.is_empty() {
+            return Err(AlkanesError::Other(
+                "empty response from protorunesbyoutpoint".to_string(),
+            ));
+        }
+        let proto_response = protorune_pb::OutpointResponse::decode(response_bytes.as_slice())?;
+        let output = proto_response
+            .output
+            .ok_or_else(|| AlkanesError::Other("missing output in outpoint response".to_string()))?;
+        let balance_sheet_pb = proto_response
+            .balances
+            
+            .ok_or_else(|| {
+                AlkanesError::Other("missing balance sheet in outpoint response".to_string())
+            })?;
+        Ok(crate::alkanes::protorunes::ProtoruneOutpointResponse {
+            output: TxOut {
+                value: Amount::from_sat(output.value),
+                script_pubkey: ScriptBuf::from_bytes(output.script),
+            },
+            outpoint,
+            balance_sheet: {
+                let mut balances_map = BTreeMap::new();
+                for entry in balance_sheet_pb.entries {
+                    if let Some(rune) = entry.rune {
+                        if let Some(rune_id) = rune.rune_id {
+                            if let (Some(height), Some(txindex), Some(balance)) = (
+                                rune_id.height,
+                                rune_id.txindex,
+                                entry.balance,
+                            ) {
+                                let protorune_id =
+                                    crate::alkanes::balance_sheet::ProtoruneRuneId {
+                                        block: height.lo as u128,
+                                        tx: txindex.lo as u128,
+                                    };
+                                balances_map.insert(protorune_id, balance.lo as u128);
+                            }
+                        }
+                    }
+                }
+                crate::alkanes::balance_sheet::BalanceSheet {
+                    cached: crate::alkanes::balance_sheet::CachedBalanceSheet {
+                        balances: balances_map,
+                    },
+                    load_ptrs: vec![],
+                }
+            },
+        })
+    }
+    }
+
+
+
+#[async_trait(?Send)]
+impl EsploraProvider for ConcreteProvider {
+    async fn get_blocks_tip_hash(&self) -> Result<String> {
+        let _rpc_url = get_rpc_url(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } })?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } });
+        #[cfg(feature = "native-deps")]
+        if call_type == RpcCallType::Rest {
+            let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } })?;
+            let url = format!("{}/blocks/tip/hash", rpc_url);
+            log::info!("[EsploraProvider] Using direct HTTP GET to {}", url);
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            let text = response.text().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            log::info!("[EsploraProvider] get_blocks_tip_hash response: {}", text);
+            return Ok(text);
+        }
+ 
+        log::info!("[EsploraProvider] Falling back to JSON-RPC call: {}", crate::esplora::EsploraJsonRpcMethods::BLOCKS_TIP_HASH);
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } })?;
+        let result = self.call(&rpc_url, crate::esplora::EsploraJsonRpcMethods::BLOCKS_TIP_HASH, crate::esplora::params::empty(), 1).await?;
+        result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid tip hash response".to_string()))
+    }
+
+    async fn get_blocks_tip_height(&self) -> Result<u64> {
+        log::info!("[EsploraProvider] Calling get_blocks_tip_height");
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } })?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } });
+        #[cfg(feature = "native-deps")]
+        if call_type == RpcCallType::Rest {
+            let url = format!("{}/blocks/tip/height", rpc_url);
+            log::info!("[EsploraProvider] Using direct HTTP GET to {}", url);
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            let text = response.text().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            log::info!("[EsploraProvider] get_blocks_tip_height response: {}", text);
+            return text.parse::<u64>().map_err(|e| AlkanesError::RpcError(format!("Invalid tip height response from REST API: {e}")));
+        }
+        
+        log::info!("[EsploraProvider] Falling back to JSON-RPC call: {}", crate::esplora::EsploraJsonRpcMethods::BLOCKS_TIP_HEIGHT);
+        let result = self.call(&rpc_url, crate::esplora::EsploraJsonRpcMethods::BLOCKS_TIP_HEIGHT, crate::esplora::params::empty(), 1).await?;
+        result.as_u64().ok_or_else(|| AlkanesError::RpcError("Invalid tip height response".to_string()))
+    }
+
+    async fn get_blocks(&self, start_height: Option<u64>) -> Result<serde_json::Value> {
+        log::info!("[EsploraProvider] Calling get_blocks with start_height: {:?}", start_height);
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } })?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } });
+        #[cfg(feature = "native-deps")]
+        if call_type == RpcCallType::Rest {
+            let url = if let Some(height) = start_height {
+                format!("{}/blocks/{}", rpc_url, height)
+            } else {
+                format!("{}/blocks", rpc_url)
+            };
+            log::info!("[EsploraProvider] Using direct HTTP GET to {}", url);
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            let json = response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
+            log::info!("[EsploraProvider] get_blocks response: {:?}", json);
+            return json;
+        }
+        
+        log::info!("[EsploraProvider] Falling back to JSON-RPC call: {}", crate::esplora::EsploraJsonRpcMethods::BLOCKS);
+        self.call(&rpc_url, crate::esplora::EsploraJsonRpcMethods::BLOCKS, crate::esplora::params::optional_single(start_height), 1).await
+    }
+
+    async fn get_block_by_height(&self, height: u64) -> Result<String> {
+        log::info!("[EsploraProvider] Calling get_block_by_height: {}", height);
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } })?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } });
+        #[cfg(feature = "native-deps")]
+        if call_type == RpcCallType::Rest {
+            let url = format!("{}/block-height/{}", rpc_url, height);
+            log::info!("[EsploraProvider] Using direct HTTP GET to {}", url);
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            let text = response.text().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            log::info!("[EsploraProvider] get_block_by_height response: {}", text);
+            return Ok(text);
+        }
+        
+        log::info!("[EsploraProvider] Falling back to JSON-RPC call: {}", crate::esplora::EsploraJsonRpcMethods::BLOCK_HEIGHT);
+        let result = self.call(&rpc_url, crate::esplora::EsploraJsonRpcMethods::BLOCK_HEIGHT, crate::esplora::params::single(height), 1).await?;
+        result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid block hash response".to_string()))
+    }
+
+    async fn get_block(&self, hash: &str) -> Result<serde_json::Value> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } })?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } });
+        #[cfg(feature = "native-deps")]
+        if call_type == RpcCallType::Rest {
+            let url = format!("{}/block/{}", rpc_url, hash);
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
+        }
+        
+        self.call(&rpc_url, crate::esplora::EsploraJsonRpcMethods::BLOCK, crate::esplora::params::single(hash), 1).await
+    }
+
+    async fn get_block_status(&self, hash: &str) -> Result<serde_json::Value> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } })?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } });
+        #[cfg(feature = "native-deps")]
+        if call_type == RpcCallType::Rest {
+            let url = format!("{}/block/{}/status", rpc_url, hash);
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
+        }
+        
+        self.call(&rpc_url, crate::esplora::EsploraJsonRpcMethods::BLOCK_STATUS, crate::esplora::params::single(hash), 1).await
+    }
+
+    async fn get_block_txids(&self, hash: &str) -> Result<serde_json::Value> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } })?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } });
+        #[cfg(feature = "native-deps")]
+        if call_type == RpcCallType::Rest {
+            let url = format!("{}/block/{}/txids", rpc_url, hash);
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
+        }
+        
+        self.call(&rpc_url, crate::esplora::EsploraJsonRpcMethods::BLOCK_TXIDS, crate::esplora::params::single(hash), 1).await
+    }
+
+    async fn get_block_header(&self, hash: &str) -> Result<String> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } })?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } });
+        #[cfg(feature = "native-deps")]
+        if call_type == RpcCallType::Rest {
+            let url = format!("{}/block/{}/header", rpc_url, hash);
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return response.text().await.map_err(|e| AlkanesError::Network(e.to_string()));
+        }
+        
+        let result = self.call(&rpc_url, crate::esplora::EsploraJsonRpcMethods::BLOCK_HEADER, crate::esplora::params::single(hash), 1).await?;
+        result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid block header response".to_string()))
+    }
+
+    async fn get_block_raw(&self, hash: &str) -> Result<String> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } })?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } });
+        #[cfg(feature = "native-deps")]
+        if call_type == RpcCallType::Rest {
+            let url = format!("{}/block/{}/raw", rpc_url, hash);
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            let bytes = response.bytes().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return Ok(hex::encode(bytes));
+        }
+        
+        let result = self.call(&rpc_url, crate::esplora::EsploraJsonRpcMethods::BLOCK_RAW, crate::esplora::params::single(hash), 1).await?;
+        result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid raw block response".to_string()))
+    }
+
+    async fn get_block_txid(&self, hash: &str, index: u32) -> Result<String> {
+        log::info!("[EsploraProvider] Calling get_block_txid for hash: {}, index: {}", hash, index);
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } })?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } });
+        #[cfg(feature = "native-deps")]
+        if call_type == RpcCallType::Rest {
+            let url = format!("{}/block/{}/txid/{}", rpc_url, hash, index);
+            log::info!("[EsploraProvider] Using direct HTTP GET to {}", url);
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            let text = response.text().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            log::info!("[EsploraProvider] get_block_txid response: {}", text);
+            return Ok(text);
+        }
+        
+        log::info!("[EsploraProvider] Falling back to JSON-RPC call: {}", crate::esplora::EsploraJsonRpcMethods::BLOCK_TXID);
+        let result = self.call(&rpc_url, crate::esplora::EsploraJsonRpcMethods::BLOCK_TXID, crate::esplora::params::dual(hash, index), 1).await?;
+        result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid txid response".to_string()))
+    }
+
+    async fn get_block_txs(&self, hash: &str, start_index: Option<u32>) -> Result<serde_json::Value> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } })?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } });
+        #[cfg(feature = "native-deps")]
+        if call_type == RpcCallType::Rest {
+            let url = if let Some(index) = start_index {
+                format!("{}/block/{}/txs/{}", rpc_url, hash, index)
+            } else {
+                format!("{}/block/{}/txs", rpc_url, hash)
+            };
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
+        }
+        
+        self.call(&rpc_url, crate::esplora::EsploraJsonRpcMethods::BLOCK_TXS, crate::esplora::params::optional_dual(hash, start_index), 1).await
+    }
+
+
+   async fn get_address_info(&self, address: &str) -> Result<serde_json::Value> {
+        log::info!("[EsploraProvider] Calling get_address_info for address: {}", address);
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } })?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } });
+       #[cfg(feature = "native-deps")]
+       if call_type == RpcCallType::Rest {
+           let url = format!("{}/address/{}", rpc_url, address);
+            log::info!("[EsploraProvider] Using direct HTTP GET to {}", url);
+           let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+           return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
+       }
+       
+        log::info!("[EsploraProvider] Falling back to JSON-RPC call: {}", crate::esplora::EsploraJsonRpcMethods::ADDRESS);
+       self.call(&rpc_url, crate::esplora::EsploraJsonRpcMethods::ADDRESS, crate::esplora::params::single(address), 1).await
+   }
+
+   async fn get_address_utxo(&self, address: &str) -> Result<serde_json::Value> {
+        log::info!("[EsploraProvider] Calling get_address_utxo for address: {}", address);
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } })?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } });
+       #[cfg(feature = "native-deps")]
+       if call_type == RpcCallType::Rest {
+           let url = format!("{}/address/{}/utxo", rpc_url, address);
+            log::info!("[EsploraProvider] Using direct HTTP GET to {}", url);
+           let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+           return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
+       }
+       
+        log::info!("[EsploraProvider] Falling back to JSON-RPC call: {}", crate::esplora::EsploraJsonRpcMethods::ADDRESS_UTXO);
+       self.call(&rpc_url, crate::esplora::EsploraJsonRpcMethods::ADDRESS_UTXO, crate::esplora::params::single(address), 1).await
+   }
+
+    async fn get_address_txs(&self, address: &str) -> Result<serde_json::Value> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } })?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } });
+        #[cfg(feature = "native-deps")]
+        if call_type == RpcCallType::Rest {
+            let url = format!("{}/address/{}/txs", rpc_url, address);
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
+        }
+        
+        self.call(&rpc_url, crate::esplora::EsploraJsonRpcMethods::ADDRESS_TXS, crate::esplora::params::single(address), 1).await
+    }
+
+    async fn get_address_txs_chain(&self, address: &str, last_seen_txid: Option<&str>) -> Result<serde_json::Value> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } })?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } });
+        #[cfg(feature = "native-deps")]
+        if call_type == RpcCallType::Rest {
+            let url = if let Some(txid) = last_seen_txid {
+                format!("{}/address/{}/txs/chain/{}", rpc_url, address, txid)
+            } else {
+                format!("{}/address/{}/txs/chain", rpc_url, address)
+            };
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
+        }
+        
+        self.call(&rpc_url, crate::esplora::EsploraJsonRpcMethods::ADDRESS_TXS_CHAIN, crate::esplora::params::optional_dual(address, last_seen_txid), 1).await
+    }
+
+    async fn get_address_txs_mempool(&self, address: &str) -> Result<serde_json::Value> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } })?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } });
+        #[cfg(feature = "native-deps")]
+        if call_type == RpcCallType::Rest {
+            let url = format!("{}/address/{}/txs/mempool", rpc_url, address);
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
+        }
+        
+        self.call(&rpc_url, crate::esplora::EsploraJsonRpcMethods::ADDRESS_TXS_MEMPOOL, crate::esplora::params::single(address), 1).await
+    }
+
+
+    async fn get_address_prefix(&self, prefix: &str) -> Result<serde_json::Value> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } })?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } });
+        #[cfg(feature = "native-deps")]
+        if call_type == RpcCallType::Rest {
+            let url = format!("{}/address-prefix/{}", rpc_url, prefix);
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
+        }
+        
+        self.call(&rpc_url, crate::esplora::EsploraJsonRpcMethods::ADDRESS_PREFIX, crate::esplora::params::single(prefix), 1).await
+    }
+
+    async fn get_tx(&self, txid: &str) -> Result<serde_json::Value> {
+        log::info!("[EsploraProvider] Calling get_tx for txid: {}", txid);
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } })?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } });
+        #[cfg(feature = "native-deps")]
+        if call_type == RpcCallType::Rest {
+            let url = format!("{}/tx/{}", rpc_url, txid);
+            log::info!("[EsploraProvider] Using direct HTTP GET to {}", url);
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
+        }
+        
+        log::info!("[EsploraProvider] Falling back to JSON-RPC call: {}", crate::esplora::EsploraJsonRpcMethods::TX);
+        self.call(&rpc_url, crate::esplora::EsploraJsonRpcMethods::TX, crate::esplora::params::single(txid), 1).await
+    }
+
+    async fn get_tx_hex(&self, txid: &str) -> Result<String> {
+        log::info!("[EsploraProvider] Calling get_tx_hex for txid: {}", txid);
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } })?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } });
+        #[cfg(feature = "native-deps")]
+        if call_type == RpcCallType::Rest {
+            let url = format!("{}/tx/{}/hex", rpc_url, txid);
+            log::info!("[EsploraProvider] Using direct HTTP GET to {}", url);
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            let text = response.text().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            log::info!("[EsploraProvider] get_tx_hex response: {}", text);
+            return Ok(text);
+        }
+
+        // For JSON-RPC mode (no esplora_url configured), use bitcoind_getrawtransaction
+        // This is the standard path for hosted environments like subfrost-regtest
+        log::info!("[EsploraProvider] Using bitcoind_getrawtransaction via JSON-RPC");
+        let bitcoind_rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind {
+            command: crate::commands::BitcoindCommands::Getblockcount { raw: false }
+        })?;
+        let params = serde_json::json!([txid, false]);
+        let result = self.call(&bitcoind_rpc_url, "getrawtransaction", params, 1).await?;
+        result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid tx hex response from bitcoind".to_string()))
+    }
+
+    async fn get_tx_raw(&self, txid: &str) -> Result<String> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } })?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } });
+        #[cfg(feature = "native-deps")]
+        if call_type == RpcCallType::Rest {
+            let url = format!("{}/tx/{}/raw", rpc_url, txid);
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            let bytes = response.bytes().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return Ok(hex::encode(bytes));
+        }
+
+        // For JSON-RPC mode (no esplora_url configured), use bitcoind_getrawtransaction
+        log::info!("[EsploraProvider] Using bitcoind_getrawtransaction via JSON-RPC");
+        let bitcoind_rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind {
+            command: crate::commands::BitcoindCommands::Getblockcount { raw: false }
+        })?;
+        let params = serde_json::json!([txid, false]);
+        let result = self.call(&bitcoind_rpc_url, "getrawtransaction", params, 1).await?;
+        result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid raw tx response from bitcoind".to_string()))
+    }
+
+    async fn get_tx_status(&self, txid: &str) -> Result<serde_json::Value> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } })?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } });
+        #[cfg(feature = "native-deps")]
+        if call_type == RpcCallType::Rest {
+            let url = format!("{}/tx/{}/status", rpc_url, txid);
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
+        }
+        
+        self.call(&rpc_url, crate::esplora::EsploraJsonRpcMethods::TX_STATUS, crate::esplora::params::single(txid), 1).await
+    }
+
+    async fn get_tx_merkle_proof(&self, txid: &str) -> Result<serde_json::Value> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } })?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } });
+        #[cfg(feature = "native-deps")]
+        if call_type == RpcCallType::Rest {
+            let url = format!("{}/tx/{}/merkle-proof", rpc_url, txid);
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
+        }
+        
+        self.call(&rpc_url, crate::esplora::EsploraJsonRpcMethods::TX_MERKLE_PROOF, crate::esplora::params::single(txid), 1).await
+    }
+
+    async fn get_tx_merkleblock_proof(&self, txid: &str) -> Result<String> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } })?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } });
+        #[cfg(feature = "native-deps")]
+        if call_type == RpcCallType::Rest {
+            let url = format!("{}/tx/{}/merkleblock-proof", rpc_url, txid);
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return response.text().await.map_err(|e| AlkanesError::Network(e.to_string()));
+        }
+        
+        let result = self.call(&rpc_url, crate::esplora::EsploraJsonRpcMethods::TX_MERKLEBLOCK_PROOF, crate::esplora::params::single(txid), 1).await?;
+        result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid merkleblock proof response".to_string()))
+    }
+
+    async fn get_tx_outspend(&self, txid: &str, index: u32) -> Result<serde_json::Value> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } })?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } });
+        #[cfg(feature = "native-deps")]
+        if call_type == RpcCallType::Rest {
+            let url = format!("{}/tx/{}/outspend/{}", rpc_url, txid, index);
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
+        }
+        
+        self.call(&rpc_url, crate::esplora::EsploraJsonRpcMethods::TX_OUTSPEND, crate::esplora::params::dual(txid, index), 1).await
+    }
+
+    async fn get_tx_outspends(&self, txid: &str) -> Result<serde_json::Value> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } })?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } });
+        #[cfg(feature = "native-deps")]
+        if call_type == RpcCallType::Rest {
+            let url = format!("{}/tx/{}/outspends", rpc_url, txid);
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
+        }
+        
+        self.call(&rpc_url, crate::esplora::EsploraJsonRpcMethods::TX_OUTSPENDS, crate::esplora::params::single(txid), 1).await
+    }
+
+    async fn broadcast(&self, tx_hex: &str) -> Result<String> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } })?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } });
+        #[cfg(feature = "native-deps")]
+        if call_type == RpcCallType::Rest {
+            let url = format!("{}/tx", rpc_url);
+            let request_builder = self.http_client.post(&url).body(tx_hex.to_string());
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return response.text().await.map_err(|e| AlkanesError::Network(e.to_string()));
+        }
+        
+        let result = self.call(&rpc_url, crate::esplora::EsploraJsonRpcMethods::BROADCAST, crate::esplora::params::single(tx_hex), 1).await?;
+        result.as_str().map(|s| s.to_string()).ok_or_else(|| AlkanesError::RpcError("Invalid broadcast response".to_string()))
+    }
+
+    async fn get_mempool(&self) -> Result<serde_json::Value> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } })?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } });
+        #[cfg(feature = "native-deps")]
+        if call_type == RpcCallType::Rest {
+            let url = format!("{}/mempool", rpc_url);
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
+        }
+        
+        self.call(&rpc_url, crate::esplora::EsploraJsonRpcMethods::MEMPOOL, crate::esplora::params::empty(), 1).await
+    }
+
+    async fn get_mempool_txids(&self) -> Result<serde_json::Value> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } })?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } });
+        #[cfg(feature = "native-deps")]
+        if call_type == RpcCallType::Rest {
+            let url = format!("{}/mempool/txids", rpc_url);
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
+        }
+        
+        self.call(&rpc_url, crate::esplora::EsploraJsonRpcMethods::MEMPOOL_TXIDS, crate::esplora::params::empty(), 1).await
+    }
+
+    async fn get_mempool_recent(&self) -> Result<serde_json::Value> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } })?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } });
+        #[cfg(feature = "native-deps")]
+        if call_type == RpcCallType::Rest {
+            let url = format!("{}/mempool/recent", rpc_url);
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
+        }
+        
+        self.call(&rpc_url, crate::esplora::EsploraJsonRpcMethods::MEMPOOL_RECENT, crate::esplora::params::empty(), 1).await
+    }
+
+    async fn get_fee_estimates(&self) -> Result<serde_json::Value> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } })?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Esplora { command: crate::commands::EsploraCommands::BlocksTipHeight { raw: false } });
+        #[cfg(feature = "native-deps")]
+        if call_type == RpcCallType::Rest {
+            let url = format!("{}/fee-estimates", rpc_url);
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
+        }
+        
+        self.call(&rpc_url, crate::esplora::EsploraJsonRpcMethods::FEE_ESTIMATES, crate::esplora::params::empty(), 1).await
+    }
+    }
+
+#[async_trait(?Send)]
+impl RunestoneProvider for ConcreteProvider {
+    async fn decode_runestone(&self, tx: &Transaction) -> Result<serde_json::Value> {
+        if let Some(artifact) = Runestone::decipher(tx) {
+            match artifact {
+                Artifact::Runestone(runestone) => Ok(serde_json::to_value(runestone)?),
+                Artifact::Cenotaph(cenotaph) => Err(AlkanesError::Runestone(format!("Cenotaph found: {cenotaph:?}"))),
+            }
+        } else {
+            Err(AlkanesError::Runestone("No runestone found in transaction".to_string()))
+        }
+    }
+
+    async fn format_runestone_with_decoded_messages(&self, tx: &Transaction) -> Result<serde_json::Value> {
+        if let Some(artifact) = Runestone::decipher(tx) {
+            match artifact {
+                Artifact::Runestone(runestone) => {
+                    Ok(serde_json::json!({
+                        "runestone": runestone,
+                        "decoded_messages": format!("{:?}", runestone)
+                    }))
+                },
+                Artifact::Cenotaph(cenotaph) => Err(AlkanesError::Runestone(format!("Cenotaph found: {cenotaph:?}"))),
+            }
+        } else {
+            Err(AlkanesError::Runestone("No runestone found in transaction".to_string()))
+        }
+    }
+
+    async fn analyze_runestone(&self, txid: &str) -> Result<serde_json::Value> {
+        let tx_hex = self.get_tx_hex(txid).await?;
+        let tx_bytes = hex::decode(&tx_hex)?;
+        let tx: Transaction = bitcoin::consensus::deserialize(&tx_bytes)?;
+        self.decode_runestone(&tx).await
+    }
+    }
+
+#[async_trait(?Send)]
+impl AlkanesProvider for ConcreteProvider {
+    async fn execute(&mut self, params: EnhancedExecuteParams) -> Result<ExecutionState> {
+        let mut executor = EnhancedAlkanesExecutor::new(self);
+        executor.execute(params).await
+    }
+
+    async fn execute_full(&mut self, params: EnhancedExecuteParams) -> Result<EnhancedExecuteResult> {
+        let mut executor = EnhancedAlkanesExecutor::new(self);
+        executor.execute_full(params).await
+    }
+
+    async fn resume_execution(
+        &mut self,
+        state: ReadyToSignTx,
+        params: &EnhancedExecuteParams,
+    ) -> Result<EnhancedExecuteResult> {
+        let mut executor = EnhancedAlkanesExecutor::new(self);
+        executor.resume_execution(state, params).await
+    }
+
+    async fn resume_commit_execution(
+        &mut self,
+        state: ReadyToSignCommitTx,
+    ) -> Result<ExecutionState> {
+        let mut executor = EnhancedAlkanesExecutor::new(self);
+        executor.resume_commit_execution(state).await
+    }
+
+    async fn resume_reveal_execution(
+        &mut self,
+        state: ReadyToSignRevealTx,
+    ) -> Result<EnhancedExecuteResult> {
+        let mut executor = EnhancedAlkanesExecutor::new(self);
+        executor.resume_reveal_execution(state).await
+    }
+
+    async fn protorunes_by_address(
+        &self,
+        address: &str,
+        block_tag: Option<String>,
+        protocol_tag: u128,
+    ) -> Result<crate::alkanes::protorunes::ProtoruneWalletResponse> {
+        if self.rpc_config.using_titan_api() {
+            let path = if let Some(height) = block_tag {
+                format!("/alkanes/byaddress/{}/atheight/{}", address, height)
+            } else {
+                format!("/alkanes/byaddress/{}", address)
+            };
+            let json = self.call_titan_rest_api(&path).await?;
+            Ok(serde_json::from_value(json)?)
+        } else {
+            <Self as MetashrewRpcProvider>::get_protorunes_by_address(self, address, block_tag, protocol_tag).await
+        }
+    }
+
+    async fn protorunes_by_outpoint(
+        &self,
+        txid: &str,
+        vout: u32,
+        block_tag: Option<String>,
+        protocol_tag: u128,
+    ) -> Result<crate::alkanes::protorunes::ProtoruneOutpointResponse> {
+        if self.rpc_config.using_titan_api() {
+            let outpoint = format!("{}:{}", txid, vout);
+            let encoded_outpoint = url_encode(&outpoint);
+            let path = if let Some(height) = block_tag {
+                format!("/alkanes/byoutpoint/{}/atheight/{}", encoded_outpoint, height)
+            } else {
+                format!("/alkanes/byoutpoint/{}", encoded_outpoint)
+            };
+            let json = self.call_titan_rest_api(&path).await?;
+            Ok(serde_json::from_value(json)?)
+        } else {
+            <Self as MetashrewRpcProvider>::get_protorunes_by_outpoint(self, txid, vout, block_tag, protocol_tag).await
+        }
+    }
+
+    async fn view(&self, contract_id: &str, view_fn: &str, params: Option<&[u8]>, block_tag: Option<String>) -> Result<JsonValue> {
+        let combined_view = format!("{}/{}", contract_id, view_fn);
+        let params_hex = params.map(|p| format!("0x{}", hex::encode(p))).unwrap_or_else(|| "0x".to_string());
+        let result_bytes = self.metashrew_view_call(&combined_view, &params_hex, block_tag.as_deref().unwrap_or("latest")).await?;
+
+        // Attempt to deserialize as a simple u64 if it's 8 bytes long.
+        if result_bytes.len() == 8 {
+            let val = u64::from_le_bytes(result_bytes.try_into().unwrap());
+            return Ok(serde_json::json!(val));
+        }
+
+        // Attempt to deserialize as generic JSON.
+        if let Ok(json_val) = serde_json::from_slice(&result_bytes) {
+            return Ok(json_val);
+        }
+
+        // Fallback to a hex string representation if it's not valid JSON.
+        Ok(serde_json::json!(format!("0x{}", hex::encode(result_bytes))))
+    }
+
+    async fn simulate(&self, contract_id: &str, context: &alkanes_pb::MessageContextParcel, block_tag: Option<String>) -> Result<JsonValue> {
+        use prost::Message;
+        use protorune_support::utils::encode_varint_list;
+
+        // Parse contract_id ("block:tx") and prepend to calldata as a cellpack.
+        // The metashrew "simulate" view function expects calldata = encipher([target_block, target_tx, ...inputs]),
+        // matching the encoding in alkanes-jsonrpc handler's encode_simulate_request.
+        let parts: Vec<&str> = contract_id.split(':').collect();
+        if parts.len() != 2 {
+            return Err(AlkanesError::Other(format!("Invalid contract_id format '{}', expected 'block:tx'", contract_id)));
+        }
+        let target_block: u128 = parts[0].parse()
+            .map_err(|_| AlkanesError::Other(format!("Invalid block in contract_id: {}", parts[0])))?;
+        let target_tx: u128 = parts[1].parse()
+            .map_err(|_| AlkanesError::Other(format!("Invalid tx in contract_id: {}", parts[1])))?;
+
+        // The caller already built calldata with Cellpack::encipher() which includes
+        // [target_block, target_tx, ...inputs]. Just use it directly — don't prepend
+        // the target again.
+        let mut patched = context.clone();
+
+        let mut buf = Vec::new();
+        patched.encode(&mut buf)?;
+        let params_hex = format!("0x{}", hex::encode(&buf));
+
+        let result_bytes = self.metashrew_view_call("simulate", &params_hex, block_tag.as_deref().unwrap_or("latest")).await?;
+
+        // Return as hex string JSON value
+        Ok(serde_json::json!(format!("0x{}", hex::encode(result_bytes))))
+    }
+
+    async fn tx_script(
+        &self,
+        wasm_bytes: &[u8],
+        inputs: Vec<u128>,
+        block_tag: Option<String>,
+    ) -> Result<Vec<u8>> {
+        use bitcoin::{Transaction, TxIn, TxOut, OutPoint, Amount, ScriptBuf, Sequence};
+        use bitcoin::transaction::Version;
+        use alkanes_support::envelope::RawEnvelope;
+        use alkanes_support::cellpack::Cellpack;
+        use alkanes_support::id::AlkaneId;
+        use prost::Message;
+
+        // Get simulation height
+        let simulation_height = match block_tag {
+            Some(ref tag) if tag == "latest" => self.get_metashrew_height().await?,
+            Some(ref tag) => tag.parse()?,
+            None => self.get_metashrew_height().await?,
+        };
+
+        // Create cellpack with tx-script target (1:0) and inputs
+        let cellpack = Cellpack {
+            target: AlkaneId { block: 1, tx: 0 },
+            inputs,
+        };
+        let calldata = cellpack.encipher();
+
+        // Create envelope with WASM
+        let raw_envelope = RawEnvelope::from(wasm_bytes.to_vec());
+        let witness = raw_envelope.to_witness(true);
+
+        // Create fake deploy transaction
+        let fake_tx = Transaction {
+            version: Version::TWO,
+            lock_time: bitcoin::locktime::absolute::LockTime::ZERO,
+            input: vec![TxIn {
+                previous_output: OutPoint::null(),
+                script_sig: ScriptBuf::new(),
+                sequence: Sequence::MAX,
+                witness,
+            }],
+            output: vec![TxOut {
+                value: Amount::from_sat(0),
+                script_pubkey: ScriptBuf::new(),
+            }],
+        };
+
+        // Encode transaction
+        use bitcoin::consensus::Encodable;
+        let mut transaction_bytes = Vec::new();
+        fake_tx.consensus_encode(&mut transaction_bytes)
+            .map_err(|e| AlkanesError::Serialization(format!("Failed to encode transaction: {}", e)))?;
+
+        // Create context
+        let context = alkanes_pb::MessageContextParcel {
+            alkanes: vec![],
+            transaction: transaction_bytes,
+            block: vec![],
+            height: simulation_height,
+            vout: 0,
+            txindex: 1,
+            calldata,
+            pointer: 0,
+            refund_pointer: 0,
+        };
+
+        // Simulate tx-script execution
+        let result = self.simulate("1:0", &context, Some("latest".to_string())).await?;
+
+        // Parse response
+        if let Some(hex_str) = result.as_str() {
+            let hex_data = hex_str.strip_prefix("0x").unwrap_or(hex_str);
+            let bytes = hex::decode(hex_data)?;
+            let sim_response = alkanes_pb::SimulateResponse::decode(bytes.as_slice())?;
+            
+            if let Some(execution) = sim_response.execution {
+                return Ok(execution.data);
+            }
+        }
+
+        Err(AlkanesError::Alkanes("Failed to parse tx_script response".to_string()))
+    }
+
+    async fn trace(&self, outpoint: &str) -> Result<alkanes_pb::Trace> {
+        if self.rpc_config.using_titan_api() {
+            let encoded_outpoint = url_encode(outpoint);
+            let path = format!("/alkanes/trace/{}", encoded_outpoint);
+            let json = self.call_titan_rest_api(&path).await?;
+            // Titan returns JSON, convert to protobuf format
+            // The JSON response needs to be converted to alkanes_pb::Trace
+            // For now, we'll try to decode from the hex response if it's in that format
+            if let Some(hex_str) = json.as_str() {
+                let hex_data = hex_str.strip_prefix("0x").unwrap_or(hex_str);
+                let bytes = hex::decode(hex_data)
+                    .map_err(|e| AlkanesError::Serialization(format!("Failed to decode trace hex: {}", e)))?;
+                let trace = alkanes_pb::Trace::decode(bytes.as_slice())?;
+                return Ok(trace);
+            }
+            // If JSON format, try to deserialize directly
+            return serde_json::from_value(json)
+                .map_err(|e| AlkanesError::Serialization(format!("Failed to parse trace response: {}", e)));
+        }
+        
+        let parts: Vec<&str> = outpoint.split(':').collect();
+        if parts.len() != 2 {
+            return Err(AlkanesError::InvalidParameters("Invalid outpoint format. Expected 'txid:vout'".to_string()));
+        }
+        let txid = bitcoin::Txid::from_str(parts[0])?;
+        let vout = parts[1].parse::<u32>()?;
+
+        let mut out_point_pb = protorune_pb::Outpoint::default();
+        // Note: bitcoin::Txid::to_byte_array() returns bytes in little-endian format
+        out_point_pb.txid = txid.to_byte_array().to_vec();
+        out_point_pb.vout = vout;
+
+        let hex_input = format!("0x{}", hex::encode(out_point_pb.encode_to_vec()));
+        log::debug!("Trace request for outpoint {}:{} - hex_input: {}", parts[0], vout, hex_input);
+        let response_bytes = self.metashrew_view_call("trace", &hex_input, "latest").await?;
+
+        log::debug!("Trace response: {} bytes", response_bytes.len());
+
+        if response_bytes.is_empty() {
+            log::debug!("Trace response empty for {}:{}", parts[0], vout);
+            return Ok(alkanes_pb::Trace::default());
+        }
+        
+        // The response is an AlkanesTrace protobuf, not a full Trace wrapper
+        let alkanes_trace = alkanes_pb::AlkanesTrace::decode(response_bytes.as_slice())?;
+        
+        // Wrap it in a Trace message with the outpoint
+        // Convert protorune_pb::Outpoint to alkanes_pb::Outpoint
+        let mut alkanes_outpoint = alkanes_pb::Outpoint::default();
+        alkanes_outpoint.txid = out_point_pb.txid.clone();
+        alkanes_outpoint.vout = out_point_pb.vout;
+        
+        let mut trace = alkanes_pb::Trace::default();
+        trace.outpoint = Some(alkanes_outpoint);
+        trace.trace = Some(alkanes_trace);
+        
+        Ok(trace)
+    }
+
+    async fn get_block(&self, height: u64) -> Result<alkanes_pb::BlockResponse> {
+        let mut block_request = alkanes_pb::BlockRequest::default();
+        block_request.height = height as u32;
+        
+        let hex_input = format!("0x{}", hex::encode(block_request.encode_to_vec()));
+        let response_bytes = self.metashrew_view_call("getblock", &hex_input, "latest").await?;
+
+        let block_response = alkanes_pb::BlockResponse::decode(response_bytes.as_slice())?;
+        Ok(block_response)
+    }
+
+    async fn sequence(&self, block_tag: Option<String>) -> Result<JsonValue> {
+        let response_bytes = self.metashrew_view_call("sequence", "0x", block_tag.as_deref().unwrap_or("latest")).await?;
+        if response_bytes.len() == 16 {
+            let val = u128::from_le_bytes(response_bytes.try_into().unwrap());
+            return Ok(serde_json::json!(val));
+        }
+        Ok(serde_json::json!(format!("0x{}", hex::encode(response_bytes))))
+    }
+
+    async fn spendables_by_address(&self, address: &str) -> Result<JsonValue> {
+        if self.rpc_config.using_titan_api() {
+            let path = format!("/alkanes/byaddress/{}", address);
+            return self.call_titan_rest_api(&path).await;
+        }
+        
+        let mut request = protorune_pb::WalletRequest::default();
+        request.wallet = address.as_bytes().to_vec();
+        let hex_input = format!("0x{}", hex::encode(request.encode_to_vec()));
+        let response_bytes = self
+            .metashrew_view_call("spendablesbyaddress", &hex_input, "latest")
+            .await?;
+        if response_bytes.is_empty() {
+            return Ok(serde_json::json!([]));
+        }
+        let wallet_response = protorune_pb::WalletResponse::decode(response_bytes.as_slice())?;
+        let entries: Vec<serde_json::Value> = wallet_response.outpoints.into_iter().map(|item| {
+            serde_json::json!({
+                "outpoint": {
+                    "txid": hex::encode(item.outpoint.as_ref().map_or(vec![], |o| o.txid.clone())),
+                    "vout": item.outpoint.as_ref().map_or(0, |o| o.vout),
+                },
+                "amount": item.output.as_ref().map_or(0, |o| o.value),
+                "script": hex::encode(item.output.as_ref().map_or(vec![], |o| o.script.clone())),
+                "runes": item.balances.map(|b| b.entries).unwrap_or_default().iter().map(|entry| {
+                    serde_json::json!({
+                        "runeId": {
+                            "height": entry.rune.as_ref().and_then(|r| r.rune_id.as_ref()).and_then(|id| id.height.as_ref()).map_or(0, |h| h.lo),
+                            "txindex": entry.rune.as_ref().and_then(|r| r.rune_id.as_ref()).and_then(|id| id.txindex.as_ref()).map_or(0, |t| t.lo),
+                        },
+                        "amount": entry.balance.as_ref().map_or(0, |a| a.lo),
+                    })
+                }).collect::<Vec<_>>(),
+            })
+        }).collect();
+        Ok(serde_json::json!(entries))
+    }
+
+    async fn trace_block(&self, height: u64) -> Result<alkanes_pb::AlkanesBlockTraceEvent> {
+        let mut block_request = alkanes_pb::BlockRequest::default();
+        block_request.height = height as u32;
+
+        let hex_input = format!("0x{}", hex::encode(block_request.encode_to_vec()));
+        let response_bytes = self.metashrew_view_call("traceblock", &hex_input, "latest").await?;
+
+        if response_bytes.is_empty() {
+            return Ok(alkanes_pb::AlkanesBlockTraceEvent::default());
+        }
+
+        let trace_response = alkanes_pb::AlkanesBlockTraceEvent::decode(response_bytes.as_slice())?;
+        Ok(trace_response)
+    }
+
+    async fn get_bytecode(&self, alkane_id: &str, block_tag: Option<String>) -> Result<String> {
+        if self.rpc_config.using_titan_api() {
+            let encoded_id = url_encode(alkane_id);
+            let path = if let Some(height) = block_tag {
+                format!("/alkanes/getbytecode/{}/atheight/{}", encoded_id, height)
+            } else {
+                format!("/alkanes/getbytecode/{}", encoded_id)
+            };
+            let json = self.call_titan_rest_api(&path).await?;
+            // Titan returns the bytecode as a string (likely hex-encoded)
+            if let Some(bytecode_str) = json.as_str() {
+                return Ok(bytecode_str.to_string());
+            }
+            return Ok(json.to_string());
+        }
+        
+        let parts: Vec<&str> = alkane_id.split(':').collect();
+        if parts.len() != 2 {
+            return Err(AlkanesError::InvalidParameters("Invalid alkane_id format. Expected 'block:tx'".to_string()));
+        }
+        let block = parts[0].parse::<u64>()?;
+        let tx = parts[1].parse::<u64>()?;
+
+        let mut alkane_id_pb = alkanes_pb::AlkaneId::default();
+        let mut block_uint128 = alkanes_pb::Uint128::default();
+        block_uint128.lo = block;
+        let mut tx_uint128 = alkanes_pb::Uint128::default();
+        tx_uint128.lo = tx;
+        alkane_id_pb.block = Some(block_uint128).into();
+        alkane_id_pb.tx = Some(tx_uint128).into();
+
+        let mut request = alkanes_pb::BytecodeRequest::default();
+        request.id = Some(alkane_id_pb).into();
+
+        let hex_input = format!("0x{}", hex::encode(request.encode_to_vec()));
+        self.info(&format!(
+            "[get_bytecode] Calling metashrew_view with view_fn: getbytecode, params: {}",
+            hex_input
+        ));
+        let response_bytes = self.metashrew_view_call("getbytecode", &hex_input, block_tag.as_deref().unwrap_or("latest")).await?;
+        self.info(&format!(
+            "[get_bytecode] Received response: 0x{}",
+            hex::encode(&response_bytes)
+        ));
+        Ok(format!("0x{}", hex::encode(response_bytes)))
+    }
+
+    async fn meta(&self, alkane_id: &str, block_tag: Option<String>) -> Result<Vec<u8>> {
+        // Parse the alkane_id into block:tx format
+        let parts: Vec<&str> = alkane_id.split(':').collect();
+        if parts.len() != 2 {
+            return Err(AlkanesError::InvalidParameters("Invalid alkane_id format. Expected 'block:tx'".to_string()));
+        }
+        let block = parts[0].parse::<u128>()?;
+        let tx = parts[1].parse::<u128>()?;
+
+        // Create a MessageContextParcel with the cellpack calling the target contract
+        let mut parcel = alkanes_pb::MessageContextParcel::default();
+        parcel.height = 0;
+        parcel.block = vec![];
+        parcel.transaction = vec![];
+        parcel.vout = 0;
+
+        // Encode the calldata as a cellpack: [block, tx] (varint encoded)
+        use protorune_support::utils::encode_varint_list;
+        parcel.calldata = encode_varint_list(&vec![block, tx]);
+        parcel.alkanes = vec![];
+        parcel.pointer = 0;
+        parcel.refund_pointer = 0;
+
+        // Encode the parcel to protobuf
+        use prost::Message;
+        let hex_input = format!("0x{}", hex::encode(parcel.encode_to_vec()));
+
+        self.info(&format!(
+            "[meta] Calling metashrew_view with view_fn: meta, params: {}",
+            hex_input
+        ));
+
+        // Call metashrew_view with "meta" view function
+        let response_bytes = self.metashrew_view_call("meta", &hex_input, block_tag.as_deref().unwrap_or("latest")).await?;
+
+        self.info(&format!(
+            "[meta] Received response: {} bytes",
+            response_bytes.len()
+        ));
+
+        Ok(response_bytes)
+    }
+
+    #[cfg(feature = "wasm-inspection")]
+    async fn inspect(
+  &self,
+  target: &str,
+  config: AlkanesInspectConfig,
+ ) -> Result<AlkanesInspectResult> {
+  let inspector = AlkaneInspector::new();
+  let parts: Vec<&str> = target.split(':').collect();
+  if parts.len() != 2 {
+   return Err(AlkanesError::InvalidParameters(
+    "Invalid target format. Expected 'block:tx'".to_string(),
+   ));
+  }
+  let block = parts[0].parse::<u64>()?;
+  let tx = parts[1].parse::<u64>()?;
+  let alkane_id = AlkaneId { block, tx };
+  let inspection_config = InspectionConfig {
+   disasm: config.disasm,
+   fuzz: config.fuzz,
+   fuzz_ranges: config.fuzz_ranges,
+   meta: config.meta,
+   codehash: config.codehash,
+   raw: config.raw,
+  };
+  let result = inspector.inspect_alkane(&alkane_id, &inspection_config, self).await.map_err(|e| AlkanesError::Other(e.to_string()))?;
+  Ok(serde_json::from_value(serde_json::to_value(result)?)?)
+ }
+
+    #[cfg(not(feature = "wasm-inspection"))]
+    async fn inspect(
+        &self,
+        _target: &str,
+        _config: AlkanesInspectConfig,
+    ) -> Result<AlkanesInspectResult> {
+        Err(AlkanesError::NotImplemented(
+            "Alkanes inspection is not available without the 'wasm-inspection' feature".to_string(),
+        ))
+    }
+
+    async fn get_balance(&self, address: Option<&str>) -> Result<Vec<AlkaneBalance>> {
+        let addr_str = match address {
+            Some(a) => a.to_string(),
+            None => WalletProvider::get_address(self).await?,
+        };
+        // Use protorunesbyaddress with protocol_tag=1 (alkanes)
+        let mut request = protorune_pb::ProtorunesWalletRequest::default();
+        request.wallet = addr_str.as_bytes().to_vec();
+        request.protocol_tag = Some(<u128 as Into<protorune_pb::Uint128>>::into(1u128));
+        let hex_input = format!("0x{}", hex::encode(request.encode_to_vec()));
+        let response_bytes = self
+            .metashrew_view_call("protorunesbyaddress", &hex_input, "latest")
+            .await?;
+        if response_bytes.is_empty() {
+            return Ok(vec![]);
+        }
+        let wallet_response = protorune_pb::WalletResponse::decode(response_bytes.as_slice())?;
+
+        // Aggregate balances across all outpoints
+        let mut balance_map: std::collections::HashMap<(u64, u64), (String, String, u64)> = std::collections::HashMap::new();
+
+        for item in wallet_response.outpoints.into_iter() {
+            if let Some(balance_sheet_pb) = item.balances {
+                for entry in balance_sheet_pb.entries {
+                    if let Some(rune) = entry.rune {
+                        if let Some(rune_id) = rune.rune_id {
+                            if let (Some(height), Some(txindex), Some(balance)) = (
+                                rune_id.height,
+                                rune_id.txindex,
+                                entry.balance,
+                            ) {
+                                let key = (height.lo, txindex.lo);
+                                let entry = balance_map.entry(key).or_insert((
+                                    rune.name.clone(),
+                                    rune.symbol.clone(),
+                                    0,
+                                ));
+                                entry.2 = entry.2.saturating_add(balance.lo);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let result: Vec<AlkaneBalance> = balance_map
+            .into_iter()
+            .map(|((block, tx), (name, symbol, balance))| AlkaneBalance {
+                alkane_id: AlkaneId { block, tx },
+                name,
+                symbol,
+                balance,
+            })
+            .collect();
+
+        Ok(result)
+    }
+
+    async fn trace_protostones(&self, txid: &str) -> Result<Option<Vec<JsonValue>>> {
+        use prost::Message;
+        
+        // Get transaction
+        let tx_hex = self.get_transaction_hex(txid).await?;
+        let tx_bytes = hex::decode(&tx_hex).map_err(|e| AlkanesError::Hex(e.to_string()))?;
+        let tx: bitcoin::Transaction = bitcoin::consensus::deserialize(&tx_bytes)
+            .map_err(|e| AlkanesError::Serialization(e.to_string()))?;
+        
+        // Decode runestone to get protostones
+        let result = crate::runestone_enhanced::format_runestone_with_decoded_messages(&tx, self.get_network())
+            .map_err(|e| AlkanesError::Other(format!("Failed to decode runestone: {}", e)))?;
+        
+        // Extract number of protostones
+        let num_protostones = if let Some(protostones) = result.get("protostones").and_then(|p| p.as_array()) {
+            protostones.len()
+        } else {
+            0
+        };
+        
+        if num_protostones == 0 {
+            return Ok(None);
+        }
+        
+        // Calculate virtual vout indices and trace each protostone
+        // Protostones are indexed starting at tx.output.len() + 1
+        let base_vout = tx.output.len() as u32 + 1;
+        let mut all_traces = Vec::new();
+        
+        for i in 0..num_protostones {
+            let vout = base_vout + i as u32;
+            let outpoint = format!("{}:{}", txid, vout);
+            
+            match self.trace(&outpoint).await {
+                Ok(trace_pb) => {
+                    if let Some(alkanes_trace) = trace_pb.trace {
+                        // Convert alkanes-cli-common proto to alkanes-support proto via bytes
+                        // The Into<Trace> trait is only implemented for alkanes_support::proto::alkanes::AlkanesTrace
+                        let trace_bytes = Message::encode_to_vec(&alkanes_trace);
+                        match alkanes_support::proto::alkanes::AlkanesTrace::decode(trace_bytes.as_slice()) {
+                            Ok(support_trace) => {
+                                let trace: alkanes_support::trace::Trace = support_trace.into();
+                                let json = crate::alkanes::trace::trace_to_json(&trace);
+                                all_traces.push(json);
+                            }
+                            Err(e) => {
+                                all_traces.push(serde_json::json!({
+                                    "error": format!("Failed to decode trace: {}", e),
+                                    "events": []
+                                }));
+                            }
+                        }
+                    } else {
+                        // Empty trace - this is normal
+                        all_traces.push(serde_json::json!({"events": []}));
+                    }
+                }
+                Err(e) => {
+                    all_traces.push(serde_json::json!({
+                        "error": format!("Failed to trace: {}", e),
+                        "events": []
+                    }));
+                }
+            }
+        }
+        
+        Ok(Some(all_traces))
+    }
+
+    async fn pending_unwraps(&self, block_tag: Option<String>) -> Result<Vec<crate::alkanes::PendingUnwrap>> {
+        use bitcoin::consensus::Decodable;
+        use std::io::Cursor;
+        use std::collections::HashSet;
+        
+        // Get the current height if block_tag is not provided
+        let (query_height, height_tag) = match &block_tag {
+            Some(tag) if tag == "latest" => {
+                let h = self.get_height().await?;
+                (h, "latest".to_string())
+            },
+            Some(tag) => {
+                // Try to parse as a number
+                let h = tag.parse::<u64>()
+                    .map_err(|_| AlkanesError::InvalidParameters(format!("Invalid block_tag: {}", tag)))?;
+                (h, tag.clone())
+            },
+            None => {
+                let h = self.get_height().await?;
+                (h, "latest".to_string())
+            }
+        };
+        
+        // Call the view function to get all unwraps from the indexer
+        let params = serde_json::json!(["unwrap", "0x", query_height]);
+        let response = self.call(
+            &self.rpc_config.get_metashrew_rpc_target().url,
+            "metashrew_view",
+            params,
+            1,
+        ).await?;
+        
+        let hex_data = response.as_str()
+            .ok_or_else(|| AlkanesError::RpcError("metashrew_view result is not a string".to_string()))?;
+        let hex_data_stripped = hex_data.strip_prefix("0x").unwrap_or(hex_data);
+        let response_bytes = hex::decode(hex_data_stripped)
+            .map_err(|e| AlkanesError::RpcError(format!("Failed to decode hex response: {}", e)))?;
+        
+        if response_bytes.is_empty() {
+            return Ok(vec![]);
+        }
+        
+        // Decode the protobuf response
+        let unwraps_response = crate::proto::alkanes::PendingUnwrapsResponse::decode(response_bytes.as_slice())?;
+        
+        if unwraps_response.payments.is_empty() {
+            log::info!("No pending unwraps found in indexer");
+            return Ok(vec![]);
+        }
+        
+        log::info!("Initially found {} unwraps from indexer", unwraps_response.payments.len());
+        
+        // Get wallet address to filter by spendable UTXOs
+        // If we can't get an address (no wallet loaded), return unfiltered results
+        let wallet_address = match WalletProvider::get_address(self).await {
+            Ok(addr) => {
+                log::info!("Filtering unwraps by spendable UTXOs for address: {}", addr);
+                Some(addr)
+            },
+            Err(e) => {
+                log::warn!("No wallet address available ({}), returning unfiltered unwraps", e);
+                None
+            }
+        };
+        
+        // If we have a wallet address, filter by spendable UTXOs
+        let spendable_outpoints = if let Some(address) = wallet_address {
+            // Call jsonrpc to get current UTXOs
+            let _jsonrpc_url = self.rpc_config.jsonrpc_url.clone()
+                .ok_or_else(|| AlkanesError::Configuration("jsonrpc_url not configured".to_string()))?;
+            
+            // Use lua/balances.lua script to get balances
+            use crate::lua_script::scripts;
+            let balances = self.execute_lua_script(&scripts::BALANCES, vec![JsonValue::String(address.clone())]).await?;
+
+            log::debug!("Received balances from jsonrpc: {:?}", balances);
+            
+            // Extract spendable outpoints from both "spendable" and "assets" arrays
+            let mut outpoints = HashSet::new();
+            for array_key in ["spendable", "assets"] {
+                if let Some(utxos) = balances[array_key].as_array() {
+                    for utxo in utxos {
+                        if let Some(outpoint_str) = utxo["outpoint"].as_str() {
+                            let parts: Vec<&str> = outpoint_str.split(':').collect();
+                            if parts.len() == 2 {
+                                if let (Ok(txid), Ok(vout)) = (
+                                    bitcoin::Txid::from_str(parts[0]),
+                                    parts[1].parse::<u32>()
+                                ) {
+                                    outpoints.insert(bitcoin::OutPoint::new(txid, vout));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            log::info!("Found {} spendable UTXOs in wallet", outpoints.len());
+            Some(outpoints)
+        } else {
+            None
+        };
+        
+        // Convert proto payments to PendingUnwrap structs, filtering if we have spendables
+        let mut result = Vec::new();
+        for payment in unwraps_response.payments {
+            let spendable = payment.spendable.ok_or_else(|| {
+                AlkanesError::RpcError("Payment missing spendable field".to_string())
+            })?;
+            
+            let txid_bytes = spendable.txid.clone();
+            let txid = bitcoin::Txid::from_slice(&txid_bytes)
+                .map_err(|e| AlkanesError::RpcError(format!("Invalid txid in spendable: {}", e)))?;
+            let vout = spendable.vout;
+            let outpoint = bitcoin::OutPoint::new(txid, vout);
+            
+            // If we're filtering, only include unwraps whose spendable UTXO still exists
+            if let Some(ref spendables) = spendable_outpoints {
+                if !spendables.contains(&outpoint) {
+                    log::debug!("Skipping fulfilled unwrap: {}:{}", txid, vout);
+                    continue;
+                }
+            }
+            
+            // Decode the TxOut from the output bytes
+            let mut cursor = Cursor::new(payment.output);
+            let tx_out = bitcoin::TxOut::consensus_decode(&mut cursor)
+                .map_err(|e| AlkanesError::RpcError(format!("Failed to decode TxOut: {}", e)))?;
+            
+            let amount = tx_out.value.to_sat();
+            
+            // Try to extract address from script_pubkey
+            let address = bitcoin::Address::from_script(&tx_out.script_pubkey, self.get_network())
+                .ok()
+                .map(|a| a.to_string());
+            
+            result.push(crate::alkanes::PendingUnwrap {
+                txid: txid.to_string(),
+                vout,
+                amount,
+                address,
+                fulfilled: payment.fulfilled,
+            });
+        }
+        
+        log::info!("Returning {} pending unwraps after filtering", result.len());
+        Ok(result)
+    }
+}
+
+#[async_trait(?Send)]
+impl DeezelProvider for ConcreteProvider {
+    fn provider_name(&self) -> &str {
+        "ConcreteProvider"
+    }
+
+    fn get_bitcoin_rpc_url(&self) -> Option<String> {
+        self.rpc_config.bitcoin_rpc_url.clone()
+    }
+
+    fn get_esplora_api_url(&self) -> Option<String> {
+        self.rpc_config.esplora_url.clone()
+    }
+
+    fn get_ord_server_url(&self) -> Option<String> {
+        self.rpc_config.ord_url.clone()
+    }
+
+    fn get_metashrew_rpc_url(&self) -> Option<String> {
+        self.rpc_config.metashrew_rpc_url.clone()
+    }
+
+    fn is_qubitcoin_mode(&self) -> bool {
+        self.rpc_config.is_qubitcoin_mode()
+    }
+
+    fn get_brc20_prog_rpc_url(&self) -> Option<String> {
+        // If explicitly set, use that
+        if let Some(ref url) = self.rpc_config.brc20_prog_rpc_url {
+            return Some(url.clone());
+        }
+        
+        // Otherwise, use default based on network
+        self.rpc_config.get_default_brc20_prog_rpc_url()
+    }
+
+    fn clone_box(&self) -> Box<dyn DeezelProvider> {
+        Box::new(self.clone())
+    }
+
+    async fn initialize(&self) -> Result<()> {
+        // Note: The actual initialization logic is in the mutable initialize() method
+        // This trait method is a no-op because initialize requires &mut self
+        // Callers should use ConcreteProvider::initialize(&mut self) directly
+        Ok(())
+    }
+
+    async fn shutdown(&self) -> Result<()> {
+        Ok(())
+    }
+
+    fn secp(&self) -> &Secp256k1<All> {
+        &self.secp
+    }
+
+    async fn get_utxo(&self, outpoint: &OutPoint) -> Result<Option<TxOut>> {
+        let txid_str = outpoint.txid.to_string();
+        let vout = outpoint.vout;
+        let tx_result = self.get_tx(&txid_str).await;
+
+        let (amount, script_pubkey_hex) = match tx_result {
+            Ok(ref tx_info) if tx_info.get("error").is_none() && tx_info.get("vout").is_some() => {
+                let vout_info = tx_info["vout"].get(vout as usize)
+                    .ok_or_else(|| AlkanesError::Wallet(format!("Vout {} not found for tx {}", vout, txid_str)))?;
+                let amt = vout_info["value"].as_u64()
+                    .ok_or_else(|| AlkanesError::Wallet("UTXO value not found".to_string()))?;
+                let script = vout_info["scriptpubkey"].as_str()
+                    .ok_or_else(|| AlkanesError::Wallet("UTXO script pubkey not found".to_string()))?;
+                (amt, script.to_string())
+            }
+            _ => {
+                // Fallback: use gettxout for qubitcoin mode (no txindex)
+                log::info!("get_tx failed for get_utxo({}:{}), trying gettxout", &txid_str[..16.min(txid_str.len())], vout);
+                let network = self.get_network();
+                let gettxout_resp = <Self as crate::traits::JsonRpcProvider>::call(
+                    self, "", "gettxout", serde_json::json!([txid_str, vout]), 1,
+                ).await.unwrap_or(serde_json::Value::Null);
+                let result = gettxout_resp.get("result").unwrap_or(&gettxout_resp);
+                if result.is_null() {
+                    // Derive from wallet address
+                    let wallet_addr = WalletProvider::get_address(self).await.unwrap_or_default();
+                    let script_hex = bitcoin::Address::from_str(&wallet_addr).ok()
+                        .and_then(|a| a.require_network(network).ok())
+                        .map(|a| hex::encode(a.script_pubkey().as_bytes()))
+                        .unwrap_or_default();
+                    (546u64, script_hex)
+                } else {
+                    let value_btc = result["value"].as_f64().unwrap_or(0.0);
+                    let amt = (value_btc * 100_000_000.0) as u64;
+                    let script = result.get("scriptPubKey").and_then(|s| s.get("hex")).and_then(|h| h.as_str())
+                        .unwrap_or("").to_string();
+                    (amt, script)
+                }
+            }
+        };
+        let script_pubkey_hex = &script_pubkey_hex;
+
+        let script_pubkey = ScriptBuf::from(Vec::from_hex(script_pubkey_hex)?);
+        Ok(Some(TxOut { value: Amount::from_sat(amount), script_pubkey }))
+    }
+
+    async fn sign_taproot_script_spend(&self, sighash: bitcoin::secp256k1::Message, ephemeral_secret: Option<bitcoin::secp256k1::SecretKey>) -> Result<bitcoin::secp256k1::schnorr::Signature> {
+        // ANTI-FRONTRUNNING: If ephemeral_secret is provided (from presign flow),
+        // use it instead of generating random entropy. This ensures the reveal can be
+        // signed with the same key used to create the commit address.
+        let keypair = if let Some(secret) = ephemeral_secret {
+            bitcoin::secp256k1::Keypair::from_secret_key(&self.secp, &secret)
+        } else if let WalletState::ExternalKey { private_key, .. } = &self.wallet_state {
+            // Use external private key for signing
+            let secret_key = bitcoin::secp256k1::SecretKey::from_str(private_key)
+                .map_err(|e| AlkanesError::Wallet(format!("Invalid external private key: {}", e)))?;
+            bitcoin::secp256k1::Keypair::from_secret_key(&self.secp, &secret_key)
+        } else {
+            // Fallback to keystore mnemonic for non-presign flows
+            let mnemonic = match &self.wallet_state {
+                WalletState::Unlocked { mnemonic, .. } => mnemonic,
+                _ => return Err(AlkanesError::Wallet("Wallet must be unlocked to sign".to_string())),
+            };
+            let _mnemonic = bip39::Mnemonic::parse_in(bip39::Language::English, mnemonic.as_str())?;
+            let seed = Mnemonic::from_entropy(&rand::random::<[u8; 32]>()).map_err(|e| AlkanesError::Wallet(format!("{e}")))?.to_seed("");
+            let network = self.get_network();
+            let root_key = Xpriv::new_master(network, &seed)?;
+            root_key.to_keypair(&self.secp)
+        };
+
+        #[cfg(not(target_arch = "wasm32"))]
+        let signature = self.secp.sign_schnorr_with_rng(&sighash, &keypair, &mut rand::thread_rng());
+        #[cfg(target_arch = "wasm32")]
+        let signature = self.secp.sign_schnorr_with_rng(&sighash, &keypair, &mut OsRng);
+        Ok(signature)
+    }
+
+    async fn wrap(&mut self, _amount: u64, _address: Option<String>, _fee_rate: Option<f32>) -> Result<String> {
+        Err(AlkanesError::NotImplemented("wrap".to_string()))
+    }
+
+    async fn unwrap(&mut self, _amount: u64, _address: Option<String>) -> Result<String> {
+        Err(AlkanesError::NotImplemented("unwrap".to_string()))
+    }
+    }
+
+#[async_trait(?Send)]
+impl AddressResolver for ConcreteProvider {
+    async fn resolve_all_identifiers(&self, input: &str) -> Result<String> {
+        let mut resolver = crate::address_resolver::AddressResolver::new(self.clone());
+        resolver.resolve_all_identifiers(input).await
+    }
+
+    fn contains_identifiers(&self, input: &str) -> bool {
+        let resolver = crate::address_resolver::AddressResolver::new(self.clone());
+        resolver.contains_identifiers(input)
+    }
+
+    async fn get_address(&self, address_type: &str, index: u32) -> Result<String> {
+        // Normalize address type (handle both "p2sh-p2wpkh" and "p2sh_p2wpkh")
+        let normalized_type = address_type.replace('-', "_");
+
+        // Map address identifiers to script types used by keystore
+        let script_type = match normalized_type.to_lowercase().as_str() {
+            "p2pk" => "p2pkh",  // P2PK addresses use similar derivation to P2PKH
+            "p2pkh" => "p2pkh",
+            "p2sh" => "p2sh",
+            "p2wpkh" => "p2wpkh",
+            "p2wsh" => "p2wsh",
+            "p2sh_p2wpkh" => "p2sh-p2wpkh",  // Nested SegWit
+            "p2sh_p2wsh" => "p2sh-p2wsh",  // P2SH-wrapped P2WSH (not commonly used, fall back to p2wsh)
+            "p2tr" => "p2tr",
+            _ => return Err(AlkanesError::Wallet(format!("Unsupported address type: {}", address_type))),
+        };
+
+        // Get the keystore - allow both Locked and Unlocked states for view-only address derivation
+        // Only signing operations should require an unlocked wallet
+        let keystore = match &self.wallet_state {
+            WalletState::Unlocked { keystore, .. } => keystore,
+            WalletState::Locked(keystore) => keystore,
+            _ => return Err(AlkanesError::Wallet("No keystore available - wallet must be loaded with --wallet-file".to_string())),
+        };
+        
+        // Get network params from the current network
+        let network = self.get_network();
+        let network_str = match network {
+            bitcoin::Network::Bitcoin => "mainnet",
+            bitcoin::Network::Testnet => "testnet",
+            bitcoin::Network::Signet => "signet",
+            bitcoin::Network::Regtest => "regtest",
+            _ => "regtest",
+        };
+        let network_params = crate::network::NetworkParams::from_network_str(network_str)?;
+        
+        // Determine network suffix for xpub lookup
+        let network_suffix = if network == bitcoin::Network::Bitcoin { "mainnet" } else { "testnet" };
+        let xpub_key = format!("{}:{}", script_type, network_suffix);
+        
+        // Try to get the account xpub for this address type and network
+        if let Some(account_xpub) = keystore.account_xpubs.get(&xpub_key) {
+            // New keystore format with account_xpubs map - use proper BIP-standard derivation
+            let derive_script_type = match script_type {
+                "p2sh-p2wpkh" => "p2sh",
+                "p2sh-p2wsh" => "p2wsh",
+                other => other,
+            };
+            
+            let addresses = self.derive_addresses(account_xpub, &network_params, &[derive_script_type], index, 1).await?;
+            
+            return addresses.first()
+                .map(|a| a.address.clone())
+                .ok_or_else(|| AlkanesError::Wallet(format!("Failed to derive address for type {} at index {}", address_type, index)));
+        }
+        
+        // Fall back to old keystore format - use single account_xpub (works for all types via KeystoreManager)
+        if !keystore.account_xpub.is_empty() {
+            use bitcoin::bip32::Xpub;
+            use bitcoin::secp256k1::Secp256k1;
+            use core::str::FromStr;
+            
+            let master_xpub = Xpub::from_str(&keystore.account_xpub)
+                .map_err(|e| AlkanesError::Wallet(format!("Invalid master public key: {}", e)))?;
+            let secp = Secp256k1::new();
+            
+            // Use KeystoreManager's approach for old keystores - derive all address types from single xpub
+            // This works but isn't strictly BIP-standard for non-p2tr types
+            let address_info = Self::derive_single_address_legacy(&master_xpub, &secp, network, script_type, 0, index)?;
+            return Ok(address_info.address);
+        }
+        
+        Err(AlkanesError::Wallet(format!(
+            "No account xpub found for {} on {}. This keystore may be in an older format. \
+             To derive addresses for all address types, please recreate your wallet using 'wallet create' with your mnemonic.",
+            script_type, network_suffix
+        )))
+    }
+
+    async fn list_identifiers(&self) -> Result<Vec<String>> {
+        // This is a placeholder. A real implementation would inspect the wallet.
+        Ok(vec!["[self:p2tr:0]".to_string(), "[self:p2tr:1]".to_string()])
+    }
+    }
+
+
+#[async_trait(?Send)]
+impl MetashrewProvider for ConcreteProvider {
+    async fn get_height(&self) -> Result<u64> {
+        <Self as MetashrewRpcProvider>::get_metashrew_height(self).await
+    }
+
+    async fn get_block_hash(&self, height: u64) -> Result<String> {
+        <Self as BitcoinRpcProvider>::get_block_hash(self, height).await
+    }
+
+    async fn get_state_root(&self, _height: JsonValue) -> Result<String> {
+        // Placeholder implementation.
+        // In a real scenario, this would call a specific RPC method like `getstateroot`.
+        // Err(AlkanesError::NotImplemented("get_state_root is not implemented for ConcreteProvider".to_string()))
+        <Self as MetashrewRpcProvider>::get_state_root(self, _height as serde_json::Value).await
+    }
+    }
+
+#[async_trait(?Send)]
+impl UtxoProvider for ConcreteProvider {
+    async fn get_utxos_by_spec(&self, spec: &[String]) -> Result<Vec<Utxo>> {
+        let utxos = self.get_utxos(false, Some(spec.to_vec())).await?;
+        let result = utxos
+            .into_iter()
+            .map(|(_outpoint, utxo_info)| Utxo {
+                txid: utxo_info.txid,
+                vout: utxo_info.vout,
+                amount: utxo_info.amount,
+                address: utxo_info.address,
+            })
+            .collect();
+        Ok(result)
+    }
+    }
+#[async_trait(?Send)]
+impl MonitorProvider for ConcreteProvider {
+    async fn monitor_blocks(&self, _start: Option<u64>) -> Result<()> {
+        Err(AlkanesError::NotImplemented("MonitorProvider monitor_blocks not yet implemented".to_string()))
+    }
+
+    async fn get_block_events(&self, _height: u64) -> Result<Vec<BlockEvent>> {
+        Err(AlkanesError::NotImplemented("MonitorProvider get_block_events not yet implemented".to_string()))
+    }
+}
+#[async_trait(?Send)]
+#[allow(unused_variables)]
+impl BitcoinRpcProvider for ConcreteProvider {
+    async fn get_block_count(&self) -> Result<u64> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind { 
+            command: crate::commands::BitcoindCommands::Getblockcount { raw: false }
+        })?;
+        let json = self.call(&rpc_url, "getblockcount", json!([]), 1).await?;
+        if let Some(count) = json.as_u64() {
+            return Ok(count);
+        }
+        if let Some(count_str) = json.as_str() {
+            if let Ok(val) = count_str.parse::<u64>() {
+                return Ok(val);
+            }
+        }
+        Err(AlkanesError::RpcError(format!("Invalid block count response: {}", json)))
+    }
+
+    async fn generate_to_address(&self, nblocks: u32, address: &str) -> Result<JsonValue> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind { 
+            command: crate::commands::BitcoindCommands::Getblockcount { raw: false }
+        })?;
+        let params = json!([nblocks, address]);
+        self.call(&rpc_url, "generatetoaddress", params, 1).await
+    }
+
+    async fn generate_future(&self, address: &str) -> Result<JsonValue> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind {
+            command: crate::commands::BitcoindCommands::Getblockcount { raw: false }
+        })?;
+        let params = json!([address]);
+        self.call(&rpc_url, "generatefuture", params, 1).await
+    }
+
+    async fn subfrost_thieve(&self, address: &str, amount: u64) -> Result<JsonValue> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind {
+            command: crate::commands::BitcoindCommands::Getblockcount { raw: false }
+        })?;
+        let params = json!([address, amount]);
+        self.call(&rpc_url, "subfrost_thieve", params, 1).await
+    }
+
+    async fn get_blockchain_info(&self) -> Result<JsonValue> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind { 
+            command: crate::commands::BitcoindCommands::Getblockcount { raw: false }
+        })?;
+        self.call(&rpc_url, "getblockchaininfo", json!([]), 1).await
+    }
+
+    async fn get_new_address(&self) -> Result<JsonValue> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind { 
+            command: crate::commands::BitcoindCommands::Getblockcount { raw: false }
+        })?;
+        self.call(&rpc_url, "getnewaddress", json!([]), 1).await
+    }
+
+    async fn get_transaction_hex(&self, txid: &str) -> Result<String> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind { 
+            command: crate::commands::BitcoindCommands::Getblockcount { raw: false }
+        })?;
+        let params = json!([txid, false]);
+        let result = self.call(&rpc_url, "getrawtransaction", params, 1).await?;
+        result.as_str()
+            .ok_or_else(|| AlkanesError::RpcError("Invalid transaction hex response".to_string()))
+            .map(|s| s.to_string())
+    }
+
+    async fn get_block(&self, hash: &str, raw: bool) -> Result<JsonValue> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind { 
+            command: crate::commands::BitcoindCommands::Getblockcount { raw: false }
+        })?;
+        let verbosity = if raw { 0 } else { 1 };
+        let params = json!([hash, verbosity]);
+        self.call(&rpc_url, "getblock", params, 1).await
+    }
+
+    async fn get_block_hash(&self, height: u64) -> Result<String> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind { 
+            command: crate::commands::BitcoindCommands::Getblockcount { raw: false }
+        })?;
+        let params = json!([height]);
+        let result = self.call(&rpc_url, "getblockhash", params, 1).await?;
+        result.as_str()
+            .ok_or_else(|| AlkanesError::RpcError("Invalid block hash response".to_string()))
+            .map(|s| s.to_string())
+    }
+
+    async fn send_raw_transaction(&self, tx_hex: &str) -> Result<String> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind {
+            command: crate::commands::BitcoindCommands::Getblockcount { raw: false }
+        })?;
+        // Use maxfeerate=0 in qubitcoin mode: qubitcoind's block storage may not support
+        // UTXO value lookups needed for fee calculation, causing false "0 sat/kvB" errors.
+        let maxfeerate: f64 = if self.rpc_config.is_qubitcoin_mode() { 0.0 } else { 0.1 };
+        // Only pass maxfeerate - maxburnamount is not supported in Bitcoin Core < 26.0
+        let params = json!([tx_hex, maxfeerate]);
+        let result = self.call(&rpc_url, "sendrawtransaction", params, 1).await?;
+        result.as_str()
+            .ok_or_else(|| AlkanesError::RpcError("Invalid sendrawtransaction response".to_string()))
+            .map(|s| s.to_string())
+    }
+
+    async fn send_raw_transactions(&self, tx_hexes: &[String]) -> Result<Vec<String>> {
+        // If only one transaction, just use the single method
+        if tx_hexes.len() == 1 {
+            let txid = self.send_raw_transaction(&tx_hexes[0]).await?;
+            return Ok(vec![txid]);
+        }
+
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind {
+            command: crate::commands::BitcoindCommands::Getblockcount { raw: false }
+        })?;
+        let maxfeerate = 0.1;
+        // Only pass maxfeerate - maxburnamount is not supported in Bitcoin Core < 26.0
+        let params = json!([tx_hexes, maxfeerate]);
+
+        // Try batch sendrawtransactions first
+        match self.call(&rpc_url, "sendrawtransactions", params, 1).await {
+            Ok(result) => {
+                // Parse array of txids
+                result.as_array()
+                    .ok_or_else(|| AlkanesError::RpcError("Invalid sendrawtransactions response".to_string()))?
+                    .iter()
+                    .map(|v| v.as_str()
+                        .ok_or_else(|| AlkanesError::RpcError("Invalid txid in response".to_string()))
+                        .map(|s| s.to_string()))
+                    .collect()
+            }
+            Err(e) => {
+                // Check if this is a "method not found" error - fallback to iterative broadcast
+                let err_str = e.to_string().to_lowercase();
+                if err_str.contains("method not found") || err_str.contains("unknown method") || err_str.contains("-32601") {
+                    log::warn!("sendrawtransactions not available, falling back to sequential broadcast");
+                    log::warn!("⚠️ Sequential broadcast may be vulnerable to MEV/frontrunning");
+
+                    let mut txids = Vec::with_capacity(tx_hexes.len());
+                    for (i, tx_hex) in tx_hexes.iter().enumerate() {
+                        match self.send_raw_transaction(tx_hex).await {
+                            Ok(txid) => {
+                                log::info!("Broadcast tx {}/{}: {}", i + 1, tx_hexes.len(), txid);
+                                txids.push(txid);
+                            }
+                            Err(tx_err) => {
+                                // If we've already broadcast some, log the failure but don't abort
+                                // This allows partial success tracking
+                                if !txids.is_empty() {
+                                    log::error!("Failed to broadcast tx {}/{}: {}", i + 1, tx_hexes.len(), tx_err);
+                                    return Err(AlkanesError::RpcError(format!(
+                                        "Partial broadcast failure: {} of {} transactions broadcast. Failed at tx {}: {}",
+                                        txids.len(), tx_hexes.len(), i + 1, tx_err
+                                    )));
+                                }
+                                return Err(tx_err);
+                            }
+                        }
+                    }
+                    Ok(txids)
+                } else {
+                    // Some other error - propagate it
+                    Err(e)
+                }
+            }
+        }
+    }
+
+    async fn get_mempool_info(&self) -> Result<JsonValue> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind { 
+            command: crate::commands::BitcoindCommands::Getblockcount { raw: false }
+        })?;
+        self.call(&rpc_url, "getmempoolinfo", json!([]), 1).await
+    }
+
+    async fn estimate_smart_fee(&self, target: u32) -> Result<JsonValue> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind { 
+            command: crate::commands::BitcoindCommands::Getblockcount { raw: false }
+        })?;
+        let params = json!([target]);
+        self.call(&rpc_url, "estimatesmartfee", params, 1).await
+    }
+
+    async fn get_esplora_blocks_tip_height(&self) -> Result<u64> {
+        // This is actually an Esplora method, but it's in the BitcoinRpcProvider trait
+        // Call the EsploraProvider implementation
+        <Self as EsploraProvider>::get_blocks_tip_height(self).await
+    }
+
+    async fn trace_transaction(&self, txid: &str, vout: u32, block: Option<&str>, tx: Option<&str>) -> Result<serde_json::Value> {
+        // This uses the MetashrewRpcProvider's trace_outpoint
+        <Self as MetashrewRpcProvider>::trace_outpoint(self, txid, vout).await
+    }
+
+    async fn get_network_info(&self) -> Result<JsonValue> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind { 
+            command: crate::commands::BitcoindCommands::Getblockcount { raw: false }
+        })?;
+        self.call(&rpc_url, "getnetworkinfo", json!([]), 1).await
+    }
+
+    async fn get_raw_transaction(&self, txid: &str, block_hash: Option<&str>) -> Result<JsonValue> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind { 
+            command: crate::commands::BitcoindCommands::Getblockcount { raw: false }
+        })?;
+        let params = if let Some(hash) = block_hash {
+            json!([txid, true, hash])
+        } else {
+            json!([txid, true])
+        };
+        self.call(&rpc_url, "getrawtransaction", params, 1).await
+    }
+
+    async fn get_block_header(&self, hash: &str) -> Result<JsonValue> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind { 
+            command: crate::commands::BitcoindCommands::Getblockcount { raw: false }
+        })?;
+        let params = json!([hash, true]);
+        self.call(&rpc_url, "getblockheader", params, 1).await
+    }
+
+    async fn get_block_stats(&self, hash: &str) -> Result<JsonValue> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind { 
+            command: crate::commands::BitcoindCommands::Getblockcount { raw: false }
+        })?;
+        let params = json!([hash]);
+        self.call(&rpc_url, "getblockstats", params, 1).await
+    }
+
+    async fn get_chain_tips(&self) -> Result<JsonValue> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind { 
+            command: crate::commands::BitcoindCommands::Getblockcount { raw: false }
+        })?;
+        self.call(&rpc_url, "getchaintips", json!([]), 1).await
+    }
+
+    async fn get_raw_mempool(&self) -> Result<JsonValue> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind { 
+            command: crate::commands::BitcoindCommands::Getblockcount { raw: false }
+        })?;
+        self.call(&rpc_url, "getrawmempool", json!([]), 1).await
+    }
+
+    async fn get_tx_out(&self, txid: &str, vout: u32, include_mempool: bool) -> Result<JsonValue> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind {
+            command: crate::commands::BitcoindCommands::Getblockcount { raw: false }
+        })?;
+        let params = json!([txid, vout, include_mempool]);
+        self.call(&rpc_url, "gettxout", params, 1).await
+    }
+
+    async fn decode_raw_transaction(&self, hex: &str) -> Result<JsonValue> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind {
+            command: crate::commands::BitcoindCommands::Getblockcount { raw: false }
+        })?;
+        let params = json!([hex]);
+        self.call(&rpc_url, "decoderawtransaction", params, 1).await
+    }
+
+    async fn decode_psbt(&self, psbt: &str) -> Result<JsonValue> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Bitcoind {
+            command: crate::commands::BitcoindCommands::Getblockcount { raw: false }
+        })?;
+        let params = json!([psbt]);
+        self.call(&rpc_url, "decodepsbt", params, 1).await
+    }
+}
+
+#[async_trait(?Send)]
+#[async_trait(?Send)]
+impl OrdProvider for ConcreteProvider {
+    async fn get_inscription(&self, inscription_id: &str) -> Result<crate::ord::Inscription> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Ord(crate::commands::OrdCommands::Inscription { id: String::new(), raw: false }))?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Ord(crate::commands::OrdCommands::Inscription { id: String::new(), raw: false }));
+        
+        #[cfg(feature = "native-deps")]
+        if call_type == RpcCallType::Rest {
+            let url = format!("{}/inscription/{}", rpc_url, inscription_id);
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
+        }
+        
+        let result = self.call(&rpc_url, crate::ord::OrdJsonRpcMethods::INSCRIPTION, json!([inscription_id]), 1).await?;
+        serde_json::from_value(result).map_err(|e| AlkanesError::Serialization(e.to_string()))
+    }
+
+    async fn get_inscriptions_in_block(&self, block_hash: &str) -> Result<crate::ord::Inscriptions> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Ord(crate::commands::OrdCommands::Inscription { id: String::new(), raw: false }))?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Ord(crate::commands::OrdCommands::Inscription { id: String::new(), raw: false }));
+        
+        #[cfg(feature = "native-deps")]
+        if call_type == RpcCallType::Rest {
+            let url = format!("{}/inscriptions/block/{}", rpc_url, block_hash);
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
+        }
+        
+        let result = self.call(&rpc_url, crate::ord::OrdJsonRpcMethods::INSCRIPTIONS_IN_BLOCK, json!([block_hash]), 1).await?;
+        serde_json::from_value(result).map_err(|e| AlkanesError::Serialization(e.to_string()))
+    }
+
+    async fn get_ord_address_info(&self, address: &str) -> Result<crate::ord::AddressInfo> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Ord(crate::commands::OrdCommands::Inscription { id: String::new(), raw: false }))?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Ord(crate::commands::OrdCommands::Inscription { id: String::new(), raw: false }));
+        
+        #[cfg(feature = "native-deps")]
+        if call_type == RpcCallType::Rest {
+            let url = format!("{}/address/{}", rpc_url, address);
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
+        }
+        
+        let result = self.call(&rpc_url, crate::ord::OrdJsonRpcMethods::ADDRESS, json!([address]), 1).await?;
+        serde_json::from_value(result).map_err(|e| AlkanesError::Serialization(e.to_string()))
+    }
+
+    async fn get_block_info(&self, query: &str) -> Result<crate::ord::Block> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Ord(crate::commands::OrdCommands::Inscription { id: String::new(), raw: false }))?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Ord(crate::commands::OrdCommands::Inscription { id: String::new(), raw: false }));
+        
+        #[cfg(feature = "native-deps")]
+        if call_type == RpcCallType::Rest {
+            let url = format!("{}/block/{}", rpc_url, query);
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
+        }
+        
+        let result = self.call(&rpc_url, crate::ord::OrdJsonRpcMethods::BLOCK, json!([query]), 1).await?;
+        serde_json::from_value(result).map_err(|e| AlkanesError::Serialization(e.to_string()))
+    }
+
+    async fn get_ord_block_count(&self) -> Result<u64> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Ord(crate::commands::OrdCommands::Inscription { id: String::new(), raw: false }))?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Ord(crate::commands::OrdCommands::Inscription { id: String::new(), raw: false }));
+        
+        #[cfg(feature = "native-deps")]
+        if call_type == RpcCallType::Rest {
+            let url = format!("{}/blockcount", rpc_url);
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            let text = response.text().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return text.parse::<u64>().map_err(|e| AlkanesError::RpcError(format!("Invalid block count: {}", e)));
+        }
+        
+        let json = self.call(&rpc_url, crate::ord::OrdJsonRpcMethods::BLOCK_COUNT, json!([]), 1).await?;
+        if let Some(count) = json.as_u64() {
+            return Ok(count);
+        }
+        if let Some(count_str) = json.as_str() {
+            return count_str.parse::<u64>().map_err(|_| AlkanesError::RpcError("Invalid block count string response".to_string()));
+        }
+        Err(AlkanesError::RpcError("Invalid block count response: not a u64 or string".to_string()))
+    }
+
+    async fn get_ord_blocks(&self) -> Result<crate::ord::Blocks> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Ord(crate::commands::OrdCommands::Inscription { id: String::new(), raw: false }))?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Ord(crate::commands::OrdCommands::Inscription { id: String::new(), raw: false }));
+        
+        #[cfg(feature = "native-deps")]
+        if call_type == RpcCallType::Rest {
+            let url = format!("{}/blocks", rpc_url);
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
+        }
+        
+        let result = self.call(&rpc_url, crate::ord::OrdJsonRpcMethods::BLOCKS, json!([]), 1).await?;
+        serde_json::from_value(result).map_err(|e| AlkanesError::Serialization(e.to_string()))
+    }
+
+    async fn get_children(&self, inscription_id: &str, page: Option<u32>) -> Result<crate::ord::Children> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Ord(crate::commands::OrdCommands::Inscription { id: String::new(), raw: false }))?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Ord(crate::commands::OrdCommands::Inscription { id: String::new(), raw: false }));
+        
+        #[cfg(feature = "native-deps")]
+        if call_type == RpcCallType::Rest {
+            let url = if let Some(p) = page {
+                format!("{}/inscription/{}/children/{}", rpc_url, inscription_id, p)
+            } else {
+                format!("{}/inscription/{}/children", rpc_url, inscription_id)
+            };
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
+        }
+        
+        let params = if let Some(p) = page {
+            json!([inscription_id, p])
+        } else {
+            json!([inscription_id])
+        };
+        let result = self.call(&rpc_url, crate::ord::OrdJsonRpcMethods::CHILDREN, params, 1).await?;
+        serde_json::from_value(result).map_err(|e| AlkanesError::Serialization(e.to_string()))
+    }
+
+    async fn get_content(&self, inscription_id: &str) -> Result<Vec<u8>> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Ord(crate::commands::OrdCommands::Inscription { id: String::new(), raw: false }))?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Ord(crate::commands::OrdCommands::Inscription { id: String::new(), raw: false }));
+        
+        #[cfg(feature = "native-deps")]
+        if call_type == RpcCallType::Rest {
+            let url = format!("{}/content/{}", rpc_url, inscription_id);
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            let bytes = response.bytes().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return Ok(bytes.to_vec());
+        }
+        
+        // For JSON-RPC, content is returned as base64
+        let result = self.call(&rpc_url, crate::ord::OrdJsonRpcMethods::CONTENT, json!([inscription_id]), 1).await?;
+        let base64_str = result.as_str().ok_or_else(|| AlkanesError::RpcError("Content response is not a string".to_string()))?;
+        use base64::Engine;
+        base64::engine::general_purpose::STANDARD.decode(base64_str).map_err(|e| AlkanesError::Other(format!("Base64 decode error: {}", e)))
+    }
+
+    async fn get_inscriptions(&self, page: Option<u32>) -> Result<crate::ord::Inscriptions> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Ord(crate::commands::OrdCommands::Inscription { id: String::new(), raw: false }))?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Ord(crate::commands::OrdCommands::Inscription { id: String::new(), raw: false }));
+        
+        #[cfg(feature = "native-deps")]
+        if call_type == RpcCallType::Rest {
+            let url = if let Some(p) = page {
+                format!("{}/inscriptions/{}", rpc_url, p)
+            } else {
+                format!("{}/inscriptions", rpc_url)
+            };
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
+        }
+        
+        let params = if let Some(p) = page {
+            json!([p])
+        } else {
+            json!([])
+        };
+        let result = self.call(&rpc_url, crate::ord::OrdJsonRpcMethods::INSCRIPTIONS, params, 1).await?;
+        serde_json::from_value(result).map_err(|e| AlkanesError::Serialization(e.to_string()))
+    }
+
+    async fn get_output(&self, output: &str) -> Result<crate::ord::Output> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Ord(crate::commands::OrdCommands::Inscription { id: String::new(), raw: false }))?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Ord(crate::commands::OrdCommands::Inscription { id: String::new(), raw: false }));
+        
+        #[cfg(feature = "native-deps")]
+        if call_type == RpcCallType::Rest {
+            let url = format!("{}/output/{}", rpc_url, output);
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
+        }
+        
+        let result = self.call(&rpc_url, crate::ord::OrdJsonRpcMethods::OUTPUT, json!([output]), 1).await?;
+        serde_json::from_value(result).map_err(|e| AlkanesError::Serialization(e.to_string()))
+    }
+
+    async fn get_parents(&self, inscription_id: &str, page: Option<u32>) -> Result<crate::ord::ParentInscriptions> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Ord(crate::commands::OrdCommands::Inscription { id: String::new(), raw: false }))?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Ord(crate::commands::OrdCommands::Inscription { id: String::new(), raw: false }));
+        
+        #[cfg(feature = "native-deps")]
+        if call_type == RpcCallType::Rest {
+            let url = if let Some(p) = page {
+                format!("{}/inscription/{}/parents/{}", rpc_url, inscription_id, p)
+            } else {
+                format!("{}/inscription/{}/parents", rpc_url, inscription_id)
+            };
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
+        }
+        
+        let params = if let Some(p) = page {
+            json!([inscription_id, p])
+        } else {
+            json!([inscription_id])
+        };
+        let result = self.call(&rpc_url, crate::ord::OrdJsonRpcMethods::PARENTS, params, 1).await?;
+        serde_json::from_value(result).map_err(|e| AlkanesError::Serialization(e.to_string()))
+    }
+
+    async fn get_rune(&self, rune: &str) -> Result<crate::ord::RuneInfo> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Ord(crate::commands::OrdCommands::Inscription { id: String::new(), raw: false }))?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Ord(crate::commands::OrdCommands::Inscription { id: String::new(), raw: false }));
+        
+        #[cfg(feature = "native-deps")]
+        if call_type == RpcCallType::Rest {
+            let url = format!("{}/rune/{}", rpc_url, rune);
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
+        }
+        
+        let result = self.call(&rpc_url, crate::ord::OrdJsonRpcMethods::RUNE, json!([rune]), 1).await?;
+        serde_json::from_value(result).map_err(|e| AlkanesError::Serialization(e.to_string()))
+    }
+
+    async fn get_runes(&self, page: Option<u32>) -> Result<crate::ord::Runes> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Ord(crate::commands::OrdCommands::Inscription { id: String::new(), raw: false }))?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Ord(crate::commands::OrdCommands::Inscription { id: String::new(), raw: false }));
+        
+        #[cfg(feature = "native-deps")]
+        if call_type == RpcCallType::Rest {
+            let url = if let Some(p) = page {
+                format!("{}/runes/{}", rpc_url, p)
+            } else {
+                format!("{}/runes", rpc_url)
+            };
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
+        }
+        
+        let params = if let Some(p) = page {
+            json!([p])
+        } else {
+            json!([])
+        };
+        let result = self.call(&rpc_url, crate::ord::OrdJsonRpcMethods::RUNES, params, 1).await?;
+        serde_json::from_value(result).map_err(|e| AlkanesError::Serialization(e.to_string()))
+    }
+
+    async fn get_sat(&self, sat: u64) -> Result<crate::ord::SatResponse> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Ord(crate::commands::OrdCommands::Inscription { id: String::new(), raw: false }))?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Ord(crate::commands::OrdCommands::Inscription { id: String::new(), raw: false }));
+        
+        #[cfg(feature = "native-deps")]
+        if call_type == RpcCallType::Rest {
+            let url = format!("{}/sat/{}", rpc_url, sat);
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
+        }
+        
+        let result = self.call(&rpc_url, crate::ord::OrdJsonRpcMethods::SAT, json!([sat]), 1).await?;
+        serde_json::from_value(result).map_err(|e| AlkanesError::Serialization(e.to_string()))
+    }
+
+    async fn get_tx_info(&self, txid: &str) -> Result<crate::ord::TxInfo> {
+        let rpc_url = get_rpc_url(&self.rpc_config, &Commands::Ord(crate::commands::OrdCommands::Inscription { id: String::new(), raw: false }))?;
+        let call_type = determine_rpc_call_type(&self.rpc_config, &Commands::Ord(crate::commands::OrdCommands::Inscription { id: String::new(), raw: false }));
+        
+        #[cfg(feature = "native-deps")]
+        if call_type == RpcCallType::Rest {
+            let url = format!("{}/tx/{}", rpc_url, txid);
+            let request_builder = self.http_client.get(&url);
+            let request_builder = self.add_subfrost_header(&url, request_builder);
+            let response = request_builder.send().await.map_err(|e| AlkanesError::Network(e.to_string()))?;
+            return response.json().await.map_err(|e| AlkanesError::Network(e.to_string()));
+        }
+        
+        let result = self.call(&rpc_url, crate::ord::OrdJsonRpcMethods::TX, json!([txid]), 1).await?;
+        serde_json::from_value(result).map_err(|e| AlkanesError::Serialization(e.to_string()))
+    }
+}
+impl ConcreteProvider {
+    /// Derive a single address from an account xpub using the legacy approach (for old keystores)
+    /// This matches the KeystoreManager::derive_single_address implementation
+    fn derive_single_address_legacy(
+        master_xpub: &bitcoin::bip32::Xpub,
+        secp: &bitcoin::secp256k1::Secp256k1<bitcoin::secp256k1::All>,
+        network: bitcoin::Network,
+        script_type: &str,
+        chain: u32,
+        index: u32,
+    ) -> Result<KeystoreAddress> {
+        use bitcoin::bip32::DerivationPath;
+        use bitcoin::{Address, PublicKey, CompressedPublicKey, ScriptBuf};
+        use core::str::FromStr;
+        
+        let coin_type = match network {
+            bitcoin::Network::Bitcoin => "0",
+            _ => "1",
+        };
+        
+        // Normalize script type
+        let normalized_script_type = script_type.replace('_', "-");
+        
+        // Derive using relative path from account xpub (m/0/index)
+        let relative_path_str = format!("m/{}/{}", chain, index);
+        let relative_path = DerivationPath::from_str(&relative_path_str)
+            .map_err(|e| AlkanesError::Wallet(format!("Failed to create relative derivation path: {}", e)))?;
+        
+        let derived_key = master_xpub.derive_pub(secp, &relative_path)
+            .map_err(|e| AlkanesError::Wallet(format!("Failed to derive public key for path: {}", e)))?;
+        
+        let (derivation_path, address) = match normalized_script_type.as_str() {
+            "p2tr" => {
+                let full_path = format!("m/86'/{}/0'/{}/{}", coin_type, chain, index);
+                let internal_key = bitcoin::key::UntweakedPublicKey::from(derived_key.public_key);
+                let address = Address::p2tr(secp, internal_key, None, network);
+                (full_path, address.to_string())
+            }
+            "p2wpkh" => {
+                let full_path = format!("m/84'/{}/0'/{}/{}", coin_type, chain, index);
+                let pk = PublicKey::new(derived_key.public_key);
+                let compressed = CompressedPublicKey::try_from(pk)
+                    .map_err(|e| AlkanesError::Wallet(format!("{}", e)))?;
+                let address = Address::p2wpkh(&compressed, network);
+                (full_path, address.to_string())
+            }
+            "p2sh" | "p2sh-p2wpkh" => {
+                let full_path = format!("m/49'/{}/0'/{}/{}", coin_type, chain, index);
+                let pk = PublicKey::new(derived_key.public_key);
+                let compressed = CompressedPublicKey::try_from(pk)
+                    .map_err(|e| AlkanesError::Wallet(format!("{}", e)))?;
+                let wpkh_script = ScriptBuf::new_p2wpkh(&compressed.wpubkey_hash());
+                let address = Address::p2sh(&wpkh_script, network)
+                    .map_err(|e| AlkanesError::Wallet(format!("{}", e)))?;
+                (full_path, address.to_string())
+            }
+            "p2pkh" => {
+                let full_path = format!("m/44'/{}/0'/{}/{}", coin_type, chain, index);
+                let pk = PublicKey::new(derived_key.public_key);
+                let compressed = CompressedPublicKey::try_from(pk)
+                    .map_err(|e| AlkanesError::Wallet(format!("{}", e)))?;
+                let address = Address::p2pkh(compressed, network);
+                (full_path, address.to_string())
+            }
+            "p2wsh" | "p2sh-p2wsh" => {
+                let full_path = format!("m/86'/{}/0'/{}/{} (p2wsh from p2tr account)", coin_type, chain, index);
+                let pk = PublicKey::new(derived_key.public_key);
+                let compressed = CompressedPublicKey::try_from(pk)
+                    .map_err(|e| AlkanesError::Wallet(format!("{}", e)))?;
+                let script = ScriptBuf::new_p2wpkh(&compressed.wpubkey_hash());
+                let address = Address::p2wsh(&script, network);
+                (full_path, address.to_string())
+            }
+            _ => return Err(AlkanesError::Wallet(format!("Unsupported script type: {}", script_type))),
+        };
+        
+        Ok(KeystoreAddress {
+            address,
+            derivation_path,
+            index,
+            script_type: normalized_script_type,
+            network: None,
+        })
+    }
+}
+
+#[async_trait(?Send)]
+impl KeystoreProvider for ConcreteProvider {
+    async fn get_address(&self, address_type: &str, index: u32) -> Result<String> {
+        <Self as AddressResolver>::get_address(self, address_type, index).await
+    }
+    
+    async fn derive_addresses(&self, master_public_key: &str, network_params: &NetworkParams, script_types: &[&str], start_index: u32, count: u32) -> Result<Vec<KeystoreAddress>> {
+        use bitcoin::bip32::{DerivationPath, Xpub};
+        use bitcoin::secp256k1::Secp256k1;
+        use bitcoin::{Address, PublicKey, CompressedPublicKey, ScriptBuf};
+        use core::str::FromStr;
+        
+        let secp = Secp256k1::new();
+        let account_xpub = Xpub::from_str(master_public_key)
+            .map_err(|e| AlkanesError::Wallet(format!("Invalid master public key: {}", e)))?;
+        
+        let mut addresses = Vec::new();
+        
+        // Get coin type based on network for display purposes
+        let coin_type = match network_params.network {
+            bitcoin::Network::Bitcoin => "0",
+            _ => "1",  // testnet, signet, regtest
+        };
+        
+        for script_type in script_types {
+            // Normalize the script type to handle both forms
+            let normalized_script_type = script_type.replace('_', "-");
+            
+            // Determine BIP purpose for the full path display
+            let purpose = match normalized_script_type.as_str() {
+                "p2pkh" => 44,
+                "p2sh" | "p2sh-p2wpkh" => 49,  // BIP49 for nested segwit
+                "p2wpkh" => 84,
+                "p2wsh" | "p2sh-p2wsh" => 84,
+                "p2tr" => 86,
+                _ => return Err(AlkanesError::Wallet(format!("Unsupported script type: {}", script_type))),
+            };
+            
+            for i in 0..count {
+                let index = start_index + i;
+                
+                // Derive using RELATIVE path from account xpub (m/0/index)
+                // The account_xpub is already at m/purpose'/coin'/0'
+                let relative_path_str = format!("m/0/{}", index);
+                let relative_path = DerivationPath::from_str(&relative_path_str)
+                    .map_err(|e| AlkanesError::Wallet(format!("Invalid derivation path: {}", e)))?;
+                
+                let derived_key = account_xpub.derive_pub(&secp, &relative_path)
+                    .map_err(|e| AlkanesError::Wallet(format!("Failed to derive public key: {}", e)))?;
+                
+                // Build the address based on script type
+                let (full_path, address_str) = match normalized_script_type.as_str() {
+                    "p2tr" => {
+                        let full_path = format!("m/{}'/{}'/{}/0/{}", purpose, coin_type, 0, index);
+                        let internal_key = bitcoin::key::UntweakedPublicKey::from(derived_key.public_key);
+                        let address = Address::p2tr(&secp, internal_key, None, network_params.network);
+                        (full_path, address.to_string())
+                    }
+                    "p2wpkh" => {
+                        let full_path = format!("m/{}'/{}'/{}/0/{}", purpose, coin_type, 0, index);
+                        let pk = PublicKey::new(derived_key.public_key);
+                        let compressed = CompressedPublicKey::try_from(pk)
+                            .map_err(|e| AlkanesError::Wallet(format!("{}", e)))?;
+                        let address = Address::p2wpkh(&compressed, network_params.network);
+                        (full_path, address.to_string())
+                    }
+                    "p2sh" | "p2sh-p2wpkh" => {
+                        let full_path = format!("m/{}'/{}'/{}/0/{}", purpose, coin_type, 0, index);
+                        let pk = PublicKey::new(derived_key.public_key);
+                        let compressed = CompressedPublicKey::try_from(pk)
+                            .map_err(|e| AlkanesError::Wallet(format!("{}", e)))?;
+                        let wpkh_script = ScriptBuf::new_p2wpkh(&compressed.wpubkey_hash());
+                        let address = Address::p2sh(&wpkh_script, network_params.network)
+                            .map_err(|e| AlkanesError::Wallet(format!("{}", e)))?;
+                        (full_path, address.to_string())
+                    }
+                    "p2pkh" => {
+                        let full_path = format!("m/{}'/{}'/{}/0/{}", purpose, coin_type, 0, index);
+                        let pk = PublicKey::new(derived_key.public_key);
+                        let compressed = CompressedPublicKey::try_from(pk)
+                            .map_err(|e| AlkanesError::Wallet(format!("{}", e)))?;
+                        let address = Address::p2pkh(compressed, network_params.network);
+                        (full_path, address.to_string())
+                    }
+                    "p2wsh" | "p2sh-p2wsh" => {
+                        let full_path = format!("m/{}'/{}'/{}/0/{}", purpose, coin_type, 0, index);
+                        let pk = PublicKey::new(derived_key.public_key);
+                        let compressed = CompressedPublicKey::try_from(pk)
+                            .map_err(|e| AlkanesError::Wallet(format!("{}", e)))?;
+                        let script = ScriptBuf::new_p2wpkh(&compressed.wpubkey_hash());
+                        let address = Address::p2wsh(&script, network_params.network);
+                        (full_path, address.to_string())
+                    }
+                    _ => return Err(AlkanesError::Wallet(format!("Unsupported script type: {}", script_type))),
+                };
+                
+                addresses.push(KeystoreAddress {
+                    address: address_str,
+                    derivation_path: full_path,
+                    index,
+                    script_type: normalized_script_type.clone(),
+                    network: Some(network_params.bech32_prefix.clone()),
+                });
+            }
+        }
+        
+        Ok(addresses)
+    }
+
+    async fn get_default_addresses(&self, _master_public_key: &str, _network_params: &NetworkParams) -> Result<Vec<KeystoreAddress>> {
+        Err(AlkanesError::NotImplemented("KeystoreProvider get_default_addresses not yet implemented".to_string()))
+    }
+
+    fn parse_address_range(&self, _range_spec: &str) -> Result<(String, u32, u32)> {
+        Err(AlkanesError::NotImplemented("KeystoreProvider parse_address_range not yet implemented".to_string()))
+    }
+    
+    async fn get_keystore_info(&self, _master_fingerprint: &str, _created_at: u64, _version: &str) -> Result<KeystoreInfo> {
+        Err(AlkanesError::NotImplemented("KeystoreProvider get_keystore_info not yet implemented".to_string()))
+    }
+
+    async fn derive_address_from_path(
+        &self,
+        master_public_key: &str,
+        path: &DerivationPath,
+        script_type: &str,
+        network_params: &NetworkParams,
+    ) -> Result<KeystoreAddress> {
+        let address = crate::keystore::derive_address_from_public_key(
+            master_public_key,
+            path,
+            network_params,
+            script_type,
+        )?;
+
+        Ok(KeystoreAddress {
+            address: address.to_string(),
+            derivation_path: path.to_string(),
+            index: path.into_iter().last().map(|child| match *child {
+                bitcoin::bip32::ChildNumber::Normal { index } => index,
+                bitcoin::bip32::ChildNumber::Hardened { index } => index,
+            }).unwrap_or(0),
+            script_type: script_type.to_string(),
+            network: Some(network_params.bech32_prefix.clone()),
+        })
+    }
+}
+
+/// Rebar Shield integration for private transaction relay
+pub mod rebar {
+    use anyhow::{Context, Result};
+    use serde::{Deserialize, Serialize};
+
+    /// Rebar Shield API base URL
+    pub const REBAR_INFO_URL: &str = "https://shield.rebarlabs.io/v1/info";
+    pub const REBAR_RPC_URL: &str = "https://shield.rebarlabs.io/v1/rpc";
+
+    /// Rebar Shield fee tier information
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct RebarFeeTier {
+        /// Estimated percentage of network hashrate (0.0-1.0)
+        pub estimated_hashrate: f64,
+        /// Fee rate in sat/vB
+        pub feerate: u64,
+    }
+
+    /// Rebar Shield payment information from /v1/info endpoint
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct RebarInfo {
+        /// Current block height
+        pub height: u64,
+        /// Payment addresses by script type
+        pub payment: RebarPayment,
+        /// Available fee tiers
+        pub fees: Vec<RebarFeeTier>,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct RebarPayment {
+        /// P2WPKH payment address
+        pub p2wpkh: String,
+    }
+
+    /// Query Rebar Shield /v1/info endpoint for payment info and fee tiers
+    pub async fn query_info() -> Result<RebarInfo> {
+        let client = reqwest::Client::new();
+        let response = client
+            .get(REBAR_INFO_URL)
+            .send()
+            .await
+            .context("Failed to query Rebar Shield info endpoint")?;
+
+        if !response.status().is_success() {
+            anyhow::bail!("Rebar Shield API returned error: {}", response.status());
+        }
+
+        let info: RebarInfo = response
+            .json()
+            .await
+            .context("Failed to parse Rebar Shield info response")?;
+
+        Ok(info)
+    }
+
+    /// Calculate Rebar payment amount for a transaction
+    /// Payment = transaction_vsize × fee_tier_rate
+    pub fn calculate_payment(tx_vsize: usize, tier: &RebarFeeTier) -> u64 {
+        tx_vsize as u64 * tier.feerate
+    }
+
+    /// Get fee tier by index (1 or 2)
+    pub fn get_tier(info: &RebarInfo, tier_index: u8) -> Result<&RebarFeeTier> {
+        let index = (tier_index.saturating_sub(1)) as usize;
+        info.fees
+            .get(index)
+            .ok_or_else(|| anyhow::anyhow!("Invalid Rebar tier: {}. Available tiers: 1-{}", tier_index, info.fees.len()))
+    }
+
+    /// Submit transaction via Rebar Shield JSON-RPC
+    pub async fn submit_transaction(tx_hex: &str) -> Result<String> {
+        let client = reqwest::Client::new();
+
+        #[derive(Serialize)]
+        struct RpcRequest<'a> {
+            jsonrpc: &'a str,
+            id: &'a str,
+            method: &'a str,
+            params: Vec<&'a str>,
+        }
+
+        #[derive(Deserialize)]
+        struct RpcResponse {
+            result: Option<String>,
+            error: Option<RpcError>,
+        }
+
+        #[derive(Deserialize)]
+        struct RpcError {
+            code: i32,
+            message: String,
+        }
+
+        let request = RpcRequest {
+            jsonrpc: "2.0",
+            id: "alkanes-cli",
+            method: "sendrawtransaction",
+            params: vec![tx_hex],
+        };
+
+        let response = client
+            .post(REBAR_RPC_URL)
+            .json(&request)
+            .send()
+            .await
+            .context("Failed to submit transaction to Rebar Shield")?;
+
+        if !response.status().is_success() {
+            anyhow::bail!("Rebar Shield returned HTTP error: {}", response.status());
+        }
+
+        let rpc_response: RpcResponse = response
+            .json()
+            .await
+            .context("Failed to parse Rebar Shield RPC response")?;
+
+        if let Some(error) = rpc_response.error {
+            anyhow::bail!(
+                "Rebar Shield RPC error (code {}): {}",
+                error.code,
+                error.message
+            );
+        }
+
+        rpc_response
+            .result
+            .ok_or_else(|| anyhow::anyhow!("Rebar Shield returned no result"))
+    }
+
+    /// Print Rebar fee information for user
+    pub fn print_fee_info(info: &RebarInfo, tx_vsize: usize) {
+        println!("🔒 Rebar Shield - Private Transaction Relay");
+        println!("   Block height: {}", info.height);
+        println!("   Payment address: {}", info.payment.p2wpkh);
+        println!();
+        println!("   Available fee tiers:");
+        for (i, tier) in info.fees.iter().enumerate() {
+            let payment = calculate_payment(tx_vsize, tier);
+            println!(
+                "   [{}] {} sat/vB @ {:.0}% hashrate → {} sats payment",
+                i + 1,
+                tier.feerate,
+                tier.estimated_hashrate * 100.0,
+                payment
+            );
+        }
+        println!();
+    }
+}
+
+// Implement LuaScriptExecutor for ConcreteProvider
+#[async_trait::async_trait(?Send)]
+impl LuaScriptExecutor for ConcreteProvider {
+    async fn execute_lua_script(
+        &self,
+        script: &LuaScript,
+        args: Vec<JsonValue>,
+    ) -> Result<JsonValue> {
+        // Try lua_evalsaved first (cached execution)
+        match self.lua_evalsaved_internal(script.hash(), args.clone()).await {
+            Ok(result) => {
+                log::debug!("Successfully executed cached script (hash: {})", script.hash());
+                Ok(result)
+            }
+            Err(e) => {
+                // Script not cached or other error, fall back to lua_evalscript
+                log::debug!("Cached execution failed ({}), falling back to full script execution", e);
+                self.lua_evalscript_internal(script.content(), args).await
+            }
+        }
+    }
+
+    async fn lua_evalsaved(
+        &self,
+        script_hash: &str,
+        args: Vec<JsonValue>,
+    ) -> Result<JsonValue> {
+        self.lua_evalsaved_internal(script_hash, args).await
+    }
+
+    async fn lua_evalscript(
+        &self,
+        script_content: &str,
+        args: Vec<JsonValue>,
+    ) -> Result<JsonValue> {
+        self.lua_evalscript_internal(script_content, args).await
+    }
+}
+
+// Implement EspoProvider for ConcreteProvider
+// Note: espo-pg uses object parameters {"key": "value"} rather than array parameters
+#[async_trait(?Send)]
+impl EspoProvider for ConcreteProvider {
+    async fn get_espo_height(&self) -> Result<u64> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling get_espo_height at {}", target.url);
+
+        let result = self.call(&target.url, "get_espo_height", json!({}), 1).await?;
+
+        // Handle format: {"height": N}
+        if let Some(height) = result.get("height").and_then(|v| v.as_u64()) {
+            return Ok(height);
+        }
+        // Handle direct number response
+        if let Some(height) = result.as_u64() {
+            return Ok(height);
+        }
+
+        Err(AlkanesError::RpcError(format!("Invalid get_espo_height response: {:?}", result)))
+    }
+
+    async fn get_address_balances(&self, address: &str, include_outpoints: bool) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling essentials.get_address_balances for {} (include_outpoints={}) at {}",
+            address, include_outpoints, target.url);
+
+        self.call(&target.url, "essentials.get_address_balances", json!({
+            "address": address,
+            "include_outpoints": include_outpoints
+        }), 1).await
+    }
+
+    async fn get_address_outpoints(&self, address: &str) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling essentials.get_address_outpoints for {} at {}", address, target.url);
+
+        self.call(&target.url, "essentials.get_address_outpoints", json!({
+            "address": address
+        }), 1).await
+    }
+
+    async fn get_address_spendable_outpoints(&self, address: &str) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!(
+            "[EspoProvider] Calling essentials.get_address_spendable_outpoints for {} at {}",
+            address,
+            target.url
+        );
+
+        self.call(&target.url, "essentials.get_address_spendable_outpoints", json!({
+            "address": address,
+            "omit_raw_tx": true
+        }), 1).await
+    }
+
+    async fn get_outpoint_balances(&self, outpoint: &str) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling essentials.get_outpoint_balances for {} at {}", outpoint, target.url);
+
+        self.call(&target.url, "essentials.get_outpoint_balances", json!({
+            "outpoint": outpoint
+        }), 1).await
+    }
+
+    async fn get_holders(&self, alkane_id: &str, page: u64, limit: u64) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling essentials.get_holders for {} (page={}, limit={}) at {}",
+            alkane_id, page, limit, target.url);
+
+        self.call(&target.url, "essentials.get_holders", json!({
+            "alkane": alkane_id,
+            "page": page,
+            "limit": limit
+        }), 1).await
+    }
+
+    async fn get_holders_count(&self, alkane_id: &str) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling essentials.get_holders_count for {} at {}", alkane_id, target.url);
+
+        self.call(&target.url, "essentials.get_holders_count", json!({
+            "alkane": alkane_id
+        }), 1).await
+    }
+
+    async fn get_keys(&self, alkane_id: &str, page: u64, limit: u64) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling essentials.get_keys for {} (page={}, limit={}) at {}",
+            alkane_id, page, limit, target.url);
+
+        self.call(&target.url, "essentials.get_keys", json!({
+            "alkane": alkane_id,
+            "page": page,
+            "limit": limit,
+            "try_decode_utf8": true
+        }), 1).await
+    }
+
+    async fn ping(&self) -> Result<String> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling essentials.ping at {}", target.url);
+
+        let result = self.call(&target.url, "essentials.ping", json!({}), 1).await?;
+
+        if let Some(s) = result.as_str() {
+            return Ok(s.to_string());
+        }
+
+        Ok(result.to_string())
+    }
+
+    async fn ammdata_ping(&self) -> Result<String> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling ammdata.ping at {}", target.url);
+
+        let result = self.call(&target.url, "ammdata.ping", json!({}), 1).await?;
+
+        if let Some(s) = result.as_str() {
+            return Ok(s.to_string());
+        }
+
+        Ok(result.to_string())
+    }
+
+    async fn get_candles(
+        &self,
+        pool: &str,
+        timeframe: Option<&str>,
+        side: Option<&str>,
+        limit: Option<u64>,
+        page: Option<u64>,
+    ) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling ammdata.get_candles for pool={} at {}", pool, target.url);
+
+        let mut params = json!({
+            "pool": pool
+        });
+
+        if let Some(tf) = timeframe {
+            params["timeframe"] = json!(tf);
+        }
+        if let Some(s) = side {
+            params["side"] = json!(s);
+        }
+        if let Some(l) = limit {
+            params["limit"] = json!(l);
+        }
+        if let Some(p) = page {
+            params["page"] = json!(p);
+        }
+
+        self.call(&target.url, "ammdata.get_candles", params, 1).await
+    }
+
+    async fn get_trades(
+        &self,
+        pool: &str,
+        limit: Option<u64>,
+        page: Option<u64>,
+        side: Option<&str>,
+        filter_side: Option<&str>,
+        sort: Option<&str>,
+        dir: Option<&str>,
+    ) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling ammdata.get_activity for pool={} at {}", pool, target.url);
+
+        let mut params = json!({
+            "pool": pool
+        });
+
+        if let Some(l) = limit {
+            params["limit"] = json!(l);
+        }
+        if let Some(p) = page {
+            params["page"] = json!(p);
+        }
+        if let Some(s) = side {
+            params["side"] = json!(s);
+        }
+        if let Some(fs) = filter_side {
+            params["filter_side"] = json!(fs);
+        }
+        if let Some(s) = sort {
+            params["sort"] = json!(s);
+        }
+        if let Some(d) = dir {
+            params["dir"] = json!(d);
+        }
+
+        self.call(&target.url, "ammdata.get_activity", params, 1).await
+    }
+
+    async fn get_pools(
+        &self,
+        limit: Option<u64>,
+        page: Option<u64>,
+    ) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling ammdata.get_pools at {}", target.url);
+
+        let mut params = json!({});
+
+        if let Some(l) = limit {
+            params["limit"] = json!(l);
+        }
+        if let Some(p) = page {
+            params["page"] = json!(p);
+        }
+
+        self.call(&target.url, "ammdata.get_pools", params, 1).await
+    }
+
+    async fn find_best_swap_path(
+        &self,
+        token_in: &str,
+        token_out: &str,
+        mode: Option<&str>,
+        amount_in: Option<&str>,
+        amount_out: Option<&str>,
+        amount_out_min: Option<&str>,
+        amount_in_max: Option<&str>,
+        available_in: Option<&str>,
+        fee_bps: Option<u64>,
+        max_hops: Option<u64>,
+    ) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling ammdata.find_best_swap_path for {} -> {} at {}", token_in, token_out, target.url);
+
+        let mut params = json!({
+            "token_in": token_in,
+            "token_out": token_out
+        });
+
+        if let Some(m) = mode {
+            params["mode"] = json!(m);
+        }
+        if let Some(ai) = amount_in {
+            params["amount_in"] = json!(ai);
+        }
+        if let Some(ao) = amount_out {
+            params["amount_out"] = json!(ao);
+        }
+        if let Some(aom) = amount_out_min {
+            params["amount_out_min"] = json!(aom);
+        }
+        if let Some(aim) = amount_in_max {
+            params["amount_in_max"] = json!(aim);
+        }
+        if let Some(av) = available_in {
+            params["available_in"] = json!(av);
+        }
+        if let Some(f) = fee_bps {
+            params["fee_bps"] = json!(f);
+        }
+        if let Some(h) = max_hops {
+            params["max_hops"] = json!(h);
+        }
+
+        self.call(&target.url, "ammdata.find_best_swap_path", params, 1).await
+    }
+
+    async fn get_best_mev_swap(
+        &self,
+        token: &str,
+        fee_bps: Option<u64>,
+        max_hops: Option<u64>,
+    ) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling ammdata.get_best_mev_swap for token={} at {}", token, target.url);
+
+        let mut params = json!({
+            "token": token
+        });
+
+        if let Some(f) = fee_bps {
+            params["fee_bps"] = json!(f);
+        }
+        if let Some(h) = max_hops {
+            params["max_hops"] = json!(h);
+        }
+
+        self.call(&target.url, "ammdata.get_best_mev_swap", params, 1).await
+    }
+
+    async fn get_amm_factories(
+        &self,
+        page: Option<u64>,
+        limit: Option<u64>,
+    ) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling ammdata.get_amm_factories at {}", target.url);
+        let mut params = json!({});
+        if let Some(p) = page { params["page"] = json!(p); }
+        if let Some(l) = limit { params["limit"] = json!(l); }
+        self.call(&target.url, "ammdata.get_amm_factories", params, 1).await
+    }
+
+    // ==================== Essentials methods (new) ====================
+
+    async fn get_all_alkanes(&self, page: Option<u64>, limit: Option<u64>) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling essentials.get_all_alkanes at {}", target.url);
+        let mut params = json!({});
+        if let Some(p) = page { params["page"] = json!(p); }
+        if let Some(l) = limit { params["limit"] = json!(l); }
+        self.call(&target.url, "essentials.get_all_alkanes", params, 1).await
+    }
+
+    async fn get_alkane_info(&self, alkane_id: &str) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling essentials.get_alkane_info for {} at {}", alkane_id, target.url);
+        self.call(&target.url, "essentials.get_alkane_info", json!({"alkane": alkane_id}), 1).await
+    }
+
+    async fn get_block_summary(&self, height: u64) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling essentials.get_block_summary for height={} at {}", height, target.url);
+        self.call(&target.url, "essentials.get_block_summary", json!({"height": height}), 1).await
+    }
+
+    async fn get_circulating_supply(&self, alkane_id: &str, height: Option<u64>) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling essentials.get_circulating_supply for {} at {}", alkane_id, target.url);
+        let mut params = json!({"alkane": alkane_id});
+        if let Some(h) = height { params["height"] = json!(h); }
+        self.call(&target.url, "essentials.get_circulating_supply", params, 1).await
+    }
+
+    async fn get_transfer_volume(&self, alkane_id: &str, page: Option<u64>, limit: Option<u64>) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling essentials.get_transfer_volume for {} at {}", alkane_id, target.url);
+        let mut params = json!({"alkane": alkane_id});
+        if let Some(p) = page { params["page"] = json!(p); }
+        if let Some(l) = limit { params["limit"] = json!(l); }
+        self.call(&target.url, "essentials.get_transfer_volume", params, 1).await
+    }
+
+    async fn get_total_received(&self, alkane_id: &str, page: Option<u64>, limit: Option<u64>) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling essentials.get_total_received for {} at {}", alkane_id, target.url);
+        let mut params = json!({"alkane": alkane_id});
+        if let Some(p) = page { params["page"] = json!(p); }
+        if let Some(l) = limit { params["limit"] = json!(l); }
+        self.call(&target.url, "essentials.get_total_received", params, 1).await
+    }
+
+    async fn get_address_activity(&self, address: &str) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling essentials.get_address_activity for {} at {}", address, target.url);
+        self.call(&target.url, "essentials.get_address_activity", json!({"address": address}), 1).await
+    }
+
+    async fn get_alkane_balances(&self, alkane_id: &str) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling essentials.get_alkane_balances for {} at {}", alkane_id, target.url);
+        self.call(&target.url, "essentials.get_alkane_balances", json!({"alkane": alkane_id}), 1).await
+    }
+
+    async fn get_alkane_balance_metashrew(&self, owner: &str, target_alkane: &str, height: Option<u64>) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling essentials.get_alkane_balance_metashrew for owner={} target={} at {}", owner, target_alkane, target.url);
+        let mut params = json!({"owner": owner, "target": target_alkane});
+        if let Some(h) = height { params["height"] = json!(h); }
+        self.call(&target.url, "essentials.get_alkane_balance_metashrew", params, 1).await
+    }
+
+    async fn get_alkane_balance_txs(&self, alkane_id: &str, page: Option<u64>, limit: Option<u64>) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling essentials.get_alkane_balance_txs for {} at {}", alkane_id, target.url);
+        let mut params = json!({"alkane": alkane_id});
+        if let Some(p) = page { params["page"] = json!(p); }
+        if let Some(l) = limit { params["limit"] = json!(l); }
+        self.call(&target.url, "essentials.get_alkane_balance_txs", params, 1).await
+    }
+
+    async fn get_alkane_balance_txs_by_token(&self, owner: &str, token: &str, page: Option<u64>, limit: Option<u64>) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling essentials.get_alkane_balance_txs_by_token for owner={} token={} at {}", owner, token, target.url);
+        let mut params = json!({"owner": owner, "token": token});
+        if let Some(p) = page { params["page"] = json!(p); }
+        if let Some(l) = limit { params["limit"] = json!(l); }
+        self.call(&target.url, "essentials.get_alkane_balance_txs_by_token", params, 1).await
+    }
+
+    async fn get_block_traces(&self, height: u64) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling essentials.get_block_traces for height={} at {}", height, target.url);
+        self.call(&target.url, "essentials.get_block_traces", json!({"height": height}), 1).await
+    }
+
+    async fn get_alkane_tx_summary(&self, txid: &str) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling essentials.get_alkane_tx_summary for {} at {}", txid, target.url);
+        self.call(&target.url, "essentials.get_alkane_tx_summary", json!({"txid": txid}), 1).await
+    }
+
+    async fn get_alkane_block_txs(&self, height: u64, page: Option<u64>, limit: Option<u64>) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling essentials.get_alkane_block_txs for height={} at {}", height, target.url);
+        let mut params = json!({"height": height});
+        if let Some(p) = page { params["page"] = json!(p); }
+        if let Some(l) = limit { params["limit"] = json!(l); }
+        self.call(&target.url, "essentials.get_alkane_block_txs", params, 1).await
+    }
+
+    async fn get_alkane_address_txs(&self, address: &str, page: Option<u64>, limit: Option<u64>) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling essentials.get_alkane_address_txs for {} at {}", address, target.url);
+        let mut params = json!({"address": address});
+        if let Some(p) = page { params["page"] = json!(p); }
+        if let Some(l) = limit { params["limit"] = json!(l); }
+        self.call(&target.url, "essentials.get_alkane_address_txs", params, 1).await
+    }
+
+    async fn get_address_transactions(&self, address: &str, page: Option<u64>, limit: Option<u64>, only_alkane_txs: Option<bool>) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling essentials.get_address_transactions for {} at {}", address, target.url);
+        let mut params = json!({"address": address});
+        if let Some(p) = page { params["page"] = json!(p); }
+        if let Some(l) = limit { params["limit"] = json!(l); }
+        if let Some(o) = only_alkane_txs { params["only_alkane_txs"] = json!(o); }
+        self.call(&target.url, "essentials.get_address_transactions", params, 1).await
+    }
+
+    async fn get_alkane_latest_traces(&self) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling essentials.get_alkane_latest_traces at {}", target.url);
+        self.call(&target.url, "essentials.get_alkane_latest_traces", json!({}), 1).await
+    }
+
+    async fn get_mempool_traces(&self, page: Option<u64>, limit: Option<u64>, address: Option<&str>) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling essentials.get_mempool_traces at {}", target.url);
+        let mut params = json!({});
+        if let Some(p) = page { params["page"] = json!(p); }
+        if let Some(l) = limit { params["limit"] = json!(l); }
+        if let Some(a) = address { params["address"] = json!(a); }
+        self.call(&target.url, "essentials.get_mempool_traces", params, 1).await
+    }
+
+    // ==================== Subfrost methods ====================
+
+    async fn get_wrap_events_all(&self, count: Option<u64>, offset: Option<u64>, successful: Option<bool>) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling subfrost.get_wrap_events_all at {}", target.url);
+        let mut params = json!({});
+        if let Some(c) = count { params["count"] = json!(c); }
+        if let Some(o) = offset { params["offset"] = json!(o); }
+        if let Some(s) = successful { params["successful"] = json!(s); }
+        self.call(&target.url, "subfrost.get_wrap_events_all", params, 1).await
+    }
+
+    async fn get_wrap_events_by_address(&self, address: &str, count: Option<u64>, offset: Option<u64>, successful: Option<bool>) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling subfrost.get_wrap_events_by_address for {} at {}", address, target.url);
+        let mut params = json!({"address": address});
+        if let Some(c) = count { params["count"] = json!(c); }
+        if let Some(o) = offset { params["offset"] = json!(o); }
+        if let Some(s) = successful { params["successful"] = json!(s); }
+        self.call(&target.url, "subfrost.get_wrap_events_by_address", params, 1).await
+    }
+
+    async fn get_unwrap_events_all(&self, count: Option<u64>, offset: Option<u64>, successful: Option<bool>) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling subfrost.get_unwrap_events_all at {}", target.url);
+        let mut params = json!({});
+        if let Some(c) = count { params["count"] = json!(c); }
+        if let Some(o) = offset { params["offset"] = json!(o); }
+        if let Some(s) = successful { params["successful"] = json!(s); }
+        self.call(&target.url, "subfrost.get_unwrap_events_all", params, 1).await
+    }
+
+    async fn get_unwrap_events_by_address(&self, address: &str, count: Option<u64>, offset: Option<u64>, successful: Option<bool>) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling subfrost.get_unwrap_events_by_address for {} at {}", address, target.url);
+        let mut params = json!({"address": address});
+        if let Some(c) = count { params["count"] = json!(c); }
+        if let Some(o) = offset { params["offset"] = json!(o); }
+        if let Some(s) = successful { params["successful"] = json!(s); }
+        self.call(&target.url, "subfrost.get_unwrap_events_by_address", params, 1).await
+    }
+
+    // ==================== PizzaFun methods ====================
+
+    async fn get_series_id_from_alkane_id(&self, alkane_id: &str) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling pizzafun.get_series_id_from_alkane_id for {} at {}", alkane_id, target.url);
+        self.call(&target.url, "pizzafun.get_series_id_from_alkane_id", json!({"alkane_id": alkane_id}), 1).await
+    }
+
+    async fn get_series_ids_from_alkane_ids(&self, alkane_ids: &[&str]) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling pizzafun.get_series_ids_from_alkane_ids for {} ids at {}", alkane_ids.len(), target.url);
+        self.call(&target.url, "pizzafun.get_series_ids_from_alkane_ids", json!({"alkane_ids": alkane_ids}), 1).await
+    }
+
+    async fn get_alkane_id_from_series_id(&self, series_id: &str) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling pizzafun.get_alkane_id_from_series_id for {} at {}", series_id, target.url);
+        self.call(&target.url, "pizzafun.get_alkane_id_from_series_id", json!({"series_id": series_id}), 1).await
+    }
+
+    async fn get_alkane_ids_from_series_ids(&self, series_ids: &[&str]) -> Result<JsonValue> {
+        let target = self.rpc_config.get_espo_rpc_target();
+        log::info!("[EspoProvider] Calling pizzafun.get_alkane_ids_from_series_ids for {} ids at {}", series_ids.len(), target.url);
+        self.call(&target.url, "pizzafun.get_alkane_ids_from_series_ids", json!({"series_ids": series_ids}), 1).await
+    }
+}

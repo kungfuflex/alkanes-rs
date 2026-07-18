@@ -1,0 +1,22 @@
+[package]
+name = "tlsfetch-events"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Event/profiling primitives shared by every transport and codec in the tlsfetch stack. ConnEvent / StreamEvent enums, Profiler trait, ProfilerHandle, Timeline collector. No-op cost when unused."
+
+[dependencies]
+parking_lot = "0.12"
+# `web-time` is `std::time` on native; on wasm32-unknown-unknown it
+# polyfills `SystemTime::now()` via `Date.now()` so the events crate
+# emits timestamps on every target without a dedicated wasm path.
+web-time = "1"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt", "time"] }
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test = "0.3"
+
+[features]
+default = []

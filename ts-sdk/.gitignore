@@ -1,0 +1,41 @@
+# Dependencies
+node_modules/
+# package-lock.json is tracked for reproducible GitHub installs
+yarn.lock
+
+# Build outputs
+# Note: dist/ and build/ are committed for direct GitHub installs
+# dist/
+# build/
+wasm-pkg/
+*.tsbuildinfo
+
+# Tests
+coverage/
+.nyc_output/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Temporary files
+*.tmp
+.cache/

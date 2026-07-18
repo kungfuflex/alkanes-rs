@@ -1,0 +1,23 @@
+[package]
+name = "alkanes-rpc-core"
+version.workspace = true
+edition = "2021"
+description = "Core RPC dispatch and codec for alkanes ecosystem"
+license = "MIT"
+
+[features]
+default = ["std"]
+std = ["alkanes-cli-common/std"]
+web-compat = ["alkanes-cli-common/web-compat", "alkanes-cli-common/wasm-inspection"]
+
+[dependencies]
+alkanes-cli-common = { path = "../alkanes-cli-common", default-features = false }
+alkanes-support = { workspace = true }
+prost = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+hex = { workspace = true }
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+base64 = { workspace = true }

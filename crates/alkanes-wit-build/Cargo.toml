@@ -1,0 +1,12 @@
+[package]
+name = "alkanes-wit-build"
+version.workspace = true
+edition.workspace = true
+description = "Build-time WIT codegen helper for alkanes contracts"
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+alkanes-wit-parser = { path = "../alkanes-wit-parser" }
+alkanes-wit-codegen = { path = "../alkanes-wit-codegen" }
+anyhow.workspace = true

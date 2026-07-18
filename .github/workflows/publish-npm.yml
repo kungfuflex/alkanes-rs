@@ -1,0 +1,315 @@
+name: Publish TypeScript SDK
+
+on:
+  push:
+    branches:
+      - develop
+    paths:
+      - 'ts-sdk/**'
+      - 'crates/alkanes-web-sys/**'
+      # alkanes-cli-common is compiled INTO the web-sys WASM (provider, UTXO
+      # selection, execute) — changes to it change the published artifact.
+      # Missing from these triggers until 2026-07-11, so pure cli-common fixes
+      # silently shipped no new SDK.
+      - 'crates/alkanes-cli-common/**'
+      - 'prod_wasms/**'
+      - '.github/workflows/publish-npm.yml'
+  pull_request:
+    branches:
+      - develop
+    types:
+      - closed
+    paths:
+      - 'ts-sdk/**'
+      - 'crates/alkanes-web-sys/**'
+      - 'crates/alkanes-cli-common/**'
+      - 'prod_wasms/**'
+      - '.github/workflows/publish-npm.yml'
+
+env:
+  NODE_VERSION: '20'
+  RUST_VERSION: 'stable'
+  WASM_PACK_VERSION: '0.13.1'
+
+jobs:
+  publish-npm:
+    # Only run on push events or when a PR is merged (not just closed)
+    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.merged == true)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # Required for OIDC/Workload Identity
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Full history for version info
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          targets: wasm32-unknown-unknown
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler
+          protoc --version
+
+      - name: Cache Rust dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            crates/alkanes-web-sys/target
+          key: ${{ runner.os }}-cargo-wasm-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-wasm-
+
+      - name: Install wasm-pack
+        run: |
+          curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh -s -- -f
+          wasm-pack --version
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: 'ts-sdk/package-lock.json'
+
+      - name: Authenticate to Google Cloud
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+          token_format: 'access_token'
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Verify GCP authentication
+        run: |
+          gcloud auth list
+          gcloud config list
+
+      - name: Generate version
+        id: version
+        run: |
+          # Get base version from package.json
+          BASE_VERSION=$(node -p "require('./ts-sdk/package.json').version")
+          SHORT_SHA=$(git rev-parse --short=7 HEAD)
+          # IMMUTABLE PUBLISH (#286): the commit sha alone is NOT build-unique —
+          # rebuilding/republishing the same commit reused the SAME version tag
+          # (0.1.6-<sha>) with different bytes, so warm pnpm/CI caches served the
+          # stale artifact forever under an immutable-looking label. Append the
+          # monotonic CI run number so every publish is a DISTINCT tag that is
+          # never overwritten; a rebuild of the same source is opt-in via the new
+          # suffix (e.g. 0.1.6-<sha>.<run>). Consumers pin bytes, not a moving tag.
+          VERSION="${BASE_VERSION}-${SHORT_SHA}.${GITHUB_RUN_NUMBER}"
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "short_sha=${SHORT_SHA}" >> $GITHUB_OUTPUT
+          echo "Generated version: ${VERSION}"
+
+      - name: Configure npm authentication
+        run: |
+          cd ts-sdk
+          cat > .npmrc <<EOF
+          @alkanes:registry=https://us-central1-npm.pkg.dev/pkg-alkanes-build/npm-packages/
+          //us-central1-npm.pkg.dev/pkg-alkanes-build/npm-packages/:_authToken=$(gcloud auth print-access-token)
+          //us-central1-npm.pkg.dev/pkg-alkanes-build/npm-packages/:always-auth=true
+          EOF
+          echo "npm configuration created"
+
+      - name: Update package.json version
+        working-directory: ts-sdk
+        run: |
+          # No --allow-same-version: each version is build-unique (#286), so a
+          # collision here means an unexpected re-publish and SHOULD fail loudly.
+          npm version ${{ steps.version.outputs.version }} --no-git-tag-version
+          echo "Updated package.json to version ${{ steps.version.outputs.version }}"
+          cat package.json | grep '"version"'
+
+      - name: Install dependencies
+        working-directory: ts-sdk
+        run: |
+          npm ci
+          echo "Dependencies installed"
+
+      - name: Build WASM from alkanes-web-sys
+        working-directory: crates/alkanes-web-sys
+        run: |
+          echo "Building WASM with wasm-pack..."
+          wasm-pack build --target bundler --out-dir ../../ts-sdk/build/wasm
+          echo "Copying WASM files to top-level wasm/ directory..."
+          cp -r ../../ts-sdk/build/wasm/* ../../ts-sdk/wasm/
+          echo "Removing ignore files from wasm directory..."
+          rm -f ../../ts-sdk/wasm/.gitignore ../../ts-sdk/wasm/.npmignore
+          echo "WASM build complete"
+          ls -lh ../../ts-sdk/wasm/
+
+      - name: Vendor production WASMs
+        working-directory: ts-sdk
+        run: |
+          echo "Vendoring production contract WASMs..."
+          npm run build:vendor
+          echo "Production WASMs vendored"
+          ls -lh build/contracts/ | head -20
+
+      - name: Build TypeScript SDK
+        working-directory: ts-sdk
+        run: |
+          echo "Building TypeScript SDK..."
+          npm run build:ts
+          echo "TypeScript build complete"
+          ls -lh dist/
+
+      - name: Verify build artifacts
+        working-directory: ts-sdk
+        run: |
+          echo "=== Build artifacts verification ==="
+          echo "WASM module:"
+          ls -lh wasm/alkanes_web_sys_bg.wasm
+          echo ""
+          echo "TypeScript bundles:"
+          ls -lh dist/
+          echo ""
+          echo "Package contents:"
+          npm pack --dry-run
+
+      - name: Publish to Artifact Registry
+        working-directory: ts-sdk
+        run: |
+          echo "Publishing @alkanes/ts-sdk@${{ steps.version.outputs.version }}..."
+          npm publish --registry=https://us-central1-npm.pkg.dev/pkg-alkanes-build/npm-packages/ --access=public
+          echo "Package published successfully"
+
+      - name: Emit build manifest (content-address, #286)
+        working-directory: ts-sdk
+        run: |
+          # Content-address the published artifact so consumers can pin/verify
+          # BYTES, not just a tag (#286). npm pack reproduces the published tarball.
+          TARBALL=$(npm pack --silent | tail -1)
+          SHA256=$(sha256sum "$TARBALL" | cut -d' ' -f1)
+          mkdir -p ../pkg-manifests
+          cat > "../pkg-manifests/${{ steps.version.outputs.version }}.json" <<EOF
+          {
+            "package": "@alkanes/ts-sdk",
+            "version": "${{ steps.version.outputs.version }}",
+            "commit": "${{ github.sha }}",
+            "run": "${{ github.run_number }}",
+            "built_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "tarball": "${TARBALL}",
+            "sha256": "${SHA256}"
+          }
+          EOF
+          echo "== build manifest (tag -> commit -> sha256) =="
+          cat "../pkg-manifests/${{ steps.version.outputs.version }}.json"
+
+      - name: Upload build manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: pkg-manifest-${{ steps.version.outputs.version }}
+          path: pkg-manifests/*.json
+
+      - name: Tag as latest-dev
+        working-directory: ts-sdk
+        continue-on-error: true
+        run: |
+          echo "Tagging as latest-dev..."
+          npm dist-tag add @alkanes/ts-sdk@${{ steps.version.outputs.version }} latest-dev \
+            --registry=https://us-central1-npm.pkg.dev/pkg-alkanes-build/npm-packages/
+          echo "Tagged as latest-dev"
+
+      - name: Purge CloudFlare cache
+        continue-on-error: true
+        run: |
+          echo "Purging CloudFlare cache for pkg.alkanes.build..."
+          ZONE_ID=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones?name=alkanes.build" \
+            -H "Authorization: Bearer ${{ secrets.CLOUDFLARE_API_TOKEN }}" \
+            -H "Content-Type: application/json" | jq -r '.result[0].id')
+
+          echo "Zone ID: ${ZONE_ID}"
+
+          # Purge all package-related URLs
+          RESPONSE=$(curl -s -X POST "https://api.cloudflare.com/client/v4/zones/${ZONE_ID}/purge_cache" \
+            -H "Authorization: Bearer ${{ secrets.CLOUDFLARE_API_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            --data '{
+              "files": [
+                "https://pkg.alkanes.build/dist/@alkanes/ts-sdk",
+                "https://pkg.alkanes.build/@alkanes/ts-sdk",
+                "https://pkg.alkanes.build/versions/@alkanes/ts-sdk"
+              ]
+            }')
+
+          echo "Purge response: ${RESPONSE}"
+
+          # Check if purge was successful
+          if echo "$RESPONSE" | jq -e '.success == true' > /dev/null; then
+            echo "CloudFlare cache purged successfully"
+          else
+            echo "Cache purge failed, check CLOUDFLARE_API_TOKEN permissions"
+            echo "Token needs 'Zone.Cache Purge' permission in CloudFlare dashboard"
+          fi
+
+      - name: Output published version
+        run: |
+          echo "=== Publication Summary ==="
+          echo "Published: @alkanes/ts-sdk@${{ steps.version.outputs.version }}"
+          echo "Registry: https://us-central1-npm.pkg.dev/pkg-alkanes-build/npm-packages/"
+          echo ""
+          echo "Install via tarball URL (recommended):"
+          echo "   # Latest version"
+          echo "   pnpm install --save-dev https://pkg.alkanes.build/dist/@alkanes/ts-sdk"
+          echo ""
+          echo "   # Specific version"
+          echo "   pnpm install --save-dev 'https://pkg.alkanes.build/dist/@alkanes/ts-sdk?v=${{ steps.version.outputs.version }}'"
+          echo ""
+          echo "Query package info:"
+          echo "   curl https://pkg.alkanes.build/@alkanes/ts-sdk"
+          echo ""
+          echo "List all versions:"
+          echo "   curl https://pkg.alkanes.build/versions/@alkanes/ts-sdk"
+
+      - name: Create summary
+        run: |
+          cat >> $GITHUB_STEP_SUMMARY <<EOF
+          ## TypeScript SDK Published
+
+          **Version:** \`${{ steps.version.outputs.version }}\`
+          **Commit:** \`${{ steps.version.outputs.short_sha }}\`
+          **Registry:** [Google Artifact Registry](https://console.cloud.google.com/artifacts/npm/pkg-alkanes-build/us-central1/npm-packages/@alkanes/ts-sdk?project=pkg-alkanes-build)
+
+          ### Installation (via tarball URL - recommended)
+
+          \`\`\`bash
+          # Install latest version
+          pnpm install --save-dev https://pkg.alkanes.build/dist/@alkanes/ts-sdk
+
+          # Install this specific version
+          pnpm install --save-dev 'https://pkg.alkanes.build/dist/@alkanes/ts-sdk?v=${{ steps.version.outputs.version }}'
+          \`\`\`
+
+          ### Query Package Info
+
+          \`\`\`bash
+          # Get latest version and metadata
+          curl https://pkg.alkanes.build/@alkanes/ts-sdk
+
+          # List all available versions
+          curl https://pkg.alkanes.build/versions/@alkanes/ts-sdk
+          \`\`\`
+
+          ### Build Details
+
+          - **Version format:** \`{base-version}-{commit-hash}\` (e.g., \`0.1.1-abc1234\`)
+          - **WASM built from:** \`crates/alkanes-web-sys\`
+          - **Production WASMs vendored:** Yes
+          - **TypeScript compiled:** Yes
+          - **Package size:** ~7-8MB (includes WASM + contracts)
+          EOF

@@ -1,0 +1,13 @@
+[package]
+name = "qubitcoin-indexer-core"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Shared indexer traits and state layout for Qubitcoin secondary indexers"
+
+[dependencies]
+prost = "0.12"
+sha2 = "0.10"
+
+[build-dependencies]
+prost-build = "0.12"
