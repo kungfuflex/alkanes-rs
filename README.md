@@ -1,7 +1,7 @@
 # alkanes-rs
 
-![Tests](https://img.shields.io/github/actions/workflow/status/AssemblyScript/assemblyscript/test.yml?branch=main&label=test&logo=github)
-![Publish](https://img.shields.io/github/actions/workflow/status/AssemblyScript/assemblyscript/publish.yml?branch=main&label=publish&logo=github)
+![Tests](https://img.shields.io/github/actions/workflow/status/kungfuflex/alkanes-rs/rust.yml?branch=main&label=tests&logo=github)
+![Publish](https://img.shields.io/github/actions/workflow/status/kungfuflex/alkanes-rs/publish-npm.yml?branch=main&label=publish&logo=github)
 
 **The ALKANES specification is hosted at** 👉🏻👉🏼👉🏽👉🏾👉🏿 [https://github.com/kungfuflex/alkanes-rs/wiki](https://github.com/kungfuflex/alkanes-rs/wiki)
 
@@ -32,7 +32,7 @@ For information on protorunes, refer to the specification hosted at:
 
 The indexer stack used to synchronize the state of the metaprotocol and offer an RPC to consume its data and features is METASHREW. METASHREW is started with a WASM binary of the indexer program, produced with a normal build of this repository as `alkanes.wasm`.
 
-Bindings to the METASHREW environment are available in `crates/metashrew`.
+Bindings to the METASHREW environment are consumed from the pinned [`sandshrewmetaprotocols/metashrew`](https://github.com/sandshrewmetaprotocols/metashrew) dependency; the environment-agnostic pieces live in `crates/metashrew-support`.
 
 Sources needed to build both metashrew and protorunes meant to be shared with builds of individual alkanes or the generic alkanes-runtime bindings are factored out into `crates/metashrew-support` and `crates/protorune-support` such that they can be imported into an alkane build without the metashrew import definitions leaking in and generating import statements for the METASHREW environment.
 
@@ -44,21 +44,32 @@ Boilerplate for various alkanes are included and prefixed with `alkanes-std-` an
 
 ## Building
 
-ALKANES is built with the command:
+The production ALKANES indexer wasm is built with the command:
 
 ```sh
-cargo build --release --features mainnet
+cargo build --release --target wasm32-unknown-unknown --features mainnet -p alkanes --locked
 ```
 
-Replace `mainnet` with your network of choice. Constants are defined for luckycoin, regtest, mainnet, dogecoin, bellscoin, and fractal. For other networks or test networks, use the regtest feature.
+This is the exact, reproducible build used for the shipped `alkanes.wasm` (see `scripts/Dockerfile.wasm` / `scripts/build.sh`, which pin the toolchain and set `SOURCE_DATE_EPOCH`). Replace `mainnet` with your network of choice — constants are defined for luckycoin, regtest, mainnet, dogecoin, bellscoin, and fractal; for other networks or test networks, use the regtest feature.
 
-An `alkanes.wasm` file will be built, as well as a WASM for every crate prefixed with `alkanes-std-`, which will be built to `target/alkanes/wasm32-unknown-unknown/release`
+The `alkanes.wasm` file is produced at `target/wasm32-unknown-unknown/release/alkanes.wasm`, and a WASM for every crate prefixed with `alkanes-std-` is made available to the test suite.
+
+> Note: this repository is a mixed workspace — the top-level `alkanes` indexer crate targets `wasm32-unknown-unknown`, while the CLI, SDKs, and tooling crates build natively. The default cargo target is native, so pass `--target wasm32-unknown-unknown -p alkanes` explicitly when building the indexer.
 
 ## Indexing
 
 Refer to the METASHREW documentation for descriptions of the indexer stack used for ALKANES.
 
 [https://github.com/sandshrewmetaprotocols/metashrew](https://github.com/sandshrewmetaprotocols/metashrew)
+
+### Running against mainnet
+
+To index ALKANES on mainnet you must run matching, current versions of both components:
+
+- **alkanes-rs `v2.2.1-rc.5`** (latest) — built to `alkanes.wasm` and loaded via `--indexer`. See [releases](https://github.com/kungfuflex/alkanes-rs/releases).
+- **metashrew `v9.0.5-rc.13`** — the [`kungfuflex/metashrew`](https://github.com/kungfuflex/metashrew/releases/tag/v9.0.5-rc.13) indexer stack (`rockshrew-mono`).
+
+Running mismatched versions can produce divergent state. Live mainnet system health — indexer height, sync status, and RPC availability — can be checked at **[https://mainnet.subfrost.io](https://mainnet.subfrost.io)**.
 
 A sample command may look like:
 
@@ -112,6 +123,10 @@ Features are provided within the Cargo.toml at the root of the monorepo to decla
 ```
 cargo test -p protorune --target TARGET
 ```
+
+## Acknowledgements
+
+ALKANES is carried forward by a community of builders, indexers, contract authors, and researchers who believe finance can be open, permissionless, and native to Bitcoin. To everyone writing code, running infrastructure, shipping contracts, filing issues, and stress-testing the protocol in the open — thank you. This work moves because you move it, toward a vision of free finance for everyone. 🧡
 
 ### Authors
 
