@@ -21,16 +21,6 @@ pub struct TraceResponse {
 
 #[derive(Debug, Clone)]
 pub enum TraceEvent {
-    EnterDelegatecall(TraceContext),
-    EnterStaticcall(TraceContext),
-    EnterCall(TraceContext),
-    RevertContext(TraceResponse),
-    ReturnContext(TraceResponse),
-    CreateAlkane(AlkaneId),
-    // align-main additive (develop-only): consumed by portable crates
-    // (alkanes-cli-common trace rendering, alkanes-contract-indexer). The root
-    // src/** indexer never constructs these variants — verified dead in the
-    // indexer path — so trace output for real indexed inputs is unchanged.
     ReceiveIntent {
         incoming_alkanes: AlkaneTransferParcel,
     },
@@ -38,6 +28,12 @@ pub enum TraceEvent {
         transfers: Vec<AlkaneTransfer>,
         redirect_to: u32,
     },
+    EnterDelegatecall(TraceContext),
+    EnterStaticcall(TraceContext),
+    EnterCall(TraceContext),
+    RevertContext(TraceResponse),
+    ReturnContext(TraceResponse),
+    CreateAlkane(AlkaneId),
 }
 
 impl Into<TraceResponse> for ExtendedCallResponse {
@@ -111,6 +107,26 @@ impl Into<proto::alkanes::AlkanesEnterContext> for TraceContext {
 impl Into<proto::alkanes::AlkanesTraceEvent> for TraceEvent {
     fn into(self) -> proto::alkanes::AlkanesTraceEvent {
         let event = match self {
+            TraceEvent::ReceiveIntent { incoming_alkanes } => {
+                let receive_intent = proto::alkanes::AlkanesReceiveIntent {
+                    incoming_alkanes: incoming_alkanes
+                        .0
+                        .into_iter()
+                        .map(|v| v.into())
+                        .collect::<Vec<proto::alkanes::AlkaneTransfer>>(),
+                };
+                proto::alkanes::alkanes_trace_event::Event::ReceiveIntent(receive_intent)
+            }
+            TraceEvent::ValueTransfer {
+                transfers,
+                redirect_to,
+            } => {
+                let value_transfer = proto::alkanes::AlkanesValueTransfer {
+                    transfers: transfers.into_iter().map(|v| v.into()).collect(),
+                    redirect_to,
+                };
+                proto::alkanes::alkanes_trace_event::Event::ValueTransfer(value_transfer)
+            }
             TraceEvent::EnterCall(v) => {
                 let mut context: proto::alkanes::AlkanesEnterContext = v.into();
                 context.call_type = 1;
@@ -141,27 +157,6 @@ impl Into<proto::alkanes::AlkanesTraceEvent> for TraceEvent {
                     new_alkane: Some(v.into()),
                 };
                 proto::alkanes::alkanes_trace_event::Event::CreateAlkane(creation)
-            }
-            // align-main additive (develop-only, indexer-dead) conversions.
-            TraceEvent::ReceiveIntent { incoming_alkanes } => {
-                let receive_intent = proto::alkanes::AlkanesReceiveIntent {
-                    incoming_alkanes: incoming_alkanes
-                        .0
-                        .into_iter()
-                        .map(|v| v.into())
-                        .collect::<Vec<proto::alkanes::AlkaneTransfer>>(),
-                };
-                proto::alkanes::alkanes_trace_event::Event::ReceiveIntent(receive_intent)
-            }
-            TraceEvent::ValueTransfer {
-                transfers,
-                redirect_to,
-            } => {
-                let value_transfer = proto::alkanes::AlkanesValueTransfer {
-                    transfers: transfers.into_iter().map(|v| v.into()).collect(),
-                    redirect_to,
-                };
-                proto::alkanes::alkanes_trace_event::Event::ValueTransfer(value_transfer)
             }
         };
         proto::alkanes::AlkanesTraceEvent { event: Some(event) }
@@ -264,7 +259,6 @@ impl From<proto::alkanes::AlkanesTraceEvent> for TraceEvent {
                 proto::alkanes::alkanes_trace_event::Event::CreateAlkane(v) => {
                     TraceEvent::CreateAlkane(v.new_alkane.map_or(Default::default(), |a| a.into()))
                 }
-                // align-main additive (develop-only, indexer-dead) conversions.
                 proto::alkanes::alkanes_trace_event::Event::ReceiveIntent(v) => {
                     TraceEvent::ReceiveIntent {
                         incoming_alkanes: AlkaneTransferParcel(

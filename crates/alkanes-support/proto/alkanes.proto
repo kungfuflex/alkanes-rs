@@ -86,17 +86,11 @@ message AlkanesTraceEvent {
     AlkanesEnterContext enter_context = 1;
     AlkanesExitContext exit_context = 2;
     AlkanesCreate create_alkane = 3;
-    // align-main additive: develop-only trace events consumed by the portable
-    // crates (alkanes-cli-common, alkanes-contract-indexer). Dead in the
-    // indexer path — the root src/** indexer never constructs these. Additive
-    // field numbers 4/5 do not renumber existing fields (wire-compatible).
     AlkanesReceiveIntent receive_intent = 4;
     AlkanesValueTransfer value_transfer = 5;
   }
 }
 
-// align-main additive (develop-only): backing messages for the receive_intent
-// and value_transfer trace events. Not emitted by the indexer.
 message AlkanesReceiveIntent {
   repeated AlkaneTransfer incoming_alkanes = 1;
 }
@@ -205,17 +199,6 @@ message Payment {
 message PendingUnwrapsResponse {
   repeated Payment payments = 1;
 }
-
-// ---------------------------------------------------------------------------
-// simulatetransaction / simulateprotostones — view-mode full per-tx replay.
-//
-// Two-tier shape: `simulateprotostones` is the lower-level entry point
-// (caller supplies alkane inputs + a list of protostones directly, with
-// optional transaction/block bytes for `self.transaction()` / `self.block()`
-// host calls and optional storage overrides). `simulatetransaction` wraps
-// it: it decodes a PSBT or raw tx, derives the alkane inputs from the
-// spent outpoints' live OUTPOINT_TO_RUNES state, auto-synthesizes a
-// realistic-looking faux block chained off the last indexed header, then
 // delegates to simulateprotostones. Both return the same response shape.
 //
 // The response includes the actual transaction + block bytes that were

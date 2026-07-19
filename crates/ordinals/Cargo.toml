@@ -10,6 +10,7 @@ rust-version = "1.74.0"
 
 [features]
 dogecoin = []
+zcash = []
 
 [dependencies]
 bitcoin = { workspace = true }

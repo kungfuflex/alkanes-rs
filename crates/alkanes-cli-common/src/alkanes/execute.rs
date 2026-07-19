@@ -38,8 +38,7 @@ pub use super::types::{
 use super::envelope::AlkanesEnvelope;
 use anyhow::anyhow;
 use ordinals::Runestone;
-use protorune_support::protostone::{Protostone, ProtostoneEdict as ProtoruneEdict};
-use crate::alkanes::protostone_ext::Protostones;
+use protorune_support::protostone::{Protostones, Protostone, ProtostoneEdict as ProtoruneEdict};
 use protorune_support::balance_sheet::ProtoruneRuneId;
 
 const MAX_FEE_SATS: u64 = 100_000; // 0.001 BTC. Cap to avoid "absurdly high fee rate" errors.

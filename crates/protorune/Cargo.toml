@@ -14,6 +14,7 @@ crate-type = ["cdylib", "rlib"]
 test-utils = []
 mainnet = []
 cache = []
+zcash = []
 # Forward to metashrew-core/debug-log. Default OFF — when off, the
 # `metashrew_core::println!` host call is compiled to `()`, which
 # eliminates the per-cellpack log spam dominating throughput on
@@ -28,8 +29,29 @@ debug-log = ["metashrew-core/debug-log"]
 # 47bd86b3, ported from kungfuflex/v2.1.8) lives here so those consumers can
 # pick it up by enabling `--features runes`.
 runes = []
+# Opt-in operator feature: restores the v2-style address-keyed views
+# (`protorunesbyaddress` / `runesbyaddress` / `spendablesbyaddress`) on
+# top of the v3 chunked storage model. When OFF (the default), the
+# indexer writes ZERO per-address state and the address-keyed view
+# functions return a "feature not enabled" error.
+#
+# When ON, `index_spendables` rewrites one chunked
+# `AddressOutpoints` record per address-touching block per address —
+# O(1) chain entries per address per block instead of the v2
+# multi-pointer O(outputs-for-this-address-in-this-block) growth.
+#
+# Operators opt in via:
+#   cargo build --release --target wasm32-unknown-unknown \
+#     --features mainnet,address-indexing -p alkanes
+#
+# This feature is alkanes-side only — it does NOT require any
+# metashrew-side changes. It uses `set_chunk` / `get_chunk` which are
+# already shipped in the pinned v10 metashrew. The default mainnet
+# build pipeline does NOT enable this feature.
+address-indexing = []
 
 [dependencies]
+alkanes-support = { workspace = true }
 anyhow = { workspace = true }
 bitcoin = { workspace = true }
 metashrew-core = { workspace = true }
@@ -48,6 +70,7 @@ prost = { workspace = true }
 prost-types = { workspace = true }
 
 [dev-dependencies]
-metashrew-core = { git = "https://github.com/sandshrewmetaprotocols/metashrew", tag = "v9.0.5-rc.8", features = ["test-utils"] }
+metashrew-core = { workspace = true, features = ["test-utils"] }
+wasm-bindgen-cli = "0.2.99"
 getrandom = { version = "0.2.15", features = ["js"] }
 protorune = { path = ".", features = ["test-utils"] }

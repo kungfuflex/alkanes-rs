@@ -1082,8 +1082,7 @@ impl<'a> Brc20ProgExecutor<'a> {
         pointer_index: u32,
     ) -> Result<(TxOut, ScriptBuf)> {
         use ordinals::Runestone;
-        use protorune_support::protostone::{Protostone, ProtostoneEdict};
-        use crate::alkanes::protostone_ext::Protostones;
+        use protorune_support::protostone::{Protostone, ProtostoneEdict, Protostones};
 
         // DIESEL contract: block 2, tx 0, opcode 77 (mint)
         let message = vec![2u8, 0u8, 77u8];

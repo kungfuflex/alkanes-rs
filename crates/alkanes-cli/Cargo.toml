@@ -72,6 +72,10 @@ assert_cmd = "2.0"
 predicates = "3.0"
 serde_json = "1.0"
 bitcoind = "0.36.0"
-# [[test]] alkanes_execute_mock removed on align-main: the referenced
-# ../../tests/alkanes_execute_mock.rs does not exist in this tree.
+
+
+[[test]]
+name = "alkanes_execute_mock"
+path = "../../tests/alkanes_execute_mock.rs"
+harness = true
 

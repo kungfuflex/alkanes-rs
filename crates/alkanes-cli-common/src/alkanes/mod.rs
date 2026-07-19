@@ -15,7 +15,6 @@ pub mod types;
 pub mod envelope;
 pub mod inspector;
 pub mod protorunes;
-pub mod protostone_ext;
 pub mod protoburn;
 pub mod simulation;
 pub mod simulate_view;

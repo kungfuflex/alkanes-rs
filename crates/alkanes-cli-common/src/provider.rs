@@ -2185,9 +2185,9 @@ impl WalletProvider for ConcreteProvider {
 
                         let msg = bitcoin::secp256k1::Message::from(sighash);
                         #[cfg(not(target_arch = "wasm32"))]
-                        let signature = secp.sign_schnorr_with_rng(&msg, &tweaked_keypair.to_inner(), &mut thread_rng());
+                        let signature = secp.sign_schnorr_with_rng(&msg, &tweaked_keypair.to_keypair(), &mut thread_rng());
                         #[cfg(target_arch = "wasm32")]
-                        let signature = secp.sign_schnorr_with_rng(&msg, &tweaked_keypair.to_inner(), &mut OsRng);
+                        let signature = secp.sign_schnorr_with_rng(&msg, &tweaked_keypair.to_keypair(), &mut OsRng);
                         
                         let taproot_signature = taproot::Signature {
                             signature,
@@ -2331,9 +2331,9 @@ impl WalletProvider for ConcreteProvider {
 
                     let msg = bitcoin::secp256k1::Message::from(sighash);
                     #[cfg(not(target_arch = "wasm32"))]
-                    let signature = secp.sign_schnorr_with_rng(&msg, &tweaked_keypair.to_inner(), &mut thread_rng());
+                    let signature = secp.sign_schnorr_with_rng(&msg, &tweaked_keypair.to_keypair(), &mut thread_rng());
                     #[cfg(target_arch = "wasm32")]
-                    let signature = secp.sign_schnorr_with_rng(&msg, &tweaked_keypair.to_inner(), &mut OsRng);
+                    let signature = secp.sign_schnorr_with_rng(&msg, &tweaked_keypair.to_keypair(), &mut OsRng);
 
                     let taproot_signature = taproot::Signature {
                         signature,
@@ -2609,9 +2609,9 @@ impl WalletProvider for ConcreteProvider {
 
                     let msg = bitcoin::secp256k1::Message::from(sighash);
                     #[cfg(not(target_arch = "wasm32"))]
-                    let signature = secp.sign_schnorr_with_rng(&msg, &tweaked_keypair.to_inner(), &mut rand::thread_rng());
+                    let signature = secp.sign_schnorr_with_rng(&msg, &tweaked_keypair.to_keypair(), &mut rand::thread_rng());
                     #[cfg(target_arch = "wasm32")]
-                    let signature = secp.sign_schnorr_with_rng(&msg, &tweaked_keypair.to_inner(), &mut OsRng);
+                    let signature = secp.sign_schnorr_with_rng(&msg, &tweaked_keypair.to_keypair(), &mut OsRng);
 
                     let taproot_signature = taproot::Signature {
                         signature,
@@ -2852,9 +2852,9 @@ impl WalletProvider for ConcreteProvider {
 
                         let msg = bitcoin::secp256k1::Message::from(sighash);
                         #[cfg(not(target_arch = "wasm32"))]
-                        let signature = secp.sign_schnorr_with_rng(&msg, &tweaked_keypair.to_inner(), &mut thread_rng());
+                        let signature = secp.sign_schnorr_with_rng(&msg, &tweaked_keypair.to_keypair(), &mut thread_rng());
                         #[cfg(target_arch = "wasm32")]
-                        let signature = secp.sign_schnorr_with_rng(&msg, &tweaked_keypair.to_inner(), &mut OsRng);
+                        let signature = secp.sign_schnorr_with_rng(&msg, &tweaked_keypair.to_keypair(), &mut OsRng);
 
                         let taproot_signature = taproot::Signature {
                             signature,
