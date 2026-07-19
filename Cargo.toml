@@ -84,8 +84,8 @@ repository = "https://github.com/kungfuflex/alkanes-rs"
 anyhow = "1.0.90"
 num = "0.4.3"
 bitcoin = { version = "0.32.4", features = ["rand"] }
-metashrew-core = { git = "https://github.com/sandshrewmetaprotocols/metashrew", tag = "v9.0.5-rc.8" }
-metashrew-support = { git = "https://github.com/sandshrewmetaprotocols/metashrew", tag = "v9.0.5-rc.8" }
+metashrew-core = { git = "https://github.com/kungfuflex/metashrew", tag = "v9.0.5-rc.8" }
+metashrew-support = { git = "https://github.com/kungfuflex/metashrew", tag = "v9.0.5-rc.8" }
 ordinals = { path = "./crates/ordinals" }
 protorune = { path = "./crates/protorune" }
 protorune-support = { path = "./crates/protorune-support" }
@@ -263,7 +263,7 @@ alkanes = { path = ".", features = [
     "auth_token",
     "minimal",
 ] }
-metashrew-core = { git = "https://github.com/sandshrewmetaprotocols/metashrew", tag = "v9.0.5-rc.8", features = ["test-utils"] }
+metashrew-core = { git = "https://github.com/kungfuflex/metashrew", tag = "v9.0.5-rc.8", features = ["test-utils"] }
 protorune = { path = "crates/protorune", features = ["test-utils"] }
 
 [build-dependencies]
