@@ -23,7 +23,7 @@ icmp = ["alkanes-cli-common/icmp"]
 sha2 = { workspace = true }
 reqwest = { workspace = true, features = ["json"] }
 alkanes-cli-common = { path = "../alkanes-cli-common", features = ["std", "wc-signer", "wc-signer-native"] }
-alkanes-cli-sys = { path = "../alkanes-cli-sys" }
+alkanes-cli-sys = { path = "../alkanes-cli-sys", features = ["attest-upload"] }
 subfrost-wc = { path = "../../vendor/subfrost-wc", features = ["relay-client"] }
 async-trait = { workspace = true }
 dirs = "5.0"

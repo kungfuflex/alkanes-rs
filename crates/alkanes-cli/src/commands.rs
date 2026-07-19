@@ -168,6 +168,23 @@ pub enum Commands {
     /// emit the canonical BuildInfo JSON. Offline unless fetching an on-chain target.
     #[command(subcommand)]
     BuildInfo(alkanes_cli_common::buildinfo::cli::BuildInfoCommands),
+    /// Upload a BuildInfo JSON to the explorer as an attestation (default) or a
+    /// full rebuild-verify request. POSTs over the vendored tlsfetch h2 client
+    /// (no curl, no reqwest). Attest is admin-gated (needs an `sfadm_…` key).
+    Upload {
+        /// Path to a BuildInfo JSON (as emitted by `build-info`).
+        build_info: String,
+        /// Explorer API key. `sfadm_…` admin key for attest/verify.
+        #[arg(long)]
+        api_key: String,
+        /// Explorer base URL. Defaults to https://explorer.subfrost.io.
+        #[arg(long)]
+        explorer_url: Option<String>,
+        /// Instead of attest, POST the full fixture set to `/verify` so the
+        /// server rebuilds + diffs in-sandbox.
+        #[arg(long)]
+        verify: bool,
+    },
 }
 
 /// Lua script subcommands
@@ -3349,6 +3366,8 @@ impl Commands {
             Commands::Decodepsbt { .. } => false,
             // build-info workbench doesn't need wallet
             Commands::BuildInfo(_) => false,
+            // upload just POSTs a JSON artifact — no wallet
+            Commands::Upload { .. } => false,
         }
     }
 }
