@@ -163,6 +163,11 @@ pub enum Commands {
         #[arg(long)]
         raw: bool,
     },
+    /// Reproducible-build workbench: reverse an alkane's build environment from its
+    /// bytecode (id or local .wasm), reconstruct it in a controlled sandbox, diff, and
+    /// emit the canonical BuildInfo JSON. Offline unless fetching an on-chain target.
+    #[command(subcommand)]
+    BuildInfo(alkanes_cli_common::buildinfo::cli::BuildInfoCommands),
 }
 
 /// Lua script subcommands
@@ -3342,6 +3347,8 @@ impl Commands {
             Commands::Wc(_) => false,
             // PSBT decoding doesn't need wallet
             Commands::Decodepsbt { .. } => false,
+            // build-info workbench doesn't need wallet
+            Commands::BuildInfo(_) => false,
         }
     }
 }
