@@ -66,7 +66,7 @@ Refer to the METASHREW documentation for descriptions of the indexer stack used 
 
 To index ALKANES on mainnet you must run matching, current versions of both components:
 
-- **alkanes-rs `v2.2.1-rc.5`** (latest) — built to `alkanes.wasm` and loaded via `--indexer`. See [releases](https://github.com/kungfuflex/alkanes-rs/releases).
+- **alkanes-rs `v2.2.1-rc.3`** (latest) — built to `alkanes.wasm` and loaded via `--indexer`. See [`v2.2.1-rc.3`](https://github.com/kungfuflex/alkanes-rs/releases/tag/v2.2.1-rc.3).
 - **metashrew `v9.0.5-rc.13`** — the [`kungfuflex/metashrew`](https://github.com/kungfuflex/metashrew/releases/tag/v9.0.5-rc.13) indexer stack (`rockshrew-mono`).
 
 Running mismatched versions can produce divergent state. Live mainnet system health — indexer height, sync status, and RPC availability — can be checked at **[https://mainnet.subfrost.io](https://mainnet.subfrost.io)**.
