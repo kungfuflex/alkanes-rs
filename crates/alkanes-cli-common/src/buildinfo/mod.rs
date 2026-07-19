@@ -6,6 +6,7 @@
 pub mod cli;
 pub mod formula;
 pub mod schema;
+pub mod upload;
 pub mod wasm;
 
 pub use schema::*;
