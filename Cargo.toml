@@ -71,6 +71,11 @@ members = [
     "vendor/tlsfetch-events",
     "vendor/tlsfetch-transport",
     "vendor/tlsfetch-ws",
+    # Minimal native HTTP/2 client (tokio-rustls, server-auth) for the
+    # alkanes-cli reproducible-build `upload` path. Vendored + trimmed
+    # from kungfuflex/tlsfetch. Standalone: does NOT inherit tlsfetch's
+    # rustls/h2 [patch.crates-io] forks (no persona ClientHello here).
+    "vendor/tlsfetch-h2-client",
 ]
 
 [workspace.package]

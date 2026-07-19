@@ -1,0 +1,61 @@
+{
+  "schema_version": "1.0.0",
+  "identity": {
+    "target_source": "onchain",
+    "alkane_id": "4:797",
+    "network": "mainnet",
+    "target_sha256": "8b51384a4f4feb8cce44feaf77a0a9f03ca7a78f7c3c1f550c4e4ddc603e3305",
+    "target_size": 297481
+  },
+  "source": {
+    "kind": "git",
+    "repo": "https://github.com/kungfuflex/free-mint",
+    "commit": "e33d5e8",
+    "package": "free-mint",
+    "is_workspace_member": false,
+    "features": [],
+    "build_command": "cargo build --release --locked --target wasm32-unknown-unknown -p free-mint",
+    "artifact": "free_mint.wasm"
+  },
+  "toolchain": {
+    "rustc_version": "1.82.0",
+    "rustc_commit": "f6e511eec7342f59a25f7c0534f1dbea00d01b14",
+    "host_triple": "1.82.0-x86_64-unknown-linux-gnu",
+    "os_image": "ubuntu-22.04",
+    "target": "wasm32-unknown-unknown"
+  },
+  "c_toolchain": {
+    "vendor": "Ubuntu",
+    "version": "14.0.0",
+    "source": { "method": "apt", "apt_package": "clang-14" },
+    "c_object_host_dependent": false
+  },
+  "environment": {
+    "home": "/home/lee",
+    "cargo_home": "/home/lee/.cargo",
+    "build_env": ["CC_wasm32_unknown_unknown=clang-14", "FREE_MINT_BUILD_IN_PROGRESS=1"],
+    "remap_path_prefix": []
+  },
+  "registry": {
+    "mode": "time-machine",
+    "archive_commit": "010733a015fba9b4915786936fb00d731e9d1586",
+    "timestamp": "2025-03-19T02:19:47Z",
+    "served_as": "index.crates.io",
+    "registry_hash": "index.crates.io-6f17d22bba15001f"
+  },
+  "git_deps": [
+    { "url": "https://github.com/kungfuflex/alkanes-rs", "rev": "d787cdd1f22ef1b7e32337fc531209df85ed1db8", "source_form": "bare" }
+  ],
+  "result": {
+    "verdict": "reproducible",
+    "built_sha256": "8b51384a4f4feb8cce44feaf77a0a9f03ca7a78f7c3c1f550c4e4ddc603e3305",
+    "byte_exact": true,
+    "normalized_match_pct": 100.0,
+    "sections": [],
+    "note": "byte-exact; the winning fixes were: canonical registry path (serve frozen index AS index.crates.io), Ubuntu clang 14.0.0, and the bare alkanes-rs git source-id"
+  },
+  "notes": [
+    "no Cargo.lock committed in free-mint (checked all commits) → time-machine registry reconstruction",
+    "typo in Cargo.toml (https:/github.com single slash) normalized before resolve"
+  ]
+}
