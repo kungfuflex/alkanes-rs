@@ -99,6 +99,19 @@ async fn main() -> Result<()> {
         .await;
     }
 
+    // Reproducible-build `upload` — POST a BuildInfo JSON to the explorer
+    // attest/verify endpoints over the vendored tlsfetch h2 client. No wallet /
+    // System needed, so handle it early too.
+    if let Commands::Upload { build_info, api_key, explorer_url, verify } = &args.command {
+        return alkanes_cli_sys::attest_upload::run_upload(
+            build_info,
+            api_key,
+            explorer_url.as_deref(),
+            *verify,
+        )
+        .await;
+    }
+
     // Convert DeezelCommands to Args
     let alkanes_args = alkanes_cli_common::commands::Args::from(&args);
 
@@ -157,6 +170,10 @@ async fn execute_command<T: System + SystemOrd + UtxoProvider>(system: &mut T, c
         Commands::BuildInfo(_) => {
             // build-info is handled in main() because it doesn't need the System trait
             unreachable!("BuildInfo commands should be handled in main()")
+        }
+        Commands::Upload { .. } => {
+            // upload is handled in main() because it doesn't need the System trait
+            unreachable!("Upload command should be handled in main()")
         }
         Commands::Subfrost(cmd) => execute_subfrost_command(system.provider(), cmd).await,
         Commands::Espo(cmd) => execute_espo_command(system.provider(), cmd.into()).await,
