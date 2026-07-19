@@ -82,6 +82,23 @@ async fn main() -> Result<()> {
         return execute_opi_command(&args, cmd.clone()).await;
     }
 
+    // Reproducible-build workbench — offline by default; only fetches an on-chain
+    // target via --jsonrpc-url. Needs no wallet / System, so handle it early.
+    if let Commands::BuildInfo(ref cmd) = args.command {
+        let headers: Vec<(String, String)> = args
+            .jsonrpc_headers
+            .iter()
+            .filter_map(|h| h.split_once(':').map(|(k, v)| (k.trim().to_string(), v.trim().to_string())))
+            .collect();
+        return alkanes_cli_common::buildinfo::cli::handle(
+            cmd.clone(),
+            args.jsonrpc_url.clone(),
+            headers,
+            Some(args.provider.clone()),
+        )
+        .await;
+    }
+
     // Convert DeezelCommands to Args
     let alkanes_args = alkanes_cli_common::commands::Args::from(&args);
 
@@ -136,6 +153,10 @@ async fn execute_command<T: System + SystemOrd + UtxoProvider>(system: &mut T, c
         Commands::Opi(_) => {
             // OPI is handled in main() because it doesn't need the System trait
             unreachable!("OPI commands should be handled in main()")
+        }
+        Commands::BuildInfo(_) => {
+            // build-info is handled in main() because it doesn't need the System trait
+            unreachable!("BuildInfo commands should be handled in main()")
         }
         Commands::Subfrost(cmd) => execute_subfrost_command(system.provider(), cmd).await,
         Commands::Espo(cmd) => execute_espo_command(system.provider(), cmd.into()).await,
