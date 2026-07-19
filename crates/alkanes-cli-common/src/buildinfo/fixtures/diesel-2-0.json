@@ -1,0 +1,71 @@
+{
+  "schema_version": "1.0.0",
+  "identity": {
+    "target_source": "onchain",
+    "alkane_id": "2:0",
+    "network": "mainnet",
+    "target_sha256": "f780aacd1718a312c9ac1a5f8b126a8b8e15708a4b0c908d4d633fbfdb847fd1",
+    "target_size": 262445
+  },
+  "source": {
+    "kind": "git",
+    "repo": "https://github.com/kungfuflex/alkanes-rs",
+    "commit": "fb11ee0e",
+    "subdir": "/Users/kevinyao/Documents/Code/alkanes-rs",
+    "package": "alkanes-std-genesis-alkane-upgraded-eoa",
+    "is_workspace_member": true,
+    "features": [],
+    "build_command": "cargo build --release --locked --target wasm32-unknown-unknown -p alkanes-std-genesis-alkane-upgraded-eoa",
+    "artifact": "alkanes_std_genesis_alkane_upgraded_eoa.wasm"
+  },
+  "toolchain": {
+    "rustc_version": "1.86.0",
+    "rustc_commit": "05f9846f893b09a1be1fc8560e33fc3c815cfecb",
+    "host_triple": "1.86.0-aarch64-apple-darwin",
+    "os_image": "ubuntu-22.04",
+    "target": "wasm32-unknown-unknown"
+  },
+  "c_toolchain": {
+    "vendor": "Homebrew",
+    "version": "20.1.7",
+    "source": {
+      "method": "homebrew-bottle",
+      "homebrew_bottles": [
+        { "formula": "llvm", "blob_sha256": "ed2b39367f1b5092e9d2c4089edc69e483c58c31a14be8fc942e2da2f1488657" },
+        { "formula": "z3", "blob_sha256": "d3a2ff4a356931244f900557023d57b862b4953ca38f3b107ceaa32fd6fa176b" },
+        { "formula": "libedit", "blob_sha256": "3de065ef66904f7758361d623fc96cbc5226663d919b3d6524f9b46bf3153692" }
+      ]
+    },
+    "c_object_host_dependent": true,
+    "note": "secp256k1-sys 0.10.1; the C-object static footprint differs a few bytes between macOS-built and Linux-built Homebrew clang 20.1.7, shifting the memory base — Linux reconstruction reaches `verified` (logic + producers exact), full `reproducible` needs the origin host clang"
+  },
+  "environment": {
+    "home": "/Users/kevinyao",
+    "cargo_home": "/Users/kevinyao/.cargo",
+    "build_env": [],
+    "remap_path_prefix": []
+  },
+  "registry": {
+    "mode": "time-machine",
+    "archive_commit": "9c1365b80ef347568ada4c8898270ccb13b5d1e8",
+    "timestamp": "2025-05-10T11:59:50Z",
+    "served_as": "index.crates.io",
+    "registry_hash": "index.crates.io-1949cf8c6b5b557f"
+  },
+  "git_deps": [
+    { "url": "https://github.com/sandshrewmetaprotocols/metashrew", "rev": "26d968c596c417a7fc6b16b4474fefdb5314a14e", "source_form": "bare" }
+  ],
+  "result": {
+    "verdict": "verified",
+    "built_sha256": "f2a0fea17da24961c2b887a990f151234788934f1be934ad2ddbdd083c877fd4",
+    "byte_exact": false,
+    "normalized_match_pct": 99.997,
+    "sections": [],
+    "note": "producers byte-exact (assembled Homebrew clang 20.1.7 on Linux); data byte-length exact; ~6-byte residual = secp256k1 C-object memory-base shift + a coupled get_value mono-swap (host-dependent C codegen). Reproduced via the darwin toolchain-path copy trick (see macos-build-reconstruction)."
+  },
+  "notes": [
+    "darwin build reconstructed on Linux: COPY the 1.86.0 toolchain to $RUSTUP_HOME/toolchains/1.86.0-aarch64-apple-darwin (symlink is canonicalized by rustc), HOME=/Users/kevinyao, alkanes-rs cloned to /Users/kevinyao/Documents/Code/alkanes-rs",
+    "metashrew resolved to 26d968c via a bare sandshrewmetaprotocols URL carried in kevinyao's uncommitted lock; freeze window is [2025-04-30 sha2 0.10.9, 2025-05-13 bitcoin 0.32.6)",
+    "the upgraded-eoa DIESEL was built with DEFAULT features (not the build.rs per-network --features mainnet flow, which was +31 bytes)"
+  ]
+}
