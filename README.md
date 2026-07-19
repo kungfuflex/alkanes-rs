@@ -8,11 +8,9 @@
 This repository hosts Rust sources for the ALKANES metaprotocol. The indexer for ALKANES can be built as the top level crate in the monorepo, with builds targeting wasm32-unknown-unknown, usable within the METASHREW indexer stack.
 
 ALKANES is a metaprotocol designed to support an incarnation of DeFi as we have traditionally seen it, but designed specifically for the Bitcoin consensus model and supporting structures.
-The ALKANES genesis block is 880000. Builders are encouraged to test on regtest using the docker-compose environment at [https://github.com/kungfuflex/alkanes](https://github.com/kungfuflex/alkanes)
+The ALKANES genesis block is 880000. Builders can end-to-end test their own alkanes smart contracts against the **exact mainnet indexer code path** — no real funds and no live regtest required — using this repository's test harness (see [Testing alkanes end-to-end](#testing-alkanes-end-to-end) below).
 
-A signet RPC will be available on https://signet.sandshrew.io
-
-Join ALKANES / metashrew discussion on the SANDSHREW サンド Discord.
+Public SUBFROST RPC endpoints: mainnet `https://mainnet.subfrost.io/v4/jsonrpc`, signet `https://signet.subfrost.io/v4/jsonrpc`.
 
 #### NOTE: ALKANES does not have a network token
 
@@ -32,7 +30,7 @@ For information on protorunes, refer to the specification hosted at:
 
 The indexer stack used to synchronize the state of the metaprotocol and offer an RPC to consume its data and features is METASHREW. METASHREW is started with a WASM binary of the indexer program, produced with a normal build of this repository as `alkanes.wasm`.
 
-Bindings to the METASHREW environment are consumed from the pinned [`sandshrewmetaprotocols/metashrew`](https://github.com/sandshrewmetaprotocols/metashrew) dependency; the environment-agnostic pieces live in `crates/metashrew-support`.
+Bindings to the METASHREW environment are consumed from the pinned [`kungfuflex/metashrew`](https://github.com/kungfuflex/metashrew) dependency (the canonical METASHREW repository); the environment-agnostic pieces live in `crates/metashrew-support`.
 
 Sources needed to build both metashrew and protorunes meant to be shared with builds of individual alkanes or the generic alkanes-runtime bindings are factored out into `crates/metashrew-support` and `crates/protorune-support` such that they can be imported into an alkane build without the metashrew import definitions leaking in and generating import statements for the METASHREW environment.
 
@@ -58,9 +56,9 @@ The `alkanes.wasm` file is produced at `target/wasm32-unknown-unknown/release/al
 
 ## Indexing
 
-Refer to the METASHREW documentation for descriptions of the indexer stack used for ALKANES.
+Refer to the METASHREW documentation for descriptions of the indexer stack used for ALKANES. The canonical METASHREW repository is:
 
-[https://github.com/sandshrewmetaprotocols/metashrew](https://github.com/sandshrewmetaprotocols/metashrew)
+[https://github.com/kungfuflex/metashrew](https://github.com/kungfuflex/metashrew)
 
 ### Running against mainnet
 
@@ -77,52 +75,146 @@ A sample command may look like:
 ~/metashrew/target/release/rockshrew-mono --daemon-rpc-url http://localhost:8332 --auth bitcoinrpc:bitcoinrpc --db-path ~/.metashrew --indexer ~/alkanes-rs/target/wasm32-unknown-unknown/release/alkanes.wasm --start-block 880000 --host 0.0.0.0 --port 8080 --cors '*'
 ```
 
-### Testing
+## Testing alkanes end-to-end
 
-To run all tests in the monorepo
+The most useful thing this repository gives contract authors is a **test harness that runs your alkane through the exact same indexer code path that runs on mainnet** — the real `wasmi` execution, the real protorune/alkanes state transitions, the real view functions — all in-memory. You build a Bitcoin block, drop in a transaction whose protostone deploys and calls your contract, index it, then call view functions to assert on the result. **No real funds and no live regtest node.**
 
-```
-# this might be necessary if running into: could not execute process `wasm-bindgen-test-runner...
+An alkanes test project compiles to and runs on `wasm32-unknown-unknown` under **`wasm-bindgen-test-runner`** (the same WASM runner the indexer itself is tested with). One-time setup:
+
+```sh
+rustup target add wasm32-unknown-unknown
+# The runner's version MUST match the pinned wasm-bindgen (0.2.100), or you get a
+# "schema version" mismatch:
 cargo install -f wasm-bindgen-cli --version 0.2.100
 ```
 
-```
-cargo test --all
-```
+with a `.cargo/config.toml` that points the runner at wasm:
 
-To test the alkanes indexer end-to-end, it is only required to run:
+```toml
+[build]
+target = "wasm32-unknown-unknown"
 
-```
-cargo test
-```
-
-To run tests for a specific crate
-
-```
-cargo test -p [CRATE]
+[target.wasm32-unknown-unknown]
+runner = "wasm-bindgen-test-runner"
 ```
 
-example:
+### An alkane is opcodes, like a contract interface
 
+An alkane exposes its interface as **opcodes** — numeric selectors, directly analogous to method selectors on an EVM contract. You declare them with a `MessageDispatch` enum: `#[opcode(N)]` is the selector, and `#[returns(T)]` marks a **view** method (one that only reads and returns data — the analogue of a `view`/`pure` function you'd call with `eth_call`):
+
+```rust
+use alkanes_runtime::{declare_alkane, message::MessageDispatch, runtime::AlkaneResponder};
+use alkanes_support::response::CallResponse;
+use anyhow::Result;
+
+#[derive(Default)]
+struct MyToken(());
+
+#[derive(MessageDispatch)]
+enum MyTokenMessage {
+    #[opcode(0)]
+    Initialize { token_units: u128 },     // state-changing: mints the initial supply
+
+    #[opcode(99)]
+    #[returns(String)]
+    GetName,                              // VIEW: read-only, returns the name
+}
+
+impl AlkaneResponder for MyToken {}
+
+impl MyToken {
+    fn initialize(&self, token_units: u128) -> Result<CallResponse> {
+        let context = self.context()?;
+        let mut response = CallResponse::forward(&context.incoming_alkanes);
+        // ... persist name, mint `token_units` into response.alkanes ...
+        Ok(response)
+    }
+    fn get_name(&self) -> Result<CallResponse> {
+        let context = self.context()?;
+        let mut response = CallResponse::forward(&context.incoming_alkanes);
+        response.data = b"MyToken".to_vec();   // read-only: just fill response.data
+        Ok(response)
+    }
+}
+
+declare_alkane! {
+    impl AlkaneResponder for MyToken { type Message = MyTokenMessage; }
+}
 ```
-cargo test --features test-utils -p protorune
+
+`declare_alkane!` emits the wasm entrypoints (`__execute`, `__meta`); the crate is `crate-type = ["cdylib", "rlib"]`. A `build.rs` compiles your contract to wasm and generates a `get_bytes()` your tests can deploy — copy the pattern from [free-mint's `build.rs`](https://github.com/kungfuflex/free-mint/blob/master/build.rs). (Stock contracts are also available prebuilt via `alkanes::precompiled::*::get_bytes()`, used below.)
+
+### Deploy, index, and call a view — the same code path as mainnet
+
+Add the harness as dev-dependencies. The **`test-utils` feature is required** — it's what makes `alkanes::tests::helpers` public — and your metashrew source must match the one alkanes-rs uses (`kungfuflex/metashrew`, tag `v9.0.5-rc.8`) so the workspace resolves to a single metashrew:
+
+```toml
+[dev-dependencies]
+alkanes        = { git = "https://github.com/kungfuflex/alkanes-rs", features = ["test-utils"] }
+protorune      = { git = "https://github.com/kungfuflex/alkanes-rs", features = ["test-utils"] }
+alkanes-support = { git = "https://github.com/kungfuflex/alkanes-rs" }
+metashrew-core = { git = "https://github.com/kungfuflex/metashrew", tag = "v9.0.5-rc.8", features = ["test-utils"] }
+wasm-bindgen-test = "0.3"
+anyhow = "1"
 ```
 
-This will provide a stub environment to test a METASHREW indexer program, and it will test the alkanes standard library smart contracts in simulated blocks.
+The test below deploys the stock **owned-token** contract in a block, indexes it, and reads its `GetName` view opcode with `call_view` — the **`eth_call` analogue**: it executes a view opcode against current state and returns its bytes, **without persisting any state change**. (This exact test passes against `main`.)
 
-Features are provided within the Cargo.toml at the root of the monorepo to declare alkanes which should be built with `cargo build` or `cargo test`.
+```rust
+use alkanes::indexer::index_block;
+use alkanes::precompiled::{alkanes_std_auth_token_build, alkanes_std_owned_token_build};
+use alkanes::tests::helpers::{self as alkane_helpers, clear};
+use alkanes::view;
+use alkanes_support::cellpack::Cellpack;
+use alkanes_support::constants::AUTH_TOKEN_FACTORY_ID;
+use alkanes_support::id::AlkaneId;
+use alkanes_support::utils::string_to_u128_list;
+use wasm_bindgen_test::wasm_bindgen_test;
 
-### Unit testing
+#[wasm_bindgen_test]
+fn deploy_and_read_view() -> anyhow::Result<()> {
+    clear();                                   // reset the in-memory indexer state
 
-- These are written inside the library rust code
-- Do not compile to wasm, instead unit test the native rust. Therefore, you need to find the correct target for your local machine to properly run these tests. Below are some common targets for some architectures:
-  - Macbook intel x86: x86_64-apple-darwin
-  - Macbook Apple silicon: aarch64-apple-darwin
-  - Ubuntu 20.04 LTS: x86_64-unknown-linux-gnu
+    // owned-token opcode 1 = InitializeWithNameSymbol(auth_units, token_units, name, symbol).
+    // inputs[0] is the opcode; Strings are packed into u128s via string_to_u128_list.
+    let mut init = vec![1u128, 1, 1000];
+    init.extend(string_to_u128_list("MyToken".to_string()));
+    init.extend(string_to_u128_list("MTK".to_string()));
 
+    // Each binary is deployed in its own tx; each Cellpack is that tx's protostone.
+    // {3, AUTH_TOKEN_FACTORY_ID} deploys the auth-token factory; {1,0} deploys + calls
+    // owned-token, which lands at {2,1}.
+    let block = alkane_helpers::init_with_multiple_cellpacks_with_tx(
+        vec![
+            alkanes_std_auth_token_build::get_bytes(),
+            alkanes_std_owned_token_build::get_bytes(),
+        ],
+        vec![
+            Cellpack { target: AlkaneId { block: 3, tx: AUTH_TOKEN_FACTORY_ID }, inputs: vec![100] },
+            Cellpack { target: AlkaneId { block: 1, tx: 0 }, inputs: init },
+        ],
+    );
+
+    // Run it through the REAL indexer — the exact code path used on mainnet.
+    index_block(&block, 0)?;
+
+    // Call the view opcode 99 (GetName) with call_view — no state change, like eth_call.
+    let owned = AlkaneId { block: 2, tx: 1 };
+    let name = view::call_view(&owned, &vec![99u128], 100_000 /* fuel */)?;
+    assert_eq!(String::from_utf8(name)?, "MyToken");
+    Ok(())
+}
 ```
-cargo test -p protorune --target TARGET
-```
+
+Run it with `cargo test`. You've now exercised a contract's `wasmi` execution and a view call in the precise environment it will see live on mainnet — no funds, no regtest.
+
+To read the **persisted execution trace** of a real indexed call (rather than a stateless view), use `view::trace(&outpoint)`. For a full worked contract — a custom alkane with its own `build.rs`, a state-changing mint, and trace assertions — see the [free-mint](https://github.com/kungfuflex/free-mint) and [oyl-amm](https://github.com/kungfuflex/oyl-amm) crates, which test against this harness the same way.
+
+**Notes**
+
+- Tests use `#[wasm_bindgen_test]` (not `#[test]`), because the suite compiles to and runs on wasm — the same target as the indexer.
+- The `test-utils` feature is mandatory on the `alkanes` / `protorune` / `metashrew-core` dev-deps; it's what exposes `alkanes::tests::helpers`.
+- Deploy stock contracts with `alkanes::precompiled::*::get_bytes()`; deploy your own with a `build.rs`-generated `get_bytes()`.
 
 ## Using alkanes-cli
 
