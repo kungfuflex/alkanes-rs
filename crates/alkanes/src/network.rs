@@ -80,6 +80,31 @@ pub fn frbtc_wasm_for_height(height: u32) -> Vec<u8> {
     }
 }
 
+/// Height-versioned static DIESEL genesis-alkane (`2:0`) code map — the same
+/// "load a precompiled built-in from static program storage by height" path as
+/// [`frbtc_wasm_for_height`]. The genesis alkane progresses base → upgraded → EOA
+/// at `GENESIS_UPGRADE_BLOCK_HEIGHT` / `GENESIS_UPGRADE_EOA_BLOCK_HEIGHT`; the `>=`
+/// boundaries mirror the one-shot swaps in [`check_and_upgrade_precompiled`], so
+/// these bytes are byte-identical to indexed state for every pre-fork height.
+///
+/// Restores the rc.3 execution-path map that the develop refactor dropped from
+/// [`crate::vm::utils::get_alkane_binary_from_context`] (which special-cased only
+/// frBTC `32:0`). Without it, `2:0` resolved to the indexed binary — seeded to the
+/// heavier upgraded-EOA build — and executed upgraded-EOA from genesis, over-
+/// consuming the tight pre-`FUEL_CHANGE1_HEIGHT` (899_087) fuel budget so that
+/// legitimate free-mint constructors reverted "all fuel consumed by WebAssembly",
+/// rolled back the atomic pointer, and never incremented the sequence — silently
+/// failing to create ~all `2:N` free-mint alkanes below block 908_888 vs rc.3.
+pub fn genesis_alkane_wasm_for_height(height: u32) -> Vec<u8> {
+    if height >= genesis::GENESIS_UPGRADE_EOA_BLOCK_HEIGHT {
+        genesis_alkane_upgrade_bytes_eoa()
+    } else if height >= genesis::GENESIS_UPGRADE_BLOCK_HEIGHT {
+        genesis_alkane_upgrade_bytes()
+    } else {
+        genesis_alkane_bytes()
+    }
+}
+
 pub fn fr_sigil_bytes() -> Vec<u8> {
     fr_sigil_build::get_bytes()
 }
