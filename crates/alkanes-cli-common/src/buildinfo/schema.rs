@@ -14,8 +14,47 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Bump on any breaking change to the shape below.
-pub const SCHEMA_VERSION: &str = "1.0.0";
+/// The spec version. Semver contract: consumers reject an unknown MAJOR; a higher
+/// MINOR is backward-compatible (only additive OPTIONAL fields), so a 1.0.0 consumer
+/// safely reads a 1.1.0 artifact by ignoring the fields it doesn't know. Bump the
+/// MAJOR only on a breaking change to an existing field's shape/meaning.
+///
+/// # Lineage
+/// - **1.0.0** — initial spec. The axes required for byte-exact single-alkane
+///   reproduction: toolchain (rustc + the darwin host-triple copy trick), C
+///   toolchain (clang vendor/version + apt / llvm-release / homebrew-bottle
+///   assembly), HOME + path-remap, registry (committed-lock vs a crates.io-index
+///   time-machine), a single git-dep source-id spelling (`bare`|`rev`), the full
+///   resolved lockfile, and the diff verdict.
+/// - **1.1.0** — reproduction reach extended; ALL additions are optional/additive:
+///   * `GitDep.redirect_to` — unify a crate pulled via DIFFERENT mirror URLs (e.g.
+///     `sandshrewmetaprotocols` ↔ `kungfuflex` `metashrew`) onto ONE source, so
+///     cargo does not build two incompatible copies ("multiple versions" E0599).
+///   * `GitDep.pin_transitive` — force the rev across ALL lockfile occurrences,
+///     including a dep pulled TRANSITIVELY through another git dep (lockfile
+///     `cargo update -p <crate> --precise <rev>`), not just the in-tree Cargo.toml.
+///   * `CToolchain.wasm_cflags` — extra CFLAGS for the wasm C compile (e.g.
+///     `-nostdlibinc`), letting a stock apt clang cross-compile secp256k1→wasm
+///     (previously only a self-contained Homebrew clang could — the host glibc
+///     `/usr/include` leak on `wasm32-unknown-unknown`).
+///   * `Toolchain.rustc_version` MAY now be a CHANNEL (`nightly-YYYY-MM-DD` /
+///     `beta`), not only a semver `x.y.z` — for a contract built off a nightly.
+///   * `Registry.archive_commit` is OPTIONAL: when absent it is auto-derived from
+///     the deploy date (`timestamp`) by selecting the crates.io-index-archive
+///     `snapshot-YYYY-MM-DD` branch that CONTAINS that date and `rev-list --before`.
+///   * MINIMAL RECIPE: a BuildInfo carrying only `identity` + `source` (repo +
+///     commit + package) is valid — the verifier AUTO-REVERSES toolchain /
+///     environment / registry / git_deps from the on-chain bytecode fingerprint;
+///     any field the author DID supply overrides its auto-derived value.
+/// - **1.2.0** — rustc provenance modeled; additive/optional:
+///   * `Toolchain.rustc_source` (`RustcSource`) — HOW to obtain rustc, parallel to
+///     `CToolchain.source` for clang. Absent ⇒ rustup installs the channel/semver
+///     (the common case). `method = "git-build"` ⇒ COMPILE rustc from a
+///     rust-lang/rust commit (with `channel` + `download_ci_llvm`), the only way to
+///     reproduce a contract built off an UNPUBLISHED toolchain — e.g. a stable
+///     branch-point like `9fc6b431` ("Prepare 1.85.0") whose `/rustc/<hash>/` sysroot
+///     no rustup channel ships. The builder-verifier can thus reproduce ANY rustc.
+pub const SCHEMA_VERSION: &str = "1.2.0";
 
 /// Top-level artifact.
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -106,7 +145,10 @@ pub struct InlineFile {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Toolchain {
-    /// e.g. `1.86.0`.
+    /// e.g. `1.86.0`. (spec 1.1.0) MAY also be a CHANNEL string — `nightly-YYYY-MM-DD`
+    /// or `beta` — for a contract built off a non-release toolchain; the builder
+    /// `rustup`-installs the channel and does NOT emit it into Cargo.toml's
+    /// `rust-version` field (which only accepts semver).
     pub rustc_version: String,
     /// The rustc commit hash embedded in `/rustc/<hash>` paths, when known.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -122,6 +164,43 @@ pub struct Toolchain {
     pub target: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub linker: Option<String>,
+    /// (spec 1.2.0) HOW to obtain rustc. Absent ⇒ `rustup` installs `rustc_version`
+    /// (a release semver or a nightly/beta channel) directly — the common case. Present
+    /// with `method = "git-build"` ⇒ compile rustc from a rust-lang/rust commit that no
+    /// rustup channel ships (e.g. a stable BRANCH-POINT like `9fc6b431` "Prepare 1.85.0",
+    /// whose `/rustc/<hash>/` sysroot paths NO installable toolchain reproduces). Parallel
+    /// to `CToolchain.source` for clang.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rustc_source: Option<RustcSource>,
+}
+
+/// (spec 1.2.0) How rustc itself is obtained. The builder installs a channel by default;
+/// `git-build` makes it compile rustc from source so ANY toolchain — released or not —
+/// can be reproduced, which is the only path for a contract built off an unpublished
+/// rustc commit (the `/rustc/<hash>/` panic-path hash is the sole fingerprint).
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct RustcSource {
+    /// `"rustup"` (default; install `rustc_version` as a channel/semver) |
+    /// `"git-build"` (compile rust-lang/rust from `git_commit`).
+    pub method: String,
+    /// git-build: the rust-lang/rust commit to build. This is the hash that ends up in
+    /// `/rustc/<hash>/` sysroot paths, so it must equal `Toolchain.rustc_commit`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub git_commit: Option<String>,
+    /// git-build: source repo, when not the canonical `rust-lang/rust`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub git_repo: Option<String>,
+    /// git-build: release channel to configure (`stable` | `beta` | `nightly` | `dev`).
+    /// Matters for CODEGEN, not just the version string: it sets the defaults for
+    /// `debug-assertions` / `overflow-checks`, so the wrong channel diverges the output
+    /// even at the right commit. A stable branch-point wants `stable`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub channel: Option<String>,
+    /// git-build: use the commit's CI-built LLVM (`download-ci-llvm`) so codegen matches
+    /// the OFFICIAL release build. `false` ⇒ build the bundled `src/llvm-project` submodule
+    /// (much slower, and may diverge from the official LLVM). Defaults to true when absent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub download_ci_llvm: Option<bool>,
 }
 
 /// The C toolchain, when the crate links C (e.g. secp256k1-sys). Its vendor+version
@@ -140,13 +219,23 @@ pub struct CToolchain {
     /// (logic + producers exact) but not full `reproducible` without the origin host.
     #[serde(default)]
     pub c_object_host_dependent: bool,
+    /// (spec 1.1.0) Extra CFLAGS for the wasm C compile, e.g. `-nostdlibinc`. A stock
+    /// apt clang targeting `wasm32-unknown-unknown` leaks the host glibc `/usr/include`
+    /// (→ `bits/libc-header-start.h` not found), so secp256k1-sys fails; `-nostdlibinc`
+    /// drops the system libc includes (keeping clang builtins + the crate's bundled
+    /// `wasm-sysroot`) so an apt clang-13/14/15 compiles secp256k1→wasm. Empty ⇒ a
+    /// self-contained clang (Homebrew) that needs no sysroot flag.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wasm_cflags: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ClangSource {
-    /// `apt` | `llvm-release` | `homebrew-bottle`.
+    /// `apt` | `llvm-release` | `homebrew-bottle` | `wasi-sdk` (1.2.0: the clang in a
+    /// WASI SDK release, e.g. wasi-sdk-20's bin/clang → producers "clang 16.0.0"; `cc`
+    /// retargets wasm32-wasi → wasm32-unknown-unknown) | `unpinned`.
     pub method: String,
     /// apt package (e.g. `clang-14`) when method=apt.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -218,6 +307,21 @@ pub struct GitDep {
     /// so `-C metadata` (hence monomorphization ordering) matches a build that used a
     /// bare git URL. `rev` — leave the `?rev=` source-id.
     pub source_form: String,
+    /// (spec 1.1.0) Unify a MIRRORED repo: rewrite every `git = "url"` referencing
+    /// THIS `url` to `redirect_to` (same crate, different host — e.g. the pool pulls
+    /// `sandshrewmetaprotocols/metashrew` while alkanes-rs pulls
+    /// `kungfuflex/metashrew`). Cargo keys on the URL, so without this it builds two
+    /// incompatible copies of the crate. Redirect both onto one source (+ this dep's
+    /// `rev`) to collapse them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub redirect_to: Option<String>,
+    /// (spec 1.1.0) Force `rev` onto ALL lockfile entries from this git source,
+    /// including ones pulled TRANSITIVELY via another git dep (which the in-tree
+    /// Cargo.toml rewrite can't reach). Applied post-resolve as
+    /// `cargo update -p <crate> --precise <rev>`. Set when the same repo is a direct
+    /// AND a transitive dep at drifting revs.
+    #[serde(default)]
+    pub pin_transitive: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -310,7 +414,14 @@ mod tests {
     fn roundtrip(json: &str, expect_id: &str) {
         let bi: BuildInfo = serde_json::from_str(json)
             .unwrap_or_else(|e| panic!("fixture {expect_id} failed to deserialize: {e}"));
-        assert_eq!(bi.schema_version, SCHEMA_VERSION);
+        // The compat contract is MAJOR-based: a consumer accepts any artifact of the
+        // same major (a 1.0.0 fixture round-trips fine under a 1.1.x reader — the new
+        // 1.1 fields are optional). Assert the major, not the exact version.
+        assert_eq!(
+            bi.schema_version.split('.').next(),
+            SCHEMA_VERSION.split('.').next(),
+            "fixture {expect_id}: schema major must match SCHEMA_VERSION",
+        );
         assert_eq!(bi.identity.alkane_id.as_deref(), Some(expect_id));
         let re = serde_json::to_string(&bi).unwrap();
         let _back: BuildInfo = serde_json::from_str(&re).unwrap();

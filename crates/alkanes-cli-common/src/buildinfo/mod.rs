@@ -65,6 +65,9 @@ pub fn reversed_to_buildinfo(rev: &Reversed, target_source: &str, alkane_id: Opt
             version,
             source,
             c_object_host_dependent: is_darwin,
+            // A Linux (apt) clang needs -nostdlibinc to cross-compile secp256k1→wasm;
+            // a self-contained Homebrew clang (darwin path) does not.
+            wasm_cflags: if is_darwin { None } else { Some("-nostdlibinc".into()) },
             note: if is_darwin {
                 Some("secp256k1 C-object footprint is host-dependent between macOS and Linux Homebrew clang; Linux reconstruction reaches `verified`, full `reproducible` needs the origin host clang".into())
             } else { None },
@@ -78,6 +81,10 @@ pub fn reversed_to_buildinfo(rev: &Reversed, target_source: &str, alkane_id: Opt
             url: guess_git_url(name),
             rev: rev_.clone(),
             source_form: "bare".into(),
+            // redirect_to (mirror unify) + pin_transitive need source-repo inspection;
+            // the reverser leaves them unset (the builder auto-forces transitive revs).
+            redirect_to: None,
+            pin_transitive: false,
         })
         .collect();
 
@@ -117,6 +124,9 @@ pub fn reversed_to_buildinfo(rev: &Reversed, target_source: &str, alkane_id: Opt
             os_image: "ubuntu-22.04".into(),
             target: "wasm32-unknown-unknown".into(),
             linker: None,
+            // Reverser default: rustup installs the channel/semver. A git-build source
+            // (unpublished rustc) is an explicit author/operator override.
+            rustc_source: None,
         },
         c_toolchain,
         environment: Environment {

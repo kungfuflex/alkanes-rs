@@ -1,13 +1,13 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://explorer.subfrost.io/schemas/build-info-1.0.0.json",
+  "$id": "https://explorer.subfrost.io/schemas/build-info-1.2.0.json",
   "title": "BuildInfo",
   "description": "Self-contained, parameterized artifact fully specifying how to reproduce ONE alkane's on-chain wasm from source, byte-for-byte, in a controlled sandbox. Covers every environment axis found to matter for a reproducible alkane build.",
   "type": "object",
   "required": ["schema_version", "identity", "source", "toolchain", "environment", "registry"],
   "additionalProperties": false,
   "properties": {
-    "schema_version": { "type": "string", "const": "1.0.0" },
+    "schema_version": { "type": "string", "pattern": "^1\\.[0-9]+\\.[0-9]+$", "description": "Semver; consumers accept any artifact of the same MAJOR (1.x). Current spec: 1.2.0. Lineage in schema.rs SCHEMA_VERSION docs." },
     "identity": { "$ref": "#/$defs/Identity" },
     "source": { "$ref": "#/$defs/Source" },
     "toolchain": { "$ref": "#/$defs/Toolchain" },
@@ -72,7 +72,7 @@
       "required": ["rustc_version", "host_triple", "os_image", "target"],
       "additionalProperties": false,
       "properties": {
-        "rustc_version": { "type": "string", "examples": ["1.82.0", "1.86.0"] },
+        "rustc_version": { "type": "string", "examples": ["1.82.0", "1.86.0", "nightly-2025-01-05"], "description": "(1.1.0) semver x.y.z OR a channel (nightly-YYYY-MM-DD / beta) — the builder rustup-installs it and omits a channel string from Cargo.toml rust-version." },
         "rustc_commit": { "type": "string", "description": "rustc commit embedded in /rustc/<hash> paths." },
         "host_triple": {
           "type": "string",
@@ -81,7 +81,21 @@
         },
         "os_image": { "type": "string", "examples": ["ubuntu-22.04", "debian-bookworm"] },
         "target": { "type": "string", "const": "wasm32-unknown-unknown" },
-        "linker": { "type": "string" }
+        "linker": { "type": "string" },
+        "rustc_source": { "$ref": "#/$defs/RustcSource" }
+      }
+    },
+    "RustcSource": {
+      "type": "object",
+      "required": ["method"],
+      "additionalProperties": false,
+      "description": "(1.2.0) How rustc is obtained. Absent ⇒ rustup installs rustc_version (channel/semver). method=git-build compiles rustc from a rust-lang/rust commit — the only way to reproduce a contract built off an UNPUBLISHED toolchain (e.g. a stable branch-point whose /rustc/<hash>/ sysroot no rustup channel ships). Parallel to CToolchain.source.",
+      "properties": {
+        "method": { "type": "string", "enum": ["rustup", "git-build"] },
+        "git_commit": { "type": "string", "description": "git-build: rust-lang/rust commit to compile; equals Toolchain.rustc_commit (the /rustc/<hash>/ sysroot hash)." },
+        "git_repo": { "type": "string", "format": "uri", "description": "git-build: source repo when not canonical rust-lang/rust." },
+        "channel": { "type": "string", "enum": ["stable", "beta", "nightly", "dev"], "description": "git-build: release channel to configure. Affects CODEGEN (debug-assertions / overflow-checks defaults), not just the version string — the wrong channel diverges output even at the right commit." },
+        "download_ci_llvm": { "type": "boolean", "description": "git-build: use the commit's CI-built LLVM so codegen matches the official release build. false ⇒ build the bundled src/llvm-project (slower, may diverge). Defaults true." }
       }
     },
     "CToolchain": {
@@ -97,6 +111,7 @@
           "type": "boolean",
           "description": "The secp256k1 C-object host-dependence: a macOS-built and a Linux-built Homebrew clang of the SAME LLVM version emit a marginally different secp256k1 static footprint, shifting the memory base a few bytes. When true, a Linux reconstruction reaches `verified` (logic + producers exact) but not full `reproducible` without the origin host clang."
         },
+        "wasm_cflags": { "type": "string", "description": "(1.1.0) Extra CFLAGS for the wasm C compile, e.g. -nostdlibinc — drops the host glibc /usr/include leak on wasm32-unknown-unknown so a stock apt clang can cross-compile secp256k1→wasm (keeping clang builtins + the crate's bundled wasm-sysroot). Empty ⇒ a self-contained (Homebrew) clang." },
         "note": { "type": "string" }
       }
     },
@@ -105,7 +120,7 @@
       "required": ["method"],
       "additionalProperties": false,
       "properties": {
-        "method": { "type": "string", "enum": ["apt", "llvm-release", "homebrew-bottle", "unpinned"] },
+        "method": { "type": "string", "enum": ["apt", "llvm-release", "homebrew-bottle", "wasi-sdk", "unpinned"], "description": "How the wasm C compiler is obtained. (1.2.0) `wasi-sdk` = the clang shipped in a WASI SDK release (e.g. wasi-sdk-20's bin/clang, which reports `clang 16.0.0`); `cc` retargets it from wasm32-wasi to wasm32-unknown-unknown. Used by e.g. kungfuflex/predicates." },
         "apt_package": { "type": "string", "examples": ["clang-14"] },
         "homebrew_bottles": {
           "type": "array",
@@ -143,7 +158,7 @@
           "enum": ["committed-lock", "time-machine"],
           "description": "committed-lock = repo commits Cargo.lock; use real crates.io + --locked. time-machine = no committed lock; freeze the crates.io-index tree at the build date and serve it AS index.crates.io so the registry src-dir hash is canonical for that cargo version."
         },
-        "archive_commit": { "type": "string", "description": "rust-lang/crates.io-index-archive commit frozen to the build date (time-machine)." },
+        "archive_commit": { "type": "string", "description": "rust-lang/crates.io-index-archive commit frozen to the build date (time-machine). (1.1.0) OPTIONAL — when absent it is auto-derived from `timestamp` (the deploy date): pick the snapshot-YYYY-MM-DD branch that CONTAINS that date (smallest snapshot ≥ date) and rev-list --before." },
         "timestamp": { "type": "string", "format": "date-time" },
         "served_as": { "type": "string", "const": "index.crates.io" },
         "registry_hash": { "type": "string", "description": "Canonical index.crates.io-<hash> src-dir cargo produces (cargo-version dependent).", "examples": ["index.crates.io-6f17d22bba15001f", "index.crates.io-1949cf8c6b5b557f"] }
@@ -160,7 +175,9 @@
           "type": "string",
           "enum": ["bare", "rev"],
           "description": "bare = resolve WITH the rev then rewrite the lockfile source-id to bare (?rev=…# → #) and build --locked, so -C metadata (hence monomorphization order) matches a bare-git-URL build. rev = leave the ?rev= source-id."
-        }
+        },
+        "redirect_to": { "type": "string", "format": "uri", "description": "(1.1.0) Unify a MIRRORED repo: rewrite every git=\"url\" for THIS url to redirect_to (same crate, different host, e.g. sandshrewmetaprotocols↔kungfuflex metashrew) so cargo doesn't build two incompatible copies." },
+        "pin_transitive": { "type": "boolean", "description": "(1.1.0) Force rev onto ALL lockfile entries from this git source incl. transitive ones (cargo update -p <crate> --precise <rev>), not just the in-tree Cargo.toml." }
       }
     },
     "ResolvedDep": {
