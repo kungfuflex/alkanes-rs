@@ -99,6 +99,15 @@ pub fn get_alkane_binary_from_context(
         let height = context.lock().unwrap().message.height as u32;
         return Ok(Arc::new(crate::network::frbtc_wasm_for_height(height)));
     }
+    // DIESEL genesis alkane (`2:0`) — same height-versioned static load path as
+    // frBTC above (base → upgraded → EOA by height). Restores the rc.3 map the
+    // develop refactor dropped; without it `2:0` executed the heavier upgraded-EOA
+    // build from genesis and fuel-reverted pre-908888 free-mint creations, so the
+    // audit indexer diverged from canonical mainnet (first at block 893514).
+    if *alkane_id == (AlkaneId { block: 2, tx: 0 }) {
+        let height = context.lock().unwrap().message.height as u32;
+        return Ok(Arc::new(crate::network::genesis_alkane_wasm_for_height(height)));
+    }
     let ptr = context.lock().unwrap().message.atomic.keyword("/alkanes/");
     get_alkane_binary(ptr, alkane_id)
 }
