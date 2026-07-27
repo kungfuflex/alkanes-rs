@@ -82,15 +82,55 @@ impl MessageProcessor for Protostone {
     ) -> Result<bool> {
         // Validate output indexes and protomessage_vout
         let num_outputs = transaction.output.len();
+
+        // A malformed protostone header (absent or out-of-range pointer /
+        // refund_pointer) used to return `Err` from all three checks below.
+        // `Err` is NOT "this message failed" — it propagates out of
+        // `index_protostones` and voids the WHOLE transaction's protorune
+        // processing, including protostones that already succeeded, leaving the
+        // spent inputs' alkanes stranded with no refund. `Invalid output
+        // pointer` in particular is reachable by any malformed wallet, not just
+        // an exotic batch.
+        //
+        // At/after the fork these become an ordinary failed message: `Ok(false)`
+        // plus an explicit refund, exactly like a reverting call. (`Ok(false)`
+        // alone does NOT refund — every failure path in this function pairs it
+        // with `refund_to_refund_pointer`.)
+        //
+        // Gated on the same height as the `max_virtual_vout` removal, because it
+        // changes how historical blocks index. Below it, the legacy `Err` stands.
+        let bound = (num_outputs + num_protostones) as u32;
+        let header_is_malformed = match (self.pointer, self.refund) {
+            (Some(p), Some(r)) => p > bound || r > bound,
+            _ => true,
+        };
+        if header_is_malformed && height >= T::max_virtual_vout_removal_height() {
+            // Prefer the declared refund_pointer when it names a REAL output —
+            // that is the author's stated intent and is spendable. A shadow vout
+            // is rejected here even though it is in `bound`: it addresses another
+            // protostone, which may itself fail, and we must not re-strand.
+            // Otherwise fall back to `default_output` (first non-OP_RETURN), the
+            // protocol's own convention for unallocated runes.
+            //
+            // Degenerate case: a transaction whose outputs are ALL OP_RETURN has
+            // nowhere spendable to send this, and `default_output` yields 0 — the
+            // refund burns. That is unavoidable and matches existing protorune
+            // semantics for unallocated balances.
+            let safe_refund = self
+                .refund
+                .filter(|r| (*r as usize) < num_outputs)
+                .unwrap_or_else(|| crate::default_output(transaction));
+            refund_to_refund_pointer(balances_by_output, protomessage_vout, safe_refund)?;
+            return Ok(false);
+        }
+
         let pointer = self.pointer.ok_or_else(|| anyhow!("Missing pointer"))?;
         let refund_pointer = self
             .refund
             .ok_or_else(|| anyhow!("Missing refund pointer"))?;
 
         // Ensure pointers are valid transaction outputs
-        if pointer > (num_outputs + num_protostones) as u32
-            || refund_pointer > (num_outputs + num_protostones) as u32
-        {
+        if pointer > bound || refund_pointer > bound {
             return Err(anyhow::anyhow!("Invalid output pointer"));
         }
 
