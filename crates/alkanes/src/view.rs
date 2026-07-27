@@ -18,7 +18,8 @@ use alkanes_support::parcel::AlkaneTransfer;
 use alkanes_support::proto;
 use alkanes_support::proto::alkanes::{
     AlkaneIdToOutpointRequest, AlkaneIdToOutpointResponse, AlkaneInventoryRequest,
-    AlkaneInventoryResponse, AlkaneStorageRequest, AlkaneStorageResponse,
+    AlkaneInventoryResponse, AlkaneRecycledRequest, AlkaneRecycledResponse, AlkaneStorageRequest,
+    AlkaneStorageResponse,
 };
 use alkanes_support::response::ExtendedCallResponse;
 use anyhow::{anyhow, Result};
@@ -377,6 +378,34 @@ pub fn getdeployment(input: &Vec<u8>) -> Result<AlkaneIdToOutpointResponse> {
     response.txid = hex::decode(hex_string).unwrap();
     response.vout = outpoint.vout;
     return Ok(response);
+}
+
+/// View: what a given scriptPubKey can claim from the `8:dead` recycle bin.
+///
+/// `getrecycled(AlkaneRecycledRequest { script })` → `AlkaneRecycledResponse`,
+/// a balance sheet of `(AlkaneId, value)` pairs. Amounts are clamped to
+/// `8:dead`'s held inventory, so they equal what an opcode-3 claim paying to
+/// `script` would actually release. Empty response = nothing claimable.
+///
+/// Reads only what `recycle::capture_block` already wrote — no reindex needed
+/// beyond whatever reindex populated the bin.
+pub fn getrecycled(input: &Vec<u8>) -> Result<AlkaneRecycledResponse> {
+    let request = AlkaneRecycledRequest::decode(&**input)?;
+    let mut response = AlkaneRecycledResponse::default();
+    response.alkanes = crate::recycle::recycled_balances(&request.script)
+        .into_iter()
+        .map(|(rune, value)| -> proto::alkanes::AlkaneTransfer {
+            (AlkaneTransfer {
+                id: alkanes_support::id::AlkaneId {
+                    block: rune.block,
+                    tx: rune.tx,
+                },
+                value,
+            })
+            .into()
+        })
+        .collect();
+    Ok(response)
 }
 
 pub fn getinventory(req: &AlkaneInventoryRequest) -> Result<AlkaneInventoryResponse> {

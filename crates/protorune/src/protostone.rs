@@ -118,11 +118,31 @@ impl MessageProcessor for Protostone {
             }
         }
 
-        // Validate protomessage vout to prevent overflow attacks
-        // Add a reasonable maximum based on transaction size
-        let max_virtual_vout = num_outputs + 100; // Adjust limit as needed
-        if protomessage_vout >= max_virtual_vout as u32 {
-            return Err(anyhow::anyhow!("Protomessage vout exceeds maximum allowed"));
+        // Legacy protostone-count cap, retired at
+        // `T::max_virtual_vout_removal_height()`.
+        //
+        // `num_outputs + 100` is an artifact of the era when OP_RETURN was
+        // limited to 80 bytes, which made >100 protostones unrepresentable
+        // anyway. It guards nothing: `protomessage_vout` is a u32 key into a
+        // `BTreeMap`, not an array index, so there is no overflow to prevent,
+        // and unbounded VM work is already bounded by fuel. It also contradicts
+        // the pointer bound above, which admits pointers up to
+        // `num_outputs + num_protostones`.
+        //
+        // It cannot simply be deleted: it has been consensus since 2025-02-26
+        // and historical balances depend on it, so removal is height-gated.
+        // NOTE the failure mode below the fork: this returns `Err`, not
+        // `Ok(false)`, so it does NOT take the refund path — it propagates out
+        // of `index_protostones` and voids the whole transaction's protorune
+        // processing. Assets on the spent inputs are left stranded rather than
+        // refunded, and are recovered from the `8:dead` recycle bin
+        // (`alkanes::recycle::capture_block`), which credits them to the
+        // address that owned the prevout.
+        if height < T::max_virtual_vout_removal_height() {
+            let max_virtual_vout = num_outputs + 100;
+            if protomessage_vout >= max_virtual_vout as u32 {
+                return Err(anyhow::anyhow!("Protomessage vout exceeds maximum allowed"));
+            }
         }
         let initial_sheet = balances_by_output
             .get(&protomessage_vout)

@@ -110,13 +110,29 @@ mod e2e {
     use metashrew_support::index_pointer::KeyValuePointer;
     use protorune::balance_sheet::{load_sheet_chunked, save_chunked};
     use protorune::message::MessageContext;
-    use protorune::tables::RuneTable;
+    use protorune::tables::{RuneTable, OUTPOINT_TO_OUTPUT};
+    use prost::Message as _;
     use protorune_support::balance_sheet::{
         BalanceSheet, BalanceSheetOperations, ProtoruneRuneId,
     };
     use protorune_support::utils::consensus_encode;
     use std::sync::Arc;
 
+
+    /// Register `op`'s scriptPubKey the way `index_outpoints` does for every
+    /// output of every indexed transaction. Capture keys the recycle ledger off
+    /// the PREVOUT OWNER, so a synthetic seed outpoint has to declare its owner
+    /// or it looks like a pre-indexing outpoint with no claimant.
+    fn seed_prevout_script(op: &OutPoint, spk: &ScriptBuf) -> Result<()> {
+        OUTPOINT_TO_OUTPUT.select(&consensus_encode(op)?).set(Arc::new(
+            (protorune_support::proto::protorune::Output {
+                script: spk.clone().into_bytes(),
+                value: 546,
+            })
+            .encode_to_vec(),
+        ));
+        Ok(())
+    }
 
     fn eoa_recovery_spk() -> ScriptBuf {
         ScriptBuf::new_p2wpkh(&bitcoin::WPubkeyHash::from_byte_array([7u8; 20]))
@@ -172,6 +188,8 @@ mod e2e {
             &mut table.OUTPOINT_TO_RUNES.select(&consensus_encode(&seed_op)?),
             false,
         );
+        // The victim owned the outpoint being spent — that is who capture credits.
+        seed_prevout_script(&seed_op, &recovery)?;
 
         // 2) strand it: a tx with NO OP_RETURN spending seed_op, paying recovery EOA
         let strand_tx = Transaction {
@@ -302,6 +320,8 @@ mod e2e {
             &mut table.OUTPOINT_TO_RUNES.select(&consensus_encode(&seed_op)?),
             false,
         );
+        // The victim owned the outpoint being spent — that is who capture credits.
+        seed_prevout_script(&seed_op, &victim)?;
 
         // 2) strand it: bare-BTC spend paying victim EOA → capture credits 8:dead
         //    inventory and writes /recycle/<victim_spk>.

@@ -137,6 +137,22 @@ message AlkaneInventoryResponse {
   repeated AlkaneTransfer alkanes = 1;
 }
 
+// getrecycled(AlkaneRecycledRequest) -> AlkaneRecycledResponse
+//
+// `script` is the raw scriptPubKey of the address whose recycle-bin ledger is
+// being read — the same key `8:dead` stores at /recycle/<spk>, written by
+// recycle::capture_block for the owner of a spent outpoint whose alkanes were
+// stranded, and released by handle_claim only to a claim that pays that spk.
+// A scriptPubKey (not an address string) because the indexer is network-
+// parameterised and must not have to parse addresses to answer a read.
+message AlkaneRecycledRequest {
+  bytes script = 1;
+}
+
+message AlkaneRecycledResponse {
+  repeated AlkaneTransfer alkanes = 1;
+}
+
 message AlkaneStorageRequest {
   AlkaneId id = 1;
   bytes path = 2;

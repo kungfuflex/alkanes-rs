@@ -181,6 +181,10 @@ pub mod genesis {
     /// v2.2.1 fork: activates fr_btc v1.3.1. Genesis-coincident on non-mainnet
     /// chains, so the static frBTC version map resolves to v1.3.1 from genesis.
     pub const FRBTC_V131_FORK_HEIGHT: u32 = 0;
+    /// v3 fork: removes the `max_virtual_vout` protostone cap. Genesis-coincident
+    /// on non-mainnet chains so tests exercise the post-fork (uncapped) behaviour
+    /// by default.
+    pub const MAX_VIRTUAL_VOUT_REMOVAL_HEIGHT: u64 = 0;
 }
 
 #[cfg(feature = "mainnet")]
@@ -201,6 +205,15 @@ pub mod genesis {
     /// wrap <300k fuel). Future block > FRBTC_V130 — coordinated hard fork,
     /// matches the deployed rc.3 activation.
     pub const FRBTC_V131_FORK_HEIGHT: u32 = 960_000;
+    /// v3 fork: removes the `max_virtual_vout = num_outputs + 100` protostone
+    /// cap in `protorune::protostone::process_message`. That cap is an artifact
+    /// of the old 80-byte OP_RETURN standardness limit and has no protocol
+    /// purpose — VM work is already bounded by fuel. Below this height the cap
+    /// still applies (history is byte-identical, and assets stranded by it are
+    /// recoverable from the `8:dead` recycle bin); at/after it there is no
+    /// bound on protostone count. Coordinated hard fork — every indexer must
+    /// agree on this height.
+    pub const MAX_VIRTUAL_VOUT_REMOVAL_HEIGHT: u64 = 975_000;
 }
 
 #[cfg(feature = "fractal")]
@@ -218,6 +231,10 @@ pub mod genesis {
     /// v2.2.1 fork: activates fr_btc v1.3.1. Genesis-coincident on non-mainnet
     /// chains, so the static frBTC version map resolves to v1.3.1 from genesis.
     pub const FRBTC_V131_FORK_HEIGHT: u32 = 0;
+    /// v3 fork: removes the `max_virtual_vout` protostone cap. Genesis-coincident
+    /// on non-mainnet chains so tests exercise the post-fork (uncapped) behaviour
+    /// by default.
+    pub const MAX_VIRTUAL_VOUT_REMOVAL_HEIGHT: u64 = 0;
 }
 
 #[cfg(feature = "dogecoin")]
@@ -235,6 +252,10 @@ pub mod genesis {
     /// v2.2.1 fork: activates fr_btc v1.3.1. Genesis-coincident on non-mainnet
     /// chains, so the static frBTC version map resolves to v1.3.1 from genesis.
     pub const FRBTC_V131_FORK_HEIGHT: u32 = 0;
+    /// v3 fork: removes the `max_virtual_vout` protostone cap. Genesis-coincident
+    /// on non-mainnet chains so tests exercise the post-fork (uncapped) behaviour
+    /// by default.
+    pub const MAX_VIRTUAL_VOUT_REMOVAL_HEIGHT: u64 = 0;
 }
 
 #[cfg(feature = "luckycoin")]
@@ -252,6 +273,10 @@ pub mod genesis {
     /// v2.2.1 fork: activates fr_btc v1.3.1. Genesis-coincident on non-mainnet
     /// chains, so the static frBTC version map resolves to v1.3.1 from genesis.
     pub const FRBTC_V131_FORK_HEIGHT: u32 = 0;
+    /// v3 fork: removes the `max_virtual_vout` protostone cap. Genesis-coincident
+    /// on non-mainnet chains so tests exercise the post-fork (uncapped) behaviour
+    /// by default.
+    pub const MAX_VIRTUAL_VOUT_REMOVAL_HEIGHT: u64 = 0;
 }
 
 #[cfg(feature = "bellscoin")]
@@ -269,6 +294,10 @@ pub mod genesis {
     /// v2.2.1 fork: activates fr_btc v1.3.1. Genesis-coincident on non-mainnet
     /// chains, so the static frBTC version map resolves to v1.3.1 from genesis.
     pub const FRBTC_V131_FORK_HEIGHT: u32 = 0;
+    /// v3 fork: removes the `max_virtual_vout` protostone cap. Genesis-coincident
+    /// on non-mainnet chains so tests exercise the post-fork (uncapped) behaviour
+    /// by default.
+    pub const MAX_VIRTUAL_VOUT_REMOVAL_HEIGHT: u64 = 0;
 }
 
 pub fn is_active(height: u64) -> bool {

@@ -15,9 +15,16 @@
 //! such stranded balance into the recycle bin:
 //!   1. credit `8:dead`'s alkane **inventory** with the balance, and
 //!   2. append it to the per-recipient **ledger** in `8:dead`'s storage at
-//!      `/recycle/<script_pubkey>`, keyed by `default_output(tx).script_pubkey`
-//!      (the EOA that *would* have received it), then
+//!      `/recycle/<script_pubkey>`, keyed by the **scriptPubKey of the prevout
+//!      being spent** — the address that owned the stranded assets — then
 //!   3. clear the stranded input balance.
+//!
+//! Keying on the prevout owner (rather than the spending tx's first output) is
+//! what makes the bin safe for multi-owner transactions: if a tx spends inputs
+//! from A and B, A's stranded alkanes are credited to A, not to whoever happens
+//! to own output 0. Combined with the claim-side binding in [`handle_claim`]
+//! (which releases only the ledger of the address it actually pays), the owner
+//! of the spent outpoint is the only party who can claim those assets.
 //!
 //! Because (1) and (2) are written together and the claim WASM only ever emits
 //! from inventory clamped to the ledger, a claim can never mint alkanes the bin
@@ -30,7 +37,7 @@ use crate::utils::alkane_inventory_pointer;
 use alkanes_support::id::AlkaneId;
 use anyhow::{anyhow, Result};
 use bitcoin::blockdata::block::Block;
-use bitcoin::{ScriptBuf, Transaction};
+use bitcoin::ScriptBuf;
 use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
 use metashrew_support::index_pointer::KeyValuePointer;
 use protorune::balance_sheet::{clear_chunked_balances, load_sheet_chunked};
@@ -39,6 +46,7 @@ use protorune::tables::RuneTable;
 use protorune_support::balance_sheet::{BalanceSheet, BalanceSheetOperations, ProtoruneRuneId};
 use protorune_support::rune_transfer::RuneTransfer;
 use protorune_support::utils::consensus_encode;
+use prost::Message as _;
 use std::sync::Arc;
 
 /// The recycle bin alkane. `8:*` is the reserved namespace for precompiled
@@ -53,17 +61,34 @@ pub const RECYCLE_ALKANE_ID: AlkaneId = AlkaneId {
 /// this writes.
 const RECYCLE_LEDGER_PREFIX: &str = "/recycle/";
 
-/// First non-OP_RETURN output index. Mirrors `protorune::default_output` and the
-/// WASM's `default_output` so capture + claim agree on the ledger key.
-pub(crate) fn default_output(tx: &Transaction) -> Option<usize> {
-    tx.output
-        .iter()
-        .position(|o| !o.script_pubkey.is_op_return())
-}
+// NOTE: the old `default_output(tx)` helper is deliberately gone. Neither side
+// of the bin keys on the spending tx's first output any more: capture credits
+// the prevout owner (`prevout_script`), and the claim binds to the payout output
+// (`tx.output[parcel.pointer]`). Reintroducing it would resurrect the
+// multi-owner mis-credit described above.
 
 /// EOA = key-path spendable. MUST match the WASM's `is_eoa`.
 pub(crate) fn is_eoa(spk: &ScriptBuf) -> bool {
     spk.is_p2tr() || spk.is_p2wpkh() || spk.is_p2pkh()
+}
+
+/// scriptPubKey of the outpoint identified by `outpoint_key` (a
+/// `consensus_encode`d `OutPoint`), i.e. the owner of the input being spent.
+///
+/// Read from `OUTPOINT_TO_OUTPUT`, which `index_outpoints` writes for every
+/// output of every indexed transaction and which nothing later nullifies — so
+/// it is still resolvable after `index_block` has run. Returns `None` for a
+/// coinbase input or an outpoint created before indexing began.
+pub(crate) fn prevout_script(outpoint_key: &Vec<u8>) -> Option<ScriptBuf> {
+    let stored = protorune::tables::OUTPOINT_TO_OUTPUT
+        .select(outpoint_key)
+        .get();
+    if stored.is_empty() {
+        return None;
+    }
+    protorune_support::proto::protorune::Output::decode(stored.as_ref().as_slice())
+        .ok()
+        .map(|o| ScriptBuf::from_bytes(o.script))
 }
 
 /// Ledger codec — flat LE (block, tx, value) u128 triples. MUST match
@@ -144,16 +169,6 @@ fn credit_inventory(atomic: &mut AtomicPointer, what: &ProtoruneRuneId, value: u
 pub fn capture_block(block: &Block, height: u64, protocol_tag: u128) -> Result<()> {
     let table = RuneTable::for_protocol(protocol_tag);
     for tx in block.txdata.iter() {
-        // Recipient = first non-OP_RETURN output, EOA only. Compute once.
-        let recipient: Option<ScriptBuf> = default_output(tx).and_then(|v| {
-            let spk = tx.output[v].script_pubkey.clone();
-            if is_eoa(&spk) {
-                Some(spk)
-            } else {
-                None
-            }
-        });
-
         for input in tx.input.iter() {
             let mut atomic = AtomicPointer::default();
             let key = consensus_encode(&input.previous_output)?;
@@ -165,6 +180,18 @@ pub fn capture_block(block: &Block, height: u64, protocol_tag: u128) -> Result<(
             if balances.is_empty() {
                 continue; // not stranded (already consumed by a protostone, or empty)
             }
+
+            // Recipient = the address that OWNED THE PREVOUT, i.e. whoever is
+            // spending this input — not `default_output(tx)`.
+            //
+            // Keying on the spending tx's first output is wrong whenever a
+            // transaction mixes inputs from different owners: A's stranded
+            // alkanes would land in a ledger claimable by B. The party whose
+            // assets were stranded is the prevout owner, so that is who gets to
+            // claim them from `8:dead`. Resolved per-input from
+            // OUTPOINT_TO_OUTPUT, which records each outpoint's scriptPubKey and
+            // is not nullified by index_spendables.
+            let recipient: Option<ScriptBuf> = prevout_script(&key).filter(is_eoa);
 
             match &recipient {
                 None => {
@@ -201,6 +228,46 @@ pub fn capture_block(block: &Block, height: u64, protocol_tag: u128) -> Result<(
         }
     }
     Ok(())
+}
+
+/// Read-only view of what `spk` can currently claim from the recycle bin.
+///
+/// Returns the `/recycle/<spk>` ledger with each entry **clamped to `8:dead`'s
+/// held inventory**, mirroring the clamp in [`handle_claim`] exactly — so the
+/// numbers reported here are what a claim would actually release, not a raw
+/// ledger that a hypothetical desync could have inflated. Empty vec = nothing
+/// claimable (unknown spk, already-claimed ledger, or non-EOA owner).
+///
+/// Pure read: builds a throwaway `AtomicPointer` and never commits.
+pub fn recycled_balances(spk: &[u8]) -> Vec<(ProtoruneRuneId, u128)> {
+    let mut atomic = AtomicPointer::default();
+    let owed = decode_ledger(ledger_pointer(&mut atomic, spk).get().as_ref());
+    let who_bytes: Vec<u8> = RECYCLE_ALKANE_ID.into();
+    owed.into_iter()
+        .filter_map(|(rune, amount)| {
+            if amount == 0 {
+                return None;
+            }
+            let what_bytes: Vec<u8> = AlkaneId {
+                block: rune.block,
+                tx: rune.tx,
+            }
+            .into();
+            let held = atomic
+                .derive(&IndexPointer::default())
+                .keyword("/alkanes/")
+                .select(&what_bytes)
+                .keyword("/balances/")
+                .select(&who_bytes)
+                .get_value::<u128>();
+            let claimable = amount.min(held);
+            if claimable == 0 {
+                None
+            } else {
+                Some((rune, claimable))
+            }
+        })
+        .collect()
 }
 
 /// Native recycle CLAIM handler (alkanes layer), invoked from `handle_message`

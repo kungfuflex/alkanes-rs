@@ -307,6 +307,27 @@ pub fn protorunesbyheight() -> i32 {
     export_bytes(result.encode_to_vec())
 }
 
+/// View: recycle-bin balance sheet for a scriptPubKey.
+/// `getrecycled(AlkaneRecycledRequest { script })` → `AlkaneRecycledResponse`
+/// — the alkanes `script` can claim from `8:dead`, clamped to what an opcode-3
+/// claim would actually release. Reads the existing `/recycle/<spk>` ledger; no
+/// reindex needed.
+#[cfg(not(test))]
+#[no_mangle]
+pub fn getrecycled() -> i32 {
+    configure_network();
+    let mut data: Cursor<Vec<u8>> = Cursor::new(input());
+    // first 4 bytes come in as height, not used
+    let _height = consume_sized_int::<u32>(&mut data).unwrap();
+    let data_vec = consume_to_end(&mut data).unwrap();
+    let result: alkanes_support::proto::alkanes::AlkaneRecycledResponse =
+        view::getrecycled(&data_vec).unwrap_or_else(|err| {
+            eprintln!("Error in getrecycled: {:?}", err);
+            alkanes_support::proto::alkanes::AlkaneRecycledResponse::default()
+        });
+    export_bytes(result.encode_to_vec())
+}
+
 /// View: deployment outpoint for an alkane. `getdeployment(AlkaneId)` →
 /// `Outpoint { txid, vout }` (vout = the deploying protostone's vout). Reads the
 /// existing `/alkanes_id_to_outpoint/` index — no reindex needed.

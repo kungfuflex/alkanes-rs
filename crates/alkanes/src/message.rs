@@ -229,6 +229,13 @@ impl MessageContext for AlkaneMessageContext {
     fn protocol_tag() -> u128 {
         1
     }
+    /// See [`crate::network::genesis::MAX_VIRTUAL_VOUT_REMOVAL_HEIGHT`]. At/after
+    /// this height the legacy `num_outputs + 100` protostone cap is gone, so a
+    /// transaction may carry an unbounded number of protostones (fuel remains the
+    /// real bound).
+    fn max_virtual_vout_removal_height() -> u64 {
+        crate::network::genesis::MAX_VIRTUAL_VOUT_REMOVAL_HEIGHT
+    }
     fn handle(
         _parcel: &MessageContextParcel,
     ) -> Result<(Vec<RuneTransfer>, BalanceSheet<AtomicPointer>)> {
