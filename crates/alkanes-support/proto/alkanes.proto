@@ -75,6 +75,10 @@ message AlkanesEnterContext {
 message AlkanesExitContext {
   AlkanesTraceStatusFlag status = 1;
   ExtendedCallResponse response = 2;
+  // Fuel consumed by this call frame (start_fuel - remaining + storage_fuel),
+  // mirroring the native TraceResponse.fuel_used. Added additively (field 3) so
+  // pre-existing decoders ignore it and older traces (without it) decode to 0.
+  uint64 fuel_used = 3;
 }
 
 message AlkanesCreate {

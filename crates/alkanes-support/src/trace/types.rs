@@ -85,6 +85,7 @@ impl Into<proto::alkanes::AlkanesExitContext> for TraceResponse {
     fn into(self) -> proto::alkanes::AlkanesExitContext {
         proto::alkanes::AlkanesExitContext {
             response: Some(self.inner.into()),
+            fuel_used: self.fuel_used,
             ..Default::default()
         }
     }
@@ -213,7 +214,9 @@ impl From<proto::alkanes::AlkanesExitContext> for TraceResponse {
             inner: v
                 .response
                 .map_or(ExtendedCallResponse::default(), |v| v.into()),
-            fuel_used: 0,
+            // Round-trips the fuel now carried on the proto (field 3). Older
+            // traces serialized before this field existed decode it as 0.
+            fuel_used: v.fuel_used,
         }
     }
 }
@@ -339,5 +342,46 @@ impl TryFrom<Vec<u8>> for Trace {
     type Error = anyhow::Error;
     fn try_from(v: Vec<u8>) -> Result<Self, Self::Error> {
         Ok(proto::alkanes::AlkanesTrace::decode(v.as_ref())?.into())
+    }
+}
+
+#[cfg(test)]
+mod fuel_used_tests {
+    use super::*;
+    use prost::Message;
+
+    // The consumed fuel on a TraceResponse now survives the proto round-trip:
+    // Into<AlkanesExitContext> writes field 3, From reads it back. Before this
+    // change the proto had no fuel_used field and From hard-coded 0, so every
+    // consumer (trace view, simulate sum_fuel) saw 0.
+    #[test]
+    fn fuel_used_round_trips_through_proto() {
+        let original = TraceResponse { fuel_used: 987_654, ..Default::default() };
+        let exit: proto::alkanes::AlkanesExitContext = original.into();
+        assert_eq!(exit.fuel_used, 987_654, "Into must serialize fuel_used");
+        let back: TraceResponse = exit.into();
+        assert_eq!(back.fuel_used, 987_654, "From must deserialize fuel_used");
+    }
+
+    // The value must also survive a real wire encode/decode (guards against a
+    // prost field-number/type mismatch on the new field 3).
+    #[test]
+    fn fuel_used_survives_wire_encode() {
+        let exit: proto::alkanes::AlkanesExitContext =
+            TraceResponse { fuel_used: 42, ..Default::default() }.into();
+        let bytes = exit.encode_to_vec();
+        let decoded = proto::alkanes::AlkanesExitContext::decode(bytes.as_ref()).unwrap();
+        assert_eq!(decoded.fuel_used, 42);
+        let back: TraceResponse = decoded.into();
+        assert_eq!(back.fuel_used, 42);
+    }
+
+    // Backward compatibility: an exit context serialized before field 3 existed
+    // (fuel_used unset ⇒ proto3 default 0) decodes to 0, never panics.
+    #[test]
+    fn legacy_exit_context_decodes_fuel_zero() {
+        let legacy = proto::alkanes::AlkanesExitContext::default();
+        let back: TraceResponse = legacy.into();
+        assert_eq!(back.fuel_used, 0);
     }
 }
