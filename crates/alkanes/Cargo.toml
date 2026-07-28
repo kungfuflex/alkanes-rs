@@ -11,6 +11,10 @@ crate-type = ["cdylib", "rlib"]
 
 [features]
 test-utils = []
+# Suppress the wasm `_start` entrypoint so this crate can be embedded in a
+# downstream indexer wasm that owns `_start` and calls `indexer::index_block`
+# in-process. Default OFF — normal builds are unchanged.
+embedded-indexer = []
 testnet = []
 dogecoin = []
 luckycoin = []

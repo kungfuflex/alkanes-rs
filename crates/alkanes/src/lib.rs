@@ -444,7 +444,11 @@ pub fn getstorageat() -> i32 {
     export_bytes(result.encode_to_vec())
 }
 
-#[cfg(all(target_arch = "wasm32", not(test)))]
+// `embedded-indexer` (default OFF) suppresses this entrypoint so a downstream
+// indexer wasm can link the `alkanes` crate to run `indexer::index_block` in-process
+// and own `_start` itself (e.g. to layer additional index passes in one flush).
+// Byte-identical for every normal build, where the feature is off.
+#[cfg(all(target_arch = "wasm32", not(test), not(feature = "embedded-indexer")))]
 #[no_mangle]
 pub fn _start() {
     let data = input();
