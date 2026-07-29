@@ -44,6 +44,10 @@ Boilerplate for various alkanes are included and prefixed with `alkanes-std-` an
 
 ## Building
 
+> **Which branch are you on?** The build differs between the two long-lived branches:
+> - **`develop`** (this branch) — active development. The top-level crate targets wasm by default, so `cargo build --release` alone produces `alkanes.wasm` (see below). Standard alkanes live in `alkanes/` with prebuilt WASM committed to the repo (rebuilt via `./scripts/build-std.sh`).
+> - **`main`** — the **release line**; tagged release candidates (e.g. `v2.2.1-rc.4`) are cut from here, and it is what mainnet runs. It is a **mixed workspace** (default cargo target native), so the indexer wasm is built with an explicit target/package: `cargo build --release --target wasm32-unknown-unknown --features mainnet -p alkanes --locked`, and standard alkanes live in `crates/alkanes-std-*`. If you are on `main`, follow **that branch's** README, not this one.
+
 ALKANES indexer is built with the command:
 
 ```sh
