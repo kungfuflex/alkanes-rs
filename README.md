@@ -42,6 +42,10 @@ Boilerplate for various alkanes are included and prefixed with `alkanes-std-` an
 
 ## Building
 
+> **Which branch are you on?** The build differs between the two long-lived branches, so pull the right one and follow the matching instructions:
+> - **`main`** (this branch) — the **release line**; tagged release candidates (e.g. `v2.2.1-rc.4`) are cut from here, and it is what mainnet runs. It is a **mixed workspace** (the default cargo target is native), so the indexer wasm must be built with an explicit target and package: `cargo build --release --target wasm32-unknown-unknown --features mainnet -p alkanes --locked` (see below). Standard alkanes live in `crates/alkanes-std-*` and are built by the test harness.
+> - **`develop`** — active development, with a **different layout**: the top-level crate targets wasm by default, so `cargo build --release` alone produces `alkanes.wasm`; the standard alkanes live in `alkanes/` with prebuilt WASM committed to the repo (rebuilt via `./scripts/build-std.sh`). If you are on `develop`, follow **that branch's** README, not this one.
+
 The production ALKANES indexer wasm is built with the command:
 
 ```sh
@@ -64,8 +68,8 @@ Refer to the METASHREW documentation for descriptions of the indexer stack used 
 
 To index ALKANES on mainnet you must run matching, current versions of both components:
 
-- **alkanes-rs `v2.2.1-rc.3`** (latest) — built to `alkanes.wasm` and loaded via `--indexer`. See [`v2.2.1-rc.3`](https://github.com/kungfuflex/alkanes-rs/releases/tag/v2.2.1-rc.3).
-- **metashrew `v9.0.5-rc.13`** — the [`kungfuflex/metashrew`](https://github.com/kungfuflex/metashrew/releases/tag/v9.0.5-rc.13) indexer stack (`rockshrew-mono`).
+- **alkanes-rs `v2.2.1-rc.4`** (latest) — built to `alkanes.wasm` and loaded via `--indexer`. See [`v2.2.1-rc.4`](https://github.com/kungfuflex/alkanes-rs/releases/tag/v2.2.1-rc.4).
+- **metashrew `v9.0.5-rc.14`** — the [`kungfuflex/metashrew`](https://github.com/kungfuflex/metashrew/releases/tag/v9.0.5-rc.14) indexer stack (`rockshrew-mono`).
 
 Running mismatched versions can produce divergent state. Live mainnet system health — indexer height, sync status, and RPC availability — can be checked at **[https://mainnet.subfrost.io](https://mainnet.subfrost.io)**.
 
