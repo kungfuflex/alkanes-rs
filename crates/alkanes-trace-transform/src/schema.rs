@@ -1,5 +1,5 @@
 /// Optimized Postgres schema for trace transform with proper indexes
-/// 
+///
 /// This schema is optimized for:
 /// 1. Fast lookups by address
 /// 2. Fast lookups by alkane ID
@@ -40,8 +40,13 @@ CREATE TABLE IF NOT EXISTS "TraceBalanceUtxo" (
     amount NUMERIC NOT NULL,
     block_height INTEGER NOT NULL,
     spent BOOLEAN NOT NULL DEFAULT FALSE,
+    spent_at_height INTEGER,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    PRIMARY KEY (outpoint_txid, outpoint_vout, alkane_block, alkane_tx)
+    PRIMARY KEY (outpoint_txid, outpoint_vout, alkane_block, alkane_tx),
+    CONSTRAINT trace_balance_utxo_spent_height_check CHECK (
+        (NOT spent AND spent_at_height IS NULL) OR
+        (spent AND spent_at_height IS NOT NULL AND spent_at_height >= block_height)
+    )
 );
 
 CREATE INDEX IF NOT EXISTS idx_balance_utxo_address ON "TraceBalanceUtxo"(address) WHERE NOT spent;
@@ -158,29 +163,33 @@ CREATE INDEX IF NOT EXISTS idx_storage_block ON "TraceStorage"(block_height);
 pub async fn apply_schema(pool: &PgPool) -> Result<()> {
     // Execute schema statements one by one without transaction
     // This allows IF NOT EXISTS to work properly for indexes
-    
+
     // Split by semicolons and execute each statement
     for (idx, statement) in TRACE_TRANSFORM_SCHEMA.split(';').enumerate() {
         let trimmed = statement.trim();
-        
+
         // Skip empty statements
         if trimmed.is_empty() {
             continue;
         }
-        
+
         // Remove comment lines
         let cleaned: String = trimmed
             .lines()
             .filter(|line| !line.trim().starts_with("--"))
             .collect::<Vec<_>>()
             .join("\n");
-        
+
         // Skip if only comments (nothing left after removing comment lines)
         if !cleaned.trim().is_empty() {
             // Log what we're about to execute
             let preview = cleaned.lines().next().unwrap_or("").trim();
-            eprintln!("Executing statement {}: {}...", idx, &preview[..preview.len().min(60)]);
-            
+            eprintln!(
+                "Executing statement {}: {}...",
+                idx,
+                &preview[..preview.len().min(60)]
+            );
+
             match sqlx::query(&cleaned).execute(pool).await {
                 Ok(_) => eprintln!("  ✓ Success"),
                 Err(e) => {
@@ -191,25 +200,29 @@ pub async fn apply_schema(pool: &PgPool) -> Result<()> {
             }
         }
     }
-    
+
     // Apply alkane registry schema
     for (idx, statement) in ALKANE_REGISTRY_SCHEMA.split(';').enumerate() {
         let trimmed = statement.trim();
-        
+
         if trimmed.is_empty() {
             continue;
         }
-        
+
         let cleaned: String = trimmed
             .lines()
             .filter(|line| !line.trim().starts_with("--"))
             .collect::<Vec<_>>()
             .join("\n");
-        
+
         if !cleaned.trim().is_empty() {
             let preview = cleaned.lines().next().unwrap_or("").trim();
-            eprintln!("Executing alkane registry statement {}: {}...", idx, &preview[..preview.len().min(60)]);
-            
+            eprintln!(
+                "Executing alkane registry statement {}: {}...",
+                idx,
+                &preview[..preview.len().min(60)]
+            );
+
             match sqlx::query(&cleaned).execute(pool).await {
                 Ok(_) => eprintln!("  ✓ Success"),
                 Err(e) => {
@@ -219,7 +232,7 @@ pub async fn apply_schema(pool: &PgPool) -> Result<()> {
             }
         }
     }
-    
+
     Ok(())
 }
 
@@ -239,43 +252,46 @@ pub async fn drop_schema(pool: &PgPool) -> Result<()> {
         DROP TABLE IF EXISTS "TraceBalanceAggregate" CASCADE;
         DROP TABLE IF EXISTS "TraceStorage" CASCADE;
     "#;
-    
+
     sqlx::query(drop_sql).execute(pool).await?;
-    
+
     Ok(())
 }
 
 #[cfg(all(test, feature = "postgres"))]
 mod tests {
     use super::*;
-    
+
     #[tokio::test]
     #[ignore] // Requires database connection
     async fn test_apply_schema() {
         // This test requires a real Postgres connection
         // Run with: cargo test --features postgres -- --ignored
-        
+
         let database_url = std::env::var("DATABASE_URL")
             .unwrap_or_else(|_| "postgres://localhost/alkanes_test".to_string());
-        
+
         let pool = PgPool::connect(&database_url).await.unwrap();
-        
+
         // Apply schema
         apply_schema(&pool).await.unwrap();
-        
+
         // Verify tables exist
         let tables: Vec<(String,)> = sqlx::query_as(
             r#"SELECT table_name FROM information_schema.tables 
                WHERE table_schema = 'public' 
                AND table_name LIKE 'Trace%'
-               ORDER BY table_name"#
+               ORDER BY table_name"#,
         )
         .fetch_all(&pool)
         .await
         .unwrap();
-        
-        assert!(tables.len() >= 7, "Should have created trace transform tables");
-        
+
+        assert!(
+            tables.len() >= 7,
+            "Should have created trace transform tables"
+        );
+
         // Clean up
         drop_schema(&pool).await.unwrap();
     }

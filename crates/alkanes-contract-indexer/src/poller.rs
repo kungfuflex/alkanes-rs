@@ -1,9 +1,13 @@
 use alkanes_cli_sys::SystemAlkanes as ConcreteProvider;
 use tokio::sync::oneshot;
-use tokio::time::{sleep, Duration, Instant};
+use tokio::time::{Duration, Instant, sleep};
 use tracing::{error, info, warn};
 
-use crate::{pipeline::{BlockContext, Pipeline}, progress::ProgressStore, helpers::block::canonical_tip_height};
+use crate::{
+    helpers::block::canonical_tip_height,
+    pipeline::{BlockContext, Pipeline},
+    progress::ProgressStore,
+};
 
 pub struct BlockPoller {
     provider: ConcreteProvider,
@@ -23,7 +27,14 @@ impl BlockPoller {
         init_signal: Option<oneshot::Sender<()>>,
         start_height: Option<u64>,
     ) -> Self {
-        Self { provider, pipeline, progress, poll_interval_ms, init_signal, start_height }
+        Self {
+            provider,
+            pipeline,
+            progress,
+            poll_interval_ms,
+            init_signal,
+            start_height,
+        }
     }
 
     pub async fn run(mut self) {
@@ -32,6 +43,13 @@ impl BlockPoller {
 
         loop {
             let tick_start = Instant::now();
+
+            if let Err(e) = self.pipeline.reconcile_canonical(&self.provider).await {
+                error!(error = %e, "failed to reconcile canonical commitment chain");
+                backoff_ms = (backoff_ms.saturating_mul(2)).min(30_000);
+                sleep(Duration::from_millis(backoff_ms)).await;
+                continue;
+            }
 
             // First, check our current position from the database
             let position = match self.progress.get_position().await {
@@ -50,8 +68,15 @@ impl BlockPoller {
 
                     if !initialized {
                         // On first observation, refresh pools/state once
-                        if let Err(e) = self.pipeline.fetch_pools_for_tip(&self.provider, tip_height).await {
+                        if let Err(e) = self
+                            .pipeline
+                            .fetch_pools_for_tip(&self.provider, tip_height)
+                            .await
+                        {
                             error!(height = tip_height, error = %e, "fetch_pools_for_tip failed");
+                            backoff_ms = (backoff_ms.saturating_mul(2)).min(30_000);
+                            sleep(Duration::from_millis(backoff_ms)).await;
+                            continue;
                         }
                         info!(tip_height, "initialized metashrew height");
                         initialized = true;
@@ -88,15 +113,32 @@ impl BlockPoller {
                     // Process blocks one at a time if we're behind
                     if next_height <= tip_height {
                         // Refresh pools at new tip before processing
-                        if let Err(e) = self.pipeline.fetch_pools_for_tip(&self.provider, tip_height).await {
+                        if let Err(e) = self
+                            .pipeline
+                            .fetch_pools_for_tip(&self.provider, tip_height)
+                            .await
+                        {
                             error!(height = tip_height, error = %e, "fetch_pools_for_tip failed");
+                            backoff_ms = (backoff_ms.saturating_mul(2)).min(30_000);
+                            sleep(Duration::from_millis(backoff_ms)).await;
+                            continue;
                         }
 
                         for h in next_height..=tip_height {
                             info!(height = h, "new block detected");
 
                             // Process the block - position is updated atomically inside
-                            match self.pipeline.process_block_sequential(&self.provider, BlockContext { height: h, emit_publish: true }).await {
+                            match self
+                                .pipeline
+                                .process_block_sequential(
+                                    &self.provider,
+                                    BlockContext {
+                                        height: h,
+                                        emit_publish: true,
+                                    },
+                                )
+                                .await
+                            {
                                 Ok(block_hash) => {
                                     info!(height = h, %block_hash, "block processed");
                                 }
@@ -117,11 +159,13 @@ impl BlockPoller {
             }
 
             let elapsed = tick_start.elapsed();
-            let base = if backoff_ms == self.poll_interval_ms { self.poll_interval_ms } else { backoff_ms };
+            let base = if backoff_ms == self.poll_interval_ms {
+                self.poll_interval_ms
+            } else {
+                backoff_ms
+            };
             let sleep_ms = base.saturating_sub(elapsed.as_millis() as u64);
             sleep(Duration::from_millis(sleep_ms.max(50))).await;
         }
     }
 }
-
-

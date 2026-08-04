@@ -1,24 +1,63 @@
+use alkanes_cli_common::traits::{
+    BitcoinRpcProvider, DeezelProvider, EsploraProvider, JsonRpcProvider, MetashrewRpcProvider,
+};
 use anyhow::Result;
-use alkanes_cli_common::traits::{MetashrewRpcProvider, BitcoinRpcProvider, EsploraProvider, JsonRpcProvider, DeezelProvider};
-use tracing::{info, error};
+use tracing::{error, info};
 
-use crate::{pipeline::{BlockContext, Pipeline}, progress::ProgressStore, helpers::block::canonical_tip_height};
+use crate::{
+    helpers::block::canonical_tip_height,
+    pipeline::{BlockContext, Pipeline},
+    progress::ProgressStore,
+};
 
-pub struct CatchUpCoordinator<P: MetashrewRpcProvider + BitcoinRpcProvider + EsploraProvider + JsonRpcProvider + DeezelProvider + Send + Sync> {
+pub struct CatchUpCoordinator<
+    P: MetashrewRpcProvider
+        + BitcoinRpcProvider
+        + EsploraProvider
+        + JsonRpcProvider
+        + DeezelProvider
+        + Send
+        + Sync,
+> {
     provider: P,
     pipeline: Pipeline,
     progress: ProgressStore,
     start_height: Option<u64>,
 }
 
-impl<P: MetashrewRpcProvider + BitcoinRpcProvider + EsploraProvider + JsonRpcProvider + DeezelProvider + Send + Sync> CatchUpCoordinator<P> {
-    pub fn new(provider: P, pipeline: Pipeline, progress: ProgressStore, start_height: Option<u64>) -> Self {
-        Self { provider, pipeline, progress, start_height }
+impl<
+    P: MetashrewRpcProvider
+        + BitcoinRpcProvider
+        + EsploraProvider
+        + JsonRpcProvider
+        + DeezelProvider
+        + Send
+        + Sync,
+> CatchUpCoordinator<P>
+{
+    pub fn new(
+        provider: P,
+        pipeline: Pipeline,
+        progress: ProgressStore,
+        start_height: Option<u64>,
+    ) -> Self {
+        Self {
+            provider,
+            pipeline,
+            progress,
+            start_height,
+        }
     }
 
     /// Run a single pass: check our current position and process the next block
     /// This is deterministic - we always check our position first before fetching the next block
     pub async fn run_once(&self) -> Result<()> {
+        if let Some(epoch) = self.pipeline.reconcile_canonical(&self.provider).await? {
+            info!(
+                reorg_epoch = epoch,
+                "catch-up: rolled back to a hash-verified common ancestor"
+            );
+        }
         // First, check our current position
         let position = self.progress.get_position().await?;
 
@@ -42,7 +81,17 @@ impl<P: MetashrewRpcProvider + BitcoinRpcProvider + EsploraProvider + JsonRpcPro
             info!(height = h, "catch-up: processing block sequentially");
 
             // Process the block - position is updated atomically inside
-            match self.pipeline.process_block_sequential(&self.provider, BlockContext { height: h, emit_publish: false }).await {
+            match self
+                .pipeline
+                .process_block_sequential(
+                    &self.provider,
+                    BlockContext {
+                        height: h,
+                        emit_publish: false,
+                    },
+                )
+                .await
+            {
                 Ok(block_hash) => {
                     info!(height = h, %block_hash, "catch-up: block processed");
                 }
@@ -56,5 +105,3 @@ impl<P: MetashrewRpcProvider + BitcoinRpcProvider + EsploraProvider + JsonRpcPro
         Ok(())
     }
 }
-
-
