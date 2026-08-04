@@ -1,33 +1,21 @@
-use anyhow::{Context, Result};
-use bitcoin::consensus::encode::deserialize;
-use bitcoin::Transaction;
-use alkanes_cli_common::runestone_enhanced::format_runestone_with_decoded_messages;
-use alkanes_cli_common::traits::{DeezelProvider, JsonRpcProvider, BitcoinRpcProvider, EsploraProvider, AlkanesProvider};
 use alkanes_cli_common::proto::alkanes as alkanes_pb;
-use serde_json::{json, Value as JsonValue};
+use alkanes_cli_common::runestone_enhanced::format_runestone_with_decoded_messages;
+use alkanes_cli_common::traits::{
+    AlkanesProvider, BitcoinRpcProvider, DeezelProvider, EsploraProvider, JsonRpcProvider,
+};
+use anyhow::{Context, Result, bail};
+use bitcoin::Transaction;
+use bitcoin::consensus::encode::deserialize;
+use futures::stream::{self, StreamExt};
+use serde_json::{Value as JsonValue, json};
+use std::collections::HashMap;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tokio::time::{sleep, timeout, Duration};
-use futures::stream::{self, StreamExt};
+use tokio::time::{Duration, sleep, timeout};
 use tracing::{debug, error, info, warn};
-use crate::helpers::rpc::{resilient_call, resilient_call_with_last_error};
-use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use crate::helpers::block::tx_has_op_return;
-
-// Hardcoded list of txids to skip during trace/decode. These are big-endian txid strings.
-// If a txid appears here, it will be excluded from processing to avoid blocking a whole block.
-static IGNORED_TRACE_TXIDS: &[&str] = &[
-    "a807e8d4e91a6fa957c3f9929d267f6795971e41e6da61c44886deaa45797830",
-    "33c5a9f2d415b2b826a2ea1230d1849be0a74dc73857460c9c7674fe76147830",
-    "79c202e94c425320c91d6176108b93c033fb5a627fc2750453e97c6c434e7830",
-    "12a6c6f41a722e75d48caf57ed7a22feb56686c2ba51e226e6b6033ef3357830",
-    "6ee9eda5df0814af442f75db1d553f951f04699b854b9e0cff6d1395c2bdf075",
-    "c4c00e467ec76aa228a737156488b74dc27a998cf3056655612dbd3eeb5e6fb0",
-    "9d258d9e805ca9252101d5839aee46d63fbda8786e3f80988f5b10ce35aa060e",
-    "83d0deb1d223c932e0ff4306c0f408d17dbd520bd1dfb9e8d5823b711be77830",
-    "b19dd4c02942b0c2f19c5f11e9e4b1211051a779ff4bb8e84b02f37a2f415f6d"
-];
 
 #[derive(Debug, Clone)]
 struct TraceJob {
@@ -52,187 +40,213 @@ fn uint128_to_u128(u: &alkanes_pb::Uint128) -> u128 {
     ((u.hi as u128) << 64) | (u.lo as u128)
 }
 
-/// Helper to convert AlkaneId to (block_str, tx_str)
-fn alkane_id_to_strings(id: &alkanes_pb::AlkaneId) -> (String, String) {
-    let block = id.block.as_ref().map(|b| uint128_to_u128(b).to_string()).unwrap_or_default();
-    let tx = id.tx.as_ref().map(|t| uint128_to_u128(t).to_string()).unwrap_or_default();
-    (block, tx)
+/// Helper to convert AlkaneId to (block_str, tx_str) without normalizing malformed protobufs.
+fn alkane_id_to_strings(id: &alkanes_pb::AlkaneId, label: &str) -> Result<(String, String)> {
+    let block = id
+        .block
+        .as_ref()
+        .with_context(|| format!("{label}.block is missing"))?;
+    let tx = id
+        .tx
+        .as_ref()
+        .with_context(|| format!("{label}.tx is missing"))?;
+    Ok((
+        uint128_to_u128(block).to_string(),
+        uint128_to_u128(tx).to_string(),
+    ))
+}
+
+fn alkane_transfer_to_json(
+    transfer: &alkanes_pb::AlkaneTransfer,
+    label: &str,
+) -> Result<JsonValue> {
+    let id = transfer
+        .id
+        .as_ref()
+        .with_context(|| format!("{label}.id is missing"))?;
+    let value = transfer
+        .value
+        .as_ref()
+        .with_context(|| format!("{label}.value is missing"))?;
+    let (block, tx) = alkane_id_to_strings(id, &format!("{label}.id"))?;
+    Ok(json!({
+        "id": {
+            "block": block,
+            "tx": tx,
+        },
+        "value": uint128_to_u128(value).to_string(),
+    }))
 }
 
 /// Convert AlkanesTrace events to JSON format compatible with existing indexers
-fn convert_trace_to_events(trace: &alkanes_pb::AlkanesTrace, vout: i32) -> Vec<JsonValue> {
+fn convert_trace_to_events(trace: &alkanes_pb::AlkanesTrace, vout: i32) -> Result<Vec<JsonValue>> {
     let mut events = Vec::new();
-    
-    for event in &trace.events {
-        if let Some(ref ev) = event.event {
-            match ev {
-                alkanes_pb::alkanes_trace_event::Event::EnterContext(enter) => {
-                    let call_type = match enter.call_type {
-                        0 => "none",
-                        1 => "call",
-                        2 => "delegatecall",
-                        3 => "staticcall",
-                        _ => "unknown",
-                    };
-                    
-                    let mut data = json!({
-                        "type": call_type,
-                    });
-                    
-                    if let Some(ref ctx) = enter.context {
-                        if let Some(ref inner) = ctx.inner {
-                            // Extract context fields
-                            let (myself_block, myself_tx) = inner.myself.as_ref()
-                                .map(|m| alkane_id_to_strings(m))
-                                .unwrap_or_default();
-                            
-                            // Convert inputs (Uint128) to hex strings
-                            let inputs: Vec<String> = inner.inputs.iter()
-                                .map(|i| format!("0x{:x}", uint128_to_u128(i)))
-                                .collect();
-                            
-                            // Convert incoming alkanes
-                            let incoming_alkanes: Vec<JsonValue> = inner.incoming_alkanes.iter()
-                                .map(|a| {
-                                    let (block, tx) = a.id.as_ref()
-                                        .map(|id| alkane_id_to_strings(id))
-                                        .unwrap_or_default();
-                                    let value = a.value.as_ref().map(|v| uint128_to_u128(v)).unwrap_or(0);
-                                    json!({
-                                        "id": {
-                                            "block": block,
-                                            "tx": tx,
-                                        },
-                                        "value": value.to_string(),
-                                    })
-                                })
-                                .collect();
-                            
-                            data["context"] = json!({
-                                "myself": {
-                                    "block": myself_block,
-                                    "tx": myself_tx,
-                                },
-                                "inputs": inputs,
-                                "incomingAlkanes": incoming_alkanes,
-                                "fuel": ctx.fuel,
-                            });
-                        }
-                    }
-                    
-                    events.push(json!({
-                        "event": "invoke",
-                        "vout": vout,
-                        "data": data,
-                    }));
-                }
-                alkanes_pb::alkanes_trace_event::Event::ExitContext(exit) => {
-                    let status = match exit.status {
-                        0 => "success",
-                        1 => "failure",
-                        _ => "unknown",
-                    };
-                    
-                    let mut response_data = json!({});
-                    if let Some(ref resp) = exit.response {
-                        // Convert response alkanes
-                        let alkanes: Vec<JsonValue> = resp.alkanes.iter()
-                            .map(|a| {
-                                let (block, tx) = a.id.as_ref()
-                                    .map(|id| alkane_id_to_strings(id))
-                                    .unwrap_or_default();
-                                let value = a.value.as_ref().map(|v| uint128_to_u128(v)).unwrap_or(0);
-                                json!({
-                                    "id": {
-                                        "block": block,
-                                        "tx": tx,
-                                    },
-                                    "value": value.to_string(),
-                                })
-                            })
-                            .collect();
-                        response_data["alkanes"] = json!(alkanes);
-                    }
-                    
-                    events.push(json!({
-                        "event": "return",
-                        "vout": vout,
-                        "data": {
-                            "status": status,
-                            "response": response_data,
-                        },
-                    }));
-                }
-                alkanes_pb::alkanes_trace_event::Event::CreateAlkane(create) => {
-                    let (block, tx) = create.new_alkane.as_ref()
-                        .map(|id| alkane_id_to_strings(id))
-                        .unwrap_or_default();
-                    events.push(json!({
-                        "event": "create",
-                        "vout": vout,
-                        "data": {
-                            "newAlkane": {
-                                "block": block,
-                                "tx": tx,
-                            },
-                        },
-                    }));
-                }
-                alkanes_pb::alkanes_trace_event::Event::ReceiveIntent(receive_intent) => {
-                    let incoming_alkanes: Vec<JsonValue> = receive_intent.incoming_alkanes.iter()
-                        .map(|a| {
-                            let (block, tx) = a.id.as_ref()
-                                .map(|id| alkane_id_to_strings(id))
-                                .unwrap_or_default();
-                            let value = a.value.as_ref().map(|v| uint128_to_u128(v)).unwrap_or(0);
-                            json!({
-                                "id": {
-                                    "block": block,
-                                    "tx": tx,
-                                },
-                                "value": value.to_string(),
-                            })
-                        })
-                        .collect();
-                    events.push(json!({
-                        "event": "receive_intent",
-                        "vout": vout,
-                        "data": {
-                            "incomingAlkanes": incoming_alkanes,
-                        },
-                    }));
-                }
-                alkanes_pb::alkanes_trace_event::Event::ValueTransfer(value_transfer) => {
-                    let transfers: Vec<JsonValue> = value_transfer.transfers.iter()
-                        .map(|t| {
-                            let (block, tx) = t.id.as_ref()
-                                .map(|id| alkane_id_to_strings(id))
-                                .unwrap_or_default();
-                            let value = t.value.as_ref().map(|v| uint128_to_u128(v)).unwrap_or(0);
-                            json!({
-                                "id": {
-                                    "block": block,
-                                    "tx": tx,
-                                },
-                                "value": value.to_string(),
-                            })
-                        })
-                        .collect();
 
-                    events.push(json!({
-                        "event": "value_transfer",
-                        "vout": vout,
-                        "data": {
-                            "transfers": transfers,
-                            "redirect_to": value_transfer.redirect_to,
+    for (event_index, event) in trace.events.iter().enumerate() {
+        let ev = event
+            .event
+            .as_ref()
+            .with_context(|| format!("trace event {event_index} has no event payload"))?;
+        match ev {
+            alkanes_pb::alkanes_trace_event::Event::EnterContext(enter) => {
+                let call_type = match enter.call_type {
+                    0 => "none",
+                    1 => "call",
+                    2 => "delegatecall",
+                    3 => "staticcall",
+                    value => bail!("trace event {event_index} has unknown call type {value}"),
+                };
+                let ctx = enter.context.as_ref().with_context(|| {
+                    format!("trace event {event_index} enter context is missing")
+                })?;
+                let inner = ctx.inner.as_ref().with_context(|| {
+                    format!("trace event {event_index} inner context is missing")
+                })?;
+                let myself = inner.myself.as_ref().with_context(|| {
+                    format!("trace event {event_index} context.myself is missing")
+                })?;
+                let (myself_block, myself_tx) = alkane_id_to_strings(
+                    myself,
+                    &format!("trace event {event_index} context.myself"),
+                )?;
+
+                let inputs: Vec<String> = inner
+                    .inputs
+                    .iter()
+                    .map(|i| format!("0x{:x}", uint128_to_u128(i)))
+                    .collect();
+                let incoming_alkanes: Vec<JsonValue> = inner
+                    .incoming_alkanes
+                    .iter()
+                    .enumerate()
+                    .map(|(transfer_index, transfer)| {
+                        alkane_transfer_to_json(
+                            transfer,
+                            &format!("trace event {event_index} incoming alkane {transfer_index}"),
+                        )
+                    })
+                    .collect::<Result<_>>()?;
+
+                let data = json!({
+                    "type": call_type,
+                    "context": {
+                        "myself": {
+                            "block": myself_block,
+                            "tx": myself_tx,
                         },
-                    }));
+                        "inputs": inputs,
+                        "incomingAlkanes": incoming_alkanes,
+                        "fuel": ctx.fuel,
+                    },
+                });
+
+                events.push(json!({
+                    "event": "invoke",
+                    "vout": vout,
+                    "data": data,
+                }));
+            }
+            alkanes_pb::alkanes_trace_event::Event::ExitContext(exit) => {
+                let status = match exit.status {
+                    0 => "success",
+                    1 => "failure",
+                    value => bail!("trace event {event_index} has unknown exit status {value}"),
+                };
+
+                let mut response_data = json!({});
+                if let Some(ref resp) = exit.response {
+                    // Convert response alkanes
+                    let alkanes: Vec<JsonValue> = resp
+                        .alkanes
+                        .iter()
+                        .enumerate()
+                        .map(|(transfer_index, transfer)| {
+                            alkane_transfer_to_json(
+                                transfer,
+                                &format!(
+                                    "trace event {event_index} response alkane {transfer_index}"
+                                ),
+                            )
+                        })
+                        .collect::<Result<_>>()?;
+                    response_data["alkanes"] = json!(alkanes);
                 }
+
+                events.push(json!({
+                    "event": "return",
+                    "vout": vout,
+                    "data": {
+                        "status": status,
+                        "response": response_data,
+                    },
+                }));
+            }
+            alkanes_pb::alkanes_trace_event::Event::CreateAlkane(create) => {
+                let new_alkane = create
+                    .new_alkane
+                    .as_ref()
+                    .with_context(|| format!("trace event {event_index} new alkane is missing"))?;
+                let (block, tx) = alkane_id_to_strings(
+                    new_alkane,
+                    &format!("trace event {event_index} new alkane"),
+                )?;
+                events.push(json!({
+                    "event": "create",
+                    "vout": vout,
+                    "data": {
+                        "newAlkane": {
+                            "block": block,
+                            "tx": tx,
+                        },
+                    },
+                }));
+            }
+            alkanes_pb::alkanes_trace_event::Event::ReceiveIntent(receive_intent) => {
+                let incoming_alkanes: Vec<JsonValue> = receive_intent
+                    .incoming_alkanes
+                    .iter()
+                    .enumerate()
+                    .map(|(transfer_index, transfer)| {
+                        alkane_transfer_to_json(
+                            transfer,
+                            &format!("trace event {event_index} receive alkane {transfer_index}"),
+                        )
+                    })
+                    .collect::<Result<_>>()?;
+                events.push(json!({
+                    "event": "receive_intent",
+                    "vout": vout,
+                    "data": {
+                        "incomingAlkanes": incoming_alkanes,
+                    },
+                }));
+            }
+            alkanes_pb::alkanes_trace_event::Event::ValueTransfer(value_transfer) => {
+                let transfers: Vec<JsonValue> = value_transfer
+                    .transfers
+                    .iter()
+                    .enumerate()
+                    .map(|(transfer_index, transfer)| {
+                        alkane_transfer_to_json(
+                            transfer,
+                            &format!("trace event {event_index} value transfer {transfer_index}"),
+                        )
+                    })
+                    .collect::<Result<_>>()?;
+
+                events.push(json!({
+                    "event": "value_transfer",
+                    "vout": vout,
+                    "data": {
+                        "transfers": transfers,
+                        "redirect_to": value_transfer.redirect_to,
+                    },
+                }));
             }
         }
     }
-    
-    events
+
+    Ok(events)
 }
 
 async fn trace_call<P: AlkanesProvider + DeezelProvider + JsonRpcProvider + Send + Sync>(
@@ -247,22 +261,26 @@ async fn trace_call<P: AlkanesProvider + DeezelProvider + JsonRpcProvider + Send
         hex::encode(bytes)
     };
     let outpoint_str = format!("{}:{}", txid_be, job.vout);
-    
+
     // Use AlkanesProvider::trace() which properly decodes the protobuf response
-    let trace_pb = provider.trace(&outpoint_str).await
+    let trace_pb = provider
+        .trace(&outpoint_str)
+        .await
         .context("AlkanesProvider::trace call failed")?;
-    
+
     // Convert to JSON events
-    let events = if let Some(ref alkanes_trace) = trace_pb.trace {
-        convert_trace_to_events(alkanes_trace, job.vout as i32)
-    } else {
-        Vec::new()
-    };
-    
+    let alkanes_trace = trace_pb
+        .trace
+        .as_ref()
+        .context("AlkanesProvider::trace response is missing trace payload")?;
+    let events = convert_trace_to_events(alkanes_trace, job.vout as i32)?;
+
     Ok(events)
 }
 
-async fn tx_from_json_or_fetch_hex<P: DeezelProvider + JsonRpcProvider + BitcoinRpcProvider + EsploraProvider + Send + Sync>(
+async fn tx_from_json_or_fetch_hex<
+    P: DeezelProvider + JsonRpcProvider + BitcoinRpcProvider + EsploraProvider + Send + Sync,
+>(
     provider: &P,
     tx_json: &JsonValue,
 ) -> Result<Transaction> {
@@ -296,11 +314,15 @@ async fn tx_from_json_or_fetch_hex<P: DeezelProvider + JsonRpcProvider + Bitcoin
                     warn!(%txid, attempt, "get_tx_hex timed out; will retry or fall back");
                 }
             }
-            if attempt >= 2 { break String::new(); }
+            if attempt >= 2 {
+                break String::new();
+            }
             sleep(Duration::from_millis(200 * attempt as u64)).await;
         }
     };
-    let hex_str = if !hex_str.is_empty() { hex_str } else {
+    let hex_str = if !hex_str.is_empty() {
+        hex_str
+    } else {
         info!(%txid, "falling back to BitcoinRpcProvider::get_transaction_hex");
         let mut attempt = 0;
         loop {
@@ -318,7 +340,10 @@ async fn tx_from_json_or_fetch_hex<P: DeezelProvider + JsonRpcProvider + Bitcoin
                 }
             }
             if attempt >= 3 {
-                return Err(_last_err.unwrap_or_else(|| anyhow::anyhow!("get_transaction_hex failed"))).context("get_transaction_hex call failed");
+                return Err(
+                    _last_err.unwrap_or_else(|| anyhow::anyhow!("get_transaction_hex failed"))
+                )
+                .context("get_transaction_hex call failed");
             }
             sleep(Duration::from_millis(200 * attempt as u64)).await;
         }
@@ -370,25 +395,30 @@ pub async fn decode_and_trace_for_block<P>(
     _max_trace_concurrency: usize,
 ) -> Result<Vec<TxDecodeTraceResult>>
 where
-    P: AlkanesProvider + DeezelProvider + JsonRpcProvider + BitcoinRpcProvider + EsploraProvider + Send + Sync,
+    P: AlkanesProvider
+        + DeezelProvider
+        + JsonRpcProvider
+        + BitcoinRpcProvider
+        + EsploraProvider
+        + Send
+        + Sync,
 {
     let url = resolve_sandshrew_url(provider);
-    info!(txs = txs.len(), "decode_and_trace_for_block: start (batched parallel)");
+    info!(
+        txs = txs.len(),
+        "decode_and_trace_for_block: start (batched parallel)"
+    );
     // Only OP_RETURN txs
-    let op_return_txs: Vec<JsonValue> = txs.iter().filter(|t| tx_has_op_return(t)).cloned().collect();
-    // Skip txids explicitly ignored
-    let op_return_txs: Vec<JsonValue> = op_return_txs
-        .into_iter()
-        .filter(|t| {
-            let id = t.get("txid").and_then(|v| v.as_str()).unwrap_or("");
-            let skip = IGNORED_TRACE_TXIDS.contains(&id);
-            if skip { info!(%id, "skipping txid from ignore list"); }
-            !skip
-        })
+    let op_return_txs: Vec<JsonValue> = txs
+        .iter()
+        .filter(|t| tx_has_op_return(t))
+        .cloned()
         .collect();
     let total = op_return_txs.len();
     info!(op_return_txs = total, "filtered OP_RETURN transactions");
-    if total == 0 { return Ok(Vec::new()); }
+    if total == 0 {
+        return Ok(Vec::new());
+    }
 
     // Split into up to 10 batches and process each batch concurrently.
     let num_batches = usize::min(10, total);
@@ -429,7 +459,16 @@ where
                         let txid_be = formatted.get("transaction_id").and_then(|v| v.as_str()).map(|s| s.to_string()).unwrap_or_else(|| tx.compute_txid().to_string());
                         let txid_le = to_little_endian_hex(&txid_be);
                         let start = (tx.output.len() as u32) + 1;
-                        let protos = formatted.get("protostones").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+                        let Some(protos) = formatted
+                            .get("protostones")
+                            .and_then(|value| value.as_array())
+                            .cloned()
+                        else {
+                            *fatal_err.lock().await = Some(format!(
+                                "protostone decode result is missing its array for {txid_be}"
+                            ));
+                            return;
+                        };
                         info!(batch = batch_idx, %txid_be, protostones = protos.len(), start_vout = start, "decoded runestone");
                         let mut decoded_items: Vec<DecodedProtostoneItem> = Vec::with_capacity(protos.len());
                         let mut trace_events: Vec<TraceEventItem> = Vec::new();
@@ -439,6 +478,12 @@ where
                         for (i, p) in protos.iter().enumerate() {
                             let vout = start + i as u32;
                             info!(batch = batch_idx, %txid_be, protostone_idx = i, vout, "calling trace");
+                            if p.get("message_decoded").is_none_or(JsonValue::is_null) {
+                                *fatal_err.lock().await = Some(format!(
+                                    "protostone message decode is incomplete for {txid_be} vout {vout}"
+                                ));
+                                return;
+                            }
                             let job = TraceJob { txid_le_hex: txid_le.clone(), vout, protostone_idx: i };
                             debug!(batch = batch_idx, %txid_be, protostone_idx = i, "dispatching trace job");
                             decoded_items.push(DecodedProtostoneItem { vout: vout as i32, protostone_index: i as i32, decoded: p.clone() });
@@ -451,8 +496,21 @@ where
                                     
                                     // Process events - they are already in the correct format from convert_trace_to_events
                                     for ev in &events {
-                                        let event_type = ev.get("event").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
-                                        let data = ev.get("data").cloned().unwrap_or_else(|| serde_json::json!({}));
+                                        let Some(event_type) = ev.get("event").and_then(|v| v.as_str()) else {
+                                            *fatal_err.lock().await = Some(format!(
+                                                "trace event is missing event type for {} vout {}",
+                                                txid_be, vout
+                                            ));
+                                            return;
+                                        };
+                                        let Some(data) = ev.get("data").cloned() else {
+                                            *fatal_err.lock().await = Some(format!(
+                                                "trace event is missing data for {} vout {}",
+                                                txid_be, vout
+                                            ));
+                                            return;
+                                        };
+                                        let event_type = event_type.to_string();
                                         
                                         // Check for success status in return events
                                         if event_type == "return" {
@@ -462,9 +520,23 @@ where
                                         
                                         // Extract alkane address from invoke context
                                         let (blk_str, tx_str) = if event_type == "invoke" {
-                                            let blk = data.get("context").and_then(|c| c.get("myself")).and_then(|m| m.get("block")).and_then(|v| v.as_str()).unwrap_or("").to_string();
-                                            let tx = data.get("context").and_then(|c| c.get("myself")).and_then(|m| m.get("tx")).and_then(|v| v.as_str()).unwrap_or("").to_string();
-                                            (blk, tx)
+                                            let myself = data.get("context")
+                                                .and_then(|c| c.get("myself"));
+                                            let Some(blk) = myself.and_then(|m| m.get("block")).and_then(|v| v.as_str()) else {
+                                                *fatal_err.lock().await = Some(format!(
+                                                    "invoke trace is missing context.myself.block for {} vout {}",
+                                                    txid_be, vout
+                                                ));
+                                                return;
+                                            };
+                                            let Some(tx) = myself.and_then(|m| m.get("tx")).and_then(|v| v.as_str()) else {
+                                                *fatal_err.lock().await = Some(format!(
+                                                    "invoke trace is missing context.myself.tx for {} vout {}",
+                                                    txid_be, vout
+                                                ));
+                                                return;
+                                            };
+                                            (blk.to_string(), tx.to_string())
                                         } else { (String::new(), String::new()) };
                                         
                                         trace_events.push(TraceEventItem {
@@ -484,15 +556,6 @@ where
                                         combined.push_str(" | ");
                                         combined.push_str(&cause.to_string());
                                     }
-                                    let lc = combined.to_ascii_lowercase();
-                                    // Known upstream non-deterministic client error from alkanes base-rpc addHexPrefix
-                                    // Example contains: "non-standard error object received" and "cannot read properties of undefined (reading 'substr')"
-                                    let is_known_upstream_typeerror = lc.contains("non-standard error object received") && lc.contains("cannot read properties of undefined");
-                                    if is_known_upstream_typeerror {
-                                        warn!(batch = batch_idx, %txid_be, protostone_idx = i, vout, error = %combined, "trace returned upstream TypeError; skipping this protostone");
-                                        // Do not set has_trace; continue with next protostone/tx
-                                        continue;
-                                    }
                                     error!(batch = batch_idx, %txid_be, protostone_idx = i, vout, error = ?e, "trace failed; aborting block batch");
                                     // Record fatal error to fail the block rather than proceeding with partial results
                                     *fatal_err.lock().await = Some(format!("trace failed for {} vout {}: {}", txid_be, vout, combined));
@@ -510,7 +573,11 @@ where
                         };
                         results.lock().await.push(result);
                     }
-                    Ok(Err(e)) => { warn!(batch = batch_idx, %txid_str, error = %e, "protostone decode failed; skipping tx"); }
+                    Ok(Err(e)) => {
+                        error!(batch = batch_idx, %txid_str, error = %e, "protostone decode failed; aborting block batch");
+                        *fatal_err.lock().await = Some(format!("protostone decode failed for {}: {}", txid_str, e));
+                        return;
+                    }
                     Err(panic) => {
                         let panic_msg: &str = if let Some(s) = panic.downcast_ref::<&str>() {
                             s
@@ -519,7 +586,9 @@ where
                         } else {
                             "panic"
                         };
-                        error!(batch = batch_idx, %txid_str, message = %panic_msg, "protostone decode panicked; skipping tx");
+                        error!(batch = batch_idx, %txid_str, message = %panic_msg, "protostone decode panicked; aborting block batch");
+                        *fatal_err.lock().await = Some(format!("protostone decode panicked for {}: {}", txid_str, panic_msg));
+                        return;
                     }
                 }
             }
@@ -534,8 +603,97 @@ where
         return Err(anyhow::anyhow!(err));
     }
 
-    let out = results.lock().await.clone();
-    Ok(out)
+    let mut by_txid = HashMap::with_capacity(total);
+    for result in results.lock().await.clone() {
+        let result_txid = result.transaction_id.clone();
+        if by_txid.insert(result_txid.clone(), result).is_some() {
+            return Err(anyhow::anyhow!("duplicate trace result for {result_txid}"));
+        }
+    }
+    let mut ordered = Vec::with_capacity(total);
+    for tx in &op_return_txs {
+        let txid = tx
+            .get("txid")
+            .and_then(|value| value.as_str())
+            .context("OP_RETURN transaction is missing txid")?;
+        ordered.push(by_txid.remove(txid).with_context(|| {
+            format!("trace pipeline produced no result for OP_RETURN transaction {txid}")
+        })?);
+    }
+    if !by_txid.is_empty() {
+        return Err(anyhow::anyhow!(
+            "trace pipeline returned transactions outside the source block"
+        ));
+    }
+    Ok(ordered)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alkanes_pb::alkanes_trace_event::Event;
 
+    fn uint128(value: u64) -> alkanes_pb::Uint128 {
+        alkanes_pb::Uint128 { lo: value, hi: 0 }
+    }
+
+    #[test]
+    fn trace_event_without_payload_fails_closed() {
+        let trace = alkanes_pb::AlkanesTrace {
+            events: vec![alkanes_pb::AlkanesTraceEvent { event: None }],
+        };
+
+        assert!(convert_trace_to_events(&trace, 1).is_err());
+    }
+
+    #[test]
+    fn transfer_without_id_or_value_fails_closed() {
+        let missing_id = alkanes_pb::AlkaneTransfer {
+            id: None,
+            value: Some(uint128(1)),
+        };
+        let missing_value = alkanes_pb::AlkaneTransfer {
+            id: Some(alkanes_pb::AlkaneId {
+                block: Some(uint128(4)),
+                tx: Some(uint128(10)),
+            }),
+            value: None,
+        };
+
+        for transfer in [missing_id, missing_value] {
+            let trace = alkanes_pb::AlkanesTrace {
+                events: vec![alkanes_pb::AlkanesTraceEvent {
+                    event: Some(Event::ValueTransfer(alkanes_pb::AlkanesValueTransfer {
+                        transfers: vec![transfer],
+                        redirect_to: 0,
+                    })),
+                }],
+            };
+            assert!(convert_trace_to_events(&trace, 1).is_err());
+        }
+    }
+
+    #[test]
+    fn transfer_conversion_preserves_full_u128_value() {
+        let trace = alkanes_pb::AlkanesTrace {
+            events: vec![alkanes_pb::AlkanesTraceEvent {
+                event: Some(Event::ValueTransfer(alkanes_pb::AlkanesValueTransfer {
+                    transfers: vec![alkanes_pb::AlkaneTransfer {
+                        id: Some(alkanes_pb::AlkaneId {
+                            block: Some(uint128(4)),
+                            tx: Some(uint128(10)),
+                        }),
+                        value: Some(alkanes_pb::Uint128 { lo: 7, hi: 1 }),
+                    }],
+                    redirect_to: 0,
+                })),
+            }],
+        };
+
+        let events = convert_trace_to_events(&trace, 1).unwrap();
+        assert_eq!(
+            events[0]["data"]["transfers"][0]["value"],
+            JsonValue::String(((1_u128 << 64) + 7).to_string())
+        );
+    }
+}

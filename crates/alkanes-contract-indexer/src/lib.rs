@@ -1,13 +1,12 @@
+pub mod canonical_commit;
 pub mod config;
+pub mod coordinator;
 pub mod db;
 pub mod helpers;
 pub mod inferred_transfers;
-pub mod schema;
-pub mod progress;
-pub mod coordinator;
 pub mod pipeline;
 pub mod poller;
+pub mod progress;
 pub mod provider;
+pub mod schema;
 pub mod transform_integration;
-
-
