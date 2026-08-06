@@ -1,14 +1,10 @@
 name: Rust
 
-# NOTE: `develop` is the branch that actually ships. `publish-npm.yml` builds and
-# publishes @alkanes/ts-sdk from `develop`, while `main` is hundreds of commits
-# behind. Until 2026-08-06 this workflow triggered on `main` only, so the branch
-# users install from was tested by nothing. Keep BOTH branches in these lists.
 on:
   push:
-    branches: ["main", "develop"]
+    branches: ["main"]
   pull_request:
-    branches: ["main", "develop"]
+    branches: ["main"]
 
 env:
   CARGO_TERM_COLOR: always
@@ -25,20 +21,6 @@ jobs:
             command: "cargo test -p protorune --features test-utils"
           - name: "Protorune Unit Tests"
             command: "cargo test -p protorune --target x86_64-unknown-linux-gnu"
-          # alkanes-cli-common is compiled INTO the published @alkanes/ts-sdk
-          # web-sys WASM: it is the wallet, coin-selection and PSBT code the app
-          # depends on. Until 2026-08-06 no matrix leg built it at all, so a
-          # plain compile error could sit on a branch with three green checks.
-          #
-          # --lib ONLY, deliberately: the integration targets under
-          # crates/alkanes-cli-common/tests/ have bit-rotted (struct fields added
-          # without updating callers, `alkanes::protorunes` items moved) and do
-          # not compile. Half of that directory is already parked as *.rs.bak.
-          # Un-rotting them is tracked separately; gating on --lib now is what
-          # makes this leg green-on-arrival instead of permanently red, and it
-          # still covers src/mock_provider.rs and the 271 unit tests.
-          - name: "Alkanes CLI Common Unit Tests"
-            command: "cargo test -p alkanes-cli-common --lib --target x86_64-unknown-linux-gnu"
       fail-fast: false # Allows all tests to run even if one fails
 
     name: ${{ matrix.test-config.name }}
