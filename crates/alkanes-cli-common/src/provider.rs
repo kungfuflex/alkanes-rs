@@ -1167,6 +1167,42 @@ impl JsonRpcProvider for ConcreteProvider {
 }
 
 impl ConcreteProvider {
+    /// Sequentially broadcast each tx via the hardened single-tx
+    /// `send_raw_transaction` (which probes testmempoolaccept through the
+    /// shared `broadcast_result` module on a gateway-stripped result). Shared
+    /// fallback for `send_raw_transactions` — fires both when the batch
+    /// `sendrawtransactions` method is unavailable (-32601, an `Err`) AND when
+    /// it returns the stripped `Ok(Null)`/non-array signature. Partial success
+    /// is surfaced (some already broadcast) rather than silently dropped.
+    ///
+    /// NOTE: sequential broadcast may be vulnerable to MEV/frontrunning
+    /// relative to an atomic batch — logged by the callers before delegating.
+    async fn send_raw_transactions_sequential(&self, tx_hexes: &[String]) -> Result<Vec<String>> {
+        log::warn!("⚠️ Sequential broadcast may be vulnerable to MEV/frontrunning");
+        let mut txids = Vec::with_capacity(tx_hexes.len());
+        for (i, tx_hex) in tx_hexes.iter().enumerate() {
+            match self.send_raw_transaction(tx_hex).await {
+                Ok(txid) => {
+                    log::info!("Broadcast tx {}/{}: {}", i + 1, tx_hexes.len(), txid);
+                    txids.push(txid);
+                }
+                Err(tx_err) => {
+                    // If we've already broadcast some, log the failure but don't abort
+                    // silently — surface which tx failed so partial success is visible.
+                    if !txids.is_empty() {
+                        log::error!("Failed to broadcast tx {}/{}: {}", i + 1, tx_hexes.len(), tx_err);
+                        return Err(AlkanesError::RpcError(format!(
+                            "Partial broadcast failure: {} of {} transactions broadcast. Failed at tx {}: {}",
+                            txids.len(), tx_hexes.len(), i + 1, tx_err
+                        )));
+                    }
+                    return Err(tx_err);
+                }
+            }
+        }
+        Ok(txids)
+    }
+
     async fn _call_inner(
         &self,
         url: &str,
@@ -4889,9 +4925,28 @@ impl BitcoinRpcProvider for ConcreteProvider {
         // Only pass maxfeerate - maxburnamount is not supported in Bitcoin Core < 26.0
         let params = json!([tx_hex, maxfeerate]);
         let result = self.call(&rpc_url, "sendrawtransaction", params, 1).await?;
-        result.as_str()
-            .ok_or_else(|| AlkanesError::RpcError("Invalid sendrawtransaction response".to_string()))
-            .map(|s| s.to_string())
+
+        // Gateway-stripped-error hardening, same as the alkanes-web-sys impl:
+        // when the CLI points at a subfrost gateway (tlsd-edge), bitcoind
+        // rejections are stripped to {"result": null} and `_call_inner`
+        // surfaces Ok(Null) — the old `.as_str()` check collapsed every
+        // reject reason into "Invalid sendrawtransaction response". On a
+        // non-txid result, probe testmempoolaccept (whose verdict survives
+        // the stripping) and let the shared pure interpreter produce either
+        // the real reject reason or the txid for the already-in-mempool
+        // success-in-disguise case. See crate::broadcast_result.
+        if let Some(txid) = crate::broadcast_result::sendraw_txid(&result) {
+            return Ok(txid);
+        }
+        log::warn!(
+            "send_raw_transaction: non-txid result {result:?} (gateway stripped the node error) — probing testmempoolaccept"
+        );
+        let probe = self
+            .call(&rpc_url, "testmempoolaccept", json!([[tx_hex]]), 1)
+            .await
+            .ok();
+        crate::broadcast_result::interpret_broadcast_response(&result, probe.as_ref())
+            .map_err(AlkanesError::RpcError)
     }
 
     async fn send_raw_transactions(&self, tx_hexes: &[String]) -> Result<Vec<String>> {
@@ -4908,47 +4963,34 @@ impl BitcoinRpcProvider for ConcreteProvider {
         // Only pass maxfeerate - maxburnamount is not supported in Bitcoin Core < 26.0
         let params = json!([tx_hexes, maxfeerate]);
 
-        // Try batch sendrawtransactions first
+        // Try batch sendrawtransactions first.
         match self.call(&rpc_url, "sendrawtransactions", params, 1).await {
             Ok(result) => {
-                // Parse array of txids
-                result.as_array()
-                    .ok_or_else(|| AlkanesError::RpcError("Invalid sendrawtransactions response".to_string()))?
-                    .iter()
-                    .map(|v| v.as_str()
-                        .ok_or_else(|| AlkanesError::RpcError("Invalid txid in response".to_string()))
-                        .map(|s| s.to_string()))
-                    .collect()
+                // Gateway-stripped-error hardening (FIX #3, same class as the
+                // single-tx path above): a rejected batch comes back as the
+                // stripped `Ok(Null)` signature, NOT an Err — so the old
+                // `.as_array().ok_or(...)` produced the opaque "Invalid
+                // sendrawtransactions response" with no probe and no recovery.
+                // When the result is a usable array, parse it; otherwise
+                // (Null / non-array / a non-string entry) fall through to the
+                // sequential per-tx path, which calls the hardened
+                // `send_raw_transaction` (testmempoolaccept probe via the
+                // shared broadcast_result module) so each tx gets a real
+                // reject reason or the already-in-mempool success txid.
+                if let Some(txids) = crate::broadcast_result::batch_result_txids(&result) {
+                    return Ok(txids);
+                }
+                log::warn!(
+                    "sendrawtransactions returned an unusable result {result:?} (gateway likely stripped the node error) — falling back to sequential broadcast"
+                );
+                self.send_raw_transactions_sequential(tx_hexes).await
             }
             Err(e) => {
                 // Check if this is a "method not found" error - fallback to iterative broadcast
                 let err_str = e.to_string().to_lowercase();
                 if err_str.contains("method not found") || err_str.contains("unknown method") || err_str.contains("-32601") {
                     log::warn!("sendrawtransactions not available, falling back to sequential broadcast");
-                    log::warn!("⚠️ Sequential broadcast may be vulnerable to MEV/frontrunning");
-
-                    let mut txids = Vec::with_capacity(tx_hexes.len());
-                    for (i, tx_hex) in tx_hexes.iter().enumerate() {
-                        match self.send_raw_transaction(tx_hex).await {
-                            Ok(txid) => {
-                                log::info!("Broadcast tx {}/{}: {}", i + 1, tx_hexes.len(), txid);
-                                txids.push(txid);
-                            }
-                            Err(tx_err) => {
-                                // If we've already broadcast some, log the failure but don't abort
-                                // This allows partial success tracking
-                                if !txids.is_empty() {
-                                    log::error!("Failed to broadcast tx {}/{}: {}", i + 1, tx_hexes.len(), tx_err);
-                                    return Err(AlkanesError::RpcError(format!(
-                                        "Partial broadcast failure: {} of {} transactions broadcast. Failed at tx {}: {}",
-                                        txids.len(), tx_hexes.len(), i + 1, tx_err
-                                    )));
-                                }
-                                return Err(tx_err);
-                            }
-                        }
-                    }
-                    Ok(txids)
+                    self.send_raw_transactions_sequential(tx_hexes).await
                 } else {
                     // Some other error - propagate it
                     Err(e)
