@@ -3070,9 +3070,14 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         // before this change still funds it, it just gets non-dust change when
         // another UTXO was available to provide it.
         if bitcoin_collected < bitcoin_needed {
-            return Err(AlkanesError::Wallet(format!(
-                "Insufficient funds: need {bitcoin_needed} sats, have {bitcoin_collected}"
-            )));
+            // Typed, so callers can read the shortfall instead of regexing the
+            // message and can tell the user the exact amount that WOULD fund
+            // (`AlkanesError::max_spendable_given`). Display is byte-identical
+            // to the `Wallet(...)` string this replaced.
+            return Err(AlkanesError::InsufficientBitcoin {
+                needed: bitcoin_needed,
+                collected: bitcoin_collected,
+            });
         }
 
         if headroom.is_active() {
