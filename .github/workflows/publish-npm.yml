@@ -14,17 +14,13 @@ on:
       - 'crates/alkanes-cli-common/**'
       - 'prod_wasms/**'
       - '.github/workflows/publish-npm.yml'
-  pull_request:
-    branches:
-      - develop
-    types:
-      - closed
-    paths:
-      - 'ts-sdk/**'
-      - 'crates/alkanes-web-sys/**'
-      - 'crates/alkanes-cli-common/**'
-      - 'prod_wasms/**'
-      - '.github/workflows/publish-npm.yml'
+  # NOTE: there used to be a second `pull_request: [closed]` trigger here. It was
+  # NOT a fallback — merging a PR into develop IS a push to develop, so both
+  # triggers fired for the same commit and the job ran TWICE. Observed on commit
+  # 085e303: run 175 (push) and run 176 (pull_request) started 28s apart and both
+  # published. The wasm-pack/tsc build is not byte-reproducible, so the two runs
+  # produced DIFFERENT bytes under different version tags, and `latest` resolved
+  # to whichever `npm publish` happened to land second. Do not re-add it.
 
 env:
   NODE_VERSION: '20'
@@ -32,9 +28,42 @@ env:
   WASM_PACK_VERSION: '0.13.1'
 
 jobs:
+  # Publishing gate. alkanes-cli-common is compiled into the web-sys WASM that
+  # ships in this package, so a broken crate must not reach the registry: every
+  # published tag is immutable (#286) and cannot be taken back, only superseded.
+  test:
+    name: Test (publish gate)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          targets: wasm32-unknown-unknown
+      - name: Cache Rust dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-gate-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-gate-
+      # --lib only: the integration targets under crates/alkanes-cli-common/tests/
+      # are bit-rotted and do not compile (see rust.yml for the same note).
+      - name: Test alkanes-cli-common
+        run: cargo test -p alkanes-cli-common --lib --target x86_64-unknown-linux-gnu
+
   publish-npm:
-    # Only run on push events or when a PR is merged (not just closed)
-    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.merged == true)
+    needs: test
+    # Belt-and-braces: `on.push.branches` already restricts this to develop.
+    if: github.ref == 'refs/heads/develop'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -216,9 +245,12 @@ jobs:
           name: pkg-manifest-${{ steps.version.outputs.version }}
           path: pkg-manifests/*.json
 
+      # NOT continue-on-error. The dist-tag IS the thing consumers resolve; a
+      # silent failure here leaves `latest-dev` pointing at an older build while
+      # the run still reports success, which is exactly how the tag drifted away
+      # from the newest publish unnoticed. If tagging fails, the run must go red.
       - name: Tag as latest-dev
         working-directory: ts-sdk
-        continue-on-error: true
         run: |
           echo "Tagging as latest-dev..."
           npm dist-tag add @alkanes/ts-sdk@${{ steps.version.outputs.version }} latest-dev \
