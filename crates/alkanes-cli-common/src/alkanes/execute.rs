@@ -2371,12 +2371,26 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         // itself into one enormous transaction chasing a target it can never
         // reach (each such candidate raises the target by more than it adds).
         let mut headroom_inputs: usize = 0;
-        // Does selection still want more BTC? `bitcoin_needed` is the hard
-        // requirement; anything above it is the soft dust headroom, and is
-        // abandoned the moment the cap is hit or candidates run out.
+        // The transaction cannot be built at all below this — a UTXO taken to
+        // satisfy it is a necessity, not a preference.
+        macro_rules! needs_more_btc {
+            () => {{
+                bitcoin_collected < bitcoin_needed
+            }};
+        }
+        // Hard requirement OR the soft dust headroom on top of it. The headroom
+        // is abandoned the moment the cap is hit or candidates run out.
+        //
+        // ONLY valid for candidates whose alkane status is POSITIVELY KNOWN to
+        // be clean. For anything unverified use `needs_more_btc!()` — see the
+        // call sites. Selecting an alkane carrier as a plain fee input destroys
+        // the tokens on it (mainnet 2026-05-03, tx 8bee7472…), so "we could not
+        // determine whether this UTXO carries alkanes" may be accepted when the
+        // transaction is otherwise unbuildable, but must NEVER be accepted to
+        // make the change output prettier.
         macro_rules! wants_more_btc {
             () => {{
-                if bitcoin_collected < bitcoin_needed {
+                if needs_more_btc!() {
                     true
                 } else {
                     headroom.is_active()
@@ -2957,8 +2971,21 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                         break;
                     }
                 } else {
-                    // No balance data for this UTXO, still consider it for Bitcoin if needed
-                    if wants_more_btc!() {
+                    // NO BALANCE DATA — absence of information, NOT an assertion
+                    // of "clean". The discovery fanout returned no entry for this
+                    // outpoint, which also happens on partial fanouts and provider
+                    // failures. The branches above are information-driven (needed
+                    // alkanes → take; unneeded alkanes → skip; balances.is_empty()
+                    // → positively asserted clean); this one is a blind spot.
+                    //
+                    // So it stays on the HARD requirement: acceptable when the
+                    // transaction is otherwise unbuildable, never to pad the
+                    // change output. Using the soft headroom here would let a
+                    // cosmetic dust fix pull up to MAX_HEADROOM_INPUTS UTXOs of
+                    // unknown alkane status into the tx as fee inputs — the exact
+                    // token-burn the surrounding code exists to prevent.
+                    // (Caught in review by casuwu.)
+                    if needs_more_btc!() {
                         take_btc_input!(utxo.amount);
                         selected_outpoints.push(outpoint);
                         log::debug!("Selected UTXO {}:{} for Bitcoin only (no balance data)", outpoint.txid, outpoint.vout);
@@ -3014,8 +3041,15 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                 if !wants_more_btc!() {
                     break;
                 }
-                let is_carrier = if self.provider.is_qubitcoin_mode() {
-                    false
+                // `verified` tracks whether the carrier answer is AUTHORITATIVE
+                // or a fall-through default. An unverifiable candidate may still
+                // be spent when the transaction is otherwise unbuildable (the
+                // pre-existing behavior), but must never be pulled in purely for
+                // dust headroom — see the guard below the carrier check.
+                let (is_carrier, verified) = if self.provider.is_qubitcoin_mode() {
+                    // No alkanes indexer in qubitcoin mode and no alkanes to
+                    // burn — treat as authoritative so behavior is unchanged.
+                    (false, true)
                 } else if let Some(balances) =
                     prefetched_alkanes.as_ref().and_then(|m| m.get(&outpoint))
                 {
@@ -3023,7 +3057,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                     // caller-asserted balances skip the RPC. An empty Vec means
                     // "asserted clean — not a carrier."
                     prefetched_count += 1;
-                    balances.iter().any(|(_, amt)| *amt > 0)
+                    (balances.iter().any(|(_, amt)| *amt > 0), true)
                 } else {
                     rpc_count += 1;
                     let txid_str = outpoint.txid.to_string();
@@ -3032,16 +3066,29 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                         .get_protorunes_by_outpoint(&txid_str, outpoint.vout, None, 1)
                         .await
                     {
-                        Ok(response) => response
-                            .balance_sheet
-                            .cached
-                            .balances
-                            .values()
-                            .any(|amt| *amt > 0),
-                        // Unverifiable — keep the pre-existing behavior (select).
-                        Err(_) => false,
+                        Ok(response) => (
+                            response
+                                .balance_sheet
+                                .cached
+                                .balances
+                                .values()
+                                .any(|amt| *amt > 0),
+                            true,
+                        ),
+                        // Unverifiable — keep the pre-existing behavior (select),
+                        // but mark it so the dust headroom won't reach for it.
+                        Err(_) => (false, false),
                     }
                 };
+                if !verified && !needs_more_btc!() {
+                    // Would only be taken for headroom, and we cannot prove it
+                    // is not carrying someone's tokens. Leave it alone.
+                    log::debug!(
+                        "Not extending dust headroom onto unverified UTXO {}:{}",
+                        outpoint.txid, outpoint.vout
+                    );
+                    continue;
+                }
                 if is_carrier {
                     carriers_skipped += 1;
                     log::debug!(
@@ -6619,6 +6666,80 @@ mod dust_change_tests {
         assert_eq!(
             result.outpoints.len(), 5 + MAX_HEADROOM_INPUTS,
             "headroom must stop at the cap instead of sweeping all 30 UTXOs",
+        );
+    }
+
+    /// Coin selection must NEVER pull a UTXO of unknown alkane status just to
+    /// lift the change output out of the dust band.
+    ///
+    /// The "no balance data" branch is a blind spot, not an all-clear: the
+    /// discovery fanout returned nothing for that outpoint, which also happens
+    /// on partial fanouts and provider failures. Spending an alkane carrier as
+    /// a plain fee input destroys the tokens on it (mainnet 2026-05-03), so
+    /// unknown-status UTXOs are acceptable ONLY when the transaction is
+    /// otherwise unbuildable — never for a cosmetic dust fix.
+    ///
+    /// Regression test for a defect in the first cut of the headroom change,
+    /// caught in review by casuwu.
+    #[tokio::test]
+    async fn headroom_never_reaches_for_unknown_alkane_status() {
+        let mut mock = MockProvider::new(bitcoin::Network::Regtest);
+        let secp = Secp256k1::new();
+        let (sk, pk) = secp.generate_keypair(&mut rand::thread_rng());
+        let (xonly, _) = pk.x_only_public_key();
+        let addr = Address::p2tr(&secp, xonly, None, bitcoin::Network::Regtest);
+        mock.set_keypair(sk, bitcoin::PublicKey::new(pk));
+        mock.qubitcoin_mode = false;
+        let script = addr.script_pubkey();
+
+        // One registered alkane carrier (has balance data) + several plain BTC
+        // UTXOs that are NOT registered, so the alkane-discovery pass returns
+        // nothing for them and they land in the "no balance data" branch.
+        let carrier = OutPoint::new(txid_n(0x77), 0);
+        {
+            let mut utxos = mock.utxos.lock().unwrap();
+            utxos.push((carrier, TxOut { value: Amount::from_sat(546), script_pubkey: script.clone() }));
+            for i in 0..6u8 {
+                utxos.push((
+                    OutPoint::new(txid_n(0x80 + i), 0),
+                    TxOut { value: Amount::from_sat(2_000), script_pubkey: script.clone() },
+                ));
+            }
+        }
+        mock.alkane_balances
+            .lock()
+            .unwrap()
+            .insert(format!("{}:0", txid_n(0x77)), vec![(32, 0, 1_000)]);
+
+        let mut executor = EnhancedAlkanesExecutor::new(&mut mock);
+        let requirements = vec![
+            InputRequirement::Alkanes { block: 32, tx: 0, amount: 1_000 },
+            InputRequirement::Bitcoin { amount: 3_000 },
+        ];
+
+        let result = executor
+            .select_utxos_with_headroom(
+                &requirements,
+                &Some(vec![addr.to_string()]),
+                &[], None, &[], &[],
+                UtxoDataSource::Metashrew,
+                // Large, obviously-unsatisfiable headroom: if unknown-status
+                // UTXOs were eligible for it, selection would keep taking them
+                // until the MAX_HEADROOM_INPUTS cap.
+                BtcHeadroom::new(DUST_LIMIT, 50.0),
+            )
+            .await
+            .expect("must still fund from the unknown-status UTXOs it genuinely needs");
+
+        // The carrier (546) plus enough 2000-sat UTXOs to clear 3000 sats:
+        // 546 + 2000 = 2546 < 3000, so a second is required → 4546. The third
+        // onward would be pure headroom and must NOT be taken.
+        let btc_inputs = result.outpoints.iter().filter(|op| **op != carrier).count();
+        assert_eq!(
+            btc_inputs, 2,
+            "took {btc_inputs} unknown-status UTXOs; only the 2 required to meet \
+             bitcoin_needed are permitted — the rest would be headroom reaching \
+             for UTXOs that may be carrying someone's tokens",
         );
     }
 
