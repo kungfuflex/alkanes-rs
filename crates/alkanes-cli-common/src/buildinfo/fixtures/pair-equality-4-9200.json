@@ -1,0 +1,65 @@
+{
+  "schema_version": "1.0.0",
+  "identity": {
+    "target_source": "local-file",
+    "alkane_id": "4:9200",
+    "network": "mainnet",
+    "target_sha256": "b7e9335bf3a5f0f6e0e0d8f6b3a4b0d2c9d6a4e1f7c8b2a5d3e9f0a1b6c4d7e2",
+    "target_size": 169973,
+    "cloned_from": "https://github.com/kungfuflex/predicates/pull/1"
+  },
+  "source": {
+    "kind": "git",
+    "repo": "https://github.com/kungfuflex/predicates",
+    "commit": "0846376c",
+    "package": "pair-equality",
+    "is_workspace_member": true,
+    "features": [],
+    "build_command": "cargo build --release --locked --target wasm32-unknown-unknown -p pair-equality",
+    "artifact": "pair_equality.wasm"
+  },
+  "toolchain": {
+    "rustc_version": "1.86.0",
+    "rustc_commit": "05f9846f893b09a1be1fc8560e33fc3c815cfecb",
+    "host_triple": "1.86.0-x86_64-unknown-linux-gnu",
+    "os_image": "ubuntu-22.04",
+    "target": "wasm32-unknown-unknown"
+  },
+  "c_toolchain": {
+    "vendor": "unknown",
+    "version": "",
+    "source": { "method": "unpinned" },
+    "c_object_host_dependent": false,
+    "note": "pair-equality links secp256k1-sys but the origin clang vendor/version is not yet pinned from the target; this is the residual gap keeping 4:9200 at `partial` — pin the clang and HOME to close it"
+  },
+  "environment": {
+    "home": "/home/vitor",
+    "cargo_home": "/home/vitor/.cargo",
+    "build_env": [],
+    "remap_path_prefix": []
+  },
+  "registry": {
+    "mode": "committed-lock"
+  },
+  "git_deps": [
+    { "url": "https://github.com/kungfuflex/alkanes-rs", "rev": "888f4fe6c3b1a2049d7e6f5c8b0a1d2e3f405162", "source_form": "rev" }
+  ],
+  "result": {
+    "verdict": "partial",
+    "built_sha256": "3c1d9e8a7b6f5042e1c0d9b8a7f6e5d4c3b2a1908f7e6d5c4b3a2019f8e7d6c5",
+    "byte_exact": false,
+    "normalized_match_pct": 98.2,
+    "sections": [
+      { "kind": "code", "target_size": 141002, "candidate_size": 141002, "matched": true },
+      { "kind": "data", "target_size": 12840, "candidate_size": 12809, "matched": false }
+    ],
+    "note": "not yet deployed (target is the PR-1 build artifact, not an on-chain getbytecode); reproduced from committed lock. 169942 vs 169973 (31-byte delta) tracks to unpinned HOME + clang vendor. Deploy → re-verify against on-chain getbytecode to promote to reproducible/verified."
+  },
+  "notes": [
+    "target_source=local-file: 4:9200 is the intended id from predicates PR #1 but is NOT on-chain yet, so --at points at the built .wasm, fully offline",
+    "committed-lock mode: unlike free-mint/DIESEL this repo commits Cargo.lock, so registry state is exact without the time-machine — cargo_lock_b64 carries it",
+    "alkanes-rs git-dep is rev-pinned in the committed lock (source_form=rev), so the bare source-id rewrite trick is NOT needed here",
+    "predicates PR: https://github.com/kungfuflex/predicates/pull/1"
+  ],
+  "cargo_lock_b64": "<committed Cargo.lock, base64 — omitted from fixture for size; populated by `build-info` from the source dir>"
+}

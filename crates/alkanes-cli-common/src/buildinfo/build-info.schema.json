@@ -1,0 +1,208 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://explorer.subfrost.io/schemas/build-info-1.0.0.json",
+  "title": "BuildInfo",
+  "description": "Self-contained, parameterized artifact fully specifying how to reproduce ONE alkane's on-chain wasm from source, byte-for-byte, in a controlled sandbox. Covers every environment axis found to matter for a reproducible alkane build.",
+  "type": "object",
+  "required": ["schema_version", "identity", "source", "toolchain", "environment", "registry"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0.0" },
+    "identity": { "$ref": "#/$defs/Identity" },
+    "source": { "$ref": "#/$defs/Source" },
+    "toolchain": { "$ref": "#/$defs/Toolchain" },
+    "c_toolchain": { "$ref": "#/$defs/CToolchain" },
+    "environment": { "$ref": "#/$defs/Environment" },
+    "registry": { "$ref": "#/$defs/Registry" },
+    "git_deps": { "type": "array", "items": { "$ref": "#/$defs/GitDep" } },
+    "resolved_deps": { "type": "array", "items": { "$ref": "#/$defs/ResolvedDep" } },
+    "cargo_lock_b64": { "type": "string", "description": "base64 of the exact Cargo.lock used (ground truth)." },
+    "result": { "$ref": "#/$defs/MatchResult" },
+    "notes": { "type": "array", "items": { "type": "string" } }
+  },
+  "$defs": {
+    "Identity": {
+      "type": "object",
+      "required": ["target_source", "target_sha256", "target_size"],
+      "additionalProperties": false,
+      "properties": {
+        "target_source": {
+          "type": "string",
+          "enum": ["onchain", "local-file"],
+          "description": "onchain = fetched by alkane id via jsonrpc getbytecode; local-file = a .wasm on disk (offline; also the path for not-yet-deployed alkanes)."
+        },
+        "alkane_id": { "type": "string", "pattern": "^[0-9]+:[0-9]+$" },
+        "network": { "type": "string", "examples": ["mainnet", "regtest"] },
+        "target_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "target_size": { "type": "integer", "minimum": 0 },
+        "cloned_from": { "type": "string", "description": "For a clone: the template id/URL whose bytecode getbytecode resolved to; verifying the template transitively verifies this alkane." }
+      }
+    },
+    "Source": {
+      "type": "object",
+      "required": ["kind", "is_workspace_member", "build_command"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "type": "string", "enum": ["git", "inline"] },
+        "repo": { "type": "string", "format": "uri" },
+        "commit": { "type": "string" },
+        "subdir": { "type": "string", "description": "Sub-directory (workspace-member path) the crate lives in." },
+        "package": { "type": "string", "description": "Cargo package name (-p <package>)." },
+        "is_workspace_member": { "type": "boolean" },
+        "inline_files": {
+          "type": "array",
+          "description": "Self-contained sources when kind=inline.",
+          "items": {
+            "type": "object",
+            "required": ["path", "content"],
+            "additionalProperties": false,
+            "properties": {
+              "path": { "type": "string" },
+              "content": { "type": "string", "description": "Raw UTF-8, or base64:<...> for binary." }
+            }
+          }
+        },
+        "features": { "type": "array", "items": { "type": "string" }, "description": "Cargo features (e.g. [\"mainnet\"])." },
+        "build_command": { "type": "string" },
+        "artifact": { "type": "string", "description": "Produced wasm filename." }
+      }
+    },
+    "Toolchain": {
+      "type": "object",
+      "required": ["rustc_version", "host_triple", "os_image", "target"],
+      "additionalProperties": false,
+      "properties": {
+        "rustc_version": { "type": "string", "examples": ["1.82.0", "1.86.0"] },
+        "rustc_commit": { "type": "string", "description": "rustc commit embedded in /rustc/<hash> paths." },
+        "host_triple": {
+          "type": "string",
+          "description": "Toolchain dir name whose std panic paths must match, e.g. 1.86.0-aarch64-apple-darwin. THE macOS TRICK: physically COPY (not symlink — rustc canonicalizes) the linux toolchain to $RUSTUP_HOME/toolchains/<host_triple> so embedded .../toolchains/<host_triple>/... paths match.",
+          "examples": ["1.86.0-aarch64-apple-darwin", "1.82.0-x86_64-unknown-linux-gnu"]
+        },
+        "os_image": { "type": "string", "examples": ["ubuntu-22.04", "debian-bookworm"] },
+        "target": { "type": "string", "const": "wasm32-unknown-unknown" },
+        "linker": { "type": "string" }
+      }
+    },
+    "CToolchain": {
+      "type": "object",
+      "required": ["vendor", "version", "source"],
+      "additionalProperties": false,
+      "description": "Present only when the crate links C (e.g. secp256k1-sys). vendor+version are recorded verbatim in the wasm producers section, so they must match exactly.",
+      "properties": {
+        "vendor": { "type": "string", "enum": ["Ubuntu", "Debian", "Homebrew", "unknown", ""], "description": "Empty = LLVM.org." },
+        "version": { "type": "string" },
+        "source": { "$ref": "#/$defs/ClangSource" },
+        "c_object_host_dependent": {
+          "type": "boolean",
+          "description": "The secp256k1 C-object host-dependence: a macOS-built and a Linux-built Homebrew clang of the SAME LLVM version emit a marginally different secp256k1 static footprint, shifting the memory base a few bytes. When true, a Linux reconstruction reaches `verified` (logic + producers exact) but not full `reproducible` without the origin host clang."
+        },
+        "note": { "type": "string" }
+      }
+    },
+    "ClangSource": {
+      "type": "object",
+      "required": ["method"],
+      "additionalProperties": false,
+      "properties": {
+        "method": { "type": "string", "enum": ["apt", "llvm-release", "homebrew-bottle", "unpinned"] },
+        "apt_package": { "type": "string", "examples": ["clang-14"] },
+        "homebrew_bottles": {
+          "type": "array",
+          "description": "GHCR bottle blob sha256s to assemble Homebrew clang on Linux (llvm+z3+libedit), then patchelf the interpreter/rpath.",
+          "items": {
+            "type": "object",
+            "required": ["formula", "blob_sha256"],
+            "additionalProperties": false,
+            "properties": {
+              "formula": { "type": "string", "examples": ["llvm", "z3", "libedit"] },
+              "blob_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+            }
+          }
+        }
+      }
+    },
+    "Environment": {
+      "type": "object",
+      "required": ["home"],
+      "additionalProperties": false,
+      "properties": {
+        "home": { "type": "string", "description": "Builder HOME reversed from embedded panic paths; registry/git-checkout/toolchain paths hang off this.", "examples": ["/Users/kevinyao", "/home/vitor"] },
+        "cargo_home": { "type": "string" },
+        "build_env": { "type": "array", "items": { "type": "string" }, "description": "Extra KEY=VALUE exports." },
+        "remap_path_prefix": { "type": "array", "items": { "type": "string" }, "description": "--remap-path-prefix rules; empty ⇒ paths are raw and HOME must be reconstructed." }
+      }
+    },
+    "Registry": {
+      "type": "object",
+      "required": ["mode"],
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["committed-lock", "time-machine"],
+          "description": "committed-lock = repo commits Cargo.lock; use real crates.io + --locked. time-machine = no committed lock; freeze the crates.io-index tree at the build date and serve it AS index.crates.io so the registry src-dir hash is canonical for that cargo version."
+        },
+        "archive_commit": { "type": "string", "description": "rust-lang/crates.io-index-archive commit frozen to the build date (time-machine)." },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "served_as": { "type": "string", "const": "index.crates.io" },
+        "registry_hash": { "type": "string", "description": "Canonical index.crates.io-<hash> src-dir cargo produces (cargo-version dependent).", "examples": ["index.crates.io-6f17d22bba15001f", "index.crates.io-1949cf8c6b5b557f"] }
+      }
+    },
+    "GitDep": {
+      "type": "object",
+      "required": ["url", "rev", "source_form"],
+      "additionalProperties": false,
+      "properties": {
+        "url": { "type": "string", "format": "uri" },
+        "rev": { "type": "string" },
+        "source_form": {
+          "type": "string",
+          "enum": ["bare", "rev"],
+          "description": "bare = resolve WITH the rev then rewrite the lockfile source-id to bare (?rev=…# → #) and build --locked, so -C metadata (hence monomorphization order) matches a bare-git-URL build. rev = leave the ?rev= source-id."
+        }
+      }
+    },
+    "ResolvedDep": {
+      "type": "object",
+      "required": ["name", "version"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "version": { "type": "string" },
+        "source": { "type": "string" },
+        "checksum": { "type": "string" }
+      }
+    },
+    "MatchResult": {
+      "type": "object",
+      "required": ["verdict", "built_sha256", "byte_exact", "normalized_match_pct", "sections"],
+      "additionalProperties": false,
+      "properties": {
+        "verdict": {
+          "type": "string",
+          "enum": ["reproducible", "verified", "code_match", "partial", "mismatch"],
+          "description": "reproducible = byte-exact sha256; verified = code+structure exact, only build-metadata/host-artifact bytes differ; code_match = code section identical; partial = ≥98% normalized; mismatch = below threshold."
+        },
+        "built_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "byte_exact": { "type": "boolean" },
+        "normalized_match_pct": { "type": "number", "minimum": 0, "maximum": 100 },
+        "sections": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["kind", "target_size", "candidate_size", "matched"],
+            "additionalProperties": false,
+            "properties": {
+              "kind": { "type": "string", "examples": ["code", "data", "custom:producers"] },
+              "target_size": { "type": "integer", "minimum": 0 },
+              "candidate_size": { "type": "integer", "minimum": 0 },
+              "matched": { "type": "boolean" }
+            }
+          }
+        },
+        "note": { "type": "string" }
+      }
+    }
+  }
+}
