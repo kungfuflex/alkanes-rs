@@ -2,9 +2,13 @@ name: Rust
 
 on:
   push:
-    branches: ["main"]
+    # `develop` is the branch that SHIPS — publish-npm.yml publishes the
+    # @alkanes/ts-sdk from it — and until now it was also the branch nothing
+    # tested. main, which this workflow did cover, publishes nothing. Testing
+    # only the branch that doesn't ship is the wrong way round.
+    branches: ["main", "develop"]
   pull_request:
-    branches: ["main"]
+    branches: ["main", "develop"]
 
 env:
   CARGO_TERM_COLOR: always
@@ -21,6 +25,25 @@ jobs:
             command: "cargo test -p protorune --features test-utils"
           - name: "Protorune Unit Tests"
             command: "cargo test -p protorune --target x86_64-unknown-linux-gnu"
+          # alkanes-cli-common was in NO matrix leg, despite being compiled
+          # INTO the published WASM (provider, coin selection, execute) — the
+          # crate every wallet consumer's transactions are built by. Nothing
+          # here ran a line of it: not its unit tests, not even a type-check of
+          # its test cfg. That is why a `TweakedKeypair::to_keypair` compile
+          # error sat on main (bitcoin 0.32 renamed it `to_inner`) with three
+          # green checks above it.
+          #
+          # `--lib` is deliberate, not laziness: the integration targets under
+          # crates/alkanes-cli-common/tests/ have bit-rotted on develop and do
+          # not compile (25 errors — `EnhancedExecuteParams` gained
+          # `alkanes_change_address` / `excluded_utxos` /
+          # `known_pending_tx_hexes` and `SendParams` gained `mempool_indexer` /
+          # `ordinals_strategy` without their callers being updated). Un-rotting
+          # them is separate work; `--lib` still compiles src/mock_provider.rs
+          # and runs the crate's unit tests, which is the coverage that matters
+          # for what ships.
+          - name: "Alkanes CLI Common Tests"
+            command: "cargo test -p alkanes-cli-common --lib --target x86_64-unknown-linux-gnu"
       fail-fast: false # Allows all tests to run even if one fails
 
     name: ${{ matrix.test-config.name }}
@@ -32,7 +55,30 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
+      # `--locked` is load-bearing, do not drop it.
+      #
+      # Without it `cargo install` re-resolves wasm-bindgen-cli's dependency
+      # tree from scratch against the registry as it exists TODAY, ignoring the
+      # Cargo.lock the crate publishes. Any transitive dep that raises its MSRV
+      # after release then breaks the build retroactively — this workflow was
+      # green on 2026-07-18 and failed on EVERY run from 2026-07-19 onward:
+      #
+      #   error: failed to compile `wasm-bindgen-cli v0.2.100`
+      #   Caused by:
+      #     rustc 1.86.0 is not supported by the following packages:
+      #       time@0.3.55 requires rustc 1.88.0
+      #       time-core@0.1.9 requires rustc 1.88.0
+      #
+      # rustc 1.86.0 comes from rust-toolchain.toml, which overrides the
+      # @stable action for every cargo invocation in this repo. wasm-bindgen-cli
+      # 0.2.100's own lockfile pins time 0.3.37 / time-core 0.1.2 (MSRV 1.67.1),
+      # so `--locked` both fixes this and makes the install reproducible.
+      #
+      # The 0.2.100 version pin is separately load-bearing: the wasm-bindgen
+      # runtime in this workspace must match the CLI that post-processes the
+      # module, so bumping the toolchain instead of locking the install is NOT
+      # an equivalent fix.
       - name: Install test runner
-        run: cargo install wasm-bindgen-cli --version 0.2.100
+        run: cargo install wasm-bindgen-cli --version 0.2.100 --locked
       - name: ${{ matrix.test-config.name }}
         run: ${{ matrix.test-config.command }}
