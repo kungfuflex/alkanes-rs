@@ -156,9 +156,60 @@ pub enum AlkanesError {
     JsError(String),
     NoAddressFound,
     UncompressedPublicKey,
+    /// Coin selection could not fund the transaction, with the numbers needed
+    /// to say by how much — see [`AlkanesError::bitcoin_shortfall`].
+    ///
+    /// Callers previously had to regex the message to learn anything
+    /// actionable, so the wallet UI could only say "not enough BTC" and leave
+    /// the user to guess a smaller amount. `needed` and `collected` are now
+    /// carried structurally.
+    ///
+    /// `Display` renders BYTE-IDENTICALLY to the string this replaced
+    /// (`Wallet("Insufficient funds: need N sats, have M")`) — existing
+    /// parsers in the CLI, mobile and web consumers keep working unchanged.
+    /// The `insufficient_funds_message_is_byte_identical` test pins that.
+    InsufficientBitcoin { needed: u64, collected: u64 },
     Other(String),
     Protobuf(String),
     CodegenError(String),  // For Huff bytecode generation errors
+}
+
+impl AlkanesError {
+    /// Sats the wallet was short, or `None` if this is not a funding failure.
+    ///
+    /// ## This number is directly actionable
+    ///
+    /// Reducing the spend amount by the shortfall makes the transaction fund —
+    /// exactly, not approximately. The amount a caller spends is an output
+    /// value (`B:amount:vN`), so dropping it by `S` drops
+    /// `total_bitcoin_needed` by `S` one-for-one, while the output COUNT is
+    /// unchanged so the vsize and therefore the fee stay put. The new
+    /// requirement is `needed - S == collected`.
+    ///
+    /// That holds for multi-transaction flows too: reducing what the user
+    /// spends does not move a CPFP package's carrier funding, which is sized
+    /// off the fee rate and the package vbytes rather than the amount.
+    ///
+    /// Spending to the exact maximum leaves zero change, which is only safe
+    /// because `build_psbt_and_fee` now drops a sub-dust change output into
+    /// the fee instead of emitting one the validator rejects. Before that fix
+    /// this number would have pointed callers straight at a different failure.
+    pub fn bitcoin_shortfall(&self) -> Option<u64> {
+        match self {
+            AlkanesError::InsufficientBitcoin { needed, collected } => {
+                Some(needed.saturating_sub(*collected))
+            }
+            _ => None,
+        }
+    }
+
+    /// The largest amount that WOULD have funded, given the amount attempted.
+    /// Saturates at zero — a wallet can be short by more than it was spending
+    /// (fees alone can exceed the balance).
+    pub fn max_spendable_given(&self, attempted_amount: u64) -> Option<u64> {
+        self.bitcoin_shortfall()
+            .map(|short| attempted_amount.saturating_sub(short))
+    }
 }
 
 impl core::fmt::Display for AlkanesError {
@@ -192,6 +243,13 @@ impl core::fmt::Display for AlkanesError {
             AlkanesError::JsError(msg) => write!(f, "JavaScript error: {msg}"),
             AlkanesError::NoAddressFound => write!(f, "No address found"),
             AlkanesError::UncompressedPublicKey => write!(f, "Uncompressed public key error"),
+            // Byte-identical to the `Wallet(...)` string this replaced —
+            // including the "Wallet error: " prefix Display added. Consumers
+            // regex this today; the structured fields are additive.
+            AlkanesError::InsufficientBitcoin { needed, collected } => write!(
+                f,
+                "Wallet error: Insufficient funds: need {needed} sats, have {collected}"
+            ),
             AlkanesError::Other(msg) => write!(f, "Other error: {msg}"),
             AlkanesError::Protobuf(msg) => write!(f, "Protobuf error: {msg}"),
             AlkanesError::CodegenError(msg) => write!(f, "Codegen error: {msg}"),
@@ -429,5 +487,79 @@ mod unit_tests {
         let json_err = serde_json::from_str::<serde_json::Value>("invalid json").unwrap_err();
         let deezel_err: AlkanesError = json_err.into();
         assert!(matches!(deezel_err, AlkanesError::Serialization(_)));
+    }
+}
+
+#[cfg(test)]
+mod insufficient_bitcoin_tests {
+    //! `AlkanesError::InsufficientBitcoin` — the shortfall the wallet UI needs.
+    //!
+    //! Before this variant, coin-selection failure was a formatted string, so
+    //! the only way a caller could act on it was to regex the message. In
+    //! practice nobody did the arithmetic, so surfaces guessed a fee reserve
+    //! instead — and a guess that is short by a few thousand sats is exactly
+    //! the 2026-08-06 report ("need 14933522 sats, have 14928129").
+    use super::AlkanesError;
+
+    #[test]
+    fn insufficient_funds_message_is_byte_identical() {
+        // The whole point of the additive design: every existing consumer
+        // (CLI output, mobile, the web app's humanizeError regex) keeps
+        // matching. If this assertion ever needs changing, downstream string
+        // parsers break — check them first.
+        let typed = AlkanesError::InsufficientBitcoin {
+            needed: 14_933_522,
+            collected: 14_928_129,
+        };
+        let legacy = AlkanesError::Wallet(
+            "Insufficient funds: need 14933522 sats, have 14928129".to_string(),
+        );
+        assert_eq!(typed.to_string(), legacy.to_string());
+        assert_eq!(
+            typed.to_string(),
+            "Wallet error: Insufficient funds: need 14933522 sats, have 14928129",
+        );
+    }
+
+    #[test]
+    fn shortfall_is_the_reported_gap() {
+        let err = AlkanesError::InsufficientBitcoin {
+            needed: 14_933_522,
+            collected: 14_928_129,
+        };
+        assert_eq!(err.bitcoin_shortfall(), Some(5_393));
+    }
+
+    #[test]
+    fn max_spendable_given_lands_exactly_on_the_fundable_amount() {
+        // The reported attempt: 0.14920313 BTC. Reducing it by the shortfall
+        // must leave a requirement equal to what the wallet actually holds —
+        // the amount is an output value, so it moves the requirement 1:1 while
+        // the output count (and therefore the fee) stays put.
+        let attempted = 14_920_313u64;
+        let needed = 14_933_522u64;
+        let collected = 14_928_129u64;
+        let err = AlkanesError::InsufficientBitcoin { needed, collected };
+
+        let max = err.max_spendable_given(attempted).unwrap();
+        assert_eq!(max, 14_914_920);
+
+        let new_requirement = needed - (attempted - max);
+        assert_eq!(new_requirement, collected, "must fund exactly, not approximately");
+    }
+
+    #[test]
+    fn max_spendable_saturates_when_fees_alone_exceed_the_balance() {
+        // Short by more than the user was even spending — a dust wallet at a
+        // high fee rate. Must not underflow into a huge u64.
+        let err = AlkanesError::InsufficientBitcoin { needed: 50_000, collected: 1_000 };
+        assert_eq!(err.bitcoin_shortfall(), Some(49_000));
+        assert_eq!(err.max_spendable_given(10_000), Some(0));
+    }
+
+    #[test]
+    fn other_errors_carry_no_shortfall() {
+        assert_eq!(AlkanesError::Wallet("nope".into()).bitcoin_shortfall(), None);
+        assert_eq!(AlkanesError::Other("nope".into()).max_spendable_given(1), None);
     }
 }
