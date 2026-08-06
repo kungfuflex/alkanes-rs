@@ -32,7 +32,30 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
+      # `--locked` is load-bearing, do not drop it.
+      #
+      # Without it `cargo install` re-resolves wasm-bindgen-cli's dependency
+      # tree from scratch against the registry as it exists TODAY, ignoring the
+      # Cargo.lock the crate publishes. Any transitive dep that raises its MSRV
+      # after release then breaks the build retroactively — this workflow was
+      # green on 2026-07-18 and failed on EVERY run from 2026-07-19 onward:
+      #
+      #   error: failed to compile `wasm-bindgen-cli v0.2.100`
+      #   Caused by:
+      #     rustc 1.86.0 is not supported by the following packages:
+      #       time@0.3.55 requires rustc 1.88.0
+      #       time-core@0.1.9 requires rustc 1.88.0
+      #
+      # rustc 1.86.0 comes from rust-toolchain.toml, which overrides the
+      # @stable action for every cargo invocation in this repo. wasm-bindgen-cli
+      # 0.2.100's own lockfile pins time 0.3.37 / time-core 0.1.2 (MSRV 1.67.1),
+      # so `--locked` both fixes this and makes the install reproducible.
+      #
+      # The 0.2.100 version pin is separately load-bearing: the wasm-bindgen
+      # runtime in this workspace must match the CLI that post-processes the
+      # module, so bumping the toolchain instead of locking the install is NOT
+      # an equivalent fix.
       - name: Install test runner
-        run: cargo install wasm-bindgen-cli --version 0.2.100
+        run: cargo install wasm-bindgen-cli --version 0.2.100 --locked
       - name: ${{ matrix.test-config.name }}
         run: ${{ matrix.test-config.command }}

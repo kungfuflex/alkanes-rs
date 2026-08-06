@@ -15,7 +15,51 @@ use metashrew_core::{
     println,
     stdio::{stdout, Write},
 };
+use alkanes_support::proto::alkanes as alkanes_proto;
+use prost::Message;
 use wasm_bindgen_test::wasm_bindgen_test;
+
+/// Decode the u128 an alkane returned, from the LAST exit context in a trace.
+///
+/// This used to be `trace_bytes[trace_bytes.len() - 16]` — a raw byte offset
+/// into the serialized protobuf, which only worked while `response.data` was
+/// the final thing on the wire. `AlkanesExitContext` gained `fuel_used`
+/// (field 3, additive) on 2026-07-28; that field now encodes AFTER the
+/// response, so `len - 16` stopped pointing at the return value and this test
+/// began failing. It went unnoticed because CI could not run at all between
+/// 2026-07-19 and 2026-08-06 (`cargo install wasm-bindgen-cli` was broken by
+/// an MSRV bump in a transitive dep).
+///
+/// Decoding the message instead of counting backwards from the end makes the
+/// assertion immune to any further additive proto field — which is the whole
+/// point of the fields being additive.
+fn returned_u128(trace_bytes: &[u8]) -> Result<u128> {
+    let trace = alkanes_proto::AlkanesTrace::decode(trace_bytes)
+        .map_err(|e| anyhow!("failed to decode AlkanesTrace: {e}"))?;
+
+    let data = trace
+        .events
+        .iter()
+        .rev()
+        .find_map(|event| match &event.event {
+            Some(alkanes_proto::alkanes_trace_event::Event::ExitContext(exit)) => {
+                exit.response.as_ref().map(|r| r.data.clone())
+            }
+            _ => None,
+        })
+        .ok_or(anyhow!("trace contains no exit context with a response"))?;
+
+    if data.len() < 16 {
+        return Err(anyhow!(
+            "expected at least a 16-byte u128 return value, got {} bytes",
+            data.len()
+        ));
+    }
+    // Alkanes returns u128 little-endian; take the leading value.
+    let mut le = [0u8; 16];
+    le.copy_from_slice(&data[..16]);
+    Ok(u128::from_le_bytes(le))
+}
 
 #[wasm_bindgen_test]
 fn test_vec_inputs() -> Result<()> {
@@ -105,11 +149,8 @@ fn test_vec_inputs() -> Result<()> {
     let trace_data_process_numbers = view::trace(&outpoint_process_numbers)?;
     println!("process_numbers trace: {:?}", trace_data_process_numbers);
 
-    // Verify the process_numbers result contains the expected values
-    assert_eq!(
-        trace_data_process_numbers[trace_data_process_numbers.len() - 16],
-        100,
-    );
+    // process_numbers sums the vector: 10 + 20 + 30 + 40 = 100.
+    assert_eq!(returned_u128(&trace_data_process_numbers)?, 100);
 
     // Get the trace data from the transaction for get_strings
     let outpoint_get_strings = OutPoint {
@@ -151,10 +192,7 @@ fn test_vec_inputs() -> Result<()> {
     );
 
     // The result should be the total number of elements: 3 + 2 = 5
-    assert_eq!(
-        trace_data_process_nested_vec[trace_data_process_nested_vec.len() - 16],
-        5,
-    );
+    assert_eq!(returned_u128(&trace_data_process_nested_vec)?, 5);
 
     Ok(())
 }
