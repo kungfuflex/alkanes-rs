@@ -470,7 +470,10 @@ impl WebProvider {
                                     block: e.id.block as u64,
                                     tx: e.id.tx as u64,
                                 },
-                                amount: e.amount as u64,
+                                // e.amount is u128 on the wire and u128 in
+                                // ProtostoneEdict; the `as u64` here wrapped any
+                                // edict above 2^64-1 sub-units.
+                                amount: e.amount,
                                 target: t::OutputTarget::Output(e.output as u32),
                             }).collect(),
                             bitcoin_transfer: None,

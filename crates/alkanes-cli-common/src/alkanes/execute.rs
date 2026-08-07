@@ -436,9 +436,9 @@ pub(crate) struct UtxoSelectionResult {
     /// PSBT construction can avoid getrawtransaction fallback fetches.
     pub(crate) txouts: alloc::collections::BTreeMap<OutPoint, TxOut>,
     /// Actual alkanes balances found in the selected UTXOs (aggregate)
-    pub(crate) alkanes_found: alloc::collections::BTreeMap<AlkaneId, u64>,
+    pub(crate) alkanes_found: alloc::collections::BTreeMap<AlkaneId, u128>,
     /// Per-UTXO alkane balances (for alkane-aware ordinals splitting)
-    pub(crate) per_utxo_alkanes: alloc::collections::BTreeMap<OutPoint, Vec<(AlkaneId, u64)>>,
+    pub(crate) per_utxo_alkanes: alloc::collections::BTreeMap<OutPoint, Vec<(AlkaneId, u128)>>,
 }
 
 
@@ -552,7 +552,7 @@ fn build_prefetched_alkanes_map(
 /// — same conservative posture as `build_prefetched_alkanes_map`'s callers.
 fn prefetched_covers_alkanes_needed(
     prefetched_utxos: &[PrefetchedUtxo],
-    alkanes_needed: &alloc::collections::BTreeMap<(u64, u64), u64>,
+    alkanes_needed: &alloc::collections::BTreeMap<(u64, u64), u128>,
 ) -> bool {
     if alkanes_needed.is_empty() {
         return true;
@@ -1591,7 +1591,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                         }
 
                         // Collect alkane data for inscribed UTXOs being split
-                        let split_utxo_alkanes: alloc::collections::BTreeMap<OutPoint, Vec<(AlkaneId, u64)>> = plans.iter()
+                        let split_utxo_alkanes: alloc::collections::BTreeMap<OutPoint, Vec<(AlkaneId, u128)>> = plans.iter()
                             .filter_map(|plan| {
                                 utxo_selection.per_utxo_alkanes.get(&plan.outpoint)
                                     .map(|alkanes| (plan.outpoint, alkanes.clone()))
@@ -2350,9 +2350,9 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         }
 
         let mut bitcoin_collected = 0u64;
-        let mut alkanes_collected: alloc::collections::BTreeMap<(u64, u64), u64> = alloc::collections::BTreeMap::new();
-        let mut alkanes_found: alloc::collections::BTreeMap<AlkaneId, u64> = alloc::collections::BTreeMap::new();
-        let mut per_utxo_alkanes: alloc::collections::BTreeMap<OutPoint, Vec<(AlkaneId, u64)>> = alloc::collections::BTreeMap::new();
+        let mut alkanes_collected: alloc::collections::BTreeMap<(u64, u64), u128> = alloc::collections::BTreeMap::new();
+        let mut alkanes_found: alloc::collections::BTreeMap<AlkaneId, u128> = alloc::collections::BTreeMap::new();
+        let mut per_utxo_alkanes: alloc::collections::BTreeMap<OutPoint, Vec<(AlkaneId, u128)>> = alloc::collections::BTreeMap::new();
 
         // If we need alkanes, query protorunes_by_address directly to find UTXOs with balances
         // This bypasses the lua batch script which has issues with individual outpoint queries
@@ -2434,7 +2434,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                 let requirements_covered =
                     |utxo_balances: &alloc::collections::BTreeMap<String, serde_json::Value>|
                      -> bool {
-                        let mut totals: alloc::collections::BTreeMap<(u64, u64), u64> =
+                        let mut totals: alloc::collections::BTreeMap<(u64, u64), u128> =
                             alloc::collections::BTreeMap::new();
                         for utxo_data in utxo_balances.values() {
                             let Some(arr) = utxo_data.get("balances").and_then(|v| v.as_array()) else {
@@ -2447,9 +2447,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                                 let tx = b.get("tx").and_then(|v| {
                                     v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok()))
                                 });
-                                let amount = b.get("amount").and_then(|v| {
-                                    v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok()))
-                                });
+                                let amount = b.get("amount").and_then(json_u128);
                                 if let (Some(block), Some(tx), Some(amount)) = (block, tx, amount) {
                                     let e = totals.entry((block, tx)).or_insert(0);
                                     *e = e.saturating_add(amount);
@@ -2666,11 +2664,16 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                                                 let parts: Vec<&str> = alkane_str.split(':').collect();
                                                 if parts.len() == 2 {
                                                     if let (Ok(block), Ok(tx)) = (parts[0].parse::<u64>(), parts[1].parse::<u64>()) {
-                                                        let amount = amount_str.parse::<u64>().unwrap_or(0);
+                                                        // u128, and re-emitted as a STRING: a JSON
+                                                        // number cannot carry u128, and the reader
+                                                        // above already accepts the string form.
+                                                        // `unwrap_or(0)` here is what silently turned a
+                                                        // real balance into "have 0".
+                                                        let amount = amount_str.parse::<u128>().unwrap_or(0);
                                                         balances_array.push(serde_json::json!({
                                                             "block": block,
                                                             "tx": tx,
-                                                            "amount": amount
+                                                            "amount": amount.to_string()
                                                         }));
                                                     }
                                                 }
@@ -2842,10 +2845,8 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                             let tx = b.get("tx").and_then(|v| {
                                 v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok()))
                             })?;
-                            // Handle amount as either number or string
-                            let amount = b.get("amount").and_then(|v| {
-                                v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok()))
-                            })?;
+                            // Handle amount as either number or string.
+                            let amount = b.get("amount").and_then(json_u128)?;
                             Some(((block, tx), amount))
                         }).collect::<Vec<_>>()
                     }).unwrap_or_default();
@@ -3164,7 +3165,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
     }
 
     /// Calculate alkanes needed from input requirements
-    fn calculate_alkanes_needed(&self, requirements: &[InputRequirement]) -> alloc::collections::BTreeMap<AlkaneId, u64> {
+    fn calculate_alkanes_needed(&self, requirements: &[InputRequirement]) -> alloc::collections::BTreeMap<AlkaneId, u128> {
         let mut needed = alloc::collections::BTreeMap::new();
         
         for requirement in requirements {
@@ -3185,9 +3186,9 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
     /// Calculate excess alkanes (found - needed)
     fn calculate_excess(
         &self,
-        alkanes_found: &alloc::collections::BTreeMap<AlkaneId, u64>,
-        alkanes_needed: &alloc::collections::BTreeMap<AlkaneId, u64>,
-    ) -> alloc::collections::BTreeMap<AlkaneId, u64> {
+        alkanes_found: &alloc::collections::BTreeMap<AlkaneId, u128>,
+        alkanes_needed: &alloc::collections::BTreeMap<AlkaneId, u128>,
+    ) -> alloc::collections::BTreeMap<AlkaneId, u128> {
         let mut excess = alloc::collections::BTreeMap::new();
         
         for (alkane_id, found_amount) in alkanes_found {
@@ -3212,8 +3213,8 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
     /// Generate automatic protostone for alkanes change
     async fn generate_alkanes_change_protostone(
         &mut self,
-        alkanes_needed: &alloc::collections::BTreeMap<AlkaneId, u64>,
-        alkanes_found: &alloc::collections::BTreeMap<AlkaneId, u64>,
+        alkanes_needed: &alloc::collections::BTreeMap<AlkaneId, u128>,
+        alkanes_found: &alloc::collections::BTreeMap<AlkaneId, u128>,
         alkanes_change_output_index: u32,
     ) -> Result<ProtostoneSpec> {
         log::info!("Generating automatic split protostone for {} needed alkane types, {} found alkane types",
@@ -3727,8 +3728,8 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         extra_funding_utxos: &[(OutPoint, TxOut)],
         fee_rate: f32,
         params: &EnhancedExecuteParams,
-        split_utxo_alkanes: &alloc::collections::BTreeMap<OutPoint, Vec<(AlkaneId, u64)>>,
-    ) -> Result<(Psbt, u64, Vec<OutPoint>, Vec<(OutPoint, Vec<(AlkaneId, u64)>)>, Vec<OutPoint>)> {
+        split_utxo_alkanes: &alloc::collections::BTreeMap<OutPoint, Vec<(AlkaneId, u128)>>,
+    ) -> Result<(Psbt, u64, Vec<OutPoint>, Vec<(OutPoint, Vec<(AlkaneId, u128)>)>, Vec<OutPoint>)> {
         use bitcoin::transaction::Version;
 
         // Get safe address for split outputs
@@ -3809,7 +3810,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         // clean alkane output and a protostone OP_RETURN to route alkanes there.
         // This prevents alkanes from being lost when their UTXO is split for inscriptions.
         let has_alkanes = !split_utxo_alkanes.is_empty();
-        let mut alkane_outpoints_with_balances: Vec<(OutPoint, Vec<(AlkaneId, u64)>)> = Vec::new();
+        let mut alkane_outpoints_with_balances: Vec<(OutPoint, Vec<(AlkaneId, u128)>)> = Vec::new();
 
         if has_alkanes {
             // Add a clean alkane output at the end (before OP_RETURN)
@@ -3820,7 +3821,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             });
 
             // Aggregate all alkanes from inscribed UTXOs
-            let mut aggregated_alkanes: alloc::collections::BTreeMap<AlkaneId, u64> = alloc::collections::BTreeMap::new();
+            let mut aggregated_alkanes: alloc::collections::BTreeMap<AlkaneId, u128> = alloc::collections::BTreeMap::new();
             for (_outpoint, alkanes) in split_utxo_alkanes {
                 for (alkane_id, amount) in alkanes {
                     *aggregated_alkanes.entry(alkane_id.clone()).or_insert(0) += amount;
@@ -6161,7 +6162,7 @@ mod tests {
             Some(vec![mk_alkane(2, 0, "5000")]),
         )];
         let mut needed = alloc::collections::BTreeMap::new();
-        needed.insert((2u64, 0u64), 5000u64);
+        needed.insert((2u64, 0u64), 5000u128);
         assert!(prefetched_covers_alkanes_needed(&prefetched, &needed));
     }
 
@@ -6174,7 +6175,7 @@ mod tests {
             mk_prefetched(&format!("{}:1", TXID_B), Some(vec![mk_alkane(2, 0, "700")])),
         ];
         let mut needed = alloc::collections::BTreeMap::new();
-        needed.insert((2u64, 0u64), 1000u64);
+        needed.insert((2u64, 0u64), 1000u128);
         assert!(prefetched_covers_alkanes_needed(&prefetched, &needed));
     }
 
@@ -6187,7 +6188,7 @@ mod tests {
             Some(vec![mk_alkane(2, 0, "999")]),
         )];
         let mut needed = alloc::collections::BTreeMap::new();
-        needed.insert((2u64, 0u64), 1000u64);
+        needed.insert((2u64, 0u64), 1000u128);
         assert!(!prefetched_covers_alkanes_needed(&prefetched, &needed));
     }
 
@@ -6200,7 +6201,7 @@ mod tests {
             Some(vec![mk_alkane(2, 0, "9999")]),
         )];
         let mut needed = alloc::collections::BTreeMap::new();
-        needed.insert((2u64, 1u64), 1u64);
+        needed.insert((2u64, 1u64), 1u128);
         assert!(!prefetched_covers_alkanes_needed(&prefetched, &needed));
     }
 
@@ -6213,8 +6214,8 @@ mod tests {
             mk_prefetched(&format!("{}:0", TXID_B), Some(vec![mk_alkane(2, 1, "10")])),
         ];
         let mut needed = alloc::collections::BTreeMap::new();
-        needed.insert((2u64, 0u64), 4000u64);
-        needed.insert((2u64, 1u64), 100u64);
+        needed.insert((2u64, 0u64), 4000u128);
+        needed.insert((2u64, 1u64), 100u128);
         assert!(!prefetched_covers_alkanes_needed(&prefetched, &needed));
     }
 
@@ -6225,7 +6226,7 @@ mod tests {
         // fall back to sync rather than silently treating cache as authoritative.
         let prefetched = vec![mk_prefetched(&format!("{}:0", TXID_A_COV), None)];
         let mut needed = alloc::collections::BTreeMap::new();
-        needed.insert((2u64, 0u64), 1u64);
+        needed.insert((2u64, 0u64), 1u128);
         assert!(!prefetched_covers_alkanes_needed(&prefetched, &needed));
     }
 
@@ -6235,7 +6236,7 @@ mod tests {
         // Doesn't cover any DIESEL requirement, so coverage check returns false.
         let prefetched = vec![mk_prefetched(&format!("{}:0", TXID_A_COV), Some(vec![]))];
         let mut needed = alloc::collections::BTreeMap::new();
-        needed.insert((2u64, 0u64), 1u64);
+        needed.insert((2u64, 0u64), 1u128);
         assert!(!prefetched_covers_alkanes_needed(&prefetched, &needed));
     }
 
@@ -6249,7 +6250,7 @@ mod tests {
             Some(vec![mk_alkane(2, 0, "not-a-number")]),
         )];
         let mut needed = alloc::collections::BTreeMap::new();
-        needed.insert((2u64, 0u64), 1u64);
+        needed.insert((2u64, 0u64), 1u128);
         assert!(!prefetched_covers_alkanes_needed(&prefetched, &needed));
     }
 
@@ -6269,9 +6270,9 @@ mod tests {
             ),
         ];
         let mut needed = alloc::collections::BTreeMap::new();
-        needed.insert((2u64, 0u64), 100u64);
-        needed.insert((32u64, 0u64), 200u64);
-        needed.insert((2u64, 4u64), 50u64);
+        needed.insert((2u64, 0u64), 100u128);
+        needed.insert((32u64, 0u64), 200u128);
+        needed.insert((2u64, 4u64), 50u128);
         assert!(prefetched_covers_alkanes_needed(&prefetched, &needed));
     }
 

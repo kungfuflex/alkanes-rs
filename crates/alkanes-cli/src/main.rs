@@ -3604,7 +3604,9 @@ async fn execute_alkanes_command<T: System>(system: &mut T, command: Alkanes, fr
                 vec![InputRequirement::Alkanes {
                     block: input_token.block,
                     tx: input_token.tx,
-                    amount: input as u64,
+                    // No `as u64`: alkane amounts are u128. The Bitcoin arm above
+                    // keeps its cast because sats genuinely fit in u64.
+                    amount: input,
                 }]
             };
             
