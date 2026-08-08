@@ -29,11 +29,52 @@ env:
   WASM_PACK_VERSION: '0.13.1'
 
 jobs:
+  # Publishing gate. alkanes-cli-common is compiled into the web-sys WASM that
+  # ships in this package, so a broken crate must not reach the registry: every
+  # published tag is immutable (#286) and cannot be taken back, only superseded.
+  test:
+    name: Test (publish gate)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          targets: wasm32-unknown-unknown
+      - name: Cache Rust dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-gate-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-gate-
+      # --lib only, deliberately: the integration targets under
+      # crates/alkanes-cli-common/tests/ have bit-rotted (struct fields added
+      # without updating callers, `alkanes::protorunes` items moved) and do not
+      # compile; half that directory is already parked as *.rs.bak. Un-rotting
+      # them is separate work. --lib still compiles src/mock_provider.rs and
+      # runs the crate's unit tests, which is what this gate needs.
+      - name: Test alkanes-cli-common
+        run: cargo test -p alkanes-cli-common --lib --target x86_64-unknown-linux-gnu
+
   publish-npm:
+    needs: test
     # `push: develop` is now the only trigger, so the old
     # `github.event_name == 'push' || (pull_request && merged)` guard is dead
     # weight — its pull_request half can no longer be reached. Dropped rather
     # than left to imply a trigger that isn't there.
+    #
+    # `needs: test` is kept from the gate branch and is the point of it: the SDK
+    # was publishing even when tests failed. Observed live — b61bced published
+    # 0.1.6-b61bced.179 while the Rust job on that same commit was red.
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -215,9 +256,12 @@ jobs:
           name: pkg-manifest-${{ steps.version.outputs.version }}
           path: pkg-manifests/*.json
 
+      # NOT continue-on-error. The dist-tag IS the thing consumers resolve; a
+      # silent failure here leaves `latest-dev` pointing at an older build while
+      # the run still reports success, which is exactly how the tag drifted away
+      # from the newest publish unnoticed. If tagging fails, the run must go red.
       - name: Tag as latest-dev
         working-directory: ts-sdk
-        continue-on-error: true
         run: |
           echo "Tagging as latest-dev..."
           npm dist-tag add @alkanes/ts-sdk@${{ steps.version.outputs.version }} latest-dev \
