@@ -1180,3 +1180,105 @@ mod burn_cmd_tests {
         assert!(run(&cmd, &*post_ok(), &e()).is_err());
     }
 }
+
+/// frUSD `BurnAndBridge` — opcode 5.
+pub const OP_BURN_AND_BRIDGE: u128 = 5;
+
+/// Split a 20-byte EVM address into the `(hi, lo)` pair `BurnAndBridge` expects.
+///
+/// ⚠️ The split is **12 bytes / 8 bytes**, not 16/8 and not 16/4. Verified
+/// against `alkanes-integ-tests/tests/frusd_burn_bridge.rs`, which packs
+/// `evm_addr[..24]` and `evm_addr[24..40]` as HEX character ranges — i.e. 12
+/// then 8 bytes.
+///
+/// Getting this wrong yields a well-formed cellpack that names a DIFFERENT,
+/// real-looking address. An inverted hi/lo split is a documented past incident
+/// in this system, not a hypothetical.
+pub fn split_evm_address(addr: [u8; 20]) -> (u128, u128) {
+    let mut hi = [0u8; 16];
+    hi[4..].copy_from_slice(&addr[..12]); // 12 bytes, right-aligned in the u128
+    let mut lo = [0u8; 16];
+    lo[8..].copy_from_slice(&addr[12..]); // remaining 8 bytes
+    (u128::from_be_bytes(hi), u128::from_be_bytes(lo))
+}
+
+/// The protostone + inputs for a frUSD `BurnAndBridge`.
+///
+/// ⚠️ Attaching `burn_data` is NOT yet proven. The reference test packs only
+/// `[5, hi, lo]` — a plain transfer with no payload — so the mechanism by which
+/// the Call form's bytes ride along is unverified here. `burn_data` is
+/// therefore accepted and returned to the caller for inspection rather than
+/// silently appended: appending it as trailing u128 words WOULD produce a
+/// well-formed cellpack, and if that is not the real encoding the coordinator
+/// reads no payload and pays out plainly — the exact silent degradation this
+/// module exists to prevent.
+pub fn build_burn(
+    amount: u128,
+    eth_address: [u8; 20],
+) -> (Vec<InputRequirement>, Vec<ProtostoneSpec>) {
+    let (hi, lo) = split_evm_address(eth_address);
+    let inputs = vec![InputRequirement::Alkanes {
+        block: 4,
+        tx: 1776, // frUSD
+        amount,
+    }];
+    let protostones = vec![ProtostoneSpec {
+        cellpack: Some(Cellpack {
+            target: AlkaneId { block: 4, tx: 1776 },
+            inputs: vec![OP_BURN_AND_BRIDGE, hi, lo],
+        }),
+        edicts: Vec::new(),
+        bitcoin_transfer: None,
+        pointer: None,
+        refund: None,
+    }];
+    (inputs, protostones)
+}
+
+#[cfg(test)]
+mod burn_packing_tests {
+    use super::*;
+
+    /// Pinned against the reference test's own address and split.
+    ///
+    /// `frusd_burn_bridge.rs` uses 0xf39Fd6e5…92266 and computes
+    /// hi = from_str_radix(addr[..24]) and lo = from_str_radix(addr[24..40]).
+    #[test]
+    fn hi_lo_split_matches_the_reference_test() {
+        let addr = hex::decode("f39fd6e51aad88f6f4ce6ab8827279cfffb92266").unwrap();
+        let mut a = [0u8; 20];
+        a.copy_from_slice(&addr);
+        let (hi, lo) = split_evm_address(a);
+        let want_hi = u128::from_str_radix("f39fd6e51aad88f6f4ce6ab8", 16).unwrap();
+        let want_lo = u128::from_str_radix("827279cfffb92266", 16).unwrap();
+        assert_eq!(hi, want_hi, "hi must be the FIRST 12 bytes");
+        assert_eq!(lo, want_lo, "lo must be the LAST 8 bytes");
+    }
+
+    /// The split must be reversible — a round trip that loses bytes is a
+    /// silently wrong recipient.
+    #[test]
+    fn the_split_loses_nothing() {
+        let a: [u8; 20] = core::array::from_fn(|i| (i as u8).wrapping_mul(7).wrapping_add(3));
+        let (hi, lo) = split_evm_address(a);
+        let mut back = [0u8; 20];
+        back[..12].copy_from_slice(&hi.to_be_bytes()[4..]);
+        back[12..].copy_from_slice(&lo.to_be_bytes()[8..]);
+        assert_eq!(back, a);
+    }
+
+    #[test]
+    fn burn_spends_frusd_and_targets_frusd() {
+        let (inputs, stones) = build_burn(100_000_000, [0x11; 20]);
+        match inputs[0] {
+            InputRequirement::Alkanes { block, tx, amount } => {
+                assert_eq!((block, tx), (4, 1776), "frUSD is the token being burned");
+                assert_eq!(amount, 100_000_000);
+            }
+            _ => panic!("expected an alkanes input"),
+        }
+        let cp = stones[0].cellpack.as_ref().unwrap();
+        assert_eq!(cp.inputs[0], OP_BURN_AND_BRIDGE);
+        assert_eq!(cp.inputs.len(), 3, "opcode + hi + lo");
+    }
+}
