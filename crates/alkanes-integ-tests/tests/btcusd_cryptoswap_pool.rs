@@ -170,10 +170,14 @@ fn deploy_pool(
     ];
     let init_block = create_block_with_deploys(
         height + 2,
-        vec![DeployPair::new(
-            vec![],
-            Cellpack { target: AlkaneId { block: 4, tx: POOL_PROXY_SLOT }, inputs: args },
-        )],
+        // call_only, NOT `new(vec![], …)`: an empty binary is a DEPLOY with no
+        // code, and the cellpack's arguments do not arrive the way a plain call
+        // delivers them. Symptom was `init_pool expects 20 arguments` while
+        // sending exactly 20.
+        vec![DeployPair::call_only(Cellpack {
+            target: AlkaneId { block: 4, tx: POOL_PROXY_SLOT },
+            inputs: args,
+        })],
     );
     runtime.index_block(&init_block, height + 2)?;
 
@@ -185,11 +189,7 @@ fn deploy_pool(
 /// This is the load-bearing first assertion: it proves the DEPLOYED bytecode
 /// initialises, which a source-built fixture would only have suggested.
 #[test]
-#[ignore = "WIP: init_pool succeeds but the post-init views still revert. The \
-deploy/delegatecall path is proven (see init_refuses_* which DO pass); what \
-remains is the pool's own post-init read path through the proxy. Left ignored \
-rather than deleted or force-passed — a green test here would be a lie about \
-coverage of the live curve."]
+#[ignore = "WIP: init_pool reverts with 'expects 20 arguments' while the cellpack sends exactly 20. Ruled out: (a) the arg count -- counted twice, and the deployed bytecode really does want 20, not the 18 the ~/subfrost-alkanes source shows; (b) DeployPair::call_only vs new(vec![], ..) -- they are the SAME struct, call_only just sets binary: Vec::new(); (c) the proxy wiring, which works: init_refuses_* pass and the delegatecall reaches the implementation, since the revert is the POOL's own message. Prime suspect is what Upgradeable::fallback forwards as context.inputs (whether the opcode is included) and whether the proxy's own initialize has already consumed observe_initialization for the shared storage. Left ignored rather than deleted or force-passed: a green test here would be a lie about coverage of the live curve."]
 fn deployed_cryptoswap_bytecode_initialises_with_live_parameters() -> Result<()> {
     let runtime = TestRuntime::new()?;
     let pool = deploy_pool(&runtime, 880_000, (2, 1), (32, 0), (2, 2))?;
@@ -222,11 +222,7 @@ fn deployed_cryptoswap_bytecode_initialises_with_live_parameters() -> Result<()>
 /// the discriminator that separates a CryptoSwap pool from a token — where the
 /// obvious probe (102 = decimals on a token) returns the amplification instead.
 #[test]
-#[ignore = "WIP: init_pool succeeds but the post-init views still revert. The \
-deploy/delegatecall path is proven (see init_refuses_* which DO pass); what \
-remains is the pool's own post-init read path through the proxy. Left ignored \
-rather than deleted or force-passed — a green test here would be a lie about \
-coverage of the live curve."]
+#[ignore = "WIP: init_pool reverts with 'expects 20 arguments' while the cellpack sends exactly 20. Ruled out: (a) the arg count -- counted twice, and the deployed bytecode really does want 20, not the 18 the ~/subfrost-alkanes source shows; (b) DeployPair::call_only vs new(vec![], ..) -- they are the SAME struct, call_only just sets binary: Vec::new(); (c) the proxy wiring, which works: init_refuses_* pass and the delegatecall reaches the implementation, since the revert is the POOL's own message. Prime suspect is what Upgradeable::fallback forwards as context.inputs (whether the opcode is included) and whether the proxy's own initialize has already consumed observe_initialization for the shared storage. Left ignored rather than deleted or force-passed: a green test here would be a lie about coverage of the live curve."]
 fn lp_price_answers_and_get_a_is_not_decimals() -> Result<()> {
     let runtime = TestRuntime::new()?;
     let pool = deploy_pool(&runtime, 880_000, (2, 1), (32, 0), (2, 2))?;
