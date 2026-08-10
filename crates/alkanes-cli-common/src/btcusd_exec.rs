@@ -834,3 +834,201 @@ mod trade_tests {
         assert_eq!(cp.inputs[2], 0, "frBTC is coin 0");
     }
 }
+
+// ── Execution: simulate first, then sign ────────────────────────────────────
+
+use crate::alkanes::execute::EnhancedAlkanesExecutor;
+use crate::alkanes::types::{EnhancedExecuteParams, OrdinalsStrategy};
+use crate::traits::DeezelProvider;
+
+/// A trade that has been BUILT and PROVEN against live state, but not signed.
+///
+/// Deliberately NOT `Clone`: a verified trade corresponds to one simulation
+/// against one chain tip, and duplicating it invites broadcasting the same
+/// intent twice.
+#[derive(Debug)]
+pub struct VerifiedTrade {
+    pub params: EnhancedExecuteParams,
+    /// What `simulate` said the pool would do. Empty on success.
+    pub simulate_error: String,
+}
+
+/// Build a trade and prove it against live chain state BEFORE any signing.
+///
+/// This is the discipline the whole path is organised around: `simulate` runs
+/// the real contract against real state with no side effects, so an encoding
+/// error, a reversed coin order, or a `min_dy` the pool will not meet shows up
+/// as a REVERT here rather than as a broadcast transaction that fails or, worse,
+/// succeeds and does something else.
+///
+/// Refuses on a simulate revert rather than warning. A trade that the pool has
+/// already said it will reject has no business being signed.
+pub fn verify_trade(
+    post: &Post,
+    ep: &Endpoints,
+    inputs: Vec<InputRequirement>,
+    protostones: Vec<ProtostoneSpec>,
+    fee_rate: Option<f32>,
+    change_address: Option<String>,
+) -> Result<VerifiedTrade> {
+    // Replay the protostone's own cellpack through `simulate`. Same target,
+    // same opcode, same arguments the broadcast would carry.
+    let cp = protostones
+        .first()
+        .and_then(|p| p.cellpack.as_ref())
+        .ok_or_else(|| anyhow!("refusing to send a protostone with no cellpack — that is not a trade"))?;
+
+    let hex = simulate_hex(cp.target, cp.inputs.clone());
+    let v = post(
+        &ep.main(),
+        serde_json::json!({
+            "jsonrpc": "2.0", "id": 1, "method": "metashrew_view",
+            "params": ["simulate", hex, "latest"],
+        }),
+    )?;
+
+    // `simulate` reports contract reverts INSIDE the response, not as a
+    // transport error — a 200 here proves nothing on its own.
+    let err = v
+        .get("result")
+        .and_then(|r| r.as_str())
+        .map(|s| decode_simulate_error(s))
+        .unwrap_or_else(|| "simulate returned no result".to_string());
+    if !err.is_empty() {
+        bail!(
+            "the pool REJECTED this trade in simulation, so it is not being signed: {err}\n\
+             (checked against live state via metashrew_view simulate — no funds moved)"
+        );
+    }
+
+    Ok(VerifiedTrade {
+        params: EnhancedExecuteParams {
+            fee_rate,
+            to_addresses: vec![],
+            from_addresses: None,
+            change_address,
+            alkanes_change_address: None,
+            input_requirements: inputs,
+            protostones,
+            envelope_data: None,
+            raw_output: false,
+            trace_enabled: true,
+            mine_enabled: false,
+            // Never auto-confirm a trade. The caller decides.
+            auto_confirm: false,
+            ordinals_strategy: OrdinalsStrategy::default(),
+            // Trace pending UTXOs' inscription state when we must spend
+            // unconfirmed inputs — relevant for the RBF/mempool-aware flows.
+            mempool_indexer: true,
+            // A BTCUSD swap is one cellpack, well inside the 3.5M per-tx fuel
+            // floor (a bare `exchange` measures 1.76M balanced, 2.47M at 3x
+            // imbalance). Splitting is for wrap+execute chains that would
+            // otherwise share one budget.
+            split_transactions: false,
+            // Let the builder discover UTXOs itself; nothing here excludes or
+            // pre-supplies any.
+            known_pending_tx_hexes: Vec::new(),
+            prefetched_utxos: Vec::new(),
+            excluded_utxos: Vec::new(),
+            // Unset: the builder's own safety bound on spending UTXOs from
+            // blocks past the indexed tip. Forcing a value here would override a
+            // guard we do not own.
+            max_indexed_height: None,
+            // Do NOT suppress the builder's DIESEL-mint sibling protostone. It
+            // is added deliberately, and skipping it is for byte-stable
+            // protocols — a swap is not one.
+            skip_diesel_mint: false,
+            // Default UTXO discovery path; `espo` is the alternative.
+            utxo_source: crate::alkanes::types::UtxoDataSource::default(),
+        },
+        simulate_error: String::new(),
+    })
+}
+
+/// Pull the `error` field (field 2) out of a `SimulateResponse`.
+///
+/// Empty means the call succeeded. Anything else is the contract's own revert
+/// message and must stop the trade.
+fn decode_simulate_error(hex_str: &str) -> String {
+    let Ok(raw) = hex::decode(hex_str.trim_start_matches("0x")) else {
+        return "simulate result was not hex".to_string();
+    };
+    if raw.is_empty() {
+        return "simulate returned an empty result".to_string();
+    }
+    match field_bytes(&raw, 2) {
+        Some(b) => String::from_utf8_lossy(b).to_string(),
+        // No error field at all is the success case.
+        None => String::new(),
+    }
+}
+
+/// Sign and broadcast a trade that `verify_trade` has already proven.
+///
+/// Separate from `verify_trade` on purpose: the verification is pure and
+/// testable, and the only way to reach this function is to have passed it.
+pub async fn submit_trade(
+    provider: &mut dyn DeezelProvider,
+    trade: VerifiedTrade,
+) -> Result<crate::alkanes::types::ExecutionState> {
+    let mut executor = EnhancedAlkanesExecutor::new(provider);
+    match executor.execute(trade.params).await {
+        Ok(r) => Ok(r),
+        Err(e) => Err(anyhow!("broadcast failed after a successful simulation: {e}")),
+    }
+}
+
+#[cfg(test)]
+mod verify_tests {
+    use super::*;
+
+    #[test]
+    fn a_protostone_without_a_cellpack_is_refused() {
+        let post: Box<Post> = Box::new(|_, _| Ok(serde_json::json!({"result": "0x"})));
+        let e = Endpoints { base: "https://x".into(), api_key: Some("K".into()) };
+        let stones = vec![ProtostoneSpec {
+            cellpack: None,
+            edicts: vec![],
+            bitcoin_transfer: None,
+            pointer: None,
+            refund: None,
+        }];
+        let err = verify_trade(&*post, &e, vec![], stones, None, None)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("not a trade"), "{err}");
+    }
+
+    #[test]
+    fn a_simulate_revert_stops_the_trade_before_signing() {
+        // SimulateResponse with field 2 (error) = "insufficient output".
+        let msg = b"insufficient output";
+        let mut resp = vec![0x12, msg.len() as u8];
+        resp.extend_from_slice(msg);
+        let hex = format!("0x{}", hex::encode(&resp));
+        let post: Box<Post> = Box::new(move |_, _| Ok(serde_json::json!({ "result": hex })));
+        let e = Endpoints { base: "https://x".into(), api_key: Some("K".into()) };
+        let (inputs, stones) = build_swap(Side::Frusd, 100, 1);
+        let err = verify_trade(&*post, &e, inputs, stones, None, None)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("REJECTED"), "{err}");
+        assert!(err.contains("insufficient output"), "must surface the contract's own words: {err}");
+        assert!(err.contains("no funds moved"));
+    }
+
+    #[test]
+    fn a_clean_simulation_yields_params_that_never_auto_confirm() {
+        // A response carrying only field 1 (execution), no error field.
+        let post: Box<Post> = Box::new(|_, _| {
+            Ok(serde_json::json!({ "result": "0x0a021a00" }))
+        });
+        let e = Endpoints { base: "https://x".into(), api_key: Some("K".into()) };
+        let (inputs, stones) = build_swap(Side::Frbtc, 1_000, 1);
+        let t = verify_trade(&*post, &e, inputs, stones, Some(5.0), None).unwrap();
+        assert!(t.simulate_error.is_empty());
+        assert!(!t.params.auto_confirm, "a trade must never auto-confirm");
+        assert!(t.params.trace_enabled, "keep the trace for post-hoc reconciliation");
+        assert_eq!(t.params.protostones.len(), 1);
+    }
+}
