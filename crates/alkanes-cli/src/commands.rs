@@ -130,6 +130,12 @@ pub enum Commands {
     /// Protorunes subcommands
     #[command(subcommand)]
     Protorunes(Protorunes),
+    /// BTC/USD: market data, quoting, swaps, both bridge arms, and watching.
+    ///
+    /// Reads go through `metashrew_view` — never an `alkanes_*` JSON-RPC
+    /// method, which is a different code path from what production reads.
+    #[command(subcommand)]
+    Btcusd(alkanes_cli_common::btcusd::BtcusdCommands),
     /// Wallet subcommands
     #[command(subcommand)]
     Wallet(WalletCommands),
@@ -3345,6 +3351,9 @@ impl Commands {
             Commands::Runestone(_) => false,
             // Protorunes queries don't need wallet
             Commands::Protorunes(_) => false,
+            // Reads and EVM-side work need no Bitcoin wallet; the trade
+            // commands do, and they refuse early if one is missing.
+            Commands::Btcusd(_) => false,
             // Wallet commands need the wallet
             Commands::Wallet(cmd) => cmd.requires_wallet(),
             // Metashrew queries don't need wallet

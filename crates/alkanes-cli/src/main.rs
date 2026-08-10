@@ -154,6 +154,7 @@ async fn execute_command<T: System + SystemOrd + UtxoProvider>(system: &mut T, c
         Commands::Alkanes(cmd) => execute_alkanes_command(system, cmd, frbtc_address.clone()).await,
         Commands::Runestone(cmd) => execute_runestone_command(system, cmd).await,
         Commands::Protorunes(cmd) => execute_protorunes_command(system.provider(), cmd).await,
+        Commands::Btcusd(cmd) => execute_btcusd_command(cmd).await,
         Commands::Ord(cmd) => execute_ord_command(system.provider(), cmd.into()).await,
         Commands::Esplora(cmd) => execute_esplora_command(system.provider(), cmd.into()).await,
         Commands::Metashrew(cmd) => execute_metashrew_command(system.provider(), cmd).await,
@@ -6751,3 +6752,74 @@ fn print_simulate_transaction_response(
     Ok(())
 }
 
+
+/// `alkanes btcusd …` — BTC/USD market data, quoting, and the bridge arms.
+///
+/// Endpoint resolution, in order: `--sandshrew-rpc-url` style config via
+/// `SUBFROST_RPC_BASE`, else the public host. The api key comes from
+/// `SUBFROST_API_KEY`; without it the shared `/v4/jsonrpc` is used and
+/// `btcusd_exec` prints an unconditional warning saying so.
+///
+/// The HTTP is done with a BLOCKING client inside `spawn_blocking` rather than
+/// threading async through the command surface. That keeps `btcusd_exec::run`
+/// synchronous and therefore unit-testable with an injected closure — which is
+/// how the depth-cap, refusal and simulate-gate paths are covered without a
+/// network.
+async fn execute_btcusd_command(
+    cmd: alkanes_cli_common::btcusd::BtcusdCommands,
+) -> Result<()> {
+    use alkanes_cli_common::btcusd_exec::{run, Endpoints};
+
+    let base = std::env::var("SUBFROST_RPC_BASE")
+        .unwrap_or_else(|_| "https://mainnet.subfrost.io".to_string());
+    let api_key = std::env::var("SUBFROST_API_KEY").ok().filter(|s| !s.trim().is_empty());
+
+    let client = reqwest::Client::builder()
+        // A market-data read that takes half a minute is a failure, not
+        // something to wait out.
+        .timeout(std::time::Duration::from_secs(30))
+        .user_agent(concat!("alkanes-cli/", env!("CARGO_PKG_VERSION")))
+        .build()?;
+
+    // `btcusd_exec::run` is deliberately SYNCHRONOUS so its refusal paths — the
+    // depth cap, the simulate gate, the "not yet wired" arms — are unit-testable
+    // with an injected closure and no network. That is worth preserving, so the
+    // bridge to async happens here instead.
+    //
+    // Each request runs on its own thread with its own current-thread runtime.
+    // NOT `block_in_place`: that requires the MULTI-THREADED runtime and panics
+    // with "can call blocking only when running on the multi-threaded runtime"
+    // on this binary, which is current-thread. A scoped thread works whatever
+    // flavour the caller happens to be on, which is the property that matters
+    // for a library-ish entry point.
+    let post = move |url: &str, body: serde_json::Value| -> anyhow::Result<serde_json::Value> {
+        let client = client.clone();
+        let url = url.to_string();
+        std::thread::scope(|scope| {
+            scope
+                .spawn(move || {
+                    tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()?
+                        .block_on(async move {
+                let resp = client.post(&url).json(&body).send().await?;
+                let status = resp.status();
+                let text = resp.text().await?;
+                if !status.is_success() {
+                    // Surface the body: these endpoints answer with structured
+                    // JSON-RPC errors that say more than the status code.
+                    anyhow::bail!(
+                        "{status} from {url}: {}",
+                        text.chars().take(400).collect::<String>()
+                    );
+                }
+                            Ok(serde_json::from_str(&text)?)
+                        })
+                })
+                .join()
+                .map_err(|_| anyhow::anyhow!("btcusd http thread panicked"))?
+        })
+    };
+
+    run(&cmd, &post, &Endpoints { base, api_key })
+}

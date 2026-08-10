@@ -247,7 +247,30 @@ pub fn run(cmd: &BtcusdCommands, post: &Post, ep: &Endpoints) -> Result<()> {
                     "params": ["simulate", simulate_get_dy_hex(side, amt), "latest"],
                 }),
             )?;
-            emit(&v, false)
+            match v.get("result").and_then(|r| r.as_str()).and_then(decode_simulate_u128) {
+                Some(dy) => {
+                    let (from_name, to_name) = match side {
+                        Side::Frusd => ("frUSD", "frBTC"),
+                        Side::Frbtc => ("frBTC", "frUSD"),
+                    };
+                    println!("in : {amt} {from_name} (base units)");
+                    println!("out: {dy} {to_name} (base units)");
+                    // Both legs are 8-decimal, so the implied rate is a plain
+                    // ratio. Shown because the POOL's marginal price is not the
+                    // price you get — and today the gap is large.
+                    if dy > 0 {
+                        let rate = match side {
+                            Side::Frusd => amt as f64 / dy as f64,
+                            Side::Frbtc => dy as f64 / amt as f64,
+                        };
+                        println!("implied: {rate:.0} USD/BTC  (EFFECTIVE, not the pool's marginal price)");
+                    } else {
+                        println!("⚠️  the pool quoted ZERO out — do not trade on this");
+                    }
+                    Ok(())
+                }
+                None => emit(&v, false),
+            }
         }
         BtcusdCommands::Signers { raw } => {
             let v = post(
@@ -943,6 +966,20 @@ pub fn verify_trade(
         },
         simulate_error: String::new(),
     })
+}
+
+/// The u128 a view returned: `SimulateResponse.execution.data`, little-endian.
+///
+/// Returns `None` rather than 0 when it cannot be read — a quote of zero and a
+/// quote that could not be parsed must not look the same.
+fn decode_simulate_u128(hex_str: &str) -> Option<u128> {
+    let raw = hex::decode(hex_str.trim_start_matches("0x")).ok()?;
+    let exec = field_bytes(&raw, 1)?;
+    let data = field_bytes(exec, 3)?;
+    let mut buf = [0u8; 16];
+    let n = data.len().min(16);
+    buf[..n].copy_from_slice(&data[..n]);
+    Some(u128::from_le_bytes(buf))
 }
 
 /// Pull the `error` field (field 2) out of a `SimulateResponse`.
