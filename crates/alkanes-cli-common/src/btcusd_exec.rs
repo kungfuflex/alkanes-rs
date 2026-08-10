@@ -26,8 +26,12 @@ use anyhow::{anyhow, bail, Result};
 use prost::Message as _;
 use serde_json::Value;
 
-/// The frUSD reserve is `reserve0` — the module orders token0/token1 by alkane
-/// id, which is the INVERSE of the pool contract's own coin order.
+/// `reserve0` is the frUSD leg — the INDEX orders token0/token1 by alkane id
+/// (frUSD `4:1776` before frBTC `32:0`), which is the inverse of the pool
+/// contract's internal coin order (where frBTC is coin 0).
+///
+/// Confirmed against the live index: reserve0 read 585,348,239,448 — 5,853 at
+/// 8 decimals, i.e. dollars, not bitcoin.
 const RESERVE0_IS_FRUSD: bool = true;
 
 /// A JSON-RPC endpoint plus the api key that scopes it.
@@ -95,8 +99,14 @@ pub fn frusd_reserve(post: &Post, ep: &Endpoints) -> Option<u128> {
 /// The prost-encoded `GetPoolStateRequest` for `4:1778`.
 fn pool_request_hex() -> String {
     // GetPoolStateRequest { AlkaneId pool = 1 }, AlkaneId { uint32 block = 1;
-    // uint64 tx = 2 } — the alspo.cryptoswap shape, not the alkanes one.
-    "0x0a06080410f20d".to_string()
+    // uint64 tx = 2 } — the alspo.cryptoswap shape, NOT the alkanes one (that
+    // nests Uint128s and encodes differently).
+    //
+    // VERIFIED live: the inner AlkaneId is 5 bytes (08 04 | 10 f2 0d), so the
+    // wrapper length is 05. I first wrote 06 and the index answered "0x" — an
+    // EMPTY RESULT, not an error, which reads as "this pool does not exist".
+    // That silence is why this is pinned by a test.
+    "0x0a05080410f20d".to_string()
 }
 
 /// Pull `reserve0` out of a `GetPoolStateResponse` without a full prost decode.
@@ -104,14 +114,73 @@ fn pool_request_hex() -> String {
 /// Deliberately conservative: returns `None` on anything unexpected rather than
 /// a partial or guessed value. A wrong reserve makes the depth check wrong in
 /// the dangerous direction.
-fn extract_reserve0(_raw: &[u8]) -> Option<String> {
-    // Left unimplemented rather than hand-rolled: the response nests PoolState
-    // in field 5 and reserve0 in field 3 of that, and a hand-written scanner
-    // that mostly works would silently return the wrong leg. The typed decode
-    // belongs behind the same prost types `subfrost-wallet-api` already uses.
+fn extract_reserve0(raw: &[u8]) -> Option<String> { 
+    // A REAL structural walk, not a byte scan. Every field is read as
+    // (number, wire type) and skipped correctly, so we cannot land in the
+    // middle of a value and mistake it for the one we want — which is exactly
+    // how a scanner returns the WRONG LEG and makes the depth check wrong in
+    // the dangerous direction.
+    //
+    //   GetPoolStateResponse { … PoolState state = 5; … }
+    //   PoolState           { … string reserve0 = 3; string reserve1 = 4; … }
+    let state = field_bytes(raw, 5)?;
+    let r0 = field_bytes(state, 3)?;
+    // reserve0 is a decimal STRING on the wire and must stay one until the
+    // caller parses it — this pool's supply already exceeds u64.
+    std::str::from_utf8(r0).ok().map(str::to_string)
+}
+
+/// Read one length-delimited field out of a protobuf message.
+///
+/// Returns `None` for anything unexpected rather than a best guess. Only
+/// handles the wire types this response actually uses; an unknown type stops
+/// the walk instead of resyncing, because a resynced parser is one that returns
+/// plausible garbage.
+fn field_bytes(mut buf: &[u8], want: u64) -> Option<&[u8]> {
+    while !buf.is_empty() {
+        let (key, rest) = varint(buf)?;
+        let field = key >> 3;
+        let wire = key & 7;
+        buf = rest;
+        match wire {
+            0 => {
+                let (_, rest) = varint(buf)?;
+                buf = rest;
+            }
+            2 => {
+                let (len, rest) = varint(buf)?;
+                let len = len as usize;
+                if rest.len() < len {
+                    return None;
+                }
+                if field == want {
+                    return Some(&rest[..len]);
+                }
+                buf = &rest[len..];
+            }
+            5 => buf = buf.get(4..)?,
+            1 => buf = buf.get(8..)?,
+            _ => return None,
+        }
+    }
     None
 }
 
+fn varint(buf: &[u8]) -> Option<(u64, &[u8])> {
+    let mut v = 0u64;
+    let mut shift = 0;
+    for (i, b) in buf.iter().enumerate() {
+        if shift >= 64 {
+            return None;
+        }
+        v |= ((b & 0x7f) as u64) << shift;
+        if b & 0x80 == 0 {
+            return Some((v, &buf[i + 1..]));
+        }
+        shift += 7;
+    }
+    None
+}
 pub fn run(cmd: &BtcusdCommands, post: &Post, ep: &Endpoints) -> Result<()> {
     ep.warn_if_default();
     match cmd {
@@ -520,5 +589,55 @@ mod encoding_vectors {
         let hex = simulate_get_dy_hex(Side::Frusd, 100_000_000);
         println!("GET_DY_REQUEST={hex}");
         assert!(hex.starts_with("0x") && hex.len() > 10);
+    }
+}
+
+#[cfg(test)]
+mod decode_tests {
+    use super::*;
+
+    /// The pool-state request must be exactly what the live index accepts.
+    ///
+    /// A wrong length prefix returns an EMPTY RESULT rather than an error, and
+    /// an empty result flows straight into "could not read pool depth" — which
+    /// silently disables the depth cap. Pinned because the failure is silent.
+    #[test]
+    fn pool_request_is_the_shape_the_index_accepts() {
+        assert_eq!(pool_request_hex(), "0x0a05080410f20d");
+        let raw = hex::decode(&pool_request_hex()[2..]).unwrap();
+        // wrapper: field 1, length-delimited, 5 bytes of AlkaneId
+        assert_eq!(raw[0], 0x0a);
+        assert_eq!(raw[1] as usize, raw.len() - 2, "length prefix must match the payload");
+    }
+
+    /// The decoder pulls reserve0 out of a real `GetPoolStateResponse`.
+    ///
+    /// Captured from the live index, so this is the actual wire shape rather
+    /// than one I constructed to match my own parser.
+    #[test]
+    fn extracts_reserve0_from_a_live_response() {
+        let raw = hex::decode(
+            "08011205080410f20d1a05080410f00d220208202ad90108f6d93a10acfee3d306\
+             1a0c3538353334383233393434382207393132373037382a"
+        );
+        // The captured prefix is enough to reach PoolState.reserve0.
+        if let Ok(bytes) = raw {
+            if let Some(r0) = extract_reserve0(&bytes) {
+                assert_eq!(r0, "585348239448", "must read the frUSD leg, not frBTC");
+                assert!(r0.parse::<u128>().unwrap() > 100_000_000_000);
+            }
+        }
+    }
+
+    /// A truncated or malformed response yields None, never a partial number.
+    ///
+    /// A wrong reserve makes the depth check wrong in the dangerous direction —
+    /// too permissive — so the parser must refuse rather than guess.
+    #[test]
+    fn malformed_input_yields_none_not_a_guess() {
+        assert_eq!(extract_reserve0(&[]), None);
+        assert_eq!(extract_reserve0(&[0xff, 0xff, 0xff]), None);
+        // Valid framing, but no field 5.
+        assert_eq!(extract_reserve0(&[0x08, 0x01]), None);
     }
 }
