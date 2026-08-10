@@ -1183,6 +1183,8 @@ mod burn_cmd_tests {
 
 /// frUSD `BurnAndBridge` — opcode 5.
 pub const OP_BURN_AND_BRIDGE: u128 = 5;
+/// `BurnAndBridgeWithData` — opcode 5 with a composed-call payload attached.
+pub const OP_BURN_AND_BRIDGE_WITH_DATA: u128 = 14;
 
 /// Split a 20-byte EVM address into the `(hi, lo)` pair `BurnAndBridge` expects.
 ///
@@ -1195,26 +1197,54 @@ pub const OP_BURN_AND_BRIDGE: u128 = 5;
 /// real-looking address. An inverted hi/lo split is a documented past incident
 /// in this system, not a hypothetical.
 pub fn split_evm_address(addr: [u8; 20]) -> (u128, u128) {
+    // 4/16, NOT 12/8. The contract's `eth_addr_from_split` takes hi = the TOP
+    // 4 BYTES (it must fit a u32 and the contract REJECTS a hi that overflows)
+    // and lo = the BOTTOM 16 BYTES. A 12/8 split produces a well-formed
+    // cellpack the contract refuses, so every burn built with it reverts:
+    // tokens refund, nothing is lost, and nothing works either.
     let mut hi = [0u8; 16];
-    hi[4..].copy_from_slice(&addr[..12]); // 12 bytes, right-aligned in the u128
+    hi[12..].copy_from_slice(&addr[..4]); // top 4 bytes, right-aligned
     let mut lo = [0u8; 16];
-    lo[8..].copy_from_slice(&addr[12..]); // remaining 8 bytes
+    lo.copy_from_slice(&addr[4..]); // bottom 16 bytes
     (u128::from_be_bytes(hi), u128::from_be_bytes(lo))
+}
+
+/// Pack payload bytes into the u128 words a `BurnAndBridgeWithData` cellpack
+/// carries: big-endian, 16 bytes per word, final word zero-padded.
+///
+/// The length travels SEPARATELY because a payload legitimately ending in zero
+/// bytes could not otherwise be told from the padding. Mirrors
+/// frusd-bridge-data::pack_burn_data.
+pub fn pack_burn_data(bytes: &[u8]) -> (u128, Vec<u128>) {
+    let mut words = Vec::with_capacity(bytes.len().div_ceil(16));
+    for chunk in bytes.chunks(16) {
+        let mut w = [0u8; 16];
+        w[..chunk.len()].copy_from_slice(chunk);
+        words.push(u128::from_be_bytes(w));
+    }
+    (bytes.len() as u128, words)
 }
 
 /// The protostone + inputs for a frUSD `BurnAndBridge`.
 ///
-/// ⚠️ Attaching `burn_data` is NOT yet proven. The reference test packs only
-/// `[5, hi, lo]` — a plain transfer with no payload — so the mechanism by which
-/// the Call form's bytes ride along is unverified here. `burn_data` is
-/// therefore accepted and returned to the caller for inspection rather than
-/// silently appended: appending it as trailing u128 words WOULD produce a
-/// well-formed cellpack, and if that is not the real encoding the coordinator
-/// reads no payload and pays out plainly — the exact silent degradation this
-/// module exists to prevent.
+/// Two shapes, because MessageDispatch decodes POSITIONALLY and extending
+/// opcode 5 would break every existing caller:
+///
+///   no payload : `4,1776,5,hi,lo,assetId`
+///   with payload: `4,1776,14,hi,lo,assetId,dataLen,wordCount,words...`
+///
+/// Opcode 14 carries TWO lengths with DIFFERENT UNITS: `dataLen` in BYTES and
+/// the Vec count in ELEMENTS (words). Emitting the words without the element
+/// count yields a cellpack that decodes to a short/empty Vec — the coordinator
+/// then reads no payload and pays out plainly, which is the silent degradation
+/// this module exists to prevent.
+///
+/// `asset_id`: 0 = USDC, 1 = USDT.
 pub fn build_burn(
     amount: u128,
     eth_address: [u8; 20],
+    asset_id: u128,
+    burn_data: Option<&[u8]>,
 ) -> (Vec<InputRequirement>, Vec<ProtostoneSpec>) {
     let (hi, lo) = split_evm_address(eth_address);
     let inputs = vec![InputRequirement::Alkanes {
@@ -1222,10 +1252,26 @@ pub fn build_burn(
         tx: 1776, // frUSD
         amount,
     }];
+    let cellpack_inputs = match burn_data {
+        None => vec![OP_BURN_AND_BRIDGE, hi, lo, asset_id],
+        Some(d) => {
+            let (data_len, words) = pack_burn_data(d);
+            let mut v = vec![
+                OP_BURN_AND_BRIDGE_WITH_DATA,
+                hi,
+                lo,
+                asset_id,
+                data_len,
+                words.len() as u128,
+            ];
+            v.extend_from_slice(&words);
+            v
+        }
+    };
     let protostones = vec![ProtostoneSpec {
         cellpack: Some(Cellpack {
             target: AlkaneId { block: 4, tx: 1776 },
-            inputs: vec![OP_BURN_AND_BRIDGE, hi, lo],
+            inputs: cellpack_inputs,
         }),
         edicts: Vec::new(),
         bitcoin_transfer: None,
@@ -1236,23 +1282,108 @@ pub fn build_burn(
 }
 
 #[cfg(test)]
+mod burn_golden_vectors {
+    use super::*;
+
+    /// 0x97774400_0000000000000000000000000000cf06
+    const ADDR: [u8; 20] = [
+        0x97, 0x77, 0x44, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0xcf, 0x06,
+    ];
+
+    fn cellpack_of(stones: &[ProtostoneSpec]) -> Vec<u128> {
+        stones[0].cellpack.as_ref().unwrap().inputs.clone()
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // These literals are NOT computed here. They are the mainnet measurement
+    // of 2026-08-10 (`simulatetransaction`, height 961,899), ported verbatim
+    // from subfrost-app lib/bridge/__tests__/burnData.test.ts.
+    //
+    // Deriving the expectation from `pack_burn_data`/`split_evm_address` —
+    // the same functions the implementation calls — is exactly what kept the
+    // TypeScript suite GREEN against a wrong encoder. A test that asks the
+    // code to confirm itself proves nothing. Do not "simplify" these back
+    // into computed values.
+    // ─────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn address_splits_4_16_not_12_8() {
+        let (hi, lo) = split_evm_address(ADDR);
+        assert_eq!(hi, 0x97774400);
+        assert_eq!(lo, 0xcf06);
+        // The contract REJECTS a hi that overflows a u32.
+        assert!(hi <= u32::MAX as u128, "hi must fit a u32");
+    }
+
+    #[test]
+    fn opcode_14_carries_two_lengths_bytes_then_element_count() {
+        let (_, stones) = build_burn(1, ADDR, 0, Some(&[9, 9, 9]));
+        assert_eq!(
+            cellpack_of(&stones),
+            vec![
+                14,
+                2541175808,
+                52998,
+                0,
+                3, // dataLen — BYTES
+                1, // Vec count — ELEMENTS
+                12009965175477489169824853534747656192,
+            ]
+        );
+    }
+
+    #[test]
+    fn counts_words_not_bytes_seventeen_bytes_takes_two() {
+        let (_, stones) = build_burn(1, ADDR, 1, Some(&[0xab; 17]));
+        assert_eq!(
+            cellpack_of(&stones),
+            vec![
+                14,
+                2541175808,
+                52998,
+                1,
+                17, // BYTES
+                2,  // ELEMENTS — the whole point
+                228189351935217557851910030866009271211,
+                227297987279220614266551007307938922496,
+            ]
+        );
+    }
+
+    #[test]
+    fn no_payload_uses_opcode_5_and_stays_six_wide() {
+        let (_, stones) = build_burn(1, ADDR, 0, None);
+        assert_eq!(cellpack_of(&stones), vec![5, 2541175808, 52998, 0]);
+    }
+}
+
+#[cfg(test)]
 mod burn_packing_tests {
     use super::*;
 
     /// Pinned against the reference test's own address and split.
     ///
     /// `frusd_burn_bridge.rs` uses 0xf39Fd6e5…92266 and computes
-    /// hi = from_str_radix(addr[..24]) and lo = from_str_radix(addr[24..40]).
+    /// This test USED to assert a 12/8 split, and passed — against an encoder
+    /// the contract rejects. It was written from the retired protostoneBuilder
+    /// rather than from the contract, and nothing on this side could tell the
+    /// difference: a 12/8 cellpack is well-formed, it just reverts on chain.
+    /// The authority is now burn_golden_vectors above (mainnet, height
+    /// 961,899); this only pins the 4/16 boundary on a second address.
     #[test]
-    fn hi_lo_split_matches_the_reference_test() {
+    fn hi_lo_split_takes_the_top_four_bytes() {
         let addr = hex::decode("f39fd6e51aad88f6f4ce6ab8827279cfffb92266").unwrap();
         let mut a = [0u8; 20];
         a.copy_from_slice(&addr);
         let (hi, lo) = split_evm_address(a);
-        let want_hi = u128::from_str_radix("f39fd6e51aad88f6f4ce6ab8", 16).unwrap();
-        let want_lo = u128::from_str_radix("827279cfffb92266", 16).unwrap();
-        assert_eq!(hi, want_hi, "hi must be the FIRST 12 bytes");
-        assert_eq!(lo, want_lo, "lo must be the LAST 8 bytes");
+        assert_eq!(hi, 0xf39fd6e5, "hi is the TOP 4 bytes");
+        assert_eq!(
+            lo,
+            u128::from_str_radix("1aad88f6f4ce6ab8827279cfffb92266", 16).unwrap(),
+            "lo is the BOTTOM 16 bytes"
+        );
+        assert!(hi <= u32::MAX as u128, "the contract rejects a hi over u32");
     }
 
     /// The split must be reversible — a round trip that loses bytes is a
@@ -1262,14 +1393,14 @@ mod burn_packing_tests {
         let a: [u8; 20] = core::array::from_fn(|i| (i as u8).wrapping_mul(7).wrapping_add(3));
         let (hi, lo) = split_evm_address(a);
         let mut back = [0u8; 20];
-        back[..12].copy_from_slice(&hi.to_be_bytes()[4..]);
-        back[12..].copy_from_slice(&lo.to_be_bytes()[8..]);
+        back[..4].copy_from_slice(&hi.to_be_bytes()[12..]);
+        back[4..].copy_from_slice(&lo.to_be_bytes());
         assert_eq!(back, a);
     }
 
     #[test]
     fn burn_spends_frusd_and_targets_frusd() {
-        let (inputs, stones) = build_burn(100_000_000, [0x11; 20]);
+        let (inputs, stones) = build_burn(100_000_000, [0x11; 20], 0, None);
         match inputs[0] {
             InputRequirement::Alkanes { block, tx, amount } => {
                 assert_eq!((block, tx), (4, 1776), "frUSD is the token being burned");
@@ -1279,6 +1410,6 @@ mod burn_packing_tests {
         }
         let cp = stones[0].cellpack.as_ref().unwrap();
         assert_eq!(cp.inputs[0], OP_BURN_AND_BRIDGE);
-        assert_eq!(cp.inputs.len(), 3, "opcode + hi + lo");
+        assert_eq!(cp.inputs.len(), 4, "opcode + hi + lo + assetId");
     }
 }
