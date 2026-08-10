@@ -641,3 +641,196 @@ mod decode_tests {
         assert_eq!(extract_reserve0(&[0x08, 0x01]), None);
     }
 }
+
+// ── Trade construction ──────────────────────────────────────────────────────
+//
+// These build the protostone spec + input requirements for a BTCUSD trade.
+// They are PURE — no executor, no network — so the encoding can be checked
+// against `simulate` on mainnet before anything is signed, which is the whole
+// verification story for this path.
+//
+// Handing the result to `EnhancedAlkanesExecutor::execute` is what broadcasts.
+
+use crate::alkanes::types::{InputRequirement, ProtostoneSpec};
+
+/// The protostone + inputs for a direct `exchange` on the pool.
+///
+/// `min_dy` is NOT optional and there is no default: the pool's fee band runs
+/// 0.2%–0.8% depending on how unbalanced the trade leaves it, so a quote taken
+/// at one balance and executed at another must carry its own floor. Passing 0
+/// is an instruction to accept any output at all.
+///
+/// ⚠️ `i`/`j` come from [`Side::coin_index`], which is the POOL's internal order
+/// (frBTC = 0), not the index's by-alkane-id order. See that function for the
+/// live evidence.
+pub fn build_swap(
+    from: Side,
+    amount_in: u128,
+    min_dy: u128,
+) -> (Vec<InputRequirement>, Vec<ProtostoneSpec>) {
+    let (block, tx) = from.id();
+    let i = from.coin_index();
+    let j = 1 - i;
+
+    // The tokens being sold have to arrive at the pool, so they are an input
+    // requirement — not merely referenced in the cellpack.
+    let inputs = vec![InputRequirement::Alkanes {
+        block: block as u64,
+        tx: tx as u64,
+        amount: amount_in,
+    }];
+
+    let protostones = vec![ProtostoneSpec {
+        // ⚠️ The existing `amm.rs::swap` passes `cellpack: None`, which sends no
+        // call at all. The cellpack IS the trade.
+        cellpack: Some(Cellpack {
+            target: AlkaneId { block: btcusd::POOL_BLOCK, tx: btcusd::POOL_TX },
+            inputs: vec![btcusd::op::EXCHANGE, i, j, amount_in, min_dy],
+        }),
+        edicts: Vec::new(),
+        bitcoin_transfer: None,
+        pointer: None,
+        // Where the tokens go if the call REVERTS. Leaving this unset on a
+        // trade strands the input rather than returning it.
+        refund: None,
+    }];
+
+    (inputs, protostones)
+}
+
+/// `add_liquidity` — both coins in, LP out.
+pub fn build_add_liquidity(
+    frusd_amount: u128,
+    frbtc_amount: u128,
+    min_lp: u128,
+) -> (Vec<InputRequirement>, Vec<ProtostoneSpec>) {
+    // BOTH legs must arrive. Requiring only one silently deposits a single-sided
+    // amount, which the pool prices very differently.
+    let inputs = vec![
+        InputRequirement::Alkanes { block: 4, tx: 1776, amount: frusd_amount },
+        InputRequirement::Alkanes { block: 32, tx: 0, amount: frbtc_amount },
+    ];
+    let protostones = vec![ProtostoneSpec {
+        cellpack: Some(Cellpack {
+            target: AlkaneId { block: btcusd::POOL_BLOCK, tx: btcusd::POOL_TX },
+            // Amounts in the POOL's coin order: frBTC first.
+            inputs: vec![btcusd::op::ADD_LIQUIDITY, frbtc_amount, frusd_amount, min_lp],
+        }),
+        edicts: Vec::new(),
+        bitcoin_transfer: None,
+        pointer: None,
+        // Where the tokens go if the call REVERTS. Leaving this unset on a
+        // trade strands the input rather than returning it.
+        refund: None,
+    }];
+    (inputs, protostones)
+}
+
+/// `remove_liquidity` — LP in, both coins out (or one, with `one_coin`).
+///
+/// ⚠️ LP is 18 decimals, not 8. An amount computed as if it were 8 withdraws
+/// 1e10 times less than intended and looks like nothing happened.
+pub fn build_remove_liquidity(
+    lp_amount: u128,
+    one_coin: Option<Side>,
+    min_out: u128,
+) -> (Vec<InputRequirement>, Vec<ProtostoneSpec>) {
+    let inputs = vec![InputRequirement::Alkanes {
+        // The LP token IS the pool proxy, `4:1778`.
+        block: btcusd::POOL_BLOCK as u64,
+        tx: btcusd::POOL_TX as u64,
+        amount: lp_amount,
+    }];
+    let call = match one_coin {
+        Some(side) => vec![
+            btcusd::op::REMOVE_LIQUIDITY_ONE_COIN,
+            lp_amount,
+            side.coin_index(),
+            min_out,
+        ],
+        None => vec![btcusd::op::REMOVE_LIQUIDITY, lp_amount, min_out],
+    };
+    let protostones = vec![ProtostoneSpec {
+        cellpack: Some(Cellpack {
+            target: AlkaneId { block: btcusd::POOL_BLOCK, tx: btcusd::POOL_TX },
+            inputs: call,
+        }),
+        edicts: Vec::new(),
+        bitcoin_transfer: None,
+        pointer: None,
+        // Where the tokens go if the call REVERTS. Leaving this unset on a
+        // trade strands the input rather than returning it.
+        refund: None,
+    }];
+    (inputs, protostones)
+}
+
+#[cfg(test)]
+mod trade_tests {
+    use super::*;
+
+    #[test]
+    fn swap_puts_the_cellpack_in_the_protostone() {
+        // The existing amm.rs::swap sets cellpack: None and therefore sends no
+        // call. Guarding against inheriting that.
+        let (inputs, stones) = build_swap(Side::Frusd, 100_000_000, 1_500);
+        assert_eq!(inputs.len(), 1);
+        let cp = stones[0].cellpack.as_ref().expect("a swap without a cellpack is not a swap");
+        assert_eq!(cp.target.block, btcusd::POOL_BLOCK);
+        assert_eq!(cp.target.tx, btcusd::POOL_TX);
+        assert_eq!(cp.inputs[0], btcusd::op::EXCHANGE);
+    }
+
+    #[test]
+    fn swap_uses_the_pools_coin_order_not_the_index_order() {
+        // frUSD sells as coin 1 -> 0. Reversed, this trades the wrong way and
+        // the number still looks plausible.
+        let (_, stones) = build_swap(Side::Frusd, 1, 0);
+        let cp = stones[0].cellpack.as_ref().unwrap();
+        assert_eq!(cp.inputs[1], 1, "frUSD is coin 1");
+        assert_eq!(cp.inputs[2], 0, "frBTC is coin 0");
+
+        let (_, stones) = build_swap(Side::Frbtc, 1, 0);
+        let cp = stones[0].cellpack.as_ref().unwrap();
+        assert_eq!(cp.inputs[1], 0);
+        assert_eq!(cp.inputs[2], 1);
+    }
+
+    #[test]
+    fn swap_carries_min_dy_through_to_the_call() {
+        let (_, stones) = build_swap(Side::Frbtc, 500, 4_242);
+        let cp = stones[0].cellpack.as_ref().unwrap();
+        assert_eq!(cp.inputs[4], 4_242, "the slippage floor must reach the contract");
+    }
+
+    #[test]
+    fn add_liquidity_requires_both_legs() {
+        // Requiring one silently deposits single-sided, which prices very
+        // differently.
+        let (inputs, _) = build_add_liquidity(1_000, 2_000, 1);
+        assert_eq!(inputs.len(), 2, "both coins must be spent into the pool");
+    }
+
+    #[test]
+    fn remove_liquidity_spends_the_proxy_which_is_the_lp_token() {
+        let (inputs, stones) = build_remove_liquidity(1_000, None, 1);
+        match inputs[0] {
+            InputRequirement::Alkanes { block, tx, .. } => {
+                assert_eq!((block, tx), (4, 1778), "the LP token IS the pool proxy");
+            }
+            _ => panic!("expected an alkanes input"),
+        }
+        assert_eq!(
+            stones[0].cellpack.as_ref().unwrap().inputs[0],
+            btcusd::op::REMOVE_LIQUIDITY
+        );
+    }
+
+    #[test]
+    fn one_coin_withdrawal_selects_by_pool_coin_index() {
+        let (_, stones) = build_remove_liquidity(1_000, Some(Side::Frbtc), 1);
+        let cp = stones[0].cellpack.as_ref().unwrap();
+        assert_eq!(cp.inputs[0], btcusd::op::REMOVE_LIQUIDITY_ONE_COIN);
+        assert_eq!(cp.inputs[2], 0, "frBTC is coin 0");
+    }
+}
