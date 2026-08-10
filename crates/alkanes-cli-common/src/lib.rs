@@ -64,6 +64,9 @@ pub mod bridge;
 /// surface. Money-path validation lives here so it is checked once, before a
 /// transaction is built.
 pub mod btcusd;
+/// Local EIP-1559 signing + PRIVATE submission via the ethereum-builder route,
+/// so the EVM leg never touches the public mempool.
+pub mod evm_signer;
 pub mod brc20_prog;
 #[cfg(feature = "std")]
 pub mod brc20_prog_rpc;

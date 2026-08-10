@@ -153,8 +153,16 @@ pub enum BtcusdCommands {
     /// Prepare a USDC/USDT deposit that mints frUSD on Bitcoin, optionally
     /// converting a share to native BTC.
     ///
-    /// ⚠️ This does NOT sign or broadcast the Ethereum transaction. It prints
-    /// the approve + `depositAndBridge` calldata for the user's own wallet.
+    /// Signing is OPTIONAL. With no key flags this prints the approve +
+    /// `depositAndBridge` calldata for the user's own wallet — the right
+    /// default for an interactive user. With a key it signs locally and submits
+    /// through `/v4/{apikey}/ethereum-builder`, which keeps the transaction OUT
+    /// OF THE PUBLIC MEMPOOL.
+    ///
+    /// ⚠️ That privacy matters for this specific trade: the calldata carries the
+    /// BTC destination and the conversion split, and the Bitcoin leg's `min_dy`
+    /// is visible in an OP_RETURN until it confirms. A public broadcast hands a
+    /// searcher advance notice of a swap against a shallow pool.
     Deposit {
         /// `usdc` or `usdt`. Maps to the vault's own asset ids (0 and 1) — a
         /// swapped id approves one token and deposits against the other's
@@ -179,6 +187,21 @@ pub enum BtcusdCommands {
         /// clamps to min(this, its own cap). 0 takes the coordinator's.
         #[arg(long, default_value = "0")]
         max_slippage_bps: u32,
+
+        // ── EVM signing. Omit all three to get calldata for your own wallet. ──
+        /// Sign locally with the hex key in this file (mode 0600, please) and
+        /// submit privately. Without it, `deposit` only PRINTS the calldata.
+        #[arg(long)]
+        eth_key_file: Option<String>,
+        /// Key inline. Refused unless you also pass the acknowledgement flag,
+        /// because it lands in shell history and the process table.
+        #[arg(long)]
+        eth_private_key: Option<String>,
+        #[arg(long)]
+        i_know_this_lands_in_shell_history: bool,
+        /// Print the signed transaction instead of submitting it.
+        #[arg(long)]
+        dry_run: bool,
     },
 
     // ── Bridge: BTC → EVM ───────────────────────────────────────────────────
