@@ -226,6 +226,37 @@ pub fn run(cmd: &BtcusdCommands, post: &Post, ep: &Endpoints) -> Result<()> {
              `frbtc-wrap`; these commands should reuse it rather than grow a second copy. \
              Refusing rather than emitting a transaction that looks right and is not."
         ),
+        BtcusdCommands::Mempool { command } => {
+            use crate::btcusd::MempoolCommands as M;
+            let url = format!("{}/mempool", ep.main());
+            let (method, params) = match command {
+                M::Info => ("mempool_info", serde_json::json!({})),
+                M::Template { blocks, .. } => {
+                    ("mempool_template", serde_json::json!({ "blocks": blocks }))
+                }
+                M::Entry { txid } => ("mempool_entry", serde_json::json!({ "txid": txid })),
+                M::Watch { .. } => bail!(
+                    "not yet wired: the websocket stream needs the reconnect state machine                      (a changed `instance` invalidates every seq; `reset` also signals                      backpressure). Use `mempool template` polling until then."
+                ),
+            };
+            // ⚠️ params is an OBJECT here, unlike the esplora_*/metashrew_*
+            // families on the same host — a positional array returns -32602.
+            let v = post(
+                &url,
+                serde_json::json!({
+                    "jsonrpc": "2.0", "id": 1, "method": method, "params": params,
+                }),
+            )
+            .map_err(|e| {
+                anyhow!(
+                    "{e}\n\nNote: /v4/{{apikey}}/mempool is NOT DEPLOYED yet and will 404.                      The command surface exists so workflows can be written against it."
+                )
+            })?;
+            emit(&v, true)
+        }
+        BtcusdCommands::SimulateBlock { .. } => bail!(
+            "not yet wired: `simulateblock` needs candidate-block assembly. The view exists              and is the right MEV lens — it drives every tx through the indexer's own path              with ONE shared sandbox, so it reproduces the intra-block atomicity that              decides a contended swap. Building the candidate block is the missing piece."
+        ),
         BtcusdCommands::Watch { .. } | BtcusdCommands::Simulate { .. } => bail!(
             "not yet wired: needs the monitor/simulate plumbing in `monitor.rs`. Note \
              `protorunesbyaddress` is currently ~10.5s against a 15s timeout, so the poll \
@@ -420,7 +451,7 @@ mod tests {
             BtcusdCommands::Burn {
                 amount: "1".into(),
                 eth_address: "0x00".into(),
-                to_eth: false,
+                to_eth_bps: 0,
                 min_out: None,
                 dry_run: true,
             },

@@ -173,14 +173,30 @@ pub enum BtcusdCommands {
         #[arg(long)]
         amount: String,
         /// Mainnet Bitcoin address the minted frUSD settles at.
+        ///
+        /// MAY BE SOMEONE ELSE'S, same as `--btc-destination`. Paying frUSD
+        /// straight to a third party out of an EVM balance is a supported flow.
+        /// Validated for payability, never for ownership.
+        ///
+        /// Note the two can differ: `--recipient` takes the frUSD residue and
+        /// `--btc-destination` takes the converted BTC, so one deposit can seed
+        /// two different identities in two different assets.
         #[arg(long)]
         recipient: String,
         /// Share to convert to native BTC, in bps. 0 = plain frUSD deposit,
         /// which takes a different and byte-identical-to-mainnet code path.
         #[arg(long, default_value = "0")]
         convert_bps: u32,
-        /// Where the BTC lands. Required when `convert_bps > 0`. May differ
-        /// from `recipient`.
+        /// Where the native BTC lands. Required when `convert_bps > 0`.
+        ///
+        /// MAY BE SOMEONE ELSE'S ADDRESS, and that is a supported flow, not an
+        /// accident: this is how a fresh BTC identity gets seeded, or how you
+        /// pay a third party directly out of an EVM balance. It is validated
+        /// for payability but NOT for ownership — we cannot know whose it is.
+        ///
+        /// ⚠️ There is no recovery. frBTC's `burn()` copies this script into the
+        /// payment record and burns the supply immediately; a wrong-but-payable
+        /// address pays a stranger, permanently.
         #[arg(long)]
         btc_destination: Option<String>,
         /// Your own slippage ceiling, honoured DOWNWARDS only — the coordinator
@@ -214,11 +230,18 @@ pub enum BtcusdCommands {
         /// Destination EVM address.
         #[arg(long)]
         eth_address: String,
-        /// Also swap the payout to ETH via Uniswap V2 Router02.
-        #[arg(long)]
-        to_eth: bool,
-        /// ⚠️ REQUIRED with `--to-eth`. There is NO coordinator-side slippage
-        /// floor on this leg: 0 is an unbounded-loss instruction.
+        /// Share of the USDC output to swap onward into ETH, in bps.
+        ///
+        /// 0 = all USDC. 10000 = all ETH. Anything between splits, which is the
+        /// point: a burner can land most of it as a stablecoin and take enough
+        /// ETH to pay gas on the receiving account — otherwise a fresh EVM
+        /// identity receives tokens it cannot move.
+        #[arg(long, default_value = "0")]
+        to_eth_bps: u32,
+        /// ⚠️ REQUIRED whenever `--to-eth-bps > 0`. There is NO coordinator-side
+        /// slippage floor on this leg — `amountOutMin` is yours alone, and 0 is
+        /// an unbounded-loss instruction. Uniswap V2 Router02 is the ONLY
+        /// allowlisted target; anything else degrades to a plain payout.
         #[arg(long)]
         min_out: Option<String>,
         #[arg(long)]
@@ -247,6 +270,39 @@ pub enum BtcusdCommands {
         #[arg(long)]
         max_polls: Option<u32>,
     },
+    /// Mempool-aware reads: what is pending, and what the next blocks look like.
+    ///
+    /// Backed by `/v4/{apikey}/mempool`. ⚠️ NOT DEPLOYED YET — expect 404 until
+    /// the route ships. Written now so a workflow can be built against it.
+    Mempool {
+        #[command(subcommand)]
+        command: MempoolCommands,
+    },
+    /// Simulate a whole BLOCK to see where fees land and what ordering does.
+    ///
+    /// This is the MEV lens: `simulateblock` drives every transaction through
+    /// the same per-tx path the indexer uses, with ONE shared sandbox carrying
+    /// writes across transaction boundaries — so it reproduces the intra-block
+    /// atomicity that decides who wins a contended swap.
+    ///
+    /// Use it to answer: does my transaction still get the quote I expect if it
+    /// lands after the pending set? What fee gets me ahead of the trade that
+    /// would move the price against me?
+    SimulateBlock {
+        /// Raw block hex. Omit to build a candidate block from the current
+        /// mempool template.
+        #[arg(long)]
+        block_hex: Option<String>,
+        /// Insert this raw transaction at a given position and report what it
+        /// receives — the direct "where should I bid" question.
+        #[arg(long)]
+        insert_tx: Option<String>,
+        /// Position to insert at. Omit for the template's own ordering.
+        #[arg(long)]
+        at_index: Option<u32>,
+        #[arg(long)]
+        raw: bool,
+    },
     /// Dry-run a trade against current chain state without broadcasting —
     /// `simulate`, and for mempool-aware work `simulatetransaction` /
     /// `simulateblock`.
@@ -263,6 +319,36 @@ pub enum BtcusdCommands {
         with_mempool: bool,
         #[arg(long)]
         raw: bool,
+    },
+}
+
+/// Mempool reads. See the module docs on the deployment status.
+#[derive(clap::Subcommand, Debug, Clone, Serialize, Deserialize)]
+pub enum MempoolCommands {
+    /// Size, fee coverage, and the sequence number to attach a stream at.
+    ///
+    /// ⚠️ Read `fee_coverage` before trusting any fee number derived from this.
+    /// A thin mempool and a genuinely cheap one quote IDENTICALLY.
+    Info,
+    /// Projected next blocks — the template a miner would build.
+    Template {
+        #[arg(long, default_value = "8")]
+        blocks: u32,
+        #[arg(long)]
+        raw: bool,
+    },
+    /// One transaction's mempool entry, including its projected block.
+    Entry {
+        txid: String,
+    },
+    /// Follow the change stream over websocket.
+    ///
+    /// Reconnect handling is not optional: a changed `instance` invalidates
+    /// every `seq` you hold, and `reset` is also how backpressure is signalled.
+    Watch {
+        /// Resume from this sequence number rather than a fresh snapshot.
+        #[arg(long)]
+        since_seq: Option<u64>,
     },
 }
 
