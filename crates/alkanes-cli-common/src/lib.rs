@@ -67,6 +67,10 @@ pub mod btcusd;
 /// Local EIP-1559 signing + PRIVATE submission via the ethereum-builder route,
 /// so the EVM leg never touches the public mempool.
 pub mod evm_signer;
+/// Execution for `alkanes btcusd`. Read plane + EVM deposit are wired; the
+/// Bitcoin-side trade construction REFUSES rather than emitting a plausible
+/// no-op — see the module docs.
+pub mod btcusd_exec;
 pub mod brc20_prog;
 #[cfg(feature = "std")]
 pub mod brc20_prog_rpc;
