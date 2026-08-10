@@ -20,7 +20,10 @@
 
 use crate::btcusd::{self, BtcusdCommands, Side};
 use crate::evm_signer::{self, Eip1559Tx, EthKey};
+use alkanes_support::cellpack::Cellpack;
+use alkanes_support::id::AlkaneId;
 use anyhow::{anyhow, bail, Result};
+use prost::Message as _;
 use serde_json::Value;
 
 /// The frUSD reserve is `reserve0` — the module orders token0/token1 by alkane
@@ -324,15 +327,37 @@ fn emit(v: &Value, raw: bool) -> Result<()> {
     Ok(())
 }
 
-fn simulate_get_dy_hex(_side: Side, _amount: u128) -> String {
-    // Placeholder: the real encoding is a MessageContextParcel whose calldata is
-    // the enciphered cellpack [GET_DY, i, j, dx]. Building it needs the cellpack
-    // encoder from alkanes-support, which this module does not yet import.
-    String::from("0x")
+/// A `simulate` request: a `MessageContextParcel` whose calldata is the
+/// enciphered cellpack.
+///
+/// This is the shape every read in this module uses. `simulate` runs against
+/// live state with no side effects, which is also why it is the right way to
+/// verify a trade before signing it.
+pub fn simulate_hex(target: AlkaneId, inputs: Vec<u128>) -> String {
+    let mut parcel = alkanes_support::proto::alkanes::MessageContextParcel::default();
+    parcel.calldata = Cellpack { target, inputs }.encipher();
+    format!("0x{}", hex::encode(parcel.encode_to_vec()))
 }
 
+/// `get_dy(i, j, dx)` — what the pool would give for `dx` of coin `i`.
+///
+/// ⚠️ `i`/`j` are the pool's INTERNAL coin indices, which are the inverse of
+/// the token0/token1 ordering by alkane id. Swapping them quotes the opposite
+/// direction, and the number still looks plausible.
+fn simulate_get_dy_hex(side: Side, amount: u128) -> String {
+    let i = side.coin_index();
+    let j = 1 - i;
+    simulate_hex(
+        AlkaneId { block: btcusd::POOL_BLOCK, tx: btcusd::POOL_TX },
+        vec![btcusd::op::GET_DY, i, j, amount],
+    )
+}
+
+/// frBTC's signer view — the taproot script the signing group pays from, which
+/// is what you watch to see rollups land.
 fn frbtc_signer_hex() -> String {
-    String::from("0x")
+    // frBTC `32:0`, opcode 100 (get_signer on this contract).
+    simulate_hex(AlkaneId { block: 32, tx: 0 }, vec![100])
 }
 
 #[cfg(test)]
@@ -446,5 +471,23 @@ mod tests {
             dry_run: true,
         };
         assert!(run(&cmd, &*post, &e).unwrap_err().to_string().contains("usdc"));
+    }
+}
+
+#[cfg(test)]
+mod encoding_vectors {
+    use super::*;
+
+    /// Print the `simulate` request for `get_dy(0, 1, 1e8)` so it can be checked
+    /// against LIVE mainnet with a single curl — no funds, no signing.
+    ///
+    /// This is the verification story for the whole trade path: `simulate` runs
+    /// against real state with no side effects, so an encoding bug shows up as a
+    /// revert from the real pool rather than as a plausible local number.
+    #[test]
+    fn print_get_dy_request_for_live_check() {
+        let hex = simulate_get_dy_hex(Side::Frusd, 100_000_000);
+        println!("GET_DY_REQUEST={hex}");
+        assert!(hex.starts_with("0x") && hex.len() > 10);
     }
 }

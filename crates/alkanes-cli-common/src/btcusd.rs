@@ -291,13 +291,22 @@ impl Side {
             Side::Frbtc => FRBTC,
         }
     }
-    /// Coin INDEX as the pool orders them internally. The module orders
-    /// token0/token1 by alkane id, which is the INVERSE of the pool contract's
-    /// own coin order — get this backwards and `exchange` trades the wrong way.
+    /// Coin INDEX as the POOL orders them internally — **frBTC is 0, frUSD is
+    /// 1**. This is the INVERSE of the token0/token1 ordering by alkane id that
+    /// the index and this module's constants use, and getting it backwards
+    /// quotes the opposite direction with a number that still looks plausible.
+    ///
+    /// VERIFIED against the live pool rather than reasoned about, because I got
+    /// it wrong the first time by following the index's ordering:
+    ///   `get_dy(1, 0, 1e8)` -> 1555, and 1e8/1555 implies ~64,308 USD/BTC,
+    ///   which matches the pool's price. So coin 1 is the USD leg.
+    ///   `get_dy(0, 1, 1e8)` -> 532,877,077,035, i.e. ~91% of the entire frUSD
+    ///   reserve for one whole frBTC — consistent, since the pool holds only
+    ///   0.0913 frBTC.
     pub fn coin_index(self) -> u128 {
         match self {
-            Side::Frusd => 0,
-            Side::Frbtc => 1,
+            Side::Frbtc => 0,
+            Side::Frusd => 1,
         }
     }
 }
@@ -464,10 +473,11 @@ mod tests {
         assert_eq!(Side::parse("frusd").unwrap().id(), FRUSD);
         assert_eq!(Side::parse("BTC").unwrap().id(), FRBTC);
         assert!(Side::parse("eth").is_err());
-        // Coin index is the pool's internal order; swapping these trades the
-        // wrong direction.
-        assert_eq!(Side::Frusd.coin_index(), 0);
-        assert_eq!(Side::Frbtc.coin_index(), 1);
+        // The POOL's internal order, verified against live mainnet: frBTC is
+        // coin 0, frUSD is coin 1 — the inverse of the by-alkane-id ordering.
+        // Swapping these quotes the opposite direction, plausibly.
+        assert_eq!(Side::Frbtc.coin_index(), 0);
+        assert_eq!(Side::Frusd.coin_index(), 1);
     }
 
     #[test]

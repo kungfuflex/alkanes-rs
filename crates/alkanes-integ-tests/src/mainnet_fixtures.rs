@@ -24,7 +24,7 @@
 //! deciding whether this harness is a sound way to verify the system:
 //!
 //! ```text
-//! curl -s https://mainnet.subfrost.io/v4/subfrost \
+//! curl -s https://mainnet.subfrost.io/v4/$SUBFROST_API_KEY \
 //!   -H 'Content-Type: application/json' \
 //!   -d '{"jsonrpc":"2.0","id":1,"method":"metashrew_view",
 //!        "params":["getbytecode","<REQUEST_HEX>","latest"]}' \
