@@ -60,6 +60,10 @@ pub mod network;
 pub mod rpc;
 pub mod alkanes;
 pub mod bridge;
+/// BTC/USD trading: the CryptoSwap pool, both bridge arms, and the watch
+/// surface. Money-path validation lives here so it is checked once, before a
+/// transaction is built.
+pub mod btcusd;
 pub mod brc20_prog;
 #[cfg(feature = "std")]
 pub mod brc20_prog_rpc;

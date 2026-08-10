@@ -1175,6 +1175,16 @@ pub enum RunestoneCommands {
 /// Protorunes subcommands
 #[derive(Subcommand, Debug, Clone, Serialize, Deserialize)]
 pub enum ProtorunesCommands {
+    /// BTC/USD: market data, quoting, swaps, both bridge arms, and watching.
+    ///
+    /// Every subcommand reads chain state through `metashrew_view` — never an
+    /// `alkanes_*` JSON-RPC method, which is a different code path from what
+    /// production reads.
+    #[command(name = "btcusd")]
+    Btcusd {
+        #[command(subcommand)]
+        command: crate::btcusd::BtcusdCommands,
+    },
     /// Get protorunes by address (maps to metashrew_view protorunesbyaddress)
     #[command(name = "byaddress")]
     Byaddress {
