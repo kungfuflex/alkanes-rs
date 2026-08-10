@@ -634,3 +634,185 @@ mod tests {
         assert_eq!(swap_depth_share_bps(1, 0), None, "a zero reserve is not a 100% share");
     }
 }
+
+// ── The burn leg: BTC → EVM ─────────────────────────────────────────────────
+//
+// `burnData` is NOT protobuf. It is a raw byte encoding, and it is deliberately
+// permissive on the READ side: every parse failure is a reason to pay out
+// PLAINLY, never to stall, because the burn is already irreversible on Bitcoin
+// and the queue is strictly ordered — a stall behind one bad payload strands
+// every burn behind it too.
+//
+// That permissiveness is exactly why the WRITE side here is strict. A payload
+// we encode wrong does not error; it degrades to a plain USDC payout and the
+// user's requested swap silently does not happen.
+
+/// Wire version. A different byte here is `UnknownVersion` and degrades.
+pub const BURN_DATA_VERSION: u8 = 0x01;
+
+/// Uniswap V2 Router02 — the ONLY allowlisted `compose_targets_evm` entry.
+///
+/// V2 and not V3 deliberately: the vault performs a single `target.call`, and
+/// V3's multicall shape does not fit that. Anything not on the allowlist is
+/// refused by the coordinator and the burn pays out plainly.
+pub const UNISWAP_V2_ROUTER02: [u8; 20] = [
+    0x7a, 0x25, 0x0d, 0x56, 0x30, 0xB4, 0xcF, 0x53, 0x97, 0x39,
+    0xdF, 0x2C, 0x5d, 0xAc, 0xb4, 0xc6, 0x59, 0xF2, 0x48, 0x8D,
+];
+
+/// `swapExactTokensForETH(uint256,uint256,address[],address,uint256)`
+pub const SELECTOR_SWAP_EXACT_TOKENS_FOR_ETH: [u8; 4] = [0x18, 0xcb, 0xaf, 0xe5];
+
+/// Canonical L1 addresses for the burn path's swap.
+pub const USDC_L1: [u8; 20] = [
+    0xa0, 0xb8, 0x69, 0x91, 0xc6, 0x21, 0x8b, 0x36, 0xc1, 0xd1,
+    0x9d, 0x4a, 0x2e, 0x9e, 0xb0, 0xce, 0x36, 0x06, 0xeb, 0x48,
+];
+pub const WETH_L1: [u8; 20] = [
+    0xc0, 0x2a, 0xaa, 0x39, 0xb2, 0x23, 0xfe, 0x8d, 0x0a, 0x0e,
+    0x5c, 0x4f, 0x27, 0xea, 0xd9, 0x08, 0x3c, 0x75, 0x6c, 0xc2,
+];
+
+/// Plain transfer to the burn's `eth_address` — the payload-free default.
+pub fn burn_data_transfer() -> Vec<u8> {
+    // Empty is ALSO read as Transfer, but emitting the explicit form makes the
+    // intent legible on chain rather than inferred from an absence.
+    vec![BURN_DATA_VERSION, 0x00]
+}
+
+/// Approve `target` for the payout and call it, refunding the remainder to the
+/// burner's own `eth_address`.
+pub fn burn_data_call(target: [u8; 20], calldata: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(22 + calldata.len());
+    out.push(BURN_DATA_VERSION);
+    out.push(0x01);
+    out.extend_from_slice(&target);
+    out.extend_from_slice(calldata);
+    out
+}
+
+/// ABI-encode `swapExactTokensForETH(amountIn, amountOutMin, [USDC,WETH], to, deadline)`.
+///
+/// ⚠️ `amount_out_min` is YOURS ALONE. There is no coordinator-side slippage
+/// floor on this leg — 0 is an instruction to accept any amount of ETH,
+/// including a sandwich's leavings. This function refuses 0 rather than
+/// encoding it.
+///
+/// `amount_in` is set by the coordinator from the actual payout, so the value
+/// encoded here is the burner's own expectation; a mismatch is tolerated by the
+/// router as long as the allowance covers it.
+pub fn encode_swap_exact_tokens_for_eth(
+    amount_in: u128,
+    amount_out_min: u128,
+    to: [u8; 20],
+    deadline: u64,
+) -> Result<Vec<u8>, String> {
+    if amount_out_min == 0 {
+        return Err(
+            "amountOutMin is 0, which accepts any output at all. There is no coordinator-side \
+             slippage floor on the burn leg — set a real floor."
+                .into(),
+        );
+    }
+    let mut out = Vec::with_capacity(4 + 32 * 9);
+    out.extend_from_slice(&SELECTOR_SWAP_EXACT_TOKENS_FOR_ETH);
+    out.extend_from_slice(&word_u128(amount_in));
+    out.extend_from_slice(&word_u128(amount_out_min));
+    // `path` is dynamic: the head carries its OFFSET, not its contents. Five
+    // head words precede it (4 statics + this one), so the offset is 5*32.
+    out.extend_from_slice(&word_u128(5 * 32));
+    out.extend_from_slice(&word_addr(to));
+    out.extend_from_slice(&word_u128(deadline as u128));
+    // tail: path.len(), then each element
+    out.extend_from_slice(&word_u128(2));
+    out.extend_from_slice(&word_addr(USDC_L1));
+    out.extend_from_slice(&word_addr(WETH_L1));
+    Ok(out)
+}
+
+fn word_u128(v: u128) -> [u8; 32] {
+    let mut w = [0u8; 32];
+    w[16..].copy_from_slice(&v.to_be_bytes());
+    w
+}
+
+fn word_addr(a: [u8; 20]) -> [u8; 32] {
+    let mut w = [0u8; 32];
+    w[12..].copy_from_slice(&a);
+    w
+}
+
+/// Parse a `0x`-prefixed EVM address.
+pub fn parse_evm_address(s: &str) -> Result<[u8; 20], String> {
+    let t = s.trim().strip_prefix("0x").unwrap_or(s.trim());
+    if t.len() != 40 || !t.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(format!("not a 20-byte EVM address: {s}"));
+    }
+    let raw = hex::decode(t).map_err(|e| e.to_string())?;
+    let mut out = [0u8; 20];
+    out.copy_from_slice(&raw);
+    Ok(out)
+}
+
+#[cfg(test)]
+mod burn_tests {
+    use super::*;
+
+    #[test]
+    fn transfer_is_the_two_byte_explicit_form() {
+        assert_eq!(burn_data_transfer(), vec![0x01, 0x00]);
+    }
+
+    #[test]
+    fn call_payload_matches_the_coordinators_parser_layout() {
+        // version | action | 20-byte target | calldata
+        let cd = [0xaa, 0xbb];
+        let p = burn_data_call(UNISWAP_V2_ROUTER02, &cd);
+        assert_eq!(p[0], BURN_DATA_VERSION);
+        assert_eq!(p[1], 0x01);
+        assert_eq!(&p[2..22], &UNISWAP_V2_ROUTER02);
+        assert_eq!(&p[22..], &cd);
+        // The parser requires 22 bytes before calldata; a short target would
+        // otherwise be padded with calldata and yield a REAL but wrong address.
+        assert!(p.len() >= 22);
+    }
+
+    #[test]
+    fn zero_amount_out_min_is_refused_not_encoded() {
+        // There is no coordinator-side floor on this leg.
+        let e = encode_swap_exact_tokens_for_eth(1_000, 0, [0u8; 20], 1).unwrap_err();
+        assert!(e.contains("slippage floor"), "{e}");
+    }
+
+    #[test]
+    fn swap_calldata_has_the_right_selector_and_dynamic_offset() {
+        let to = parse_evm_address("0x1111111111111111111111111111111111111111").unwrap();
+        let cd = encode_swap_exact_tokens_for_eth(1_000_000, 900_000, to, 1_800_000_000).unwrap();
+        assert_eq!(&cd[..4], &SELECTOR_SWAP_EXACT_TOKENS_FOR_ETH);
+        // 4 selector + 5 head words + 3 tail words
+        assert_eq!(cd.len(), 4 + 32 * 8);
+        // The `path` head word must be the OFFSET (5*32 = 160), not a value —
+        // encoding the array inline here silently shifts every later argument.
+        let off = u128::from_be_bytes(cd[4 + 64 + 16..4 + 96].try_into().unwrap());
+        assert_eq!(off, 160, "path must be encoded as a dynamic offset");
+        // and the tail says length 2
+        let len = u128::from_be_bytes(cd[4 + 160 + 16..4 + 192].try_into().unwrap());
+        assert_eq!(len, 2);
+    }
+
+    #[test]
+    fn the_router_constant_is_uniswap_v2_router02() {
+        assert_eq!(
+            format!("0x{}", hex::encode(UNISWAP_V2_ROUTER02)).to_lowercase(),
+            "0x7a250d5630b4cf539739df2c5dacb4c659f2488d"
+        );
+    }
+
+    #[test]
+    fn evm_addresses_are_parsed_strictly() {
+        assert!(parse_evm_address("0x1111111111111111111111111111111111111111").is_ok());
+        for bad in ["", "0x11", "0xzz11111111111111111111111111111111111111"] {
+            assert!(parse_evm_address(bad).is_err(), "should refuse {bad:?}");
+        }
+    }
+}

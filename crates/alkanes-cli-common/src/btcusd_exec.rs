@@ -308,11 +308,65 @@ pub fn run(cmd: &BtcusdCommands, post: &Post, ep: &Endpoints) -> Result<()> {
             *dry_run,
         ),
 
+        BtcusdCommands::Burn { amount, eth_address, to_eth_bps, min_out, .. } => {
+            let amt = btcusd::parse_base_units(amount).map_err(|e| anyhow!(e))?;
+            if amt == 0 {
+                bail!("amount is zero: nothing would be burned");
+            }
+            let to = btcusd::parse_evm_address(eth_address).map_err(|e| anyhow!(e))?;
+            if *to_eth_bps > 10_000 {
+                bail!("--to-eth-bps must be 0..=10000");
+            }
+
+            let payload = if *to_eth_bps == 0 {
+                println!("burn {amt} frUSD -> USDC at 0x{}", hex::encode(to));
+                btcusd::burn_data_transfer()
+            } else {
+                let min = min_out
+                    .as_deref()
+                    .ok_or_else(|| anyhow!(
+                        "--min-out is required with --to-eth-bps: there is NO coordinator-side \
+                         slippage floor on this leg, so 0 accepts any output at all"
+                    ))
+                    .and_then(|m| btcusd::parse_base_units(m).map_err(|e| anyhow!(e)))?;
+                // The coordinator sets amountIn from the ACTUAL payout; the
+                // value encoded here is the burner's own expectation.
+                let expected_in = amt * (*to_eth_bps as u128) / btcusd::BPS_DENOM;
+                let cd = btcusd::encode_swap_exact_tokens_for_eth(
+                    expected_in,
+                    min,
+                    to,
+                    // A deadline far enough out to survive Bitcoin confirmation
+                    // plus the coordinator's own settlement wait.
+                    u64::MAX,
+                )
+                .map_err(|e| anyhow!(e))?;
+                println!(
+                    "burn {amt} frUSD -> {}bps to ETH via Uniswap V2, rest USDC, to 0x{}",
+                    to_eth_bps,
+                    hex::encode(to)
+                );
+                println!("min out            {min} (YOUR floor — the coordinator has none here)");
+                btcusd::burn_data_call(btcusd::UNISWAP_V2_ROUTER02, &cd)
+            };
+
+            println!("burnData           0x{}", hex::encode(&payload));
+            println!();
+            println!(
+                "⚠️  Not yet broadcast. The burnData above is the authoritative payload \
+                 (layout matched to the coordinator's own parser and unit-tested), but the \
+                 frUSD BurnAndBridge cellpack packing still needs checking against \
+                 alkanes-integ-tests/tests/frusd_burn_bridge.rs before this is signed. \
+                 Guessing that packing is exactly how a burn silently degrades to a plain \
+                 payout."
+            );
+            Ok(())
+        }
+
         // Bitcoin-side construction. Refuses rather than pretending.
         BtcusdCommands::Swap { .. }
         | BtcusdCommands::AddLiquidity { .. }
-        | BtcusdCommands::RemoveLiquidity { .. }
-        | BtcusdCommands::Burn { .. } => bail!(
+        | BtcusdCommands::RemoveLiquidity { .. } => bail!(
             "not yet wired: this needs Bitcoin transaction construction (UTXO selection, \
              protostone assembly, signing). That machinery exists in this crate for \
              `frbtc-wrap`; these commands should reuse it rather than grow a second copy. \
@@ -531,29 +585,23 @@ mod tests {
 
     #[test]
     fn bitcoin_side_commands_refuse_rather_than_no_op() {
+        // Swap / add / remove still need protostone assembly and must refuse
+        // rather than appear to succeed. `Burn` is NO LONGER in this list — it
+        // now produces a real burnData payload, so asserting it refuses would
+        // be asserting a regression.
         let post: Box<Post> = Box::new(|_, _| Ok(serde_json::json!({"result": "0x"})));
         let e = ep(Some("K"));
-        for cmd in [
-            BtcusdCommands::Swap {
-                from: "frusd".into(),
-                amount: "1".into(),
-                max_slippage_bps: 50,
-                dry_run: true,
-            },
-            BtcusdCommands::Burn {
-                amount: "1".into(),
-                eth_address: "0x00".into(),
-                to_eth_bps: 0,
-                min_out: None,
-                dry_run: true,
-            },
-        ] {
-            let err = run(&cmd, &*post, &e).unwrap_err().to_string();
-            assert!(
-                err.contains("not yet wired"),
-                "must refuse explicitly rather than appear to succeed: {err}"
-            );
-        }
+        let cmd = BtcusdCommands::Swap {
+            from: "frusd".into(),
+            amount: "1".into(),
+            max_slippage_bps: 50,
+            dry_run: true,
+        };
+        let err = run(&cmd, &*post, &e).unwrap_err().to_string();
+        assert!(
+            err.contains("not yet wired"),
+            "must refuse explicitly rather than appear to succeed: {err}"
+        );
     }
 
     #[test]
@@ -1067,5 +1115,68 @@ mod verify_tests {
         assert!(!t.params.auto_confirm, "a trade must never auto-confirm");
         assert!(t.params.trace_enabled, "keep the trace for post-hoc reconciliation");
         assert_eq!(t.params.protostones.len(), 1);
+    }
+}
+
+#[cfg(test)]
+mod burn_cmd_tests {
+    use super::*;
+
+    fn post_ok() -> Box<Post> {
+        Box::new(|_, _| Ok(serde_json::json!({ "result": "0x" })))
+    }
+    fn e() -> Endpoints {
+        Endpoints { base: "https://x".into(), api_key: Some("K".into()) }
+    }
+
+    #[test]
+    fn a_partial_eth_swap_without_min_out_is_refused() {
+        // No coordinator-side floor exists on this leg, so omitting the floor
+        // is an unbounded-loss instruction, not a convenience.
+        let cmd = BtcusdCommands::Burn {
+            amount: "100000000".into(),
+            eth_address: "0x1111111111111111111111111111111111111111".into(),
+            to_eth_bps: 2_000,
+            min_out: None,
+            dry_run: true,
+        };
+        let err = run(&cmd, &*post_ok(), &e()).unwrap_err().to_string();
+        assert!(err.contains("--min-out is required"), "{err}");
+    }
+
+    #[test]
+    fn a_plain_burn_needs_no_min_out() {
+        let cmd = BtcusdCommands::Burn {
+            amount: "100000000".into(),
+            eth_address: "0x1111111111111111111111111111111111111111".into(),
+            to_eth_bps: 0,
+            min_out: None,
+            dry_run: true,
+        };
+        assert!(run(&cmd, &*post_ok(), &e()).is_ok());
+    }
+
+    #[test]
+    fn an_out_of_range_split_is_refused() {
+        let cmd = BtcusdCommands::Burn {
+            amount: "1".into(),
+            eth_address: "0x1111111111111111111111111111111111111111".into(),
+            to_eth_bps: 20_000,
+            min_out: Some("1".into()),
+            dry_run: true,
+        };
+        assert!(run(&cmd, &*post_ok(), &e()).unwrap_err().to_string().contains("0..=10000"));
+    }
+
+    #[test]
+    fn a_malformed_eth_address_is_refused_before_anything_is_encoded() {
+        let cmd = BtcusdCommands::Burn {
+            amount: "1".into(),
+            eth_address: "0xdeadbeef".into(),
+            to_eth_bps: 0,
+            min_out: None,
+            dry_run: true,
+        };
+        assert!(run(&cmd, &*post_ok(), &e()).is_err());
     }
 }
