@@ -463,9 +463,9 @@ impl WalletProvider for MockProvider {
                 let tweaked_keypair = untweaked_keypair.tap_tweak(secp, None);
                 
                 #[cfg(not(target_arch = "wasm32"))]
-                let signature = secp.sign_schnorr_with_rng(&msg, &tweaked_keypair.to_keypair(), &mut rand::thread_rng());
+                let signature = secp.sign_schnorr_with_rng(&msg, &tweaked_keypair.to_inner(), &mut rand::thread_rng());
                 #[cfg(target_arch = "wasm32")]
-                let signature = secp.sign_schnorr_with_rng(&msg, &tweaked_keypair.to_keypair(), &mut rand::OsRng);
+                let signature = secp.sign_schnorr_with_rng(&msg, &tweaked_keypair.to_inner(), &mut rand::OsRng);
                 
                 let taproot_signature = taproot::Signature { signature, sighash_type: TapSighashType::Default };
                 
