@@ -447,16 +447,12 @@ pub fn run(cmd: &BtcusdCommands, post: &Post, ep: &Endpoints) -> Result<()> {
             // of the pool, so the cap prints and never binds on that side.
             match pool_reserves(post, ep) {
                 Some(r) => match btcusd::depth_share_bps(side, amt, r) {
-                    Some(share) if share > btcusd::MAX_POOL_SHARE_BPS => {
-                        println!(
-                            "⚠️  {}bps of the pool — over the {}bps cap. This trade would be \
-                             REFUSED and pay out in the source asset.",
-                            share,
-                            btcusd::MAX_POOL_SHARE_BPS
-                        );
-                    }
-                    Some(share) => println!("depth: {share}bps of the pool (cap {}bps)", btcusd::MAX_POOL_SHARE_BPS),
-                    None => println!("depth: pool reserve is zero — refuse to trade"),
+                    // One message for every size. The old one named a refusal
+                    // that cannot happen on a direct swap, and its under-cap
+                    // half read as an all-clear for a size that moves this pool
+                    // several percent.
+                    Some(share) => println!("{}", btcusd::direct_swap_depth_note(share)),
+                    None => println!("depth: the incoming leg's reserve is zero — do not trade"),
                 },
                 None => println!(
                     "⚠️  Could not read pool depth; the cap could not be checked. A trade over \
@@ -697,13 +693,17 @@ fn deposit(
     println!("   to    0x{}", hex::encode(btcusd::FRUSD_VAULT_L1));
     println!("   data  0x{}", hex::encode(&plan.deposit_calldata));
 
+    // No key at all is the NORMAL mode, and the calldata above is the whole
+    // deliverable. A key that was SUPPLIED and rejected is a different thing,
+    // and collapsing the two hid both a typo'd path and the shell-history
+    // refusal that exists to protect the person typing it.
+    let supplied_a_key = eth_key_file.is_some() || eth_private_key.is_some();
     let key = match EthKey::resolve(eth_key_file, eth_private_key, allow_inline) {
         Ok(k) => k,
+        Err(e) if supplied_a_key => return Err(e.context("the Ethereum key could not be used")),
         Err(_) => {
-            // No key is the NORMAL mode, and the calldata above is the whole
-            // deliverable: open it in MetaMask, or hand it to any wallet.
             println!(
-                "\nNo Ethereum key supplied. The two calls above are what you sign — \
+                "\nNo Ethereum key supplied. The two calls above are what you sign, \
                  in that order, and the approve must confirm first."
             );
             return Ok(());
@@ -838,6 +838,34 @@ mod tests {
             err.contains("not yet wired"),
             "must refuse explicitly rather than appear to succeed: {err}"
         );
+    }
+
+    #[test]
+    fn an_unreadable_key_is_reported_rather_than_read_as_no_key_at_all() {
+        // Every `EthKey::resolve` failure collapsed into "No Ethereum key
+        // supplied" and exit 0. The direction was safe, but a typo'd key path
+        // read as the intended no-key mode, and the shell-history refusal for
+        // `--eth-private-key` never reached the person it protects.
+        let post: Box<Post> = Box::new(|_, _| Ok(serde_json::json!({"result": "0x"})));
+        let e = ep(Some("K"));
+        let cmd = BtcusdCommands::Deposit {
+            stable: "usdc".into(),
+            amount: "1".into(),
+            recipient: "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4".into(),
+            convert_bps: 0,
+            btc_destination: None,
+            max_slippage_bps: 0,
+            eth_key_file: Some("/nonexistent/key/file".into()),
+            eth_private_key: None,
+            i_know_this_lands_in_shell_history: false,
+            dry_run: true,
+        };
+        let err = run(&cmd, &*post, &e).unwrap_err().to_string();
+        assert!(
+            !err.contains("not yet wired"),
+            "a bad key must not be reported as the unbuilt signing path: {err}"
+        );
+        assert!(err.to_lowercase().contains("key"), "{err}");
     }
 
     #[test]
@@ -1017,6 +1045,82 @@ mod decode_tests {
         assert!(!s.is_killed);
         assert!(!s.ramping, "check this before quoting: the curve moves between blocks");
         assert_eq!(s.marginal_price_q, Some(15_604_533_105_145));
+    }
+
+    /// The two flags that gate "refuse to trade", pinned.
+    ///
+    /// proto3 omits false, so the live capture stops at field 15 and CANNOT
+    /// witness these: absent-because-false and absent-because-the-field-number-
+    /// is-wrong are the same bytes. If they were wrong, a killed pool would
+    /// decode as alive and the warning would never fire, silently, which is the
+    /// exact failure class this work exists to remove. So the vector is
+    /// synthetic and built from the schema
+    /// (`alspo.cryptoswap.PoolState`: `is_killed = 16`, `ramping = 17`).
+    #[test]
+    fn the_kill_and_ramp_flags_are_read_from_the_fields_the_schema_assigns() {
+        fn ld(tag: u8, body: &[u8]) -> Vec<u8> {
+            let mut v = vec![tag, body.len() as u8];
+            v.extend_from_slice(body);
+            v
+        }
+        let mut state = Vec::new();
+        state.extend_from_slice(&[0x08, 0x01]); // 1 height
+        state.extend_from_slice(&ld(0x1a, b"100")); // 3 reserve0
+        state.extend_from_slice(&ld(0x22, b"200")); // 4 reserve1
+        state.extend_from_slice(&ld(0x2a, b"300")); // 5 total_supply
+        state.extend_from_slice(&ld(0x72, b"1000000000000000000")); // 14 virtual_price
+        // field 16 -> key 16<<3 = 128 -> varint 0x80 0x01; field 17 -> 136.
+        state.extend_from_slice(&[0x80, 0x01, 0x01]); // 16 is_killed = true
+        state.extend_from_slice(&[0x88, 0x01, 0x01]); // 17 ramping = true
+        let mut msg = ld(0x2a, &state); // 5 state
+        msg.extend_from_slice(&ld(0x32, b"1000000000000000000")); // 6 price_q_scale
+
+        let s = decode_pool_state(&msg).unwrap();
+        assert!(s.is_killed, "a killed pool decoding as alive is the silent failure");
+        assert!(s.ramping);
+        assert_eq!(s.reserve_frusd, 100);
+        assert_eq!(s.reserve_frbtc, 200);
+
+        // And the live capture, which carries neither, must read false rather
+        // than fail to decode.
+        let live = decode_pool_state(&hex::decode(LIVE_POOL_STATE).unwrap()).unwrap();
+        assert!(!live.is_killed);
+        assert!(!live.ramping);
+    }
+
+    /// A `get_dy` answer that does not fit u128 is refused, not truncated.
+    ///
+    /// ⚠️ The REAL response is 32 bytes, not 16: a u256, little-endian, whose
+    /// high half is zero for every value that fits. A first attempt at this
+    /// refused anything over 16 bytes, which is what a synthetic 16-byte
+    /// fixture says the view returns and is not what the view returns. It
+    /// passed, and it broke every quote against mainnet. Hence the live capture
+    /// below.
+    #[test]
+    fn a_simulate_result_that_does_not_fit_u128_is_refused_rather_than_truncated() {
+        // Captured from the live index: `get_dy` for 3,000,000 sats in.
+        let live = "0x0a221a20f55bc5a628000000000000000000000000000000000000000000\
+                    00000000000010a7d530";
+        assert_eq!(decode_simulate_u128(live), Some(174_596_643_829));
+
+        fn resp(data: &[u8]) -> String {
+            let mut exec = vec![0x1a, data.len() as u8];
+            exec.extend_from_slice(data);
+            let mut msg = vec![0x0a, exec.len() as u8];
+            msg.extend_from_slice(&exec);
+            format!("0x{}", hex::encode(msg))
+        }
+        // A value that genuinely needs more than 128 bits. Truncating keeps the
+        // low half and answers 42, which reads exactly like a real quote.
+        let mut wide = vec![0u8; 32];
+        wide[0] = 0x2a;
+        wide[16] = 0x01;
+        assert_eq!(decode_simulate_u128(&resp(&wide)), None);
+        // ... while the same 32-byte shape with an empty high half is the
+        // ordinary case and must still decode.
+        let mut narrow = vec![0u8; 32];
+        narrow[0] = 0x2a;
+        assert_eq!(decode_simulate_u128(&resp(&narrow)), Some(42));
     }
 
     /// BOTH reserves out of a real `GetPoolStateResponse`.
@@ -1376,9 +1480,17 @@ fn decode_simulate_u128(hex_str: &str) -> Option<u128> {
     let raw = hex::decode(hex_str.trim_start_matches("0x")).ok()?;
     let exec = field_bytes(&raw, 1)?;
     let data = field_bytes(exec, 3)?;
+    // ⚠️ The view answers in 32 bytes: a u256, little-endian, whose high half
+    // is zero for every value that fits. Keeping the low 128 bits
+    // UNCONDITIONALLY would turn a genuinely larger answer into a plausible
+    // small one — the u64 wrap that froze 23 LP, one width up. So take the low
+    // half only when the high half is empty, and refuse otherwise.
+    let (low, high) = data.split_at(data.len().min(16));
+    if high.iter().any(|b| *b != 0) {
+        return None;
+    }
     let mut buf = [0u8; 16];
-    let n = data.len().min(16);
-    buf[..n].copy_from_slice(&data[..n]);
+    buf[..low.len()].copy_from_slice(low);
     Some(u128::from_le_bytes(buf))
 }
 

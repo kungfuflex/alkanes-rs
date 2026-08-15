@@ -215,7 +215,9 @@ pub enum BtcusdCommands {
         eth_private_key: Option<String>,
         #[arg(long)]
         i_know_this_lands_in_shell_history: bool,
-        /// Print the signed transaction instead of submitting it.
+        /// Reserved. Local signing is not built (see the key flags above), so
+        /// there is currently no signed transaction to withhold: the command
+        /// prints the two calls either way.
         #[arg(long)]
         dry_run: bool,
     },
@@ -518,10 +520,18 @@ pub fn plan_conversion(
         requested_bps,
         effective_bps,
         note: format!(
-            "The pool is too shallow to convert all of this at once: {}% will become BTC \
-             and the rest arrives as frUSD. Converting more in one trade would be refused \
-             and ALL of it would arrive as frUSD.",
-            effective_bps / 100
+            // ⚠️ IN BPS, not in whole percent. `bps / 100` is integer division,
+            // so every clamp under 100bps printed "0% will become BTC" while
+            // the line under it printed the real figure and the payload encoded
+            // the real figure. On a pool this size a sub-100bps clamp is the
+            // ordinary case, and the contradiction landed on the confirmation
+            // screen of a money path whose whole claim is that the printed
+            // number and the encoded number agree.
+            "The pool is too shallow to convert all of this at once: {effective_bps}bps \
+             ({}.{:02}%) will become BTC and the rest arrives as frUSD. Converting more in one \
+             trade would be refused and ALL of it would arrive as frUSD.",
+            effective_bps / 100,
+            effective_bps % 100
         ),
     }
 }
@@ -538,6 +548,27 @@ pub fn swap_depth_share_bps(amount_in: u128, reserve_in: u128) -> Option<u128> {
         return None;
     }
     Some(amount_in.saturating_mul(BPS_DENOM) / reserve_in)
+}
+
+/// What to say about a DIRECT swap's size.
+///
+/// ⚠️ NOT a refusal, because nothing refuses a direct swap.
+/// [`MAX_POOL_SHARE_BPS`] is the COORDINATOR's cap, and the coordinator only
+/// sits in the BRIDGE path: it refuses an over-cap conversion and pays out the
+/// source asset instead. A direct `exchange` on the pool has no coordinator in
+/// it. It executes at whatever the curve gives, and `min_dy` is the only
+/// protection the trader has.
+///
+/// Saying "this would be REFUSED" here teaches a protection that is not there.
+/// Worse, the under-cap wording read as an all-clear: 999bps of this pool moves
+/// the price about 8%, and nothing was capping it.
+pub fn direct_swap_depth_note(share_bps: u128) -> String {
+    format!(
+        "size: {share_bps}bps of the pool's incoming leg. That is PRICE IMPACT, not a limit. \
+         Nothing caps a direct swap for size: it executes at whatever the curve gives, so read \
+         the effective rate below and set your own min_dy. (The {MAX_POOL_SHARE_BPS}bps cap \
+         applies to BRIDGE conversions, where the coordinator refuses instead.)"
+    )
 }
 
 /// USD per BTC, to two decimals, from a raw `*_price_q` and its scale.
@@ -1131,6 +1162,12 @@ pub fn plan_deposit(
     if convert_bps as u128 > BPS_DENOM {
         return Err(format!("convert_bps must be 0..={BPS_DENOM}, got {convert_bps}"));
     }
+    // Checked here rather than only where it is encoded: on the DirectTransfer
+    // branch the value is never looked at, so an absurd one used to pass in
+    // silence and do nothing.
+    if max_slippage_bps as u128 > BPS_DENOM {
+        return Err(format!("max_slippage_bps must be 0..={BPS_DENOM}, got {max_slippage_bps}"));
+    }
     let recipient_script = mainnet_script_pubkey(recipient)?;
 
     // The destination is required by the REQUESTED conversion, not the effective
@@ -1140,7 +1177,21 @@ pub fn plan_deposit(
         (true, None) => {
             return Err("--btc-destination is required when converting to BTC".into())
         }
-        (_, Some(d)) => Some(mainnet_script_pubkey(d)?),
+        // ⚠️ CONTRADICTORY INPUT, refused rather than half-honoured.
+        // `--convert-bps` defaults to 0, so naming a destination and nothing
+        // else is an easy mistake, and it is the flow the flag advertises:
+        // paying a third party in BTC out of an EVM balance. Encoding a plain
+        // DirectTransfer mints 100% as frUSD to `--recipient` and says nothing
+        // about the destination that was typed and dropped.
+        (false, Some(_)) => {
+            return Err(
+                "--btc-destination was given but --convert-bps is 0, so nothing would be \
+                 converted and the destination would be ignored: all of it would mint as frUSD \
+                 to --recipient. Set --convert-bps, or drop --btc-destination."
+                    .into(),
+            )
+        }
+        (true, Some(d)) => Some(mainnet_script_pubkey(d)?),
         (false, None) => None,
     };
 
@@ -1369,6 +1420,65 @@ mod deposit_tests {
     fn a_zero_reserve_is_none_rather_than_a_share_of_nothing() {
         assert_eq!(depth_share_bps(Side::Frbtc, 1, (LIVE.0, 0)), None);
         assert_eq!(depth_share_bps(Side::Frusd, 1, (0, LIVE.1)), None);
+    }
+
+    #[test]
+    fn the_clamp_note_states_the_same_number_the_payload_carries() {
+        // `bps / 100` is integer division, so ANY clamp under 100bps printed
+        // "0% will become BTC" while the line under it printed the real bps and
+        // the payload encoded the real bps. Sub-100bps clamps are the ORDINARY
+        // case on a pool this size, not an edge.
+        let reserve = 5_854_00_000_000u128;
+        let p = plan_conversion(10_000, 100_000_000_000, Some(reserve));
+        assert_eq!(p.effective_bps, 58, "this is the clamp the old note printed as 0%");
+        assert!(
+            p.note.contains("58bps"),
+            "the note must carry the number the bytes carry, said: {}",
+            p.note
+        );
+        assert!(!p.note.contains("0%"), "said: {}", p.note);
+    }
+
+    #[test]
+    fn a_destination_without_a_conversion_is_refused_rather_than_dropped() {
+        // `--convert-bps` defaults to 0, so supplying only `--btc-destination`
+        // is an easy and entirely reasonable mistake: the flag's whole purpose
+        // is paying a third party in BTC out of an EVM balance. Encoding a
+        // plain DirectTransfer here mints 100% as frUSD to `--recipient` and
+        // says nothing about the destination that was typed and ignored.
+        let addr = "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4";
+        let e = plan_deposit("usdc", 1, addr, 0, Some(addr), 0, None).unwrap_err();
+        assert!(e.contains("--convert-bps"), "{e}");
+    }
+
+    #[test]
+    fn an_out_of_range_slippage_is_refused_even_when_no_conversion_is_encoded() {
+        // Otherwise the value is only checked on the branch that uses it, and
+        // an absurd one passes silently on the other.
+        let addr = "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4";
+        assert!(plan_deposit("usdc", 1, addr, 0, None, 20_000, None).is_err());
+    }
+
+    #[test]
+    fn the_direct_swap_depth_note_does_not_promise_a_refusal_that_cannot_happen() {
+        // `MAX_POOL_SHARE_BPS` is the COORDINATOR's cap on a bridge conversion.
+        // A direct `exchange` has no coordinator in the path: nothing refuses
+        // it, it executes at whatever the curve gives, and `min_dy` is the only
+        // protection. Telling a trader it "would be REFUSED" describes a
+        // mechanism that is not there, and the under-cap wording read as a
+        // green light for a size that moves this pool ~8%.
+        for bps in [531u128, 999, 1_016, 2_657] {
+            let note = direct_swap_depth_note(bps);
+            let lower = note.to_lowercase();
+            // The claim that must never be made about THIS trade. The note may
+            // still explain where a refusal does exist, which is the bridge.
+            assert!(!lower.contains("this trade would be refused"), "at {bps}bps: {note}");
+            assert!(!lower.contains("pay out in the source asset."), "at {bps}bps: {note}");
+            assert!(note.contains(&format!("{bps}bps")), "at {bps}bps: {note}");
+            // Every size, over or under the cap, must be framed as impact —
+            // the old under-cap wording read as an all-clear.
+            assert!(lower.contains("price impact"), "at {bps}bps: {note}");
+        }
     }
 
     #[test]
