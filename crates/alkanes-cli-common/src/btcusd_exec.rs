@@ -79,21 +79,24 @@ pub type Post = dyn Fn(&str, Value) -> Result<Value>;
 /// check that fails closed on an index outage would block trades the pool can
 /// absorb perfectly well. The callers all treat `None` as "say so and proceed".
 pub fn frusd_reserve(post: &Post, ep: &Endpoints) -> Option<u128> {
+    pool_reserves(post, ep).map(|(frusd, _)| frusd)
+}
+
+/// Both reserves, as `(frusd, frbtc)`.
+///
+/// The depth cap has to measure a trade against the leg it is PAID IN, so a
+/// caller that only ever reads the frUSD side cannot check a frBTC sell at all.
+pub fn pool_reserves(post: &Post, ep: &Endpoints) -> Option<(u128, u128)> {
     let body = serde_json::json!({
         "jsonrpc": "2.0", "id": 1, "method": "metashrew_view",
         "params": ["getpoolstate", pool_request_hex(), "latest"],
     });
     let v = post(&ep.btcusd_index(), body).ok()?;
     let hex = v.get("result")?.as_str()?;
-    // The index answers in protobuf; `reserve0` is a decimal STRING there and
-    // must stay one — the LP supply on this pool already exceeds u64.
+    // The index answers in protobuf; the reserves are decimal STRINGS there and
+    // must stay strings until parsed — the LP supply already exceeds u64.
     let raw = hex::decode(hex.trim_start_matches("0x")).ok()?;
-    let s = extract_reserve0(&raw)?;
-    if RESERVE0_IS_FRUSD {
-        s.parse::<u128>().ok()
-    } else {
-        None
-    }
+    extract_reserves(&raw)
 }
 
 /// The prost-encoded `GetPoolStateRequest` for `4:1778`.
@@ -128,6 +131,170 @@ fn extract_reserve0(raw: &[u8]) -> Option<String> {
     // reserve0 is a decimal STRING on the wire and must stay one until the
     // caller parses it — this pool's supply already exceeds u64.
     std::str::from_utf8(r0).ok().map(str::to_string)
+}
+
+/// BOTH reserves, as `(frusd, frbtc)`.
+///
+/// The depth cap needs the reserve of the leg a trade is PAID IN, so reading
+/// only `reserve0` leaves the frBTC side unmeasurable — and a sat amount
+/// divided by the frUSD reserve is a plausible-looking 0bps rather than an
+/// error. Same walk, same conservatism: `None` beats a guessed leg.
+fn extract_reserves(raw: &[u8]) -> Option<(u128, u128)> {
+    //   GetPoolStateResponse { … PoolState state = 5; … }
+    //   PoolState { … string reserve0 = 3; string reserve1 = 4; … }
+    let state = field_bytes(raw, 5)?;
+    let r0 = std::str::from_utf8(field_bytes(state, 3)?).ok()?.parse::<u128>().ok()?;
+    let r1 = std::str::from_utf8(field_bytes(state, 4)?).ok()?.parse::<u128>().ok()?;
+    // The INDEX orders token0/token1 by alkane id (frUSD 4:1776 before frBTC
+    // 32:0), which is the inverse of the pool contract's internal coin order.
+    if RESERVE0_IS_FRUSD {
+        Some((r0, r1))
+    } else {
+        Some((r1, r0))
+    }
+}
+
+/// The `result` of a JSON-RPC answer, as bytes.
+///
+/// An answer without one is an ERROR here rather than an empty decode: an empty
+/// result is how "this pool does not exist" gets fabricated out of a malformed
+/// request, and a decoder that shrugs at it reports a dead pool instead of a bad
+/// call.
+fn result_bytes(v: &Value) -> Result<Vec<u8>> {
+    let s = v
+        .get("result")
+        .and_then(|r| r.as_str())
+        .ok_or_else(|| anyhow!("no result in the index's answer: {v}"))?;
+    hex::decode(s.trim_start_matches("0x")).map_err(|e| anyhow!("result is not hex: {e}"))
+}
+
+/// Render base units at a fixed scale, with no float in the path.
+///
+/// ⚠️ The scale is a property of the TOKEN, not of the pool. frUSD and frBTC are
+/// 8 decimals; the LP token is 18, because LP is minted in units of the
+/// invariant D, which lives in 1e18-normalised space.
+fn scaled(v: u128, decimals: u32) -> String {
+    let div = 10u128.pow(decimals);
+    format!("{}.{:0width$}", v / div, v % div, width = decimals as usize)
+}
+
+fn dec8(v: u128) -> String {
+    scaled(v, 8)
+}
+
+fn dec18(v: u128) -> String {
+    scaled(v, 18)
+}
+
+/// The pool's price tip. Three prices, and they are NOT interchangeable.
+///
+/// Field numbers from `alspo-proto/proto/cryptoswap.proto`, package
+/// `alspo.cryptoswap`, message `GetPriceResponse`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PriceSnapshot {
+    /// The scale every `*_price_q` is quoted in (1e18).
+    pub price_q_scale: u128,
+    /// The pool's most recent ACTUAL trade. Absent until it has been traded
+    /// against — an empty pool still quotes marginal and oracle.
+    pub executed_price_q: Option<u128>,
+    pub executed_height: Option<u64>,
+    /// From the pool's own price state, available from its first block.
+    pub marginal_price_q: Option<u128>,
+    pub oracle_price_q: Option<u128>,
+    pub state_height: Option<u64>,
+}
+
+/// Decode a `GetPriceResponse`.
+fn decode_price(raw: &[u8]) -> Option<PriceSnapshot> {
+    let dec = |f: u64| -> Option<u128> {
+        std::str::from_utf8(field_bytes(raw, f)?).ok()?.parse().ok()
+    };
+    Some(PriceSnapshot {
+        price_q_scale: dec(5)?,
+        executed_price_q: dec(6),
+        executed_height: field_varint(raw, 8),
+        marginal_price_q: dec(10),
+        oracle_price_q: dec(11),
+        state_height: field_varint(raw, 12),
+    })
+}
+
+/// Reserves, LP supply and the invariant slots.
+///
+/// Field numbers from `alspo.cryptoswap.PoolState`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PoolStateSnapshot {
+    pub height: u64,
+    /// In the MODULE's token0/token1 orientation, which is by alkane id — the
+    /// INVERSE of the contract's own coin order.
+    pub reserve_frusd: u128,
+    pub reserve_frbtc: u128,
+    /// ⚠️ 18 decimals, not 8, and already past u64.
+    pub lp_total_supply: u128,
+    pub marginal_price_q: Option<u128>,
+    pub oracle_price_q: Option<u128>,
+    /// 1e18-scaled. Rises with fees; a fall means the pool lost value.
+    pub virtual_price: u128,
+    /// Refuse to trade at all.
+    pub is_killed: bool,
+    /// An A/gamma ramp is in flight, so a quote taken now may not hold.
+    pub ramping: bool,
+    pub price_q_scale: u128,
+}
+
+/// Decode a `GetPoolStateResponse`.
+fn decode_pool_state(raw: &[u8]) -> Option<PoolStateSnapshot> {
+    let state = field_bytes(raw, 5)?;
+    let dec = |buf: &[u8], f: u64| -> Option<u128> {
+        std::str::from_utf8(field_bytes(buf, f)?).ok()?.parse().ok()
+    };
+    let (reserve_frusd, reserve_frbtc) = extract_reserves(raw)?;
+    Some(PoolStateSnapshot {
+        height: field_varint(state, 1)?,
+        reserve_frusd,
+        reserve_frbtc,
+        lp_total_supply: dec(state, 5)?,
+        marginal_price_q: dec(state, 10),
+        oracle_price_q: dec(state, 11),
+        virtual_price: dec(state, 14)?,
+        // proto3 omits false, so an absent field IS the answer.
+        is_killed: field_varint(state, 16).unwrap_or(0) != 0,
+        ramping: field_varint(state, 17).unwrap_or(0) != 0,
+        price_q_scale: dec(raw, 6)?,
+    })
+}
+
+/// Read one varint field out of a protobuf message.
+///
+/// Same walk as [`field_bytes`], same refusal to resync.
+fn field_varint(mut buf: &[u8], want: u64) -> Option<u64> {
+    while !buf.is_empty() {
+        let (key, rest) = varint(buf)?;
+        let field = key >> 3;
+        let wire = key & 7;
+        buf = rest;
+        match wire {
+            0 => {
+                let (v, rest) = varint(buf)?;
+                if field == want {
+                    return Some(v);
+                }
+                buf = rest;
+            }
+            2 => {
+                let (len, rest) = varint(buf)?;
+                let len = len as usize;
+                if rest.len() < len {
+                    return None;
+                }
+                buf = &rest[len..];
+            }
+            5 => buf = buf.get(4..)?,
+            1 => buf = buf.get(8..)?,
+            _ => return None,
+        }
+    }
+    None
 }
 
 /// Read one length-delimited field out of a protobuf message.
@@ -192,7 +359,29 @@ pub fn run(cmd: &BtcusdCommands, post: &Post, ep: &Endpoints) -> Result<()> {
                     "params": ["getprice", pool_request_hex(), "latest"],
                 }),
             )?;
-            emit(&v, *raw)
+            if *raw {
+                return emit(&v, true);
+            }
+            let p = decode_price(&result_bytes(&v)?)
+                .ok_or_else(|| anyhow!("the index answered a shape this build cannot read"))?;
+            let usd = |q: Option<u128>| {
+                q.and_then(|q| btcusd::usd_per_btc(q, p.price_q_scale))
+                    .unwrap_or_else(|| "-".into())
+            };
+            // Three prices, kept apart on purpose. `executed` is the pool's last
+            // real trade and is absent until it has been traded against;
+            // marginal and oracle come from its price state and always exist.
+            println!("USD/BTC");
+            println!("  executed  {:>14}   (last actual trade)", usd(p.executed_price_q));
+            println!("  marginal  {:>14}   (the pool's own price slot)", usd(p.marginal_price_q));
+            println!("  oracle    {:>14}   (EMA)", usd(p.oracle_price_q));
+            if let Some(h) = p.state_height {
+                println!("state height {h}");
+            }
+            // ⚠️ The marginal price is NOT what a trade gets. Quote first.
+            println!("\nThese are pool prices, not execution prices. Run `btcusd quote` for what a");
+            println!("given size actually receives — on a pool this size the gap is material.");
+            Ok(())
         }
         BtcusdCommands::Pool { raw } => {
             let v = post(
@@ -202,7 +391,38 @@ pub fn run(cmd: &BtcusdCommands, post: &Post, ep: &Endpoints) -> Result<()> {
                     "params": ["getpoolstate", pool_request_hex(), "latest"],
                 }),
             )?;
-            emit(&v, *raw)
+            if *raw {
+                return emit(&v, true);
+            }
+            let s = decode_pool_state(&result_bytes(&v)?)
+                .ok_or_else(|| anyhow!("the index answered a shape this build cannot read"))?;
+            println!("pool 4:1778 at height {}", s.height);
+            println!("  frUSD reserve  {:>20}  ({})", s.reserve_frusd, dec8(s.reserve_frusd));
+            println!("  frBTC reserve  {:>20}  ({})", s.reserve_frbtc, dec8(s.reserve_frbtc));
+            // ⚠️ LP is 18 decimals, not 8. Opcode 102 is get_A and returns
+            // 400000; anything reading it as get_decimals renders this at
+            // 1e400000.
+            println!("  LP supply      {:>20}  ({}, 18 decimals)", s.lp_total_supply, dec18(s.lp_total_supply));
+            println!("  virtual price  {:>20}  ({})", s.virtual_price, dec18(s.virtual_price));
+            if let Some(q) = s.marginal_price_q {
+                println!(
+                    "  marginal       {:>20}  ({} USD/BTC)",
+                    q,
+                    btcusd::usd_per_btc(q, s.price_q_scale).unwrap_or_else(|| "-".into())
+                );
+            }
+            // The depth cap is a share of the frUSD reserve, so it moves with
+            // the pool. Printing the number beats printing the rule.
+            let cap = s.reserve_frusd.saturating_mul(btcusd::MAX_POOL_SHARE_BPS) / btcusd::BPS_DENOM;
+            println!("  depth cap      {:>20}  ({} frUSD — {}bps of the reserve)", cap, dec8(cap), btcusd::MAX_POOL_SHARE_BPS);
+            // Both default to false on the wire, so absent is the answer.
+            if s.is_killed {
+                println!("\n⚠️  is_killed — the pool refuses trades. Do not build one.");
+            }
+            if s.ramping {
+                println!("\n⚠️  ramping — A/gamma are moving between blocks, so a quote may not hold.");
+            }
+            Ok(())
         }
         BtcusdCommands::Candles { bucket, raw, .. } => {
             if *bucket != 3600 && *bucket != 86400 {
@@ -222,8 +442,11 @@ pub fn run(cmd: &BtcusdCommands, post: &Post, ep: &Endpoints) -> Result<()> {
             let amt = btcusd::parse_base_units(amount).map_err(|e| anyhow!(e))?;
             // Depth first: a quote that does not mention the cap invites a
             // trade that silently pays out in the wrong asset.
-            match frusd_reserve(post, ep) {
-                Some(r) => match btcusd::swap_depth_share_bps(amt, r) {
+            // Measured against the leg the trade is PAID IN. Dividing a sat
+            // amount by the frUSD reserve answers ~0bps for a sell worth a tenth
+            // of the pool, so the cap prints and never binds on that side.
+            match pool_reserves(post, ep) {
+                Some(r) => match btcusd::depth_share_bps(side, amt, r) {
                     Some(share) if share > btcusd::MAX_POOL_SHARE_BPS => {
                         println!(
                             "⚠️  {}bps of the pool — over the {}bps cap. This trade would be \
@@ -426,27 +649,33 @@ fn deposit(
     allow_inline: bool,
     dry_run: bool,
 ) -> Result<()> {
-    let asset_id: u8 = match stable.trim().to_ascii_lowercase().as_str() {
-        "usdc" => 0,
-        "usdt" => 1,
-        other => bail!("unknown stable {other:?} — the vault registered usdc(0) and usdt(1)"),
-    };
     let amt = btcusd::parse_base_units(amount).map_err(|e| anyhow!(e))?;
-    if amt == 0 {
-        bail!("amount is zero: the vault would take nothing and nothing would be minted");
-    }
 
-    // Clamp the conversion to what the pool can absorb, BEFORE encoding. Over
-    // the cap the coordinator refuses the swap and pays out frUSD — no error.
-    let plan = btcusd::plan_conversion(convert_bps, amt, frusd_reserve(post, ep));
+    // Everything is decided before a byte is emitted. The pool's depth is read
+    // first because it CLAMPS the conversion, and the clamped number is what has
+    // to reach the payload — a payload asking for more than the screen said is
+    // refused by the coordinator, and refusal means the whole mint lands as
+    // frUSD.
+    let plan = btcusd::plan_deposit(
+        stable,
+        amt,
+        recipient,
+        convert_bps,
+        btc_destination,
+        max_slippage_bps,
+        frusd_reserve(post, ep),
+    )
+    .map_err(|e| anyhow!(e))?;
+
     if !plan.note.is_empty() {
         println!("⚠️  {}", plan.note);
     }
-    if plan.effective_bps > 0 && btc_destination.is_none() {
-        bail!("--btc-destination is required when converting to BTC");
-    }
 
-    println!("deposit  {amt} base units of {} (assetId {asset_id})", stable.to_uppercase());
+    println!(
+        "deposit  {amt} base units of {} (assetId {})",
+        stable.to_uppercase(),
+        plan.asset_id
+    );
     println!("recipient (frUSD)  {recipient}");
     if plan.effective_bps > 0 {
         println!(
@@ -455,41 +684,48 @@ fn deposit(
             btc_destination.unwrap_or("-")
         );
         println!("max slippage       {max_slippage_bps}bps (honoured downwards only)");
+    } else if convert_bps > 0 {
+        println!("convert            NOTHING — the pool cannot absorb it; this lands as frUSD");
     }
     println!("approve            exactly {amt} — NOT an unlimited allowance");
+    println!("bridgeData         0x{}", hex::encode(&plan.bridge_data));
+
+    println!("\n1) approve — send to the TOKEN, not the vault");
+    println!("   to    0x{}", hex::encode(plan.token));
+    println!("   data  0x{}", hex::encode(&plan.approve_calldata));
+    println!("\n2) depositAndBridge — send to the VAULT");
+    println!("   to    0x{}", hex::encode(btcusd::FRUSD_VAULT_L1));
+    println!("   data  0x{}", hex::encode(&plan.deposit_calldata));
 
     let key = match EthKey::resolve(eth_key_file, eth_private_key, allow_inline) {
         Ok(k) => k,
         Err(_) => {
-            // No key is a normal, supported mode: print the calldata and stop.
+            // No key is the NORMAL mode, and the calldata above is the whole
+            // deliverable: open it in MetaMask, or hand it to any wallet.
             println!(
-                "\nNo Ethereum key supplied — printing calldata for your own wallet.\n\
-                 Sign locally and submit privately with --eth-key-file, or open these in \
-                 MetaMask."
+                "\nNo Ethereum key supplied. The two calls above are what you sign — \
+                 in that order, and the approve must confirm first."
             );
             return Ok(());
         }
     };
-    println!("signer             {}", key.address_hex());
 
-    let tx = Eip1559Tx {
-        chain_id: evm_signer::CHAIN_ID,
-        nonce: 0,
-        max_priority_fee_per_gas: 1_000_000_000,
-        max_fee_per_gas: 30_000_000_000,
-        gas_limit: 250_000,
-        to: [0u8; 20],
-        value: 0,
-        data: vec![],
-    };
-    let raw = key.sign_1559(&tx)?;
-    if dry_run {
-        println!("\nsigned (not submitted): 0x{}", hex::encode(&raw));
-        return Ok(());
-    }
-    // ⚠️ The builder route, never /ethereum — the latter is the public read path.
-    let v = post(&ep.builder(), evm_signer::send_raw_transaction_body(&raw))?;
-    println!("submitted privately via ethereum-builder: {v}");
+    // ⚠️ REFUSED RATHER THAN GUESSED. Signing these needs a live nonce
+    // (`eth_getTransactionCount`), a fee estimate, and the approve CONFIRMED
+    // before the deposit is broadcast — the vault's `transferFrom` reverts
+    // against an allowance that is still pending. None of that is built here.
+    //
+    // This path previously signed an EIP-1559 transaction to the zero address
+    // with empty calldata and reported "submitted privately". It did not
+    // deposit anything, and on a fresh account it confirmed, burning gas and
+    // consuming nonce 0. A command that silently does nothing is worse than one
+    // that refuses.
+    let _ = (dry_run, &key);
+    bail!(
+        "not yet wired: local signing needs a live nonce, a fee estimate, and the approve \
+         confirmed before the deposit is broadcast. Sign the two calls above with your own \
+         wallet instead — that is the supported path, and it is the one the webapp uses."
+    );
     Ok(())
 }
 
@@ -667,6 +903,19 @@ mod encoding_vectors {
 mod decode_tests {
     use super::*;
 
+    /// A real `getpoolstate` answer, captured from the live index at height
+    /// 962,502 (state height 962,472). The actual wire shape, not one built to
+    /// match this parser.
+    const LIVE_POOL_STATE: &str = "08011205080410f20d1a05080410f00d220208202adb0108a8df3a10c4eefdd3\
+             061a0d31383831323134333839303738220832393532313930322a1437343531\
+             36373739383134363038383937363236320e3135363034353333313035313435\
+             3a0e3135363039303635313232313638420e3135363037343934383335333233\
+             48a8df3a520e31353630343533333130353134355a0e31353630393036353132\
+             32313638620e31353630373439343833353332336a1235383837373336313837\
+             33363239343934387213313030303038393532343433333539363934357a1331\
+             3030303039333236313437313231323339343213313030303030303030303030\
+             30303030303030";
+
     /// The pool-state request must be exactly what the live index accepts.
     ///
     /// A wrong length prefix returns an EMPTY RESULT rather than an error, and
@@ -679,6 +928,109 @@ mod decode_tests {
         // wrapper: field 1, length-delimited, 5 bytes of AlkaneId
         assert_eq!(raw[0], 0x0a);
         assert_eq!(raw[1] as usize, raw.len() - 2, "length prefix must match the payload");
+    }
+
+    /// Base units rendered at the right scale, without a float anywhere.
+    ///
+    /// The two scales are not interchangeable and the pool holds both: frUSD
+    /// and frBTC are 8 decimals, the LP token is 18. Rendering the LP supply at
+    /// 8 would report 745,167,798,146 LP for a pool that has 74.5.
+    #[test]
+    fn amounts_render_at_their_own_scale() {
+        assert_eq!(dec8(1_881_214_389_078), "18812.14389078");
+        assert_eq!(dec8(29_521_902), "0.29521902");
+        assert_eq!(dec8(0), "0.00000000");
+        assert_eq!(dec18(74_516_779_814_608_897_626), "74.516779814608897626");
+        assert_eq!(dec18(1_000_089_524_433_596_945), "1.000089524433596945");
+        // Past u64 must survive: the LP supply already is.
+        assert_eq!(
+            dec18(23_113_653_069_174_808_444_000_000_000u128),
+            "23113653069.174808444000000000"
+        );
+    }
+
+    /// A JSON-RPC answer whose `result` is not the hex string we expect is an
+    /// error, not an empty decode. `getbytecode` returning `0x` for a wrapped
+    /// request is exactly how "this contract has no code" gets fabricated.
+    #[test]
+    fn a_missing_result_is_an_error_rather_than_an_empty_decode() {
+        assert!(result_bytes(&serde_json::json!({"error": {"code": -32601}})).is_err());
+        assert!(result_bytes(&serde_json::json!({"result": "0x"})).unwrap().is_empty());
+        assert_eq!(
+            result_bytes(&serde_json::json!({"result": "0x0801"})).unwrap(),
+            vec![0x08, 0x01]
+        );
+    }
+
+    /// The live `getprice` response, decoded into the three prices it actually
+    /// carries.
+    ///
+    /// Field numbers are read from `alspo-proto/proto/cryptoswap.proto`
+    /// (`alspo.cryptoswap`), not inferred from the bytes. The three are NOT
+    /// interchangeable: `executed_price_q` is the pool's last actual trade and
+    /// is ABSENT until it has been traded against, while marginal and oracle
+    /// come from the pool's own price state and exist from its first block.
+    /// Printing one under the other's name is a wrong number that reads right.
+    #[test]
+    fn decodes_the_three_prices_from_a_live_getprice() {
+        let raw = hex::decode(
+            "08011205080410f20d1a05080410f00d220208202a1331303030303030303030\
+             303030303030303030320e313535373830363732393332383838c4eefdd30640\
+             a8df3a4a20949076100ebd8fd98d7de98981823a652a7383535a0396e4d7482a\
+             e013d63d52520e31353630343533333130353134355a0e313536303930363531\
+             323231363860a8df3a",
+        )
+        .unwrap();
+        let p = decode_price(&raw).unwrap();
+        assert_eq!(p.price_q_scale, 1_000_000_000_000_000_000);
+        assert_eq!(p.executed_price_q, Some(15_578_067_293_288));
+        assert_eq!(p.marginal_price_q, Some(15_604_533_105_145));
+        assert_eq!(p.oracle_price_q, Some(15_609_065_122_168));
+        assert_eq!(p.state_height, Some(962_472));
+    }
+
+    /// The quote is token1-per-token0 — frBTC per frUSD — so USD/BTC is the
+    /// RECIPROCAL. Getting it backwards yields a number near zero, which reads
+    /// as "no price" rather than as an error.
+    #[test]
+    fn usd_per_btc_is_the_reciprocal_and_is_computed_without_floats() {
+        assert_eq!(
+            btcusd::usd_per_btc(15_578_067_293_288, 1_000_000_000_000_000_000).unwrap(),
+            "64192.81"
+        );
+        assert_eq!(btcusd::usd_per_btc(0, 1_000_000_000_000_000_000), None);
+    }
+
+    /// The whole pool snapshot, from the same live capture the reserves come
+    /// from.
+    #[test]
+    fn decodes_a_live_pool_state_snapshot() {
+        let raw = hex::decode(LIVE_POOL_STATE).unwrap();
+        let s = decode_pool_state(&raw).unwrap();
+        assert_eq!(s.height, 962_472);
+        assert_eq!(s.reserve_frusd, 1_881_214_389_078);
+        assert_eq!(s.reserve_frbtc, 29_521_902);
+        // LP is 18 decimals, not 8, and the supply is already past u64.
+        assert_eq!(s.lp_total_supply, 74_516_779_814_608_897_626);
+        assert_eq!(s.virtual_price, 1_000_089_524_433_596_945);
+        // proto3 omits false, so absent is the answer, not a missing field.
+        assert!(!s.is_killed);
+        assert!(!s.ramping, "check this before quoting: the curve moves between blocks");
+        assert_eq!(s.marginal_price_q, Some(15_604_533_105_145));
+    }
+
+    /// BOTH reserves out of a real `GetPoolStateResponse`.
+    ///
+    /// Captured from the live index at height 962,502 — the actual wire shape,
+    /// not one built to match this parser. The frBTC leg is what the depth cap
+    /// needs to measure a sell against, and reading only `reserve0` is why that
+    /// cap reported 0bps for a trade worth a tenth of the pool.
+    #[test]
+    fn extracts_both_reserves_from_a_live_response() {
+        let raw = hex::decode(LIVE_POOL_STATE).unwrap();
+        let (frusd, frbtc) = extract_reserves(&raw).unwrap();
+        assert_eq!(frusd, 1_881_214_389_078, "18,812.14 frUSD at 8 decimals");
+        assert_eq!(frbtc, 29_521_902, "0.29521902 frBTC");
     }
 
     /// The decoder pulls reserve0 out of a real `GetPoolStateResponse`.

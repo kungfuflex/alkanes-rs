@@ -529,11 +529,50 @@ pub fn plan_conversion(
 /// Is a direct swap inside the pool's depth cap?
 ///
 /// Returns the share in bps so the caller can report it rather than just refuse.
+///
+/// ⚠️ `reserve_in` must be the reserve of the token going IN. Prefer
+/// [`depth_share_bps`], which picks it from the side and cannot be handed the
+/// wrong leg.
 pub fn swap_depth_share_bps(amount_in: u128, reserve_in: u128) -> Option<u128> {
     if reserve_in == 0 {
         return None;
     }
     Some(amount_in.saturating_mul(BPS_DENOM) / reserve_in)
+}
+
+/// USD per BTC, to two decimals, from a raw `*_price_q` and its scale.
+///
+/// ⚠️ THE QUOTE IS token1-PER-token0 — frBTC per frUSD — so USD/BTC is the
+/// RECIPROCAL, `price_q_scale / price_q`. Getting it the right way round
+/// matters more than usual here because the wrong way yields a number near
+/// zero, which a reader takes for "no price" rather than for an error.
+///
+/// Integer math on purpose: these are U256-derived values quoted at 1e18, and a
+/// double loses them silently.
+pub fn usd_per_btc(price_q: u128, price_q_scale: u128) -> Option<String> {
+    if price_q == 0 {
+        return None;
+    }
+    let cents = price_q_scale.checked_mul(100)? / price_q;
+    Some(format!("{}.{:02}", cents / 100, cents % 100))
+}
+
+/// The share of the pool a trade takes, measured against the leg it is paid in.
+///
+/// ⚠️ THE UNIT IS THE WHOLE POINT. `amount_in` is in the SOURCE token's base
+/// units, and frUSD (8 decimals, thousands of them) and frBTC (8 decimals, tens
+/// of millions of sats for a whole coin) are not comparable numbers. Dividing a
+/// sat amount by the frUSD reserve answers ~0bps for a trade that is a tenth of
+/// the pool, so the cap silently stops binding on that side — the guard still
+/// runs, still prints, and never refuses.
+///
+/// `reserves` is `(frusd, frbtc)`, the order the index reports them in.
+pub fn depth_share_bps(side: Side, amount_in: u128, reserves: (u128, u128)) -> Option<u128> {
+    let reserve_in = match side {
+        Side::Frusd => reserves.0,
+        Side::Frbtc => reserves.1,
+    };
+    swap_depth_share_bps(amount_in, reserve_in)
 }
 
 #[cfg(test)]
@@ -814,5 +853,642 @@ mod burn_tests {
         for bad in ["", "0x11", "0xzz11111111111111111111111111111111111111"] {
             assert!(parse_evm_address(bad).is_err(), "should refuse {bad:?}");
         }
+    }
+}
+
+// ── Arm B: EVM → BTC. The deposit's two calls and the payload they carry ────
+//
+// `depositAndBridge`'s third argument is OPAQUE TO THE VAULT: it stores the
+// bytes verbatim and the coordinator interprets them later. So a malformed
+// payload still SUCCEEDS on Ethereum, and the coordinator then pays the
+// operator's fallback recipient rather than the depositor. There is no error on
+// either chain and nothing to watch for.
+//
+// That is why every check in this section runs before the calldata is emitted,
+// and why the encoders return `Result` rather than doing their best.
+
+/// The frUSD vault on L1 (ERC1967 proxy). `assets(0) = USDC`, `assets(1) = USDT`.
+pub const FRUSD_VAULT_L1: [u8; 20] = [
+    0x95, 0x77, 0x9e, 0x7e, 0x1c, 0x94, 0x30, 0x42, 0x25, 0x5b,
+    0x8a, 0x78, 0x27, 0x3f, 0xe6, 0xde, 0x48, 0x23, 0xcf, 0x06,
+];
+
+/// Tether on L1. (`USDC_L1` is declared with the burn leg above.)
+pub const USDT_L1: [u8; 20] = [
+    0xda, 0xc1, 0x7f, 0x95, 0x8d, 0x2e, 0xe5, 0x23, 0xa2, 0x20,
+    0x62, 0x06, 0x99, 0x45, 0x97, 0xc1, 0x3d, 0x83, 0x1e, 0xc7,
+];
+
+/// `approve(address,uint256)`
+pub const SELECTOR_APPROVE: [u8; 4] = [0x09, 0x5e, 0xa7, 0xb3];
+/// `depositAndBridge(uint8,uint256,bytes)`
+pub const SELECTOR_DEPOSIT_AND_BRIDGE: [u8; 4] = [0xbe, 0xdb, 0x65, 0xee];
+
+/// The ERC20 the vault holds under a given asset id.
+///
+/// The ids are the VAULT'S registration order, not ours, and they are what the
+/// calldata carries. Approving one token and depositing against the other's
+/// accounting is a swapped-id bug that both chains accept.
+pub fn stable_token_l1(asset_id: u8) -> Option<[u8; 20]> {
+    match asset_id {
+        0 => Some(USDC_L1),
+        1 => Some(USDT_L1),
+        _ => None,
+    }
+}
+
+/// A MAINNET Bitcoin address as its scriptPubKey.
+///
+/// Addresses, not script hex, at the user boundary: a person can recognise
+/// `bc1p…` and cannot proofread 34 bytes. The network requirement is the load
+/// bearing part — a testnet address parses fine and yields a well-formed script
+/// that mainnet pays into a hole.
+pub fn mainnet_script_pubkey(addr: &str) -> Result<Vec<u8>, String> {
+    use std::str::FromStr;
+    let parsed = bitcoin::Address::from_str(addr.trim())
+        .map_err(|e| format!("not a Bitcoin address: {addr:?} ({e})"))?;
+    let checked = parsed.require_network(bitcoin::Network::Bitcoin).map_err(|_| {
+        format!("{addr:?} is not a MAINNET address — the script would be well formed and unpayable")
+    })?;
+    Ok(checked.script_pubkey().to_bytes())
+}
+
+/// Is this a scriptPubKey the coordinator will MINT frUSD to?
+///
+/// DELIBERATELY STRICTER than [`is_payable_script`]. The two fields answer to
+/// different authorities: `recipient_script` is minted to by the coordinator and
+/// is restricted to the five spendable forms, while `btc_destination` is paid by
+/// the frBTC signing group, which relays every witness version v0..v16. Using
+/// one classifier for both either refuses a valid destination or accepts a
+/// recipient the coordinator will not mint to.
+///
+/// Mirrors `is_standard_script_pubkey` in the coordinator.
+pub fn is_standard_recipient_script(script: &[u8]) -> bool {
+    match script.len() {
+        // P2WPKH: OP_0 PUSH20
+        22 => script[0] == 0x00 && script[1] == 0x14,
+        // P2WSH: OP_0 PUSH32 · P2TR: OP_1 PUSH32
+        34 => (script[0] == 0x00 || script[0] == 0x51) && script[1] == 0x20,
+        // P2SH: OP_HASH160 PUSH20 <20> OP_EQUAL
+        23 => script[0] == 0xa9 && script[1] == 0x14 && script[22] == 0x87,
+        // P2PKH: OP_DUP OP_HASH160 PUSH20 <20> OP_EQUALVERIFY OP_CHECKSIG
+        25 => {
+            script[0] == 0x76
+                && script[1] == 0xa9
+                && script[2] == 0x14
+                && script[23] == 0x88
+                && script[24] == 0xac
+        }
+        _ => false,
+    }
+}
+
+/// proto3 varint.
+fn varint(mut v: u64) -> Vec<u8> {
+    let mut out = Vec::new();
+    while v > 0x7f {
+        out.push((v as u8 & 0x7f) | 0x80);
+        v >>= 7;
+    }
+    out.push(v as u8);
+    out
+}
+
+/// `<tag> <len varint> <bytes>`
+fn length_delimited(tag: u8, body: &[u8]) -> Vec<u8> {
+    let mut out = vec![tag];
+    out.extend_from_slice(&varint(body.len() as u64));
+    out.extend_from_slice(body);
+    out
+}
+
+/// `BridgeData` for a plain DIRECT_TRANSFER: mint the frUSD straight to
+/// `recipient_script`.
+///
+/// ⚠️ EMPTY bytes are not a no-op. `frusd-bridge-data::parse` maps them to
+/// `BridgeIntent::Unspecified` and the coordinator mints to the OPERATOR'S
+/// configured fallback recipient. Nothing here can return an empty buffer.
+pub fn encode_direct_transfer(recipient_script: &[u8]) -> Result<Vec<u8>, String> {
+    if !is_standard_recipient_script(recipient_script) {
+        return Err(format!(
+            "recipient is not a standard scriptPubKey ({} bytes); the coordinator would refuse \
+             the mint and the deposit could not be recovered",
+            recipient_script.len()
+        ));
+    }
+    // proto3 omits zero-valued scalars, so `action` (DIRECT_TRANSFER = 0) never
+    // appears on the wire and field 2 is the whole message.
+    Ok(length_delimited(0x12, recipient_script))
+}
+
+/// `BridgeData` with field 4: convert `convert_bps` of the mint to native BTC at
+/// `btc_destination`, settle the rest as frUSD at `recipient_script`.
+///
+/// REFUSES ANYTHING THE COORDINATOR WOULD DEGRADE, and the asymmetry is the
+/// whole point. A fault in the OUTER message stalls the deposit — loud, someone
+/// investigates. A fault in this INNER message never errors at all:
+/// `parse_btc_conversion` degrades every fault to a plain frUSD payout with a
+/// log line. The depositor is paid, just not what they asked for.
+///
+/// ⚠️ Field 4 is MUTUALLY EXCLUSIVE with field 3 (`recipient_protostone`). Both
+/// set is an instruction naming two things to do with the same money and the
+/// coordinator does neither. This function cannot emit field 3 at all, which is
+/// how the exclusion is enforced rather than checked.
+pub fn encode_btc_conversion(
+    recipient_script: &[u8],
+    convert_bps: u32,
+    btc_destination: &[u8],
+    max_slippage_bps: u32,
+) -> Result<Vec<u8>, String> {
+    if !is_standard_recipient_script(recipient_script) {
+        return Err(format!(
+            "recipient is not a standard scriptPubKey ({} bytes); the coordinator would refuse \
+             the mint and the deposit could not be recovered",
+            recipient_script.len()
+        ));
+    }
+    if convert_bps == 0 || convert_bps as u128 > BPS_DENOM {
+        // 0 is excluded on purpose: it is a DirectTransfer and must take that
+        // code path rather than a zero-sized version of this one. Above the
+        // denominator the coordinator refuses rather than clamping — someone who
+        // wrote 20000 meant something, and it was not "100%".
+        return Err(format!(
+            "convert_bps must be 1..={BPS_DENOM}, got {convert_bps}; use a plain deposit for no \
+             conversion"
+        ));
+    }
+    if !is_payable_script(btc_destination) {
+        return Err(format!(
+            "btc_destination is not a payable scriptPubKey ({} bytes); frBTC's burn() would copy \
+             it into the payment record and destroy the supply against it",
+            btc_destination.len()
+        ));
+    }
+    if max_slippage_bps as u128 > BPS_DENOM {
+        return Err(format!("max_slippage_bps must be 0..={BPS_DENOM}, got {max_slippage_bps}"));
+    }
+
+    // Inner `BtcConversion`. Fields ascend and proto3 defaults are OMITTED: a
+    // `max_slippage_bps` of 0 emits no field 3, and absent means "the
+    // coordinator's own bound" rather than "no tolerance".
+    let mut inner = vec![0x08];
+    inner.extend_from_slice(&varint(convert_bps as u64));
+    inner.extend_from_slice(&length_delimited(0x12, btc_destination));
+    if max_slippage_bps > 0 {
+        inner.push(0x18);
+        inner.extend_from_slice(&varint(max_slippage_bps as u64));
+    }
+
+    let mut out = length_delimited(0x12, recipient_script);
+    out.extend_from_slice(&length_delimited(0x22, &inner));
+    Ok(out)
+}
+
+/// `approve(spender, amount)` calldata.
+///
+/// ⚠️ Callers must pass the EXACT deposit amount. A standing infinite allowance
+/// on a proxy the depositor does not control outlives the single transaction it
+/// was granted for.
+pub fn encode_approve(spender: [u8; 20], amount: u128) -> Vec<u8> {
+    let mut out = Vec::with_capacity(4 + 64);
+    out.extend_from_slice(&SELECTOR_APPROVE);
+    out.extend_from_slice(&word_addr(spender));
+    out.extend_from_slice(&word_u128(amount));
+    out
+}
+
+/// `depositAndBridge(assetId, amount, bridgeData)` calldata.
+pub fn encode_deposit_and_bridge(asset_id: u8, amount: u128, bridge_data: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(4 + 32 * 4 + bridge_data.len() + 32);
+    out.extend_from_slice(&SELECTOR_DEPOSIT_AND_BRIDGE);
+    out.extend_from_slice(&word_u128(asset_id as u128));
+    out.extend_from_slice(&word_u128(amount));
+    // `bytes` is dynamic: the head carries its OFFSET past the three head words,
+    // not its contents. Inlining it here shifts every argument silently.
+    out.extend_from_slice(&word_u128(3 * 32));
+    out.extend_from_slice(&word_u128(bridge_data.len() as u128));
+    out.extend_from_slice(bridge_data);
+    // right-pad the tail to a whole word
+    let rem = bridge_data.len() % 32;
+    if rem != 0 {
+        out.extend(std::iter::repeat(0u8).take(32 - rem));
+    }
+    out
+}
+
+/// Everything the two Ethereum calls need, decided before either is emitted.
+#[derive(Debug, Clone)]
+pub struct DepositPlan {
+    /// The vault's own asset id. Carried in the calldata.
+    pub asset_id: u8,
+    /// The ERC20 to `approve`. NOT the vault.
+    pub token: [u8; 20],
+    pub amount: u128,
+    pub recipient_script: Vec<u8>,
+    pub btc_destination_script: Option<Vec<u8>>,
+    /// What will ACTUALLY convert, after the pool's depth cap. May be less than
+    /// requested, and may be 0.
+    pub effective_bps: u32,
+    /// Empty when nothing was clamped. Non-empty MUST be shown to the user.
+    pub note: String,
+    pub bridge_data: Vec<u8>,
+    pub approve_calldata: Vec<u8>,
+    pub deposit_calldata: Vec<u8>,
+}
+
+/// Decide a deposit completely, or refuse it.
+///
+/// Pure on purpose: every refusal on this path is a refusal the coordinator
+/// would NOT make — it degrades instead, paying the depositor something other
+/// than what they asked for with no error anywhere. Keeping the decision in one
+/// function with no I/O is what makes those refusals testable.
+///
+/// `frusd_reserve` is `None` when the pool's depth could not be read. That is
+/// not fatal: the conversion is sent as requested and the caller says so.
+#[allow(clippy::too_many_arguments)]
+pub fn plan_deposit(
+    stable: &str,
+    amount: u128,
+    recipient: &str,
+    convert_bps: u32,
+    btc_destination: Option<&str>,
+    max_slippage_bps: u32,
+    frusd_reserve: Option<u128>,
+) -> Result<DepositPlan, String> {
+    let asset_id = match stable.trim().to_ascii_lowercase().as_str() {
+        "usdc" => 0u8,
+        "usdt" => 1u8,
+        other => {
+            return Err(format!(
+                "unknown stable {other:?} — the vault registered usdc(0) and usdt(1)"
+            ))
+        }
+    };
+    let token = stable_token_l1(asset_id).ok_or("no token registered for that asset id")?;
+    if amount == 0 {
+        return Err("amount is zero: the vault would take nothing and nothing would be minted".into());
+    }
+    if convert_bps as u128 > BPS_DENOM {
+        return Err(format!("convert_bps must be 0..={BPS_DENOM}, got {convert_bps}"));
+    }
+    let recipient_script = mainnet_script_pubkey(recipient)?;
+
+    // The destination is required by the REQUESTED conversion, not the effective
+    // one. Clamping to zero is a property of today's pool depth; asking to
+    // convert without saying where the BTC goes is a property of the request.
+    let destination_script = match (convert_bps > 0, btc_destination) {
+        (true, None) => {
+            return Err("--btc-destination is required when converting to BTC".into())
+        }
+        (_, Some(d)) => Some(mainnet_script_pubkey(d)?),
+        (false, None) => None,
+    };
+
+    let plan = plan_conversion(convert_bps, amount, frusd_reserve);
+
+    let bridge_data = match (plan.effective_bps, destination_script.as_ref()) {
+        // Clamped to nothing, or never asked for: a plain mint. NOT a zero-bps
+        // conversion — the coordinator reads those as different intents.
+        (0, _) | (_, None) => encode_direct_transfer(&recipient_script)?,
+        (bps, Some(dest)) => {
+            encode_btc_conversion(&recipient_script, bps, dest, max_slippage_bps)?
+        }
+    };
+
+    Ok(DepositPlan {
+        asset_id,
+        token,
+        amount,
+        recipient_script,
+        btc_destination_script: destination_script,
+        effective_bps: plan.effective_bps,
+        note: plan.note,
+        approve_calldata: encode_approve(FRUSD_VAULT_L1, amount),
+        deposit_calldata: encode_deposit_and_bridge(asset_id, amount, &bridge_data),
+        bridge_data,
+    })
+}
+
+#[cfg(test)]
+mod deposit_tests {
+    use super::*;
+
+    /// GOLDEN VECTORS, copied verbatim from
+    /// `subzero-rs/crates/frusd-bridge-data/fixtures/bridge_data_vectors.json`
+    /// by way of the client that already mirrors them
+    /// (`subfrost-app lib/bridge/__tests__/fixtures/`).
+    ///
+    /// The fixture file's own header is the reason these are pinned here rather
+    /// than reasoned about: the coordinator declares its messages with prost's
+    /// derive macros instead of generating them from the `.proto`, so nothing
+    /// mechanically forces schema and code to agree. A client in any language is
+    /// meant to be SHOWN byte-identical against these, not assumed so.
+    const P2TR_AB: &str = "5120abababababababababababababababababababababababababababababababab";
+    const P2WPKH_CD: &str = "0014cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd";
+    const P2PKH_EF: &str = "76a914efefefefefefefefefefefefefefefefefefefef88ac";
+
+    fn unhex(s: &str) -> Vec<u8> {
+        hex::decode(s).unwrap()
+    }
+
+    #[test]
+    fn direct_transfer_matches_the_golden_vectors() {
+        // `direct_transfer_p2tr`
+        assert_eq!(
+            hex::encode(encode_direct_transfer(&unhex(P2TR_AB)).unwrap()),
+            format!("1222{P2TR_AB}")
+        );
+        // `live_mainnet_deposit` — a REAL deposit that must keep decoding as a
+        // plain DirectTransfer for as long as this bridge exists.
+        let live = "51201b18312df38aa8203a1b589c9f45852f55325488df00f52024280cf9240fe574";
+        assert_eq!(
+            hex::encode(encode_direct_transfer(&unhex(live)).unwrap()),
+            format!("1222{live}")
+        );
+    }
+
+    #[test]
+    fn btc_conversion_matches_the_golden_vectors() {
+        // `btc_conversion_full`: 10000 bps, 100 bps slippage, P2WPKH destination.
+        assert_eq!(
+            hex::encode(
+                encode_btc_conversion(&unhex(P2TR_AB), 10_000, &unhex(P2WPKH_CD), 100).unwrap()
+            ),
+            format!("1222{P2TR_AB}221d08904e1216{P2WPKH_CD}1864")
+        );
+        // `btc_conversion_partial`: 4000 bps, slippage left to the coordinator.
+        assert_eq!(
+            hex::encode(
+                encode_btc_conversion(&unhex(P2TR_AB), 4_000, &unhex(P2TR_AB), 0).unwrap()
+            ),
+            format!("1222{P2TR_AB}222708a01f1222{P2TR_AB}")
+        );
+        // `btc_conversion_p2pkh_tight`: the shortest recipient and the longest
+        // destination, so a length byte written as a constant shows up here.
+        assert_eq!(
+            hex::encode(
+                encode_btc_conversion(&unhex(P2WPKH_CD), 6_000, &unhex(P2PKH_EF), 25).unwrap()
+            ),
+            format!("1216{P2WPKH_CD}222008f02e1219{P2PKH_EF}1819")
+        );
+    }
+
+    #[test]
+    fn a_zero_max_slippage_omits_field_three_because_proto3_omits_defaults() {
+        // Absent means "use the coordinator's own bound", NOT "no tolerance".
+        // Writing an explicit 0 would say something different from what the
+        // fixture says, and the fixture is what the coordinator reads.
+        let without = encode_btc_conversion(&unhex(P2TR_AB), 4_000, &unhex(P2TR_AB), 0).unwrap();
+        let with_one = encode_btc_conversion(&unhex(P2TR_AB), 4_000, &unhex(P2TR_AB), 1).unwrap();
+        // A slippage of 1 costs exactly the two bytes `18 01`, and the inner
+        // length byte grows by two with it. Nothing else may move.
+        assert_eq!(with_one.len(), without.len() + 2);
+        assert_eq!(&with_one[with_one.len() - 2..], &[0x18, 0x01]);
+    }
+
+    #[test]
+    fn convert_bps_out_of_range_is_refused_never_clamped() {
+        // Someone who wrote 20000 meant something, and it was not "100%".
+        assert!(encode_btc_conversion(&unhex(P2TR_AB), 20_000, &unhex(P2TR_AB), 0).is_err());
+        // 0 is a DirectTransfer and must take that path, not a zero-sized
+        // version of this one.
+        assert!(encode_btc_conversion(&unhex(P2TR_AB), 0, &unhex(P2TR_AB), 0).is_err());
+        assert!(encode_btc_conversion(&unhex(P2TR_AB), 4_000, &unhex(P2TR_AB), 20_000).is_err());
+    }
+
+    #[test]
+    fn an_unpayable_btc_destination_is_refused_before_anything_is_signed() {
+        // frBTC's `burn()` never checks the script it pays to: it copies it into
+        // the payment record and burns the supply. This encoder is the last
+        // place that can say no.
+        let op_return = unhex("6a0400000000");
+        let e = encode_btc_conversion(&unhex(P2TR_AB), 4_000, &op_return, 0).unwrap_err();
+        assert!(e.contains("payable"), "{e}");
+    }
+
+    #[test]
+    fn the_recipient_allowlist_is_stricter_than_the_destination_one() {
+        // The two fields answer to different authorities: `recipient_script` is
+        // minted to by the coordinator (five spendable forms only), while
+        // `btc_destination` is paid by the frBTC signing group, which relays
+        // every witness version. Reusing one classifier for both either refuses
+        // a valid destination or accepts an unmintable recipient.
+        let witness_v1_short = unhex("5114cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd");
+        assert!(is_payable_script(&witness_v1_short), "the signing group relays v1..v16");
+        assert!(
+            !is_standard_recipient_script(&witness_v1_short),
+            "the coordinator mints only to the five standard forms"
+        );
+        // And the five standard forms are accepted by both.
+        for s in [P2TR_AB, P2WPKH_CD, P2PKH_EF] {
+            assert!(is_standard_recipient_script(&unhex(s)), "should accept {s}");
+            assert!(is_payable_script(&unhex(s)), "should accept {s}");
+        }
+        assert!(encode_direct_transfer(&witness_v1_short).is_err());
+    }
+
+    #[test]
+    fn a_mainnet_address_becomes_its_script_pubkey() {
+        // BIP-173 test vector. Addresses are what a person can proofread; 34
+        // bytes of script hex are not, so the boundary takes an address.
+        assert_eq!(
+            hex::encode(mainnet_script_pubkey("bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4").unwrap()),
+            "0014751e76e8199196d454941c45d1b3a323f1433bd6"
+        );
+    }
+
+    #[test]
+    fn a_non_mainnet_address_is_refused_rather_than_paid_into_a_hole() {
+        // A testnet address parses fine and yields a well-formed script that
+        // mainnet pays into nothing. The network check is the only thing
+        // between the two, because the shapes are identical.
+        for addr in [
+            "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
+            "bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080",
+        ] {
+            assert!(mainnet_script_pubkey(addr).is_err(), "should refuse {addr}");
+        }
+        assert!(mainnet_script_pubkey("not an address").is_err());
+    }
+
+    #[test]
+    fn approve_encodes_the_erc20_selector_and_the_exact_amount() {
+        let cd = encode_approve(FRUSD_VAULT_L1, 100_000_000);
+        assert_eq!(&cd[..4], &SELECTOR_APPROVE);
+        assert_eq!(cd.len(), 4 + 64, "approve is two static words");
+        assert_eq!(&cd[4 + 12..4 + 32], &FRUSD_VAULT_L1, "spender must be the vault");
+        let amount = u128::from_be_bytes(cd[4 + 48..4 + 64].try_into().unwrap());
+        assert_eq!(amount, 100_000_000, "an unlimited allowance outlives the deposit");
+    }
+
+    #[test]
+    fn deposit_and_bridge_abi_encodes_the_bytes_as_a_dynamic_tail() {
+        let bridge = encode_direct_transfer(&unhex(P2TR_AB)).unwrap();
+        let cd = encode_deposit_and_bridge(1, 100_000_000, &bridge);
+        assert_eq!(&cd[..4], &SELECTOR_DEPOSIT_AND_BRIDGE);
+        // head: assetId, amount, offset-to-bytes. The offset is three words in,
+        // and encoding the bytes inline instead silently shifts every argument.
+        let asset = u128::from_be_bytes(cd[4 + 16..4 + 32].try_into().unwrap());
+        assert_eq!(asset, 1, "usdt is assetId 1; a swapped id deposits the other token");
+        let amount = u128::from_be_bytes(cd[4 + 48..4 + 64].try_into().unwrap());
+        assert_eq!(amount, 100_000_000);
+        let offset = u128::from_be_bytes(cd[4 + 80..4 + 96].try_into().unwrap());
+        assert_eq!(offset, 96, "bytes must be a dynamic offset, not inline");
+        // tail: length then the payload, right-padded to a whole word.
+        let len = u128::from_be_bytes(cd[4 + 112..4 + 128].try_into().unwrap()) as usize;
+        assert_eq!(len, bridge.len());
+        assert_eq!(&cd[4 + 128..4 + 128 + len], &bridge[..]);
+        assert_eq!((cd.len() - 4) % 32, 0, "the tail must be padded to a word boundary");
+    }
+
+    #[test]
+    fn an_empty_bridge_data_is_refused_because_it_pays_the_operator() {
+        // `frusd-bridge-data::parse` maps empty bytes to `BridgeIntent::Unspecified`
+        // and the coordinator then mints to the OPERATOR'S fallback recipient.
+        // The deposit succeeds on both chains and the depositor is not paid.
+        assert!(encode_direct_transfer(&[]).is_err());
+    }
+
+    /// The live pool at height 962,502: 18,812.14 frUSD and 0.29521902 frBTC.
+    const LIVE: (u128, u128) = (1_881_214_389_078, 29_521_902);
+
+    #[test]
+    fn a_frbtc_trade_is_measured_against_the_FRBTC_reserve() {
+        // Selling 0.03 frBTC is ~10% of this pool and moves the price 8.5%.
+        // Measured against the frUSD reserve — base units of a DIFFERENT token
+        // with a different scale — it reports 0bps and the cap never binds.
+        // The guard reads plausible either way; only the unit tells them apart.
+        assert_eq!(depth_share_bps(Side::Frbtc, 3_000_000, LIVE), Some(1_016));
+        assert!(depth_share_bps(Side::Frbtc, 3_000_000, LIVE).unwrap() > MAX_POOL_SHARE_BPS);
+        // The frUSD side keeps the number it already reported: $1,000 = 531bps,
+        // measured against this same pool by the shipped command.
+        assert_eq!(depth_share_bps(Side::Frusd, 100_000_000_000, LIVE), Some(531));
+    }
+
+    #[test]
+    fn a_zero_reserve_is_none_rather_than_a_share_of_nothing() {
+        assert_eq!(depth_share_bps(Side::Frbtc, 1, (LIVE.0, 0)), None);
+        assert_eq!(depth_share_bps(Side::Frusd, 1, (0, LIVE.1)), None);
+    }
+
+    #[test]
+    fn a_deposit_plan_carries_the_calldata_for_both_calls() {
+        let p = plan_deposit(
+            "usdc",
+            100_000_000,
+            "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4",
+            0,
+            None,
+            0,
+            None,
+        )
+        .unwrap();
+        assert_eq!(p.asset_id, 0);
+        assert_eq!(p.token, USDC_L1);
+        // approve goes to the TOKEN and names the VAULT as spender, for exactly
+        // the deposit amount.
+        assert_eq!(&p.approve_calldata[..4], &SELECTOR_APPROVE);
+        assert_eq!(&p.approve_calldata[4 + 12..4 + 32], &FRUSD_VAULT_L1);
+        // depositAndBridge goes to the vault and carries the payload verbatim.
+        assert_eq!(&p.deposit_calldata[..4], &SELECTOR_DEPOSIT_AND_BRIDGE);
+        assert!(
+            p.deposit_calldata
+                .windows(p.bridge_data.len())
+                .any(|w| w == p.bridge_data.as_slice()),
+            "the calldata must carry the bridgeData it was planned with"
+        );
+    }
+
+    #[test]
+    fn a_plain_deposit_is_a_direct_transfer_not_a_zero_sized_conversion() {
+        let p = plan_deposit(
+            "usdt",
+            1,
+            "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4",
+            0,
+            None,
+            0,
+            None,
+        )
+        .unwrap();
+        assert_eq!(p.asset_id, 1);
+        // Field 2 only: no field 4 tag anywhere.
+        assert_eq!(p.bridge_data[0], 0x12);
+        assert_eq!(p.bridge_data.len(), 2 + 22);
+    }
+
+    #[test]
+    fn a_clamped_conversion_encodes_THE_CLAMPED_BPS_not_the_requested_one() {
+        // The pool's depth clamp already existed and was already printed. What
+        // matters is that the BYTES carry the clamped number too: a payload that
+        // asks for more than the screen said is refused by the coordinator, and
+        // refusal here means the whole mint arrives as frUSD.
+        let addr = "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4";
+        let reserve = 5_854_00_000_000u128; // ~$5,854 a side
+        let p = plan_deposit("usdc", 100_000_000_000, addr, 10_000, Some(addr), 0, Some(reserve))
+            .unwrap();
+        assert!(p.effective_bps < 10_000, "this deposit is far past the cap");
+        assert!(!p.note.is_empty(), "a clamp the user is not told about is a silent degrade");
+        let expected = encode_btc_conversion(
+            &mainnet_script_pubkey(addr).unwrap(),
+            p.effective_bps,
+            &mainnet_script_pubkey(addr).unwrap(),
+            0,
+        )
+        .unwrap();
+        assert_eq!(p.bridge_data, expected);
+    }
+
+    #[test]
+    fn a_conversion_clamped_to_nothing_becomes_a_plain_deposit() {
+        // `plan_conversion` can clamp to 0. Encoding a 0-bps conversion is
+        // refused by the encoder, so the plan must fall back to DirectTransfer
+        // rather than fail — the deposit itself is still perfectly valid.
+        let addr = "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4";
+        let p = plan_deposit("usdc", 100_000_000_000_000, addr, 10_000, Some(addr), 0, Some(1))
+            .unwrap();
+        assert_eq!(p.effective_bps, 0);
+        assert_eq!(p.bridge_data[0], 0x12);
+        assert_eq!(p.bridge_data.len(), 2 + 22, "must be field 2 alone");
+    }
+
+    #[test]
+    fn a_deposit_refuses_what_the_coordinator_would_silently_degrade() {
+        let addr = "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4";
+        // testnet recipient
+        assert!(plan_deposit(
+            "usdc",
+            1,
+            "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
+            0,
+            None,
+            0,
+            None
+        )
+        .is_err());
+        // unknown stable — the vault registered usdc(0) and usdt(1) only
+        assert!(plan_deposit("dai", 1, addr, 0, None, 0, None).is_err());
+        // zero amount: the vault takes nothing and nothing is minted
+        assert!(plan_deposit("usdc", 0, addr, 0, None, 0, None).is_err());
+        // converting with nowhere to send the BTC
+        assert!(plan_deposit("usdc", 1, addr, 5_000, None, 0, None).is_err());
+    }
+
+    #[test]
+    fn the_vault_and_the_stables_are_the_deployed_addresses() {
+        assert_eq!(
+            format!("0x{}", hex::encode(FRUSD_VAULT_L1)),
+            "0x95779e7e1c943042255b8a78273fe6de4823cf06"
+        );
+        // asset ids are the VAULT'S own registration order, not ours.
+        assert_eq!(stable_token_l1(0).unwrap(), USDC_L1);
+        assert_eq!(stable_token_l1(1).unwrap(), USDT_L1);
+        // An unregistered id has no token; answering with one would approve a
+        // contract the vault never registered.
+        assert!(stable_token_l1(2).is_none());
+        assert_eq!(
+            format!("0x{}", hex::encode(USDT_L1)).to_lowercase(),
+            "0xdac17f958d2ee523a2206206994597c13d831ec7"
+        );
     }
 }
