@@ -26,6 +26,7 @@ pub mod block;
 pub mod etl;
 #[cfg(any(test, feature = "test-utils"))]
 pub mod fuel_probe;
+pub mod firevector;
 pub mod indexer;
 pub mod message;
 pub mod network;

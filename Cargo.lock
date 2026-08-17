@@ -277,6 +277,7 @@ name = "alkanes"
 version = "10.0.0"
 dependencies = [
  "alkanes",
+ "alkanes-std-firevector",
  "alkanes-support",
  "anyhow",
  "bitcoin 0.32.7",

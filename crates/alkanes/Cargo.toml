@@ -69,6 +69,8 @@ ordinals = { workspace = true }
 protorune = { workspace = true }
 protorune-support = { workspace = true }
 alkanes-support = { workspace = true }
+# VM core only (no `alkane` feature) — pulls just anyhow, no runtime, no cycle.
+alkanes-std-firevector = { path = "../../alkanes/alkanes-std-firevector" }
 ruint = { workspace = true }
 wasm-bindgen = { workspace = true }
 byteorder = { workspace = true }

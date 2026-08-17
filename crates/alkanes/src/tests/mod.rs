@@ -11,6 +11,8 @@ pub mod helpers;
 #[cfg(all(test, feature = "diesel-divergence-repro"))]
 pub mod diesel_divergence_repro;
 #[cfg(test)]
+pub mod firevector;
+#[cfg(test)]
 pub mod diesel_gas_paths;
 #[cfg(test)]
 pub mod diesel_mainnet_smoke;

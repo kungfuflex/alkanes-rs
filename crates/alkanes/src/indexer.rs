@@ -95,6 +95,7 @@ pub fn index_block(block: &Block, height: u32) -> Result<()> {
     // Clear view mode at start of each block for deterministic behavior
     clear_view_mode();
     clear_diesel_mints_cache();
+    crate::firevector::clear_weights_cache();
     let really_is_genesis = is_genesis(height.into());
     if really_is_genesis {
         genesis().unwrap();

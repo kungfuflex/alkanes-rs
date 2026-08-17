@@ -210,6 +210,11 @@ pub mod genesis {
     /// on non-mainnet chains so tests exercise the post-fork (uncapped) behaviour
     /// by default.
     pub const MAX_VIRTUAL_VOUT_REMOVAL_HEIGHT: u64 = 0;
+    /// FIREVECTOR: `800000000:2` starts returning a weightmap-derived
+    /// denominator instead of the raw mint count. Genesis-coincident off mainnet
+    /// so tests exercise the post-fork path by default; with no weightmap
+    /// configured the returned value is identical either way.
+    pub const FIREVECTOR_FORK_HEIGHT: u32 = 0;
 }
 
 #[cfg(feature = "mainnet")]
@@ -230,6 +235,21 @@ pub mod genesis {
     /// wrap <300k fuel). Future block > FRBTC_V130 — coordinated hard fork,
     /// matches the deployed rc.3 activation.
     pub const FRBTC_V131_FORK_HEIGHT: u32 = 960_000;
+    /// FIREVECTOR activation: the height at which `800000000:2` switches from
+    /// returning the raw DIESEL mint count to returning a weightmap-derived
+    /// denominator.
+    ///
+    /// DELIBERATELY UNSCHEDULED (`u32::MAX`). Picking this block is a governance
+    /// decision, and it must not be set until (a) the weightmap slot on 2:0 is
+    /// seeded with the identity vector, and (b) indexers have upgraded — an
+    /// un-upgraded indexer diverges from this height on, which is what a fork
+    /// gate is for.
+    ///
+    /// Note the activation itself is payout- and fuel-neutral: with the identity
+    /// vector loaded, `W / w_i == N`, and the DIESEL contract is not modified at
+    /// all, so its metered instruction count and the 16-byte reply size are
+    /// unchanged.
+    pub const FIREVECTOR_FORK_HEIGHT: u32 = u32::MAX;
     /// v3 fork: removes the `max_virtual_vout = num_outputs + 100` protostone
     /// cap in `protorune::protostone::process_message`. That cap is an artifact
     /// of the old 80-byte OP_RETURN standardness limit and has no protocol
@@ -260,6 +280,11 @@ pub mod genesis {
     /// on non-mainnet chains so tests exercise the post-fork (uncapped) behaviour
     /// by default.
     pub const MAX_VIRTUAL_VOUT_REMOVAL_HEIGHT: u64 = 0;
+    /// FIREVECTOR: `800000000:2` starts returning a weightmap-derived
+    /// denominator instead of the raw mint count. Genesis-coincident off mainnet
+    /// so tests exercise the post-fork path by default; with no weightmap
+    /// configured the returned value is identical either way.
+    pub const FIREVECTOR_FORK_HEIGHT: u32 = 0;
 }
 
 #[cfg(feature = "dogecoin")]
@@ -281,6 +306,11 @@ pub mod genesis {
     /// on non-mainnet chains so tests exercise the post-fork (uncapped) behaviour
     /// by default.
     pub const MAX_VIRTUAL_VOUT_REMOVAL_HEIGHT: u64 = 0;
+    /// FIREVECTOR: `800000000:2` starts returning a weightmap-derived
+    /// denominator instead of the raw mint count. Genesis-coincident off mainnet
+    /// so tests exercise the post-fork path by default; with no weightmap
+    /// configured the returned value is identical either way.
+    pub const FIREVECTOR_FORK_HEIGHT: u32 = 0;
 }
 
 #[cfg(feature = "luckycoin")]
@@ -302,6 +332,11 @@ pub mod genesis {
     /// on non-mainnet chains so tests exercise the post-fork (uncapped) behaviour
     /// by default.
     pub const MAX_VIRTUAL_VOUT_REMOVAL_HEIGHT: u64 = 0;
+    /// FIREVECTOR: `800000000:2` starts returning a weightmap-derived
+    /// denominator instead of the raw mint count. Genesis-coincident off mainnet
+    /// so tests exercise the post-fork path by default; with no weightmap
+    /// configured the returned value is identical either way.
+    pub const FIREVECTOR_FORK_HEIGHT: u32 = 0;
 }
 
 #[cfg(feature = "bellscoin")]
@@ -323,6 +358,11 @@ pub mod genesis {
     /// on non-mainnet chains so tests exercise the post-fork (uncapped) behaviour
     /// by default.
     pub const MAX_VIRTUAL_VOUT_REMOVAL_HEIGHT: u64 = 0;
+    /// FIREVECTOR: `800000000:2` starts returning a weightmap-derived
+    /// denominator instead of the raw mint count. Genesis-coincident off mainnet
+    /// so tests exercise the post-fork path by default; with no weightmap
+    /// configured the returned value is identical either way.
+    pub const FIREVECTOR_FORK_HEIGHT: u32 = 0;
 }
 
 pub fn is_active(height: u64) -> bool {

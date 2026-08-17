@@ -630,6 +630,42 @@ impl AlkanesHostFunctionsImpl {
     }
 
     fn _get_number_diesel_mints(caller: &mut Caller<'_, AlkanesState>) -> Result<CallResponse> {
+        // FIREVECTOR fork: at and above the activation height this precompile
+        // returns a weightmap-derived denominator rather than the raw mint count.
+        //
+        // The DIESEL contract is NOT modified — it still computes
+        // `(block_reward - diesel_fee) / <this value>`. Only the meaning of the
+        // value changes, and with the identity vector loaded it is `N / 1 == N`,
+        // i.e. bit-identical to the legacy count. That is what makes activation
+        // payout- AND fuel-neutral: the contract's metered instruction count is
+        // unchanged, and the reply stays exactly 16 bytes so `returndatacopy`
+        // (2 fuel/byte, see :280) charges what it charges today. Widening this
+        // reply would silently reintroduce a fuel divergence.
+        //
+        // Note this deliberately bypasses DIESEL_MINTS_CACHE: that cache holds
+        // the reply *bytes*, which is correct only while the answer is
+        // block-global. The FIREVECTOR answer is per-transaction, so it is
+        // memoized as a table in `crate::firevector` and indexed per caller.
+        // Serving one cached reply here would hand every mint in the block the
+        // first mint's denominator.
+        {
+            let context_guard = caller.data_mut().context.lock().unwrap();
+            let height = context_guard.message.height;
+            if crate::firevector::is_active(height) {
+                let block = context_guard.message.block.clone();
+                let txid = context_guard.message.transaction.compute_txid();
+                let denominator = crate::firevector::effective_denominator(
+                    &block,
+                    height,
+                    txid,
+                    &context_guard.message.atomic,
+                );
+                let mut response = CallResponse::default();
+                response.data = denominator.to_le_bytes().to_vec();
+                return Ok(response);
+            }
+        }
+
         if let Some(cached_data) = DIESEL_MINTS_CACHE.read().unwrap().clone() {
             #[cfg(feature = "debug-log")]
             {
