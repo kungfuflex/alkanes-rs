@@ -614,7 +614,11 @@ pub fn run(cmd: &BtcusdCommands, post: &Post, ep: &Endpoints) -> Result<()> {
             )
             .map_err(|e| {
                 anyhow!(
-                    "{e}\n\nNote: /v4/{{apikey}}/mempool is NOT DEPLOYED yet and will 404.                      The command surface exists so workflows can be written against it."
+                    "{e}\n\nNote: /v4/{{apikey}}/mempool is deployed and answering, so a failure \
+                     here is most likely the endpoint base, the API key, or the service being \
+                     temporarily unreachable, rather than a missing route. Check \
+                     SUBFROST_RPC_BASE (defaults to https://mainnet.subfrost.io) and \
+                     SUBFROST_API_KEY; a 401 above means the key."
                 )
             })?;
             emit(&v, true)
