@@ -992,3 +992,196 @@ fn describe_is_total() {
         let _ = alkanes_std_firevector::describe(&p, Source::SameBlock);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Exhaustive opcode-space coverage
+// ---------------------------------------------------------------------------
+// The randomized tests sample the input space; these enumerate it. Between them
+// there is no opcode that is merely "probably" exercised.
+
+/// Every opcode the machine recognises.
+fn all_opcodes() -> Vec<u128> {
+    (0u128..=256).filter(|op| shape(*op).is_some()).collect()
+}
+
+/// A plausible immediate for each opcode that takes them.
+fn immediates_for(op: u128) -> Vec<u128> {
+    match op {
+        OP_PUSH => vec![5],
+        OP_INPUT => vec![0],
+        OP_IN_AMOUNT | OP_OUT_AMOUNT => vec![2, 0],
+        OP_SHR | OP_SHL => vec![1],
+        _ => vec![],
+    }
+}
+
+/// Wrap one opcode in the minimum scaffolding that makes a valid program:
+/// enough operands beneath it, and enough cleanup above it to leave exactly one
+/// residue.
+fn minimal_program_for(op: u128) -> Vec<u128> {
+    let (imm, pops, pushes) = shape(op).expect("known opcode");
+    let mut p = Vec::new();
+    for _ in 0..pops {
+        p.push(OP_PUSH);
+        p.push(2);
+    }
+    p.push(op);
+    p.extend(immediates_for(op));
+    assert_eq!(immediates_for(op).len(), imm, "immediate table out of sync for {op}");
+
+    if pushes == 0 {
+        p.push(OP_PUSH);
+        p.push(0);
+    } else {
+        p.extend(std::iter::repeat_n(OP_DROP, pushes - 1));
+    }
+    p
+}
+
+#[test]
+fn every_opcode_has_both_a_shape_and_a_mnemonic() {
+    // If these two tables drift, the validator and the disassembler disagree
+    // about what a program says — the worst possible failure for something whose
+    // whole point is being auditable.
+    for op in 0u128..=512 {
+        assert_eq!(
+            shape(op).is_some(),
+            mnemonic(op).is_some(),
+            "opcode {op}: shape={:?} mnemonic={:?}",
+            shape(op),
+            mnemonic(op)
+        );
+    }
+}
+
+#[test]
+fn the_instruction_set_is_the_size_it_is_documented_to_be() {
+    // The published opcode table lists 34 instructions:
+    //   1 constant + 10 fact loads + 10 arithmetic + 6 comparison
+    //   + 3 logic + 4 stack.
+    // If someone adds one without updating the spec and the governance channel,
+    // this fails. (It already caught a published tally of "30".)
+    assert_eq!(all_opcodes().len(), 34);
+}
+
+#[test]
+fn every_opcode_is_executable_in_a_valid_program() {
+    for op in all_opcodes() {
+        let p = minimal_program_for(op);
+        let steps = validate(&p, Source::PrevBlock)
+            .unwrap_or_else(|e| panic!("opcode {op} scaffold should validate: {e}"));
+        // Must complete: a result reached with the exact budget, and unchanged
+        // when given more.
+        let exact = eval(&p, &mint_item(), steps);
+        let generous = eval(&p, &mint_item(), steps * 10);
+        assert_eq!(exact, generous, "opcode {op} did not finish within its budget");
+    }
+}
+
+#[test]
+fn every_opcode_disassembles_to_its_mnemonic() {
+    for op in all_opcodes() {
+        let text = disassemble(&minimal_program_for(op));
+        let name = mnemonic(op).unwrap();
+        assert!(text.contains(name), "opcode {op} ({name}) missing from:\n{text}");
+        assert!(
+            !text.contains("unknown"),
+            "opcode {op} disassembled as unknown:\n{text}"
+        );
+    }
+}
+
+#[test]
+fn every_ordered_pair_of_opcodes_is_survivable() {
+    // Most pairs are invalid programs. None may panic, in eval or in validate,
+    // with or without scaffolding.
+    let ops = all_opcodes();
+    let item = mint_item();
+    for a in &ops {
+        for b in &ops {
+            let mut p = vec![*a];
+            p.extend(immediates_for(*a));
+            p.push(*b);
+            p.extend(immediates_for(*b));
+
+            let _ = validate(&p, Source::PrevBlock);
+            let _ = validate(&p, Source::SameBlock);
+            let _ = eval(&p, &item, 1000);
+            let _ = disassemble(&p);
+        }
+    }
+}
+
+#[test]
+fn a_validated_program_always_completes_within_its_reported_budget() {
+    // The budget returned by validate() is the exact instruction count, so it can
+    // never starve a program that validated. If this broke, valid vectors would
+    // silently start returning 0 — an emission halt that looks like a policy.
+    let item = out_item((4, 1778), 1, (4, 1778), 12_345);
+    let programs: Vec<Vec<u128>> = vec![
+        programs::identity(),
+        programs::convex_out((4, 1778), 1, (4, 1778)),
+        programs::linear_out((4, 1778), 1, (4, 1778), 3, 2),
+    ]
+    .into_iter()
+    .chain(all_opcodes().into_iter().map(minimal_program_for))
+    .collect();
+
+    for p in programs {
+        let steps = validate(&p, Source::PrevBlock).expect("fixture must validate");
+        let at_budget = eval(&p, &item, steps);
+        let above = eval(&p, &item, steps + 1);
+        let far_above = eval(&p, &item, u32::MAX);
+        assert_eq!(at_budget, above, "program {p:?}");
+        assert_eq!(at_budget, far_above, "program {p:?}");
+    }
+}
+
+#[test]
+fn every_opcode_is_rejected_when_its_operands_are_missing() {
+    // The scaffolding is what makes these programs legal; without it, each
+    // opcode that pops must be caught by validate rather than by eval.
+    for op in all_opcodes() {
+        let (_, pops, _) = shape(op).unwrap();
+        if pops == 0 {
+            continue;
+        }
+        let mut p = vec![op];
+        p.extend(immediates_for(op));
+        assert!(
+            matches!(
+                validate(&p, Source::PrevBlock),
+                Err(ValidateError::StackUnderflow { .. })
+            ),
+            "bare opcode {op} should underflow"
+        );
+    }
+}
+
+#[test]
+fn every_opcode_with_immediates_is_rejected_when_they_are_truncated() {
+    for op in all_opcodes() {
+        let (imm, pops, _) = shape(op).unwrap();
+        if imm == 0 {
+            continue;
+        }
+        // Provide operands so underflow cannot mask the truncation.
+        let mut p = Vec::new();
+        for _ in 0..pops {
+            p.push(OP_PUSH);
+            p.push(2);
+        }
+        p.push(op);
+        // One immediate short.
+        p.extend(immediates_for(op).into_iter().take(imm - 1));
+        assert!(
+            matches!(
+                validate(&p, Source::PrevBlock),
+                Err(ValidateError::TruncatedImmediate { .. })
+            ),
+            "opcode {op} with {} of {imm} immediates should be truncated, got {:?}",
+            imm - 1,
+            validate(&p, Source::PrevBlock)
+        );
+    }
+}
