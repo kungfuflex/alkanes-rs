@@ -18,3 +18,12 @@ metashrew-support = { workspace = true, optional = true }
 [features]
 default = []
 alkane = ["alkanes-runtime", "alkanes-support", "metashrew-support"]
+
+# alkanes-support only, and only for tests: the cellpack-layout tests decode
+# with the REAL CellpackDecode rather than a local mirror that would just agree
+# with my misunderstanding of the wire format.
+[dev-dependencies]
+alkanes-support = { workspace = true }
+
+[build-dependencies]
+alkanes-wit-build = { path = "../../crates/alkanes-wit-build" }

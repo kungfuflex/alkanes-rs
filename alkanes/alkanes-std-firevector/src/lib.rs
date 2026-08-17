@@ -28,12 +28,16 @@
 //!   in the indexer preamble with indexer privileges; if governance could swap it,
 //!   the bounded-blast-radius property above would be false.
 
+pub mod abi;
 pub mod disasm;
 pub mod programs;
 pub mod vm;
 
+#[cfg(feature = "alkane")]
+pub mod alkane;
+
 pub use disasm::{describe, disassemble};
-pub use vm::{eval, isqrt, mul_div_floor, validate, validate_and_eval, Item, Source, ValidateError};
+pub use vm::{eval, isqrt, mul_div_floor, validate, Item, Source, ValidateError};
 
 /// Flat `Vec<u128>` codec for [`Item`].
 ///
@@ -99,6 +103,9 @@ pub mod codec {
     /// Total: returns `None` on any truncation or absurd length rather than
     /// panicking or over-allocating. A malformed item table must degrade to "no
     /// weights", never to a wedged indexer.
+    // Fields are filled one at a time because each read can fail with `?`;
+    // a struct initialiser cannot early-return per field.
+    #[allow(clippy::field_reassign_with_default)]
     pub fn decode_item(w: &[u128]) -> Option<(Item, usize)> {
         let mut i = 0usize;
         let take = |i: &mut usize| -> Option<u128> {

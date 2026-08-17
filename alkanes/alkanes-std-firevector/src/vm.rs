@@ -553,6 +553,10 @@ pub fn eval(program: &[u128], item: &Item, budget: u32) -> u128 {
                 push!(if c != 0 { a } else { b });
             }
 
+            // Unreachable by construction: `shape()` returned `Some`, and it
+            // recognises exactly the opcodes this match arms. Kept because the
+            // match must be exhaustive over u128, and because "return 0" is the
+            // right answer if the two ever drift apart. Shows as uncovered.
             _ => return 0,
         }
 
@@ -585,7 +589,7 @@ pub fn isqrt(n: u128) -> u128 {
     }
     // Seed at 2^ceil(bits/2), which is >= sqrt(n), so the iteration descends.
     let bits = 128 - n.leading_zeros();
-    let mut x: u128 = 1u128 << ((bits + 1) / 2);
+    let mut x: u128 = 1u128 << bits.div_ceil(2);
     loop {
         // y = (x + n/x) / 2, computed without overflowing.
         let y = x / 2 + (n / x) / 2 + ((x & 1) + ((n / x) & 1)) / 2;
@@ -594,7 +598,11 @@ pub fn isqrt(n: u128) -> u128 {
         }
         x = y;
     }
-    // Descend to the true floor; the seed guarantees at most a couple of steps.
+    // Guard, not part of the algorithm. Newton from an upper-bound seed already
+    // lands exactly on floor(sqrt(n)), so this never fires and shows as
+    // uncovered; it is retained so a future change to the seed cannot silently
+    // return a value one too large in consensus-critical arithmetic. Bounded by
+    // x, and the floor invariant is asserted directly in the test suite.
     while x > 0 && x > n / x {
         x -= 1;
     }
@@ -668,12 +676,4 @@ fn mul_full(a: u128, b: u128) -> (u128, u128) {
     let lo = (ll & MASK) | (mid & MASK) << 64;
     let hi = hh + (lh >> 64) + (hl >> 64) + (mid >> 64);
     (hi, lo)
-}
-
-/// Convenience: validate then evaluate, returning `None` if the program is
-/// invalid. Intended for the `simulate` view, not the indexing hot path — in the
-/// hot path you validate once per block and then call [`eval`] per item.
-pub fn validate_and_eval(program: &[u128], item: &Item, source: Source) -> Option<u128> {
-    let steps = validate(program, source).ok()?;
-    Some(eval(program, item, steps.max(1)))
 }

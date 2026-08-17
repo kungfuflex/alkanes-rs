@@ -6,6 +6,8 @@
 //! convexity, the identity vector — is checked because consensus depends on the
 //! exact numbers, not just on "it runs".
 
+#![allow(clippy::field_reassign_with_default)]
+
 use alkanes_std_firevector::codec::{decode_items, encode_items};
 use alkanes_std_firevector::programs;
 use alkanes_std_firevector::vm::*;
@@ -605,9 +607,7 @@ fn accepts_exactly_max_stack() {
         p.push(1);
     }
     // Collapse back down to a single residue.
-    for _ in 0..(MAX_STACK - 1) {
-        p.push(OP_ADD);
-    }
+    p.extend(std::iter::repeat_n(OP_ADD, MAX_STACK - 1));
     assert!(validate(&p, Source::PrevBlock).is_ok());
 }
 
@@ -750,7 +750,7 @@ fn eval_never_panics_on_adversarial_shapes() {
         vec![OP_PUSH, 1, OP_SHL],
         vec![OP_INPUT],
         // Deep stack pressure, unvalidated.
-        vec![OP_PUSH, 1].repeat(MAX_STACK * 4),
+        [OP_PUSH, 1].repeat(MAX_STACK * 4),
     ];
     for p in cases {
         let _ = eval(&p, &item, 100_000);
@@ -904,5 +904,91 @@ fn disassembly_never_panics_on_random_input() {
         let len = rng.below(30) as usize;
         let prog: Vec<u128> = (0..len).map(|_| rng.below(120) as u128).collect();
         let _ = disassemble(&prog);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Error strings
+// ---------------------------------------------------------------------------
+// These are shown verbatim to whoever is reviewing a proposed weightmap, so an
+// error that does not say which word is wrong is a bad error.
+
+#[test]
+fn every_validate_error_renders_and_locates_the_problem() {
+    let cases: Vec<(Vec<u128>, Source, &[&str])> = vec![
+        (vec![], Source::PrevBlock, &["empty"]),
+        (vec![OP_PUSH], Source::PrevBlock, &["immediates", "word 0"]),
+        (vec![9_999_999], Source::PrevBlock, &["unknown opcode", "9999999", "word 0"]),
+        (vec![OP_ADD], Source::PrevBlock, &["underflow", "word 0"]),
+        (vec![OP_PUSH, 1, OP_PUSH, 2], Source::PrevBlock, &["exactly 1", "left 2"]),
+        (vec![OP_STATUS], Source::SameBlock, &["unavailable", "SameBlock"]),
+    ];
+    for (prog, src, needles) in cases {
+        let err = validate(&prog, src).expect_err("must be invalid");
+        let text = err.to_string();
+        for n in needles {
+            assert!(text.contains(n), "{err:?} rendered {text:?}, missing {n:?}");
+        }
+    }
+}
+
+#[test]
+fn stack_overflow_error_reports_the_depth_and_the_limit() {
+    let mut p = Vec::new();
+    for _ in 0..(MAX_STACK + 1) {
+        p.push(OP_PUSH);
+        p.push(1);
+    }
+    let text = validate(&p, Source::PrevBlock).unwrap_err().to_string();
+    assert!(text.contains(&MAX_STACK.to_string()), "got {text:?}");
+    assert!(text.contains("limit"), "got {text:?}");
+}
+
+#[test]
+fn too_long_error_reports_the_size_and_the_limit() {
+    let p = vec![OP_PUSH; MAX_PROGRAM_WORDS + 1];
+    let text = validate(&p, Source::PrevBlock).unwrap_err().to_string();
+    assert!(text.contains(&(MAX_PROGRAM_WORDS + 1).to_string()), "got {text:?}");
+    assert!(text.contains(&MAX_PROGRAM_WORDS.to_string()), "got {text:?}");
+}
+
+#[test]
+fn step_budget_error_renders() {
+    // Not reachable through validate() today — the header ceiling is enforced by
+    // the caller that parses a weightmap header — but the variant is public and
+    // its message must not be empty if it ever surfaces.
+    let text = ValidateError::StepBudget { requested: 999_999 }.to_string();
+    assert!(text.contains("999999"), "got {text:?}");
+    assert!(text.contains(&MAX_STEPS_LIMIT.to_string()), "got {text:?}");
+}
+
+// ---------------------------------------------------------------------------
+// describe — disassembly plus verdict, for a governance UI
+// ---------------------------------------------------------------------------
+
+#[test]
+fn describe_shows_the_program_and_a_valid_verdict() {
+    let text = alkanes_std_firevector::describe(&programs::identity(), Source::PrevBlock);
+    assert!(text.contains("TARGET_BLOCK"), "got:\n{text}");
+    assert!(text.contains("valid"), "got:\n{text}");
+    assert!(text.contains("steps/item"), "got:\n{text}");
+}
+
+#[test]
+fn describe_shows_the_program_and_an_invalid_verdict() {
+    // The point: a reviewer sees the offending program AND why it is rejected,
+    // in one blob, without needing two calls.
+    let p = programs::convex_out((4, 1778), 1, (4, 1778));
+    let text = alkanes_std_firevector::describe(&p, Source::SameBlock);
+    assert!(text.contains("OUT_AMOUNT 4:1778"), "got:\n{text}");
+    assert!(text.contains("INVALID"), "got:\n{text}");
+    assert!(text.contains("SameBlock"), "got:\n{text}");
+}
+
+#[test]
+fn describe_is_total() {
+    for p in [vec![], vec![u128::MAX], vec![OP_PUSH], vec![OP_ADD]] {
+        let _ = alkanes_std_firevector::describe(&p, Source::PrevBlock);
+        let _ = alkanes_std_firevector::describe(&p, Source::SameBlock);
     }
 }

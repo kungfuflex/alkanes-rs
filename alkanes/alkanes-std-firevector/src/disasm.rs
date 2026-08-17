@@ -10,7 +10,7 @@
 //! disassemble to explicit `<...>` markers rather than erroring, because someone
 //! auditing a bad vector needs to see where it goes wrong.
 
-use crate::vm::{mnemonic, shape, Source, OP_IN_AMOUNT, OP_INPUT, OP_OUT_AMOUNT, OP_PUSH, OP_SHL, OP_SHR};
+use crate::vm::{mnemonic, shape, Source, OP_IN_AMOUNT, OP_OUT_AMOUNT};
 
 /// Render a program as one instruction per line.
 pub fn disassemble(program: &[u128]) -> String {
@@ -40,12 +40,11 @@ pub fn disassemble(program: &[u128]) -> String {
                 return out;
             }
             match op {
+                // Alkane ids read as block:tx rather than as two bare numbers.
                 OP_IN_AMOUNT | OP_OUT_AMOUNT => {
                     out.push_str(&format!(" {}:{}", program[i + 1], program[i + 2]));
                 }
-                OP_PUSH | OP_INPUT | OP_SHR | OP_SHL => {
-                    out.push_str(&format!(" {}", program[i + 1]));
-                }
+                // Everything else — PUSH, INPUT, SHR, SHL — is plain operands.
                 _ => {
                     for k in 1..=imm {
                         out.push_str(&format!(" {}", program[i + k]));
@@ -65,7 +64,7 @@ pub fn disassemble(program: &[u128]) -> String {
 /// before a vote.
 pub fn describe(program: &[u128], source: Source) -> String {
     let mut out = disassemble(program);
-    out.push_str("\n");
+    out.push('\n');
     match crate::vm::validate(program, source) {
         Ok(steps) => out.push_str(&format!("valid ({:?}, {} steps/item)\n", source, steps)),
         Err(e) => out.push_str(&format!("INVALID ({:?}): {}\n", source, e)),

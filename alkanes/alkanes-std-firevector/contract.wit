@@ -1,0 +1,37 @@
+package alkanes:firevector;
+
+/// FIREVECTOR — the DIESEL emission-weighting VM, addressable at 12:0.
+///
+/// `source` selects which fact loads are legal: 0 = prev-block (trace-verified,
+/// so STATUS and OUT_AMOUNT are answerable), 1 = same-block (parse-only, so they
+/// are not). Programs are flat `list<u64>` — widened to `Vec<u128>` by the
+/// cellpack ABI, which is the machine's native word.
+///
+/// Weight vectors come back as `list<u8>`: little-endian u128 per weight, the
+/// same packed-struct convention the rest of the system uses.
+interface firevector {
+    initialize: func() -> result<_, string>;
+
+    /// Evaluate a program over a whole item table in one pass. This is the shape
+    /// the indexer preamble uses — one call per block, never one per item.
+    evaluate: func(source: u64, program: list<u64>, items: list<u64>) -> result<list<u8>, string>;
+
+    /// Weight for a single item. This is what a wallet calls to show a user the
+    /// weight a transaction will earn before broadcasting it.
+    simulate: func(source: u64, program: list<u64>, item: list<u64>) -> result<list<u8>, string>;
+
+    /// Render a program as readable pseudocode. The reason emission policy is
+    /// auditable by voters and not only by people who read Rust.
+    disassemble-program: func(program: list<u64>) -> result<string, string>;
+
+    /// Static verdict on a program: steps-per-item if valid, else an error
+    /// naming the offending word. Governance should call this before a vote.
+    validate-program: func(source: u64, program: list<u64>) -> result<string, string>;
+
+    get-name: func() -> result<string, string>;
+    get-symbol: func() -> result<string, string>;
+}
+
+world firevector-world {
+    export firevector;
+}

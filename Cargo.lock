@@ -743,6 +743,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "alkanes-std-firevector"
+version = "10.0.0"
+dependencies = [
+ "alkanes-runtime",
+ "alkanes-support",
+ "alkanes-wit-build",
+ "anyhow",
+ "metashrew-support",
+]
+
+[[package]]
 name = "alkanes-std-genesis-alkane"
 version = "10.0.0"
 dependencies = [

@@ -1,0 +1,22 @@
+[contract]
+name = "Firevector"
+
+[opcodes]
+initialize = 0
+evaluate = 1
+simulate = 2
+disassemble-program = 3
+validate-program = 4
+get-name = 99
+get-symbol = 100
+
+# Every non-initialize method is pure: no storage reads, no writes, no state.
+# The weightmap itself lives in DIESEL's storage, not here — this alkane is the
+# evaluator, deliberately stateless so it has nothing to corrupt.
+[views]
+evaluate = true
+simulate = true
+disassemble-program = true
+validate-program = true
+get-name = true
+get-symbol = true
