@@ -85,18 +85,52 @@ delegatecall.
 
 ### Live constraints — check these before quoting anything
 
+**The invariants (these do not move):**
+
 * **Depth cap.** A single conversion may take at most **10% of the pool's frUSD
   reserve** (`MAX_POOL_SHARE_BPS = 1000`). Over that, the coordinator **refuses
   the swap and pays out plain frUSD instead** — the deposit still succeeds, no
-  error on either chain. At a ~$5,854/side pool that ceiling is about **$585**.
-* **The price is stale by construction.** The pool still prices BTC at the
-  **$64,164** fixed at init. A $585 buy executes near **$70,157** — roughly 8%
-  over market — and $1,000 around 15% over. The arb that would close it maxes out
-  at ~$75 of profit, so nobody can.
+  error on either chain. So the cap is a fraction, and its dollar value moves
+  with the pool.
+* **The pool's price is set by its own reserves, not by the market**, and this is
+  a shallow pool. The gap between the two can be any size and in either
+  direction, and arbitrage will not reliably close it — the profit available is
+  too small against fees at this depth.
 
-**Therefore: warn on any trade above the depth cap, and quote the effective
-execution price, not the pool's marginal price.** A user who sees "swap $1,000 to
-BTC" and gets frUSD at a 15% implied loss was not told enough.
+**Therefore: never quote either number from memory. Measure both, then warn on
+any trade above the depth cap and quote the effective execution price, not the
+pool's marginal price.**
+
+> ⚠️ **The measured values below are a SNAPSHOT and they go stale fast.** An
+> earlier version of this file carried numbers from 2026-08-10 and, one week
+> later, understated the pool by 4.2× and claimed the pool was "8% over market"
+> when it was 0.8% *under*. That error runs in the dangerous direction: it talks
+> a user out of a fair trade, and it would just as easily talk one into a bad one
+> after the next move. **Re-measure before quoting.**
+
+**Snapshot, measured 2026-08-17 at index height 962,598:**
+
+| | |
+|---|---|
+| frUSD reserve | 24,304.66 |
+| frBTC reserve | 0.38092710 |
+| implied pool price | ~$63,804 / BTC |
+| depth cap (10%) | ~$2,430 |
+| market (same day) | ~$64,327 / BTC — pool ~0.8% **under** |
+
+Re-measure with one call, and read `token0`/`token1` from the response rather
+than assuming the order:
+
+```bash
+curl -s https://mainnet.subfrost.io/v4/$KEY/btcusd \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"metashrew_view",
+       "params":["getpoolstate","0x0a05080410f20d","latest"]}'
+```
+
+The reserves come back as **decimal strings at 8 decimals** (see §3 — keep them
+strings). Divide frUSD by frBTC for the pool's implied USD/BTC, and compare it
+against a real market price before saying anything about premium or discount.
 
 ---
 
@@ -261,8 +295,9 @@ V2 and not V3 deliberately: one `target.call`, no multicall.
 
 1. Is the trade within the **depth cap**? If not, say what will actually happen
    (frUSD, not BTC).
-2. Have you quoted the **effective execution price**, including the ~8%+ the
-   stale price scale costs today?
+2. Have you **measured** the pool against the market today, and quoted the
+   **effective execution price** including whatever that gap costs — in whichever
+   direction it currently runs?
 3. For a bridge: is `btc_destination` a **standard, payable mainnet** script?
 4. For a bridge: is the approve **exactly** the amount?
 5. Are amounts still **strings**, not floats?
