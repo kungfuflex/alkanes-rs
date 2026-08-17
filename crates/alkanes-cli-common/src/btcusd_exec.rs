@@ -614,7 +614,9 @@ pub fn run(cmd: &BtcusdCommands, post: &Post, ep: &Endpoints) -> Result<()> {
             )
             .map_err(|e| {
                 anyhow!(
-                    "{e}\n\nNote: /v4/{{apikey}}/mempool is NOT DEPLOYED yet and will 404.                      The command surface exists so workflows can be written against it."
+                    "{e}\n\nNote: /v4/{{apikey}}/mempool is deployed and answering, so this is \
+                     most likely the endpoint or the API key rather than a missing route. \
+                     Check that --endpoint points at the mempool host and that the key is valid."
                 )
             })?;
             emit(&v, true)
