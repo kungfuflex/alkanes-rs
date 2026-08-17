@@ -104,22 +104,28 @@ pool's marginal price.**
 > ⚠️ **The measured values below are a SNAPSHOT and they go stale fast.** An
 > earlier version of this file carried numbers from 2026-08-10 and, one week
 > later, understated the pool by 4.2× and claimed the pool was "8% over market"
-> when it was 0.8% *under*. That error runs in the dangerous direction: it talks
-> a user out of a fair trade, and it would just as easily talk one into a bad one
+> when it was *under*. That error runs in the dangerous direction: it talks a
+> user out of a fair trade, and it would just as easily talk one into a bad one
 > after the next move. **Re-measure before quoting.**
+>
+> Note what actually changed: the pool's own `price_scale` barely moved (64,164 →
+> 64,069). The market rose to meet it. So the "stale by construction" framing was
+> right about the mechanism and wrong to assume the gap stays on one side.
 
-**Snapshot, measured 2026-08-17 at index height 962,598:**
+**Snapshot read 2026-08-17** (chain tip 962,947 via `metashrew_height`; the pool
+state itself is unchanged since block **962,598**, its last event, on 2026-08-15):
 
 | | |
 |---|---|
 | frUSD reserve | 24,304.66 |
 | frBTC reserve | 0.38092710 |
-| implied pool price | ~$63,804 / BTC |
-| depth cap (10%) | ~$2,430 |
-| market (same day) | ~$64,327 / BTC — pool ~0.8% **under** |
+| **pool price** (`marginal_price_q`) | **~$64,075 / BTC** |
+| `price_scale` | ~$64,069 / BTC |
+| reserve ratio (sanity check only) | ~$63,804 / BTC |
+| depth cap (10% of frUSD) | ~$2,430 |
+| market, same reading | ~$64,342 → pool ~0.4% **under** |
 
-Re-measure with one call, and read `token0`/`token1` from the response rather
-than assuming the order:
+Re-measure with one call:
 
 ```bash
 curl -s https://mainnet.subfrost.io/v4/$KEY/btcusd \
@@ -128,9 +134,19 @@ curl -s https://mainnet.subfrost.io/v4/$KEY/btcusd \
        "params":["getpoolstate","0x0a05080410f20d","latest"]}'
 ```
 
-The reserves come back as **decimal strings at 8 decimals** (see §3 — keep them
-strings). Divide frUSD by frBTC for the pool's implied USD/BTC, and compare it
-against a real market price before saying anything about premium or discount.
+> ⚠️ **The response is prost hex, not JSON.** `GetPoolStateResponse`: `token0`=f3,
+> `token1`=f4, `state`=f5, and inside that `reserve0`/`reserve1` are decimal
+> strings at 8 decimals (keep them strings — see §3). Read `token0`/`token1` from
+> the response rather than assuming the order. The reference decoder is
+> `decode_pool_state` in `alkanes-cli-common/src/btcusd_exec.rs`.
+
+> 🔴 **Take the pool's price from `marginal_price_q` (state f10), as
+> `price_q_scale / marginal_price_q` — the reciprocal rule in §3. Do NOT divide
+> the reserves.** In CryptoSwap the balances sit near `price_scale`, not at
+> parity, so the reserve ratio is not the tradable price: at this reading the two
+> differ by 0.42%, which is more than the pool's own mid fee. It is a sanity
+> check, nothing more. And for an actual trade, quote with `get_dy` (§4) rather
+> than any of these — none of them include your size.
 
 ---
 
@@ -149,7 +165,7 @@ Views: `getprice`, `getpoolstate`, `getreserves`, `getcandles`, `getpools`,
 `indexheight`. Buckets for candles: **3600 and 86400 only**.
 
 > ⚠️ **Amounts are decimal STRINGS and must stay strings.** `total_supply` is
-> `23113653069174808444` — past `u64`. Parsing as a double or u64 silently
+> `96211459799069359794` at the 2026-08-17 reading — past `u64`. Parsing as a double or u64 silently
 > corrupts it. This is not hypothetical: a u64 parse is what froze 23.0137 LP as
 > unspendable.
 >
