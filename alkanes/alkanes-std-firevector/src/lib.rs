@@ -51,6 +51,7 @@ pub use vm::{eval, isqrt, mul_div_floor, validate, Item, Source, ValidateError};
 ///
 /// ```text
 ///   target_block, target_tx, opcode, status, txindex, pstone_index, height,
+///   mint_rank,
 ///   n_inputs,   inputs...            (n_inputs words)
 ///   n_incoming, (block, tx, amount)* (3 * n_incoming words)
 ///   n_outgoing, (block, tx, amount)* (3 * n_outgoing words)
@@ -59,7 +60,7 @@ pub mod codec {
     use super::vm::Item;
 
     /// Number of fixed-position words preceding the variable-length sections.
-    const FIXED: usize = 7;
+    const FIXED: usize = 8;
 
     pub fn encode_item(item: &Item) -> Vec<u128> {
         let mut out = Vec::with_capacity(FIXED + 3 + item.inputs.len() + 3 * (item.incoming.len() + item.outgoing.len()));
@@ -70,6 +71,7 @@ pub mod codec {
         out.push(item.txindex);
         out.push(item.pstone_index);
         out.push(item.height);
+        out.push(item.mint_rank);
 
         out.push(item.inputs.len() as u128);
         out.extend_from_slice(&item.inputs);
@@ -132,6 +134,7 @@ pub mod codec {
         item.txindex = take(&mut i)?;
         item.pstone_index = take(&mut i)?;
         item.height = take(&mut i)?;
+        item.mint_rank = take(&mut i)?;
 
         let n_inputs = take_len(&mut i)?;
         item.inputs.reserve(n_inputs);

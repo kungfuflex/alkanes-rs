@@ -7,13 +7,23 @@ evaluate = 1
 simulate = 2
 disassemble-program = 3
 validate-program = 4
+set-weightmap = 10
+get-weightmap = 11
+get-weightmap-source = 12
+get-sigil = 13
 get-name = 99
 get-symbol = 100
 
-# Every non-initialize method is pure: no storage reads, no writes, no state.
-# The weightmap itself lives in DIESEL's storage, not here — this alkane is the
-# evaluator, deliberately stateless so it has nothing to corrupt.
+# The evaluator methods (1-4) are pure: no storage, no state. Only the
+# governance surface (0, 10-13) touches storage, and only opcode 10 writes.
+#
+# The weightmap lives HERE rather than in DIESEL's storage, which is what keeps
+# the DIESEL contract unmodified forever — no second fuel-affecting height gate
+# for a setter it would otherwise need.
 [views]
+get-weightmap = true
+get-weightmap-source = true
+get-sigil = true
 evaluate = true
 simulate = true
 disassemble-program = true

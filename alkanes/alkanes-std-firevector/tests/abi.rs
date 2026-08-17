@@ -214,18 +214,22 @@ fn simulate_returns_a_single_weight() {
 #[test]
 fn simulate_takes_a_bare_item_not_a_table() {
     // Easy caller mistake: passing an encode_items() table to simulate. The
-    // leading count word would be read as target_block, so this must not
-    // accidentally succeed with a plausible answer.
+    // leading count word shifts every field by one, so the result must NOT be a
+    // plausible-looking weight — either a decode error or a different answer,
+    // never the same number the correct call would give.
     let p = programs::identity();
     let bare = simulate_call(SOURCE_PREV_BLOCK, &p, &encode_item(&mint_item())).unwrap();
     assert_eq!(unpack_weights(&bare).unwrap(), vec![1]);
 
-    let as_table = simulate_call(SOURCE_PREV_BLOCK, &p, &encode_items(&[mint_item()])).unwrap();
-    assert_eq!(
-        unpack_weights(&as_table).unwrap(),
-        vec![0],
-        "a table passed to simulate must not weigh as if it were an item"
-    );
+    match simulate_call(SOURCE_PREV_BLOCK, &p, &encode_items(&[mint_item()])) {
+        Err(AbiError::MalformedItem) => {}
+        Ok(out) => assert_ne!(
+            unpack_weights(&out).unwrap(),
+            vec![1],
+            "a table passed to simulate must not weigh as if it were an item"
+        ),
+        Err(other) => panic!("unexpected error: {other:?}"),
+    }
 }
 
 #[test]
@@ -441,4 +445,70 @@ fn every_abi_error_renders_something_actionable() {
     assert!(unknown.contains('3'), "got {unknown:?}");
     assert!(unknown.contains("prev-block"), "got {unknown:?}");
     assert!(unknown.contains("same-block"), "got {unknown:?}");
+}
+
+// ---------------------------------------------------------------------------
+// The governance setter's gate
+// ---------------------------------------------------------------------------
+
+#[test]
+fn programs_roundtrip_through_storage_packing() {
+    for p in [
+        programs::identity(),
+        programs::legacy_winner_takes_all(),
+        programs::convex_out(POOL, 1, POOL),
+    ] {
+        assert_eq!(unpack_program(&pack_program(&p)), Some(p));
+    }
+}
+
+#[test]
+fn program_packing_rejects_a_partial_word() {
+    // The indexer reads these bytes back directly, so a truncated tail must be
+    // refused rather than decoded into a shorter, still-runnable program.
+    assert!(unpack_program(&[0u8; 17]).is_none());
+    assert!(unpack_program(&[0u8; 15]).is_none());
+    assert!(unpack_program(&[]).is_none());
+}
+
+#[test]
+fn the_adoption_gate_accepts_the_vectors_we_actually_ship() {
+    check_adoptable(SOURCE_SAME_BLOCK, &programs::identity()).expect("identity must be adoptable");
+    check_adoptable(SOURCE_SAME_BLOCK, &programs::legacy_winner_takes_all())
+        .expect("legacy rule must be adoptable");
+    check_adoptable(SOURCE_SAME_BLOCK, &programs::first_n_mints(3))
+        .expect("first-n must be adoptable");
+    check_adoptable(SOURCE_PREV_BLOCK, &programs::convex_out(POOL, 1, POOL))
+        .expect("convex vector must be adoptable");
+}
+
+#[test]
+fn the_adoption_gate_refuses_a_vector_that_would_halt_emission() {
+    // Well-formed, runs fine, pays nobody. Installing it would stop DIESEL
+    // emission entirely and look like a policy rather than a mistake — so the
+    // setter refuses it.
+    let never = vec![OP_PUSH, 0];
+    assert!(validate(&never, Source::SameBlock).is_ok());
+    let err = check_adoptable(SOURCE_SAME_BLOCK, &never).unwrap_err();
+    assert!(err.contains("halt emission"), "got {err:?}");
+}
+
+#[test]
+fn the_adoption_gate_refuses_invalid_programs_and_sources() {
+    assert!(check_adoptable(SOURCE_SAME_BLOCK, &[OP_ADD]).is_err());
+    assert!(check_adoptable(SOURCE_SAME_BLOCK, &[]).is_err());
+    assert!(check_adoptable(9, &programs::identity()).is_err());
+    // STATUS cannot be answered same-block, so the source and the program
+    // disagree and the write is refused rather than silently weighing zero.
+    assert!(check_adoptable(SOURCE_SAME_BLOCK, &programs::convex_out(POOL, 1, POOL)).is_err());
+}
+
+#[test]
+fn the_adoption_gate_is_total() {
+    let mut rng = Lcg(0xADD0_9A7E);
+    for _ in 0..5_000 {
+        let len = rng.below(20) as usize;
+        let p: Vec<u128> = (0..len).map(|_| rng.below(120) as u128).collect();
+        let _ = check_adoptable(rng.below(4) as u128, &p);
+    }
 }

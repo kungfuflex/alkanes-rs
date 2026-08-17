@@ -222,3 +222,112 @@ fn equivalence_requires_the_item_builder_to_count_per_transaction() {
         "an honest minter must not be diluted by another tx's duplicate protostone"
     );
 }
+
+// ---------------------------------------------------------------------------
+// The PRE-UPGRADE rule: first mint in the block takes everything
+// ---------------------------------------------------------------------------
+// Legacy `create_mint_transfer` let `observe_mint` claim `/seen/<height>`, so one
+// winner took the whole reward and every later mint in the block reverted.
+// Expressing that needs MINT_RANK — "am I first" is cross-item knowledge, and the
+// machine is otherwise strictly per-item.
+
+fn ranked_mint(txindex: u128, rank: u128) -> Item {
+    Item {
+        target_block: 2,
+        target_tx: 0,
+        opcode: 77,
+        txindex,
+        mint_rank: rank,
+        ..Default::default()
+    }
+}
+
+#[test]
+fn legacy_vector_gives_the_whole_block_to_the_first_mint() {
+    let p = programs::legacy_winner_takes_all();
+    let items: Vec<Item> = (0..6).map(|i| ranked_mint(i + 1, i)).collect();
+    let weights = evaluate_table(&p, &items, Source::SameBlock);
+
+    assert_eq!(weights, vec![1, 0, 0, 0, 0, 0]);
+
+    let emission = emission_after_fee(880_000, 0);
+    let claims = firevector_claims(emission, &weights);
+    assert_eq!(claims[0], emission, "the winner takes the entire emission");
+    assert!(
+        claims[1..].iter().all(|c| *c == 0),
+        "every later mint earns nothing"
+    );
+}
+
+#[test]
+fn legacy_vector_is_expressible_only_because_of_mint_rank() {
+    // Without the rank fact, the two items below are indistinguishable: same
+    // target, same opcode, same everything a per-item machine can see. This test
+    // exists to document WHY the fact was added, so nobody removes it as
+    // redundant.
+    let a = ranked_mint(1, 0);
+    let mut b = ranked_mint(2, 1);
+    b.txindex = a.txindex; // strip the only other distinguishing fact
+
+    let p = programs::legacy_winner_takes_all();
+    let steps = validate(&p, Source::SameBlock).unwrap();
+    assert_eq!(eval(&p, &a, steps), 1);
+    assert_eq!(eval(&p, &b, steps), 0);
+}
+
+#[test]
+fn first_n_mints_generalises_the_legacy_rule() {
+    let items: Vec<Item> = (0..8).map(|i| ranked_mint(i + 1, i)).collect();
+
+    // n = 1 is exactly the legacy rule.
+    assert_eq!(
+        evaluate_table(&programs::first_n_mints(1), &items, Source::SameBlock),
+        evaluate_table(&programs::legacy_winner_takes_all(), &items, Source::SameBlock)
+    );
+
+    // n = 3 pays the first three equally, which is the shape governance would
+    // actually reach for.
+    let w = evaluate_table(&programs::first_n_mints(3), &items, Source::SameBlock);
+    assert_eq!(w, vec![1, 1, 1, 0, 0, 0, 0, 0]);
+
+    let emission = emission_after_fee(880_000, 0);
+    let claims = firevector_claims(emission, &w);
+    assert_eq!(claims[0], emission / 3);
+    assert_eq!(claims[3], 0);
+}
+
+#[test]
+fn a_non_mint_transaction_is_never_ranked_first() {
+    // mint_rank defaults to u128::MAX — "not a mint" — precisely so that a
+    // default-constructed item cannot accidentally read as the block's winner.
+    let p = programs::legacy_winner_takes_all();
+    let steps = validate(&p, Source::SameBlock).unwrap();
+    assert_eq!(Item::default().mint_rank, u128::MAX);
+    assert_eq!(eval(&p, &Item::default(), steps), 0);
+}
+
+#[test]
+fn the_legacy_vector_is_not_bit_identical_to_the_legacy_contract() {
+    // Stated as a test so "backwards compatible" is not overclaimed. The legacy
+    // contract paid `current_block_reward()` with NO fee carve-out; FIREVECTOR
+    // divides `block_reward - diesel_fee`, because it does not modify the
+    // deployed contract's arithmetic.
+    let height = 880_000u64;
+    let miner_fee = block_reward(height) * 3; // plenty of excess fee
+    let emission = emission_after_fee(height, miner_fee);
+    let legacy_contract_payout = block_reward(height);
+
+    assert!(
+        emission < legacy_contract_payout,
+        "with excess fees the carve-out must bite: {emission} vs {legacy_contract_payout}"
+    );
+
+    let p = programs::legacy_winner_takes_all();
+    let items = vec![ranked_mint(1, 0), ranked_mint(2, 1)];
+    let claims = firevector_claims(emission, &evaluate_table(&p, &items, Source::SameBlock));
+    assert_eq!(claims[0], emission);
+    assert_ne!(
+        claims[0], legacy_contract_payout,
+        "distribution matches the old rule; the arithmetic deliberately does not"
+    );
+}

@@ -10,7 +10,10 @@ package alkanes:firevector;
 /// Weight vectors come back as `list<u8>`: little-endian u128 per weight, the
 /// same packed-struct convention the rest of the system uses.
 interface firevector {
-    initialize: func() -> result<_, string>;
+    /// `sigil` is the alkane whose possession authorises set-weightmap.
+    /// Set here and never settable again — a mutable setter would leave a window
+    /// in which anyone could claim the capability.
+    initialize: func(sigil-block: u64, sigil-tx: u64) -> result<_, string>;
 
     /// Evaluate a program over a whole item table in one pass. This is the shape
     /// the indexer preamble uses — one call per block, never one per item.
@@ -27,6 +30,21 @@ interface firevector {
     /// Static verdict on a program: steps-per-item if valid, else an error
     /// naming the offending word. Governance should call this before a vote.
     validate-program: func(source: u64, program: list<u64>) -> result<string, string>;
+
+    /// Install a new weightmap. Gated on possession of the governance sigil,
+    /// which must arrive in `incoming_alkanes`. `source` is 0 = same-block,
+    /// 1 = prev-block. Rejects a program that does not validate, and one that
+    /// weighs nothing at all.
+    set-weightmap: func(source: u64, program: list<u64>) -> result<_, string>;
+
+    /// The active weightmap, as stored.
+    get-weightmap: func() -> result<list<u8>, string>;
+
+    /// The active weightmap's source discriminant.
+    get-weightmap-source: func() -> result<u64, string>;
+
+    /// The governance sigil that may call set-weightmap. Set once, at init.
+    get-sigil: func() -> result<list<u8>, string>;
 
     get-name: func() -> result<string, string>;
     get-symbol: func() -> result<string, string>;

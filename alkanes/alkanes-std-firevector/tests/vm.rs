@@ -721,6 +721,7 @@ fn eval_never_panics_on_random_programs() {
             txindex: rng.next() as u128,
             pstone_index: rng.below(8) as u128,
             height: 950_000,
+            mint_rank: rng.below(4) as u128,
         };
 
         // Must return, must not panic, must respect the budget.
@@ -839,6 +840,7 @@ fn item_table_roundtrips() {
             txindex: 12,
             pstone_index: 2,
             height: 950_123,
+            mint_rank: 3,
         },
     ];
     let encoded = encode_items(&items);
@@ -1056,12 +1058,14 @@ fn every_opcode_has_both_a_shape_and_a_mnemonic() {
 
 #[test]
 fn the_instruction_set_is_the_size_it_is_documented_to_be() {
-    // The published opcode table lists 34 instructions:
-    //   1 constant + 10 fact loads + 10 arithmetic + 6 comparison
+    // The published opcode table now lists 35 instructions:
+    //   1 constant + 11 fact loads + 10 arithmetic + 6 comparison
     //   + 3 logic + 4 stack.
+    // MINT_RANK was the 11th fact load, added so the pre-upgrade
+    // winner-takes-all rule is expressible at all.
     // If someone adds one without updating the spec and the governance channel,
     // this fails. (It already caught a published tally of "30".)
-    assert_eq!(all_opcodes().len(), 34);
+    assert_eq!(all_opcodes().len(), 35);
 }
 
 #[test]

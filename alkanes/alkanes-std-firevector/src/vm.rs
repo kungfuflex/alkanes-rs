@@ -52,6 +52,16 @@ pub const OP_OUT_AMOUNT: u128 = 22;
 pub const OP_TXINDEX: u128 = 23;
 pub const OP_PSTONE_INDEX: u128 = 24;
 pub const OP_HEIGHT: u128 = 25;
+/// Rank of this item's transaction among the block's DIESEL-mint transactions,
+/// 0-based, in transaction order; `u128::MAX` if the transaction carries no mint.
+///
+/// The one fact in the set that is not local to the item. It exists because
+/// "am I the first mint in this block" is otherwise inexpressible — the machine
+/// is per-item by design, which is what keeps it O(N) and order-independent —
+/// and without it the pre-upgrade DIESEL rule (first mint takes everything)
+/// cannot be written as a vector. The indexer already walks transactions in
+/// order to count mints, so computing the rank is free and deterministic.
+pub const OP_MINT_RANK: u128 = 26;
 
 // Arithmetic — saturating; division by zero yields zero.
 pub const OP_ADD: u128 = 32;
@@ -94,7 +104,7 @@ pub fn shape(op: u128) -> Option<(usize, usize, usize)> {
         OP_PUSH => (1, 0, 1),
 
         OP_TARGET_BLOCK | OP_TARGET_TX | OP_OPCODE | OP_STATUS | OP_TXINDEX | OP_PSTONE_INDEX
-        | OP_HEIGHT => (0, 0, 1),
+        | OP_HEIGHT | OP_MINT_RANK => (0, 0, 1),
         OP_INPUT => (1, 0, 1),
         OP_IN_AMOUNT | OP_OUT_AMOUNT => (2, 0, 1),
 
@@ -132,6 +142,7 @@ pub fn mnemonic(op: u128) -> Option<&'static str> {
         OP_TXINDEX => "TXINDEX",
         OP_PSTONE_INDEX => "PSTONE_INDEX",
         OP_HEIGHT => "HEIGHT",
+        OP_MINT_RANK => "MINT_RANK",
         OP_ADD => "ADD",
         OP_SUB => "SUB",
         OP_MUL => "MUL",
@@ -179,7 +190,7 @@ pub enum Source {
 }
 
 /// One weighable unit of activity: a single protocol-tag-1 protostone.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Item {
     pub target_block: u128,
     pub target_tx: u128,
@@ -200,6 +211,9 @@ pub struct Item {
     pub txindex: u128,
     pub pstone_index: u128,
     pub height: u128,
+    /// Rank among the block's mint-bearing transactions, 0-based; `u128::MAX`
+    /// when this item's transaction carries no DIESEL mint. See [`OP_MINT_RANK`].
+    pub mint_rank: u128,
 }
 
 impl Item {
@@ -219,6 +233,26 @@ impl Item {
             return 0;
         }
         self.inputs.get(i as usize).copied().unwrap_or(0)
+    }
+}
+
+impl Default for Item {
+    /// `mint_rank` defaults to `u128::MAX` — "not a mint" — because defaulting it
+    /// to 0 would silently mean "the first mint in the block".
+    fn default() -> Self {
+        Self {
+            target_block: 0,
+            target_tx: 0,
+            opcode: 0,
+            inputs: Vec::new(),
+            status: 0,
+            incoming: Vec::new(),
+            outgoing: Vec::new(),
+            txindex: 0,
+            pstone_index: 0,
+            height: 0,
+            mint_rank: u128::MAX,
+        }
     }
 }
 
@@ -430,6 +464,7 @@ pub fn eval(program: &[u128], item: &Item, budget: u32) -> u128 {
             OP_TXINDEX => push!(item.txindex),
             OP_PSTONE_INDEX => push!(item.pstone_index),
             OP_HEIGHT => push!(item.height),
+            OP_MINT_RANK => push!(item.mint_rank),
 
             OP_ADD => {
                 let b = pop!();

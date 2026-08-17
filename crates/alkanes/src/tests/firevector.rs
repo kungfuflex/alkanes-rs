@@ -10,7 +10,8 @@
 
 use crate::firevector::{
     clear_weights_cache, compute_block_weights, effective_denominator, legacy_mint_count,
-    DENOMINATOR_NO_CLAIM, DIESEL_ID, DIESEL_MINT_OPCODE, WEIGHTMAP_KEY, WEIGHTMAP_SOURCE_KEY,
+    DENOMINATOR_NO_CLAIM, DIESEL_ID, DIESEL_MINT_OPCODE, FIREVECTOR_ID, WEIGHTMAP_KEY,
+    WEIGHTMAP_SOURCE_KEY,
 };
 use crate::tests::helpers::{self as alkane_helpers, clear};
 use alkanes_std_firevector::programs;
@@ -78,8 +79,8 @@ fn block_of_mints(n: usize) -> Block {
     finalize(block)
 }
 
-/// Write a weightmap into DIESEL's contract storage, exactly where a governance
-/// setter on 2:0 would put it.
+/// Write a weightmap into FIREVECTOR's contract storage, exactly where
+/// `set_weightmap` on 12:0 puts it.
 fn set_weightmap(program: &[u128], source_byte: u8) {
     let mut bytes = Vec::with_capacity(program.len() * 16);
     for w in program {
@@ -91,7 +92,7 @@ fn set_weightmap(program: &[u128], source_byte: u8) {
 fn set_weightmap_raw(bytes: Vec<u8>, source_byte: u8) {
     let base = IndexPointer::default()
         .keyword("/alkanes/")
-        .select(&<AlkaneId as Into<Vec<u8>>>::into(DIESEL_ID))
+        .select(&<AlkaneId as Into<Vec<u8>>>::into(FIREVECTOR_ID))
         .keyword("/storage/");
     base.select(&WEIGHTMAP_KEY.to_vec()).set(Arc::new(bytes));
     base.select(&WEIGHTMAP_SOURCE_KEY.to_vec())
@@ -472,4 +473,74 @@ fn the_memo_is_keyed_by_block_and_never_serves_a_stale_table() {
     assert_eq!(denominator_for(&large, 1), 9);
     // And going back must not return the large block's table either.
     assert_eq!(denominator_for(&small, 1), 3);
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[wasm_bindgen_test]
+fn the_legacy_rule_is_expressible_end_to_end() {
+    // The pre-upgrade DIESEL rule: first mint in the block takes everything,
+    // everyone else gets nothing. Only expressible because the scan assigns
+    // MINT_RANK in transaction order.
+    clear();
+    let block = block_of_mints(5);
+    set_weightmap(&programs::legacy_winner_takes_all(), 0);
+
+    let w = weights_of(&block);
+    assert_eq!(w.total, 1, "exactly one winner");
+
+    // The winner divides the emission by 1 — it takes the whole block.
+    assert_eq!(denominator_for(&block, 1), 1);
+    // Everyone else claims nothing.
+    for i in 2..=5 {
+        assert_eq!(
+            denominator_for(&block, i),
+            DENOMINATOR_NO_CLAIM,
+            "mint {i} must not claim"
+        );
+    }
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[wasm_bindgen_test]
+fn mint_rank_follows_transaction_order_and_skips_non_minters() {
+    // Rank counts mint-bearing transactions only, so an unrelated transaction
+    // sitting between two mints must not consume a rank.
+    clear();
+    let mut block = create_block_with_coinbase_tx(880_000);
+    block.txdata.push(tx_with(vec![mint_cellpack()], 0)); // rank 0
+    block.txdata.push(tx_with(
+        vec![Cellpack {
+            target: AlkaneId { block: 4, tx: 1778 },
+            inputs: vec![1],
+        }],
+        1,
+    )); // not a mint, no rank
+    block.txdata.push(tx_with(vec![mint_cellpack()], 2)); // rank 1
+    let block = finalize(block);
+
+    set_weightmap(&programs::first_n_mints(2), 0);
+    let w = weights_of(&block);
+    assert_eq!(w.total, 2, "both mints are within the first two");
+
+    // Now only the first mint qualifies; the second must still be rank 1.
+    set_weightmap(&programs::legacy_winner_takes_all(), 0);
+    assert_eq!(weights_of(&block).total, 1);
+    assert_eq!(denominator_for(&block, 1), 1);
+    assert_eq!(denominator_for(&block, 3), DENOMINATOR_NO_CLAIM);
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[wasm_bindgen_test]
+fn first_n_mints_splits_between_exactly_n_winners() {
+    clear();
+    let block = block_of_mints(6);
+    set_weightmap(&programs::first_n_mints(3), 0);
+
+    assert_eq!(weights_of(&block).total, 3);
+    for i in 1..=3 {
+        assert_eq!(denominator_for(&block, i), 3, "winner {i} splits three ways");
+    }
+    for i in 4..=6 {
+        assert_eq!(denominator_for(&block, i), DENOMINATOR_NO_CLAIM);
+    }
 }

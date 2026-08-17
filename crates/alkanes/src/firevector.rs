@@ -63,12 +63,19 @@ use alkanes_support::cellpack::Cellpack;
 
 /// DIESEL.
 pub const DIESEL_ID: AlkaneId = AlkaneId { block: 2, tx: 0 };
+/// The FIREVECTOR alkane, which owns the weightmap.
+///
+/// The weightmap lives here rather than in DIESEL's storage on purpose: it means
+/// DIESEL never needs a governance setter, so the DIESEL contract is never
+/// modified, so there is never a second fuel-affecting height gate. The whole
+/// system reaches steady state with the deployed genesis alkane untouched.
+pub const FIREVECTOR_ID: AlkaneId = AlkaneId { block: 12, tx: 0 };
 /// DIESEL's mint opcode.
 pub const DIESEL_MINT_OPCODE: u128 = 77;
 
-/// Contract-storage key holding the active weightmap, as written by the
-/// governance setter on 2:0. Full index key is
-/// `/alkanes/<2:0>/storage//weightmap`.
+/// Contract-storage key holding the active weightmap, as written by
+/// `set_weightmap` on 12:0. Full index key is
+/// `/alkanes/<12:0>/storage//weightmap`.
 pub const WEIGHTMAP_KEY: &[u8] = b"/weightmap";
 
 /// Storage key holding the weightmap's [`Source`] discriminant.
@@ -198,6 +205,9 @@ fn scan_transaction(tx: &bitcoin::Transaction, txindex: u32, height: u64) -> Vec
                 txindex: txindex as u128,
                 pstone_index: pstone_index as u128,
                 height: height as u128,
+                // Filled in by the caller once the block's mint order is known;
+                // u128::MAX until then, i.e. "not a mint".
+                mint_rank: u128::MAX,
             },
             is_diesel_mint,
         });
@@ -233,7 +243,7 @@ pub fn legacy_mint_count(block: &Block) -> u128 {
 fn load_weightmap<T: KeyValuePointer>(atomic: &T) -> Option<(Vec<u128>, Source)> {
     let base = atomic
         .keyword("/alkanes/")
-        .select(&<AlkaneId as Into<Vec<u8>>>::into(DIESEL_ID))
+        .select(&<AlkaneId as Into<Vec<u8>>>::into(FIREVECTOR_ID))
         .keyword("/storage/");
 
     let raw = base.select(&WEIGHTMAP_KEY.to_vec()).get();
@@ -287,12 +297,23 @@ pub(crate) fn compute_block_weights<T: KeyValuePointer>(block: &Block, height: u
     };
     let budget = steps.max(1);
 
+    // Rank among mint-bearing transactions, assigned in transaction order. This
+    // is the one fact a program can read that is not local to its own item, and
+    // it exists because "am I the first mint in this block" is otherwise
+    // inexpressible — which is what the pre-upgrade winner-takes-all rule needs.
+    let mut mint_rank: u128 = 0;
+
     for (txindex, tx) in block.txdata.iter().enumerate() {
-        let scanned = scan_transaction(tx, txindex as u32, height);
+        let mut scanned = scan_transaction(tx, txindex as u32, height);
         if !scanned.iter().any(|s| s.is_diesel_mint) {
             // Cannot claim, so must not contribute to the denominator.
             continue;
         }
+        for s in scanned.iter_mut() {
+            s.item.mint_rank = mint_rank;
+        }
+        mint_rank += 1;
+
         let w = scanned
             .iter()
             .map(|s| eval(&program, &s.item, budget))

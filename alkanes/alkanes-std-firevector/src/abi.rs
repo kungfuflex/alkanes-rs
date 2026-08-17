@@ -135,6 +135,89 @@ pub fn validate_call(source: u128, program: &[u128]) -> String {
     }
 }
 
+/// Pack a program for storage: little-endian u128 words, no header.
+///
+/// The indexer reads this back directly, so a length that is not a multiple of
+/// 16 is by definition malformed and falls back to today's behaviour.
+pub fn pack_program(program: &[u128]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(program.len() * 16);
+    for w in program {
+        out.extend_from_slice(&w.to_le_bytes());
+    }
+    out
+}
+
+/// Inverse of [`pack_program`].
+pub fn unpack_program(bytes: &[u8]) -> Option<Vec<u128>> {
+    if bytes.is_empty() || bytes.len() % 16 != 0 {
+        return None;
+    }
+    Some(
+        bytes
+            .chunks_exact(16)
+            .map(|c| u128::from_le_bytes(c.try_into().expect("chunks_exact(16)")))
+            .collect(),
+    )
+}
+
+/// The gate on `set_weightmap`.
+///
+/// Rejects a program that cannot run, and — deliberately — one that is
+/// well-formed but weighs nothing at all. Adopting a vector that qualifies no
+/// transaction would silently halt emission to everybody; that is a governance
+/// accident worth blocking at the setter rather than discovering a block later.
+///
+/// "Weighs nothing" is judged against a small standard probe set rather than
+/// against a real block, because the setter has no block to look at. It catches
+/// the blunt mistakes — an always-zero program, a predicate that can never match
+/// a DIESEL mint — not every subtle one.
+pub fn check_adoptable(source: u128, program: &[u128]) -> Result<(), String> {
+    let src = source_from_word(source).map_err(|e| e.to_string())?;
+    let steps = validate(program, src).map_err(|e| e.to_string())?;
+    let budget = steps.max(1);
+
+    let probes = adoption_probes();
+    if probes.iter().all(|it| eval(program, it, budget) == 0) {
+        return Err(
+            "program weighs nothing on any probe transaction; adopting it would halt emission"
+                .into(),
+        );
+    }
+    Ok(())
+}
+
+/// Representative items a candidate weightmap is tested against.
+///
+/// Deliberately small and boring: a plain DIESEL mint at several ranks, and one
+/// successful pool-shaped call. Enough to catch "this can never pay anyone".
+fn adoption_probes() -> Vec<Item> {
+    let mint = |rank: u128, txindex: u128| Item {
+        target_block: 2,
+        target_tx: 0,
+        opcode: 77,
+        txindex,
+        mint_rank: rank,
+        status: 1,
+        ..Default::default()
+    };
+    vec![
+        mint(0, 1),
+        mint(1, 2),
+        mint(7, 9),
+        Item {
+            target_block: 4,
+            target_tx: 1778,
+            opcode: 1,
+            status: 1,
+            txindex: 3,
+            mint_rank: 0,
+            outgoing: vec![(4, 1778, 1_000_000)],
+            incoming: vec![(32, 0, 1_000_000)],
+            ..Default::default()
+        },
+    ]
+}
+
 /// Verify that a candidate weightmap is safe to adopt as a governance write.
 ///
 /// Distinct from [`validate_call`] in intent: this is the check that should gate
