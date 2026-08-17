@@ -1,0 +1,20 @@
+[package]
+name = "alkanes-std-firevector"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+# The VM core deliberately depends on nothing but anyhow, so `cargo test -p
+# alkanes-std-firevector` runs natively without a wasm toolchain and without
+# pulling in the runtime. The alkane surface goes behind the `alkane` feature.
+[dependencies]
+anyhow = { workspace = true }
+alkanes-runtime = { workspace = true, optional = true }
+alkanes-support = { workspace = true, optional = true }
+metashrew-support = { workspace = true, optional = true }
+
+[features]
+default = []
+alkane = ["alkanes-runtime", "alkanes-support", "metashrew-support"]
