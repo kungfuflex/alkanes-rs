@@ -252,8 +252,10 @@ V2 and not V3 deliberately: one `target.call`, no multicall.
 * **Keep a local view.** Persist what you submitted — txids, intents, expected
   outcomes — so a resumed session can reconcile rather than re-submit. Duplicate
   submission on a bridge path is a real loss, not an inconvenience.
-* **`/v4/{apikey}/mempool/*` is documented but NOT DEPLOYED yet.** It will 404.
-  Do not build a workflow that depends on it without checking first.
+* **`/v4/{apikey}/mempool/*` is live** — the JSON-RPC reads and the WebSocket both
+  answer. A failure there is the endpoint base, the key (a bad key is 401, not
+  404), or a transient outage. Note that `mempool watch` is still unwired on the
+  client side and refuses on purpose.
 
 ---
 
