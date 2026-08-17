@@ -28,7 +28,7 @@ Also: never use mempool.space. Use `/v4/{apikey}` endpoints.
 | `/v4/{apikey}` | the main JSON-RPC: `metashrew_view`, `metashrew_height`, `esplora_*`, `btc_*` |
 | `/v4/{apikey}/btcusd` | the dedicated BTCUSD index (protobuf both directions, package `alspo.cryptoswap`) |
 | `/v4/{apikey}/espo` | espo-shaped `<module>.<suffix>` routes, e.g. `ammdata.get_pools` |
-| `/v4/{apikey}/mempool` + `/mempool/ws` | mempool JSON-RPC and change stream — **not live yet**, see §7 |
+| `/v4/{apikey}/mempool` + `/mempool/ws` | mempool JSON-RPC and change stream — live; see §7 |
 
 > ⚠️ **If the user has no API key you will fall back to `/v4/jsonrpc`, and you
 > MUST say so out loud.** State plainly: *"Using the shared default endpoint
