@@ -16,3 +16,16 @@ pkg-sa-key.json
 dist/alkanes.wasm
 .verify-a/
 .verify-b/
+
+# A cargo target directory landing inside the `alkanes/` source tree, from
+# running cargo with `--target-dir alkanes`. Nothing in the repo does this on
+# purpose — `scripts/build-std.sh` targets `target/build-std`, which the bare
+# `target` entry above already covers — so these are guards against a stray
+# invocation rather than an expected output location. Anchored to `alkanes/`
+# and named individually because that directory also holds real crates.
+/alkanes/.rustc_info.json
+/alkanes/.cargo-lock
+/alkanes/CACHEDIR.TAG
+/alkanes/debug/
+/alkanes/release/
+/alkanes/wasm32-unknown-unknown/
