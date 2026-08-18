@@ -544,3 +544,127 @@ fn first_n_mints_splits_between_exactly_n_winners() {
         assert_eq!(denominator_for(&block, i), DENOMINATOR_NO_CLAIM);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Genesis deployment: 12:0 the contract, 12:1 the capability
+// ---------------------------------------------------------------------------
+
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[wasm_bindgen_test]
+fn genesis_deploys_the_vm_and_the_sigil() {
+    clear();
+    let block = finalize(create_block_with_coinbase_tx(880_000));
+    crate::network::setup_firevector(&block, 880_000).expect("setup must succeed");
+
+    for id in [FIREVECTOR_ID, AlkaneId { block: 12, tx: 1 }] {
+        let code = IndexPointer::from_keyword("/alkanes/")
+            .select(&<AlkaneId as Into<Vec<u8>>>::into(id))
+            .get();
+        assert!(!code.is_empty(), "{id:?} must have code deployed");
+    }
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[wasm_bindgen_test]
+fn the_vm_is_a_contract_and_never_a_token() {
+    // 12:0 must never have units. It is addressable so wallets can `simulate`
+    // and anyone can `disassemble` the active policy — not because it is an
+    // asset. `setup_firevector` hard-errors if initialize hands anything back,
+    // so reaching here at all is part of the assertion; this pins the storage
+    // side too.
+    clear();
+    let block = finalize(create_block_with_coinbase_tx(880_000));
+    crate::network::setup_firevector(&block, 880_000).expect("setup must succeed");
+
+    let supply = IndexPointer::from_keyword("/alkanes/")
+        .select(&<AlkaneId as Into<Vec<u8>>>::into(FIREVECTOR_ID))
+        .keyword("/storage/")
+        .select(&b"/totalsupply".to_vec())
+        .get();
+    assert!(
+        supply.is_empty() || supply.iter().all(|b| *b == 0),
+        "12:0 must have no supply, found {supply:?}"
+    );
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[wasm_bindgen_test]
+fn the_sigil_has_exactly_one_unit_and_no_way_to_make_another() {
+    clear();
+    let block = finalize(create_block_with_coinbase_tx(880_000));
+    crate::network::setup_firevector(&block, 880_000).expect("setup must succeed");
+
+    let dsigil = AlkaneId { block: 12, tx: 1 };
+    let supply = IndexPointer::from_keyword("/alkanes/")
+        .select(&<AlkaneId as Into<Vec<u8>>>::into(dsigil))
+        .keyword("/storage/")
+        .select(&b"/totalsupply".to_vec())
+        .get();
+    assert!(!supply.is_empty(), "DSIGIL must have recorded its supply");
+    assert_eq!(
+        u128::from_le_bytes(supply[0..16].try_into().unwrap()),
+        1,
+        "exactly one DSIGIL"
+    );
+
+    // And `initialize` is the only mint path, guarded by observe_initialization —
+    // there is no `authenticate` opcode to inflate it, which is the whole reason
+    // this contract exists rather than reusing the canonical auth token.
+    let initialized = IndexPointer::from_keyword("/alkanes/")
+        .select(&<AlkaneId as Into<Vec<u8>>>::into(dsigil))
+        .keyword("/storage/")
+        .select(&b"/initialized".to_vec())
+        .get();
+    assert!(!initialized.is_empty(), "initialize must be latched");
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[wasm_bindgen_test]
+fn genesis_seeds_the_identity_vector_so_emission_is_unchanged_from_block_one() {
+    // The VM must never be live with a sigil but no policy. Seeding the identity
+    // vector at init means the first block after deployment behaves exactly like
+    // the last block before it.
+    clear();
+    let block = finalize(create_block_with_coinbase_tx(880_000));
+    crate::network::setup_firevector(&block, 880_000).expect("setup must succeed");
+
+    let stored = IndexPointer::from_keyword("/alkanes/")
+        .select(&<AlkaneId as Into<Vec<u8>>>::into(FIREVECTOR_ID))
+        .keyword("/storage/")
+        .select(&WEIGHTMAP_KEY.to_vec())
+        .get();
+    let expected: Vec<u8> = programs::identity()
+        .iter()
+        .flat_map(|w| w.to_le_bytes())
+        .collect();
+    assert_eq!(stored.as_ref(), &expected, "identity vector must be seeded");
+
+    // And it actually drives emission: a block of mints divides by the count.
+    clear_weights_cache();
+    let mints = block_of_mints(5);
+    assert_eq!(denominator_for(&mints, 1), 5);
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[wasm_bindgen_test]
+fn setup_is_idempotent() {
+    // index_block calls this every block; it must be a no-op after the first.
+    clear();
+    let block = finalize(create_block_with_coinbase_tx(880_000));
+    crate::network::setup_firevector(&block, 880_000).expect("first setup");
+    crate::network::setup_firevector(&block, 880_000).expect("second setup must be a no-op");
+    crate::network::setup_firevector(&block, 880_000).expect("third setup must be a no-op");
+
+    let dsigil = AlkaneId { block: 12, tx: 1 };
+    let supply = IndexPointer::from_keyword("/alkanes/")
+        .select(&<AlkaneId as Into<Vec<u8>>>::into(dsigil))
+        .keyword("/storage/")
+        .select(&b"/totalsupply".to_vec())
+        .get();
+    assert_eq!(
+        u128::from_le_bytes(supply[0..16].try_into().unwrap()),
+        1,
+        "repeated setup must not mint a second DSIGIL"
+    );
+}
+

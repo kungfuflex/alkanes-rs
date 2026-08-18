@@ -1,0 +1,30 @@
+package alkanes:dsigil;
+
+/// DSIGIL — the capability that authorises `set-weightmap` on the FIREVECTOR VM.
+///
+/// Exactly one unit exists, minted at initialisation and never again. Authority
+/// is possession: holding the unit and spending it into a call is the proof.
+///
+/// Note what is NOT here: there is no `authenticate` method.
+///
+/// The canonical auth-token pattern exposes one, and its implementation returns
+/// two tokens where one went in — `CallResponse::forward(&incoming)` already sets
+/// `alkanes = incoming`, then the same transfer is pushed again, and the runtime
+/// permits an alkane to mint itself. Every authentication therefore inflates the
+/// supply of the thing that is supposed to be unique. frSIGIL copies that pattern
+/// byte for byte.
+///
+/// Omitting the method makes the bug unreachable rather than merely unused: there
+/// is no callback to call, so "exactly one DSIGIL exists" is an invariant the
+/// contract actually holds. The FIREVECTOR VM checks possession directly and
+/// never calls back here.
+interface dsigil {
+    initialize: func() -> result<_, string>;
+    get-name: func() -> result<string, string>;
+    get-symbol: func() -> result<string, string>;
+    get-total-supply: func() -> result<u64, string>;
+}
+
+world dsigil-world {
+    export dsigil;
+}

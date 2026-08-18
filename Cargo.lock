@@ -732,6 +732,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "alkanes-std-dsigil"
+version = "10.0.0"
+dependencies = [
+ "alkanes-runtime",
+ "alkanes-support",
+ "alkanes-wit-build",
+ "anyhow",
+ "metashrew-support",
+]
+
+[[package]]
 name = "alkanes-std-factory-support"
 version = "10.0.0"
 dependencies = [

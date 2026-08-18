@@ -11,7 +11,8 @@ use crate::precompiled::{
     alkanes_std_genesis_alkane_upgraded_eoa_mainnet_build,
     alkanes_std_genesis_alkane_upgraded_eoa_regtest_build,
     alkanes_std_genesis_alkane_upgraded_mainnet_build,
-    alkanes_std_genesis_alkane_upgraded_regtest_build, fr_btc_build, fr_sigil_build,
+    alkanes_std_genesis_alkane_upgraded_regtest_build, dsigil_build, firevector_build,
+    fr_btc_build, fr_sigil_build,
 };
 use crate::utils::pipe_storagemap_to;
 use crate::view::simulate_parcel;
@@ -107,6 +108,16 @@ pub fn genesis_alkane_wasm_for_height(height: u32) -> Vec<u8> {
 
 pub fn fr_sigil_bytes() -> Vec<u8> {
     fr_sigil_build::get_bytes()
+}
+
+/// The FIREVECTOR VM contract, deployed at 12:0.
+pub fn firevector_bytes() -> Vec<u8> {
+    firevector_build::get_bytes()
+}
+
+/// DSIGIL, the governance capability, deployed at 12:1.
+pub fn dsigil_bytes() -> Vec<u8> {
+    dsigil_build::get_bytes()
 }
 
 #[cfg(feature = "mainnet")]
@@ -215,6 +226,10 @@ pub mod genesis {
     /// so tests exercise the post-fork path by default; with no weightmap
     /// configured the returned value is identical either way.
     pub const FIREVECTOR_FORK_HEIGHT: u32 = 0;
+    /// Height at which 12:0 and 12:1 are deployed. Must be <= the fork height:
+    /// the code and the seeded identity vector have to exist before the
+    /// denominator changes meaning.
+    pub const FIREVECTOR_DEPLOY_HEIGHT: u32 = 0;
 }
 
 #[cfg(feature = "mainnet")]
@@ -250,6 +265,15 @@ pub mod genesis {
     /// all, so its metered instruction count and the 16-byte reply size are
     /// unchanged.
     pub const FIREVECTOR_FORK_HEIGHT: u32 = u32::MAX;
+    /// Height at which 12:0 (the VM) and 12:1 (DSIGIL) are deployed.
+    ///
+    /// Separate from, and necessarily earlier than, FIREVECTOR_FORK_HEIGHT: the
+    /// contracts and the seeded identity vector must exist before the
+    /// denominator changes meaning. Deploying is itself a state change — it
+    /// writes two contracts and mints the single DSIGIL onto the genesis
+    /// outpoint — so it is gated rather than unconditional, and is likewise
+    /// UNSCHEDULED until governance picks a block.
+    pub const FIREVECTOR_DEPLOY_HEIGHT: u32 = u32::MAX;
     /// v3 fork: removes the `max_virtual_vout = num_outputs + 100` protostone
     /// cap in `protorune::protostone::process_message`. That cap is an artifact
     /// of the old 80-byte OP_RETURN standardness limit and has no protocol
@@ -285,6 +309,10 @@ pub mod genesis {
     /// so tests exercise the post-fork path by default; with no weightmap
     /// configured the returned value is identical either way.
     pub const FIREVECTOR_FORK_HEIGHT: u32 = 0;
+    /// Height at which 12:0 and 12:1 are deployed. Must be <= the fork height:
+    /// the code and the seeded identity vector have to exist before the
+    /// denominator changes meaning.
+    pub const FIREVECTOR_DEPLOY_HEIGHT: u32 = 0;
 }
 
 #[cfg(feature = "dogecoin")]
@@ -311,6 +339,10 @@ pub mod genesis {
     /// so tests exercise the post-fork path by default; with no weightmap
     /// configured the returned value is identical either way.
     pub const FIREVECTOR_FORK_HEIGHT: u32 = 0;
+    /// Height at which 12:0 and 12:1 are deployed. Must be <= the fork height:
+    /// the code and the seeded identity vector have to exist before the
+    /// denominator changes meaning.
+    pub const FIREVECTOR_DEPLOY_HEIGHT: u32 = 0;
 }
 
 #[cfg(feature = "luckycoin")]
@@ -337,6 +369,10 @@ pub mod genesis {
     /// so tests exercise the post-fork path by default; with no weightmap
     /// configured the returned value is identical either way.
     pub const FIREVECTOR_FORK_HEIGHT: u32 = 0;
+    /// Height at which 12:0 and 12:1 are deployed. Must be <= the fork height:
+    /// the code and the seeded identity vector have to exist before the
+    /// denominator changes meaning.
+    pub const FIREVECTOR_DEPLOY_HEIGHT: u32 = 0;
 }
 
 #[cfg(feature = "bellscoin")]
@@ -363,6 +399,10 @@ pub mod genesis {
     /// so tests exercise the post-fork path by default; with no weightmap
     /// configured the returned value is identical either way.
     pub const FIREVECTOR_FORK_HEIGHT: u32 = 0;
+    /// Height at which 12:0 and 12:1 are deployed. Must be <= the fork height:
+    /// the code and the seeded identity vector have to exist before the
+    /// denominator changes meaning.
+    pub const FIREVECTOR_DEPLOY_HEIGHT: u32 = 0;
 }
 
 pub fn is_active(height: u64) -> bool {
@@ -403,6 +443,141 @@ pub fn is_genesis(height: u64) -> bool {
         init_ptr.set_value::<u8>(0x01);
     }
     is_genesis
+}
+
+/// Deploy the FIREVECTOR system: the VM at 12:0 and DSIGIL at 12:1.
+///
+/// Two things worth being explicit about, because both are load-bearing:
+///
+/// **12:0 never has units.** It is a contract, not a token. Its `initialize`
+/// mints nothing and pushes no transfer of itself, so no quantity of "12:0" can
+/// ever exist to be held, traded, or required. It is addressable so wallets can
+/// `simulate` and anyone can `disassemble` the active policy — not because it is
+/// an asset.
+///
+/// **12:1 is the whole of the authority.** Exactly one unit, minted here and
+/// never again, and it carries no `authenticate` method — so the auth-token
+/// inflation bug (a callback that returns two tokens where one went in) is
+/// unreachable rather than merely unused. `set_weightmap` checks possession
+/// directly.
+///
+/// The unit lands on the genesis outpoint, merged into whatever is already
+/// there. Note the merge rather than overwrite: `setup_diesel` wrote the DIESEL
+/// premine to that outpoint first, and a plain chunked write would drop it —
+/// which is exactly what happened once before and snowballed into supply drift.
+pub fn setup_firevector(block: &Block, height: u64) -> Result<()> {
+    if height < genesis::FIREVECTOR_DEPLOY_HEIGHT as u64 {
+        return Ok(());
+    }
+    let firevector = AlkaneId { block: 12, tx: 0 };
+    let dsigil = AlkaneId { block: 12, tx: 1 };
+
+    let mut vm_ptr = IndexPointer::from_keyword("/alkanes/").select(&firevector.clone().into());
+    if vm_ptr.get().len() != 0 {
+        return Ok(());
+    }
+    vm_ptr.set(Arc::new(compress(firevector_bytes())?));
+
+    let mut sigil_ptr = IndexPointer::from_keyword("/alkanes/").select(&dsigil.clone().into());
+    sigil_ptr.set(Arc::new(compress(dsigil_bytes())?));
+
+    let mut atomic: AtomicPointer = AtomicPointer::default();
+    let empty_tx = Transaction {
+        version: bitcoin::blockdata::transaction::Version::ONE,
+        input: vec![],
+        output: vec![],
+        lock_time: bitcoin::absolute::LockTime::ZERO,
+    };
+
+    // DSIGIL first: it mints the single unit that authorises the VM's setter.
+    let sigil_parcel = MessageContextParcel {
+        atomic: atomic.derive(&IndexPointer::default()),
+        runes: vec![],
+        transaction: empty_tx.clone(),
+        block: block.clone(),
+        height: genesis::GENESIS_BLOCK,
+        pointer: 0,
+        refund_pointer: 0,
+        calldata: (Cellpack {
+            target: dsigil.clone(),
+            inputs: vec![0],
+        })
+        .encipher(),
+        sheets: Box::<BalanceSheet<AtomicPointer>>::new(BalanceSheet::default()),
+        txindex: 0,
+        vout: 0,
+        runtime_balances: Box::<BalanceSheet<AtomicPointer>>::new(BalanceSheet::default()),
+    };
+    let (sigil_response, _) = simulate_parcel(&sigil_parcel, u64::MAX)?;
+
+    // Then the VM, told which alkane holds authority over its weightmap. The
+    // sigil id is set here and is not settable afterwards — a mutable setter
+    // would leave a window in which anyone could claim the capability.
+    let vm_parcel = MessageContextParcel {
+        atomic: atomic.derive(&IndexPointer::default()),
+        runes: vec![],
+        transaction: empty_tx,
+        block: block.clone(),
+        height: genesis::GENESIS_BLOCK,
+        pointer: 0,
+        refund_pointer: 0,
+        calldata: (Cellpack {
+            target: firevector.clone(),
+            inputs: vec![0, dsigil.block, dsigil.tx],
+        })
+        .encipher(),
+        sheets: Box::<BalanceSheet<AtomicPointer>>::new(BalanceSheet::default()),
+        txindex: 0,
+        vout: 0,
+        runtime_balances: Box::<BalanceSheet<AtomicPointer>>::new(BalanceSheet::default()),
+    };
+    let (vm_response, _) = simulate_parcel(&vm_parcel, u64::MAX)?;
+
+    // The VM is a contract, not a token: it must not have handed anything back.
+    if !vm_response.alkanes.0.is_empty() {
+        return Err(anyhow::anyhow!(
+            "firevector 12:0 must never mint units; got {} transfers",
+            vm_response.alkanes.0.len()
+        ));
+    }
+
+    // Merge the DSIGIL unit into the genesis outpoint's existing chunk. MERGE,
+    // not overwrite: `setup_diesel` wrote the DIESEL premine to that outpoint
+    // first, and a plain chunked write drops it — which happened once and
+    // snowballed into supply drift.
+    let outpoint_bytes = outpoint_encode(&OutPoint {
+        txid: tx_hex_to_txid(genesis::GENESIS_OUTPOINT)?,
+        vout: 0,
+    })?;
+    let sheet: BalanceSheet<AtomicPointer> =
+        <AlkaneTransferParcel as TryInto<BalanceSheet<AtomicPointer>>>::try_into(
+            sigil_response.alkanes.into(),
+        )?;
+    save_chunked_merging(
+        &sheet,
+        &mut atomic.derive(
+            &RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
+                .OUTPOINT_TO_RUNES
+                .select(&outpoint_bytes),
+        ),
+        false,
+    )?;
+
+    // Persist both contracts' storage: DSIGIL's supply, and the VM's sigil id
+    // plus its seeded identity weightmap. Without this the initialize writes are
+    // discarded and the VM comes up with no policy and no authority.
+    pipe_storagemap_to(
+        &sigil_response.storage,
+        &mut atomic.derive(&IndexPointer::from_keyword("/alkanes/").select(&dsigil.clone().into())),
+    );
+    pipe_storagemap_to(
+        &vm_response.storage,
+        &mut atomic
+            .derive(&IndexPointer::from_keyword("/alkanes/").select(&firevector.clone().into())),
+    );
+
+    atomic.commit();
+    Ok(())
 }
 
 pub fn setup_frsigil(block: &Block) -> Result<()> {

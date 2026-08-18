@@ -5,6 +5,7 @@ members = [
     "alkanes/alkanes-std-auth-token",
     "alkanes/alkanes-std-orbital",
     "alkanes/alkanes-std-firevector",
+    "alkanes/alkanes-std-dsigil",
     "alkanes/alkanes-std-genesis-alkane",
     "alkanes/alkanes-std-genesis-protorune",
     "alkanes/alkanes-std-genesis-alkane-upgraded",
