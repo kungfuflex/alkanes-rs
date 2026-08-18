@@ -89,7 +89,7 @@ fn identity_vector_pays_exactly_what_mainnet_pays_today() {
         ] {
             for n in [1u128, 2, 3, 7, 100, 1499, 4096, 5000] {
                 let items: Vec<Item> = (0..n).map(mint_item).collect();
-                let weights = evaluate_table(&p, &items, Source::SameBlock);
+                let weights = evaluate_table(&p, &items, Mode::Split);
 
                 // Every mint weighs exactly 1 — that is what makes the split
                 // degenerate to reward/N.
@@ -119,7 +119,7 @@ fn the_dropped_remainder_is_identical_too() {
     let p = programs::identity();
     for n in [3u128, 7, 11, 1499, 4999] {
         let items: Vec<Item> = (0..n).map(mint_item).collect();
-        let weights = evaluate_table(&p, &items, Source::SameBlock);
+        let weights = evaluate_table(&p, &items, Mode::Split);
         let emission = emission_after_fee(950_000, 0);
 
         let paid_today = current_value_per_mint(950_000, 0, n) * n;
@@ -144,7 +144,7 @@ fn halving_boundaries_line_up() {
 #[test]
 fn a_block_with_no_mints_pays_nothing_and_does_not_divide_by_zero() {
     let p = programs::identity();
-    let weights = evaluate_table(&p, &[], Source::SameBlock);
+    let weights = evaluate_table(&p, &[], Mode::Split);
     assert!(weights.is_empty());
     assert_eq!(firevector_claims(emission_after_fee(950_000, 0), &weights), Vec::<u128>::new());
 }
@@ -164,7 +164,7 @@ fn non_mint_activity_does_not_dilute_the_split() {
             ..Default::default()
         });
     }
-    let weights = evaluate_table(&p, &items, Source::SameBlock);
+    let weights = evaluate_table(&p, &items, Mode::Split);
     let emission = emission_after_fee(950_000, 0);
     let claims = firevector_claims(emission, &weights);
     let today = current_value_per_mint(950_000, 0, 10);
@@ -199,7 +199,7 @@ fn equivalence_requires_the_item_builder_to_count_per_transaction() {
 
     // Correct: one item per transaction.
     let per_tx: Vec<Item> = (0..3).map(mint_item).collect();
-    let w_tx = evaluate_table(&p, &per_tx, Source::SameBlock);
+    let w_tx = evaluate_table(&p, &per_tx, Mode::Split);
     assert_eq!(w_tx.iter().sum::<u128>(), 3);
 
     // Wrong: tx 0 contributed two mint protostones.
@@ -208,7 +208,7 @@ fn equivalence_requires_the_item_builder_to_count_per_transaction() {
         pstone_index: 1,
         ..mint_item(0)
     });
-    let w_ps = evaluate_table(&p, &per_protostone, Source::SameBlock);
+    let w_ps = evaluate_table(&p, &per_protostone, Mode::Split);
     assert_eq!(
         w_ps.iter().sum::<u128>(),
         4,
@@ -246,7 +246,7 @@ fn ranked_mint(txindex: u128, rank: u128) -> Item {
 fn legacy_vector_gives_the_whole_block_to_the_first_mint() {
     let p = programs::legacy_winner_takes_all();
     let items: Vec<Item> = (0..6).map(|i| ranked_mint(i + 1, i)).collect();
-    let weights = evaluate_table(&p, &items, Source::SameBlock);
+    let weights = evaluate_table(&p, &items, Mode::Split);
 
     assert_eq!(weights, vec![1, 0, 0, 0, 0, 0]);
 
@@ -270,7 +270,7 @@ fn legacy_vector_is_expressible_only_because_of_mint_rank() {
     b.txindex = a.txindex; // strip the only other distinguishing fact
 
     let p = programs::legacy_winner_takes_all();
-    let steps = validate(&p, Source::SameBlock).unwrap();
+    let steps = validate(&p, Mode::Split).unwrap();
     assert_eq!(eval(&p, &a, steps), 1);
     assert_eq!(eval(&p, &b, steps), 0);
 }
@@ -281,13 +281,13 @@ fn first_n_mints_generalises_the_legacy_rule() {
 
     // n = 1 is exactly the legacy rule.
     assert_eq!(
-        evaluate_table(&programs::first_n_mints(1), &items, Source::SameBlock),
-        evaluate_table(&programs::legacy_winner_takes_all(), &items, Source::SameBlock)
+        evaluate_table(&programs::first_n_mints(1), &items, Mode::Split),
+        evaluate_table(&programs::legacy_winner_takes_all(), &items, Mode::Split)
     );
 
     // n = 3 pays the first three equally, which is the shape governance would
     // actually reach for.
-    let w = evaluate_table(&programs::first_n_mints(3), &items, Source::SameBlock);
+    let w = evaluate_table(&programs::first_n_mints(3), &items, Mode::Split);
     assert_eq!(w, vec![1, 1, 1, 0, 0, 0, 0, 0]);
 
     let emission = emission_after_fee(880_000, 0);
@@ -301,7 +301,7 @@ fn a_non_mint_transaction_is_never_ranked_first() {
     // mint_rank defaults to u128::MAX — "not a mint" — precisely so that a
     // default-constructed item cannot accidentally read as the block's winner.
     let p = programs::legacy_winner_takes_all();
-    let steps = validate(&p, Source::SameBlock).unwrap();
+    let steps = validate(&p, Mode::Split).unwrap();
     assert_eq!(Item::default().mint_rank, u128::MAX);
     assert_eq!(eval(&p, &Item::default(), steps), 0);
 }
@@ -324,7 +324,7 @@ fn the_legacy_vector_is_not_bit_identical_to_the_legacy_contract() {
 
     let p = programs::legacy_winner_takes_all();
     let items = vec![ranked_mint(1, 0), ranked_mint(2, 1)];
-    let claims = firevector_claims(emission, &evaluate_table(&p, &items, Source::SameBlock));
+    let claims = firevector_claims(emission, &evaluate_table(&p, &items, Mode::Split));
     assert_eq!(claims[0], emission);
     assert_ne!(
         claims[0], legacy_contract_payout,

@@ -26,7 +26,6 @@ fn mint_item() -> Item {
         target_block: DIESEL.0,
         target_tx: DIESEL.1,
         opcode: MINT,
-        status: 1,
         txindex: 3,
         pstone_index: 1,
         height: 950_000,
@@ -34,23 +33,24 @@ fn mint_item() -> Item {
     }
 }
 
-/// A successful call to `target` opcode `op` that emitted `amount` of `token`.
-fn out_item(target: (u128, u128), op: u128, token: (u128, u128), amount: u128) -> Item {
+/// A DIESEL mint qualified by a prior action that declared `amount` as its first
+/// cellpack input after the opcode.
+///
+/// The target/opcode match that populates `prior_inputs` lives in the weightmap
+/// header's [`Qualifier`] and is applied by the indexer, so by the time an item
+/// reaches the VM the only thing left to weigh is the number.
+fn prior_item(amount: u128) -> Item {
     Item {
-        target_block: target.0,
-        target_tx: target.1,
-        opcode: op,
-        status: 1,
-        outgoing: vec![(token.0, token.1, amount)],
-        ..Default::default()
+        prior_inputs: vec![amount],
+        ..mint_item()
     }
 }
 
 /// Validate and run, asserting the program is well-formed. Use in tests that are
 /// about semantics rather than about validation.
 fn run(program: &[u128], item: &Item) -> u128 {
-    let steps = validate(program, Source::PrevBlock)
-        .unwrap_or_else(|e| panic!("program should validate: {e}"));
+    let steps =
+        validate(program, Mode::Rate).unwrap_or_else(|e| panic!("program should validate: {e}"));
     eval(program, item, steps)
 }
 
@@ -79,11 +79,11 @@ fn identity_vector_is_fourteen_words() {
 }
 
 #[test]
-fn identity_vector_validates_under_both_sources() {
-    // The identity vector must be legal as a SameBlock rule, because that is how
-    // it reproduces today's semantics: today's count is a parse-only pre-pass.
-    assert!(validate(&programs::identity(), Source::SameBlock).is_ok());
-    assert!(validate(&programs::identity(), Source::PrevBlock).is_ok());
+fn identity_vector_validates_under_both_modes() {
+    // The identity vector must be legal as a SPLIT rule, because that is how it
+    // reproduces today's semantics: today's count is a parse-only pre-pass.
+    assert!(validate(&programs::identity(), Mode::Split).is_ok());
+    assert!(validate(&programs::identity(), Mode::Rate).is_ok());
 }
 
 #[test]
@@ -124,19 +124,25 @@ fn identity_vector_gives_every_mint_equal_weight() {
             it
         })
         .collect();
-    let weights = evaluate_table(&p, &items, Source::PrevBlock);
+    let weights = evaluate_table(&p, &items, Mode::Rate);
     assert_eq!(weights.len(), 500);
     assert!(weights.iter().all(|w| *w == 1));
 }
 
 #[test]
-fn identity_vector_ignores_status() {
-    // Today's count is parse-only and does not check success, so the identity
-    // vector must not either — otherwise activation would silently change
-    // behaviour for reverted mints.
+fn identity_vector_ignores_execution_derived_facts() {
+    // Today's count is parse-only, so the identity vector must weigh a mint the
+    // same whether or not anything else happened in its transaction — otherwise
+    // activation would silently change behaviour for some mints.
+    //
+    // (This was `identity_vector_ignores_status`; `Item::status` is gone, so the
+    // remaining execution-derived facts are `prior_inputs` and `incoming`.)
     let p = programs::identity();
-    let mut it = mint_item();
-    it.status = 0;
+    let it = Item {
+        prior_inputs: vec![1_000_000, 7],
+        incoming: vec![(32, 0, 1_000_000)],
+        ..mint_item()
+    };
     assert_eq!(run(&p, &it), 1);
 }
 
@@ -146,16 +152,12 @@ fn identity_vector_ignores_status() {
 
 #[test]
 fn convex_curve_makes_lumping_beat_dripping() {
-    let pool = (4u128, 1778u128);
-    let token = (4u128, 1778u128);
-    let p = programs::convex_out(pool, 1, token);
+    let p = programs::convex_on_prior(0);
 
     // One action of 1_000_000 versus a thousand actions of 1_000.
-    let lump = run(&p, &out_item(pool, 1, token, 1_000_000));
+    let lump = run(&p, &prior_item(1_000_000));
 
-    let drip: u128 = (0..1000)
-        .map(|_| run(&p, &out_item(pool, 1, token, 1_000)))
-        .sum();
+    let drip: u128 = (0..1000).map(|_| run(&p, &prior_item(1_000))).sum();
 
     assert!(
         lump > drip,
@@ -165,59 +167,69 @@ fn convex_curve_makes_lumping_beat_dripping() {
 
 #[test]
 fn convex_curve_is_monotonic_and_superlinear() {
-    let pool = (4u128, 1778u128);
-    let p = programs::convex_out(pool, 1, pool);
+    let p = programs::convex_on_prior(0);
 
     let mut prev = 0u128;
     for size in [1u128, 10, 100, 10_000, 1_000_000, 10_000_000_000] {
-        let w = run(&p, &out_item(pool, 1, pool, size));
+        let w = run(&p, &prior_item(size));
         assert!(w >= prev, "weight must be monotonic in size");
         prev = w;
     }
 
     // Doubling size must more than double weight (x^1.5 grows as 2^1.5 ≈ 2.83).
-    let a = run(&p, &out_item(pool, 1, pool, 1_000_000));
-    let b = run(&p, &out_item(pool, 1, pool, 2_000_000));
+    let a = run(&p, &prior_item(1_000_000));
+    let b = run(&p, &prior_item(2_000_000));
     assert!(b > 2 * a, "x^1.5 must be superlinear: a={a} b={b}");
 }
 
-#[test]
-fn convex_curve_zeroes_reverts() {
-    // The whole reason for previous-block settlement: a reverted action earns
-    // nothing, so spending big into a call rigged to fail is not a free way to
-    // dilute everyone else.
-    let pool = (4u128, 1778u128);
-    let p = programs::convex_out(pool, 1, pool);
+// `convex_curve_zeroes_reverts` was deleted. The VM no longer sees execution
+// status: a reverting protostone drains its transaction's fuel tank, so a mint
+// that runs at all proves every prior protostone succeeded. That guarantee now
+// lives in the fuel model and in the indexer's qualifier match, not here — see
+// the `OP_PRIOR_INPUT` docs and the tests in crates/alkanes/src/tests/.
 
-    let mut it = out_item(pool, 1, pool, 1_000_000);
-    it.status = 0;
-    assert_eq!(run(&p, &it), 0);
-}
-
-#[test]
-fn convex_curve_zeroes_wrong_target() {
-    let pool = (4u128, 1778u128);
-    let p = programs::convex_out(pool, 1, pool);
-    let it = out_item((4, 9999), 1, pool, 1_000_000);
-    assert_eq!(run(&p, &it), 0);
-}
+// `convex_curve_zeroes_wrong_target` was deleted for the same reason: the
+// target/opcode filter moved out of the program and into the weightmap header's
+// `Qualifier`, which the indexer applies before the item ever reaches the VM.
 
 #[test]
 fn convex_curve_saturates_rather_than_wrapping() {
     // size^1.5 on a huge size must saturate, not wrap to something small. A wrap
     // here would be a weight-inflation exploit.
-    let pool = (4u128, 1778u128);
-    let p = programs::convex_out(pool, 1, pool);
-    let w = run(&p, &out_item(pool, 1, pool, u128::MAX));
+    let p = programs::convex_on_prior(0);
+    let w = run(&p, &prior_item(u128::MAX));
     assert_eq!(w, u128::MAX);
 }
 
 #[test]
 fn linear_curve_is_proportional() {
-    let pool = (4u128, 1778u128);
-    let p = programs::linear_out(pool, 1, pool, 3, 2);
-    assert_eq!(run(&p, &out_item(pool, 1, pool, 1_000)), 1_500);
-    assert_eq!(run(&p, &out_item(pool, 1, pool, 2_000)), 3_000);
+    let p = programs::linear_on_prior(0, 3, 2);
+    assert_eq!(run(&p, &prior_item(1_000)), 1_500);
+    assert_eq!(run(&p, &prior_item(2_000)), 3_000);
+}
+
+#[test]
+fn linear_curve_on_incoming_reads_what_actually_arrived() {
+    // The RATE-only counterpart: weight by realized `incoming_alkanes` rather
+    // than by a self-declared cellpack input.
+    let p = programs::linear_on_incoming((32, 0), 3, 2);
+    let it = Item {
+        incoming: vec![(32, 0, 1_000), (4, 1776, 999)],
+        ..mint_item()
+    };
+    assert_eq!(run(&p, &it), 1_500);
+}
+
+#[test]
+fn piecewise_hinges_sums_saturating_slopes() {
+    // The documented example: SUB saturates, so `max(0, x - bp)` needs no branch.
+    //   x < 10        : 0
+    //   10 <= x < 20  : (x-10)
+    //   x >= 20       : (x-10) + 2*(x-20)
+    let p = programs::piecewise_hinges(&[OP_PRIOR_INPUT, 0], &[(10, 1), (20, 2)]);
+    for (x, want) in [(0u128, 0u128), (9, 0), (10, 0), (15, 5), (20, 10), (30, 40)] {
+        assert_eq!(run(&p, &prior_item(x)), want, "x={x}");
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -489,6 +501,22 @@ fn input_out_of_range_is_zero_not_a_panic() {
 }
 
 #[test]
+fn prior_input_out_of_range_is_zero_not_a_panic() {
+    // Same padding argument as INPUT, plus one more case that is entirely
+    // routine: a weightmap with no qualifier, or a mint that matched nothing,
+    // reaches the VM with `prior_inputs` empty.
+    let mut it = Item::default();
+    it.prior_inputs = vec![1_000_000, 7];
+
+    assert_eq!(arith_on(&it, vec![OP_PRIOR_INPUT, 0]), 1_000_000);
+    assert_eq!(arith_on(&it, vec![OP_PRIOR_INPUT, 1]), 7);
+    assert_eq!(arith_on(&it, vec![OP_PRIOR_INPUT, 2]), 0);
+    assert_eq!(arith_on(&it, vec![OP_PRIOR_INPUT, u128::MAX]), 0);
+
+    assert_eq!(arith_on(&Item::default(), vec![OP_PRIOR_INPUT, 0]), 0);
+}
+
+#[test]
 fn trailing_zero_inputs_are_indistinguishable_from_padding() {
     // Documented limitation, asserted so nobody later writes a vector that
     // depends on telling them apart.
@@ -509,25 +537,23 @@ fn arith_on(item: &Item, program: Vec<u128>) -> u128 {
 fn amounts_sum_across_transfers_of_the_same_alkane() {
     let mut it = Item::default();
     it.incoming = vec![(32, 0, 100), (4, 1776, 7), (32, 0, 250)];
-    it.outgoing = vec![(4, 1778, 42)];
 
-    assert_eq!(arith_on(&it, vec![OP_IN_AMOUNT, 32, 0]), 350);
-    assert_eq!(arith_on(&it, vec![OP_IN_AMOUNT, 4, 1776]), 7);
-    assert_eq!(arith_on(&it, vec![OP_OUT_AMOUNT, 4, 1778]), 42);
+    assert_eq!(arith_on(&it, vec![OP_INCOMING_AMOUNT, 32, 0]), 350);
+    assert_eq!(arith_on(&it, vec![OP_INCOMING_AMOUNT, 4, 1776]), 7);
 }
 
 #[test]
 fn absent_alkane_amount_is_zero() {
     let it = Item::default();
-    assert_eq!(arith_on(&it, vec![OP_IN_AMOUNT, 32, 0]), 0);
-    assert_eq!(arith_on(&it, vec![OP_OUT_AMOUNT, 999, 999]), 0);
+    assert_eq!(arith_on(&it, vec![OP_INCOMING_AMOUNT, 32, 0]), 0);
+    assert_eq!(arith_on(&it, vec![OP_INCOMING_AMOUNT, 999, 999]), 0);
 }
 
 #[test]
 fn amount_sums_saturate() {
     let mut it = Item::default();
     it.incoming = vec![(1, 1, u128::MAX), (1, 1, u128::MAX)];
-    assert_eq!(arith_on(&it, vec![OP_IN_AMOUNT, 1, 1]), u128::MAX);
+    assert_eq!(arith_on(&it, vec![OP_INCOMING_AMOUNT, 1, 1]), u128::MAX);
 }
 
 #[test]
@@ -536,10 +562,11 @@ fn positional_facts_load() {
     assert_eq!(arith_on(&it, vec![OP_TARGET_BLOCK]), 2);
     assert_eq!(arith_on(&it, vec![OP_TARGET_TX]), 0);
     assert_eq!(arith_on(&it, vec![OP_OPCODE]), 77);
-    assert_eq!(arith_on(&it, vec![OP_STATUS]), 1);
     assert_eq!(arith_on(&it, vec![OP_TXINDEX]), 3);
     assert_eq!(arith_on(&it, vec![OP_PSTONE_INDEX]), 1);
     assert_eq!(arith_on(&it, vec![OP_HEIGHT]), 950_000);
+    // Default rank is "not a mint", not "first mint".
+    assert_eq!(arith_on(&it, vec![OP_MINT_RANK]), u128::MAX);
 }
 
 // ---------------------------------------------------------------------------
@@ -548,27 +575,48 @@ fn positional_facts_load() {
 
 #[test]
 fn rejects_empty_program() {
-    assert_eq!(validate(&[], Source::PrevBlock), Err(ValidateError::Empty));
+    assert_eq!(validate(&[], Mode::Rate), Err(ValidateError::Empty));
 }
 
 #[test]
 fn rejects_unknown_opcode() {
     assert!(matches!(
-        validate(&[OP_PUSH, 1, 9_999_999], Source::PrevBlock),
+        validate(&[OP_PUSH, 1, 9_999_999], Mode::Rate),
         Err(ValidateError::UnknownOpcode { .. })
     ));
+}
+
+#[test]
+fn retired_opcodes_stay_retired_rather_than_being_reused() {
+    // 20/21/22 were STATUS/IN_AMOUNT/OUT_AMOUNT. They are not reused, because an
+    // off-chain disassembler built against the old table would otherwise render a
+    // new program plausibly and wrongly. As unknown opcodes they fail validation,
+    // which is the correct outcome.
+    for op in [20u128, 21, 22] {
+        assert!(spec(op).is_none(), "opcode {op} must have no shape");
+        assert!(mnemonic(op).is_none(), "opcode {op} must have no mnemonic");
+        for mode in [Mode::Split, Mode::Rate] {
+            assert!(
+                matches!(
+                    validate(&[op], mode),
+                    Err(ValidateError::UnknownOpcode { .. })
+                ),
+                "opcode {op} must be unknown in {mode:?}"
+            );
+        }
+    }
 }
 
 #[test]
 fn rejects_truncated_immediate() {
     // PUSH with no operand word after it.
     assert!(matches!(
-        validate(&[OP_PUSH], Source::PrevBlock),
+        validate(&[OP_PUSH], Mode::Rate),
         Err(ValidateError::TruncatedImmediate { .. })
     ));
-    // IN_AMOUNT needs two words, gets one.
+    // INCOMING_AMOUNT needs two words, gets one.
     assert!(matches!(
-        validate(&[OP_IN_AMOUNT, 32], Source::PrevBlock),
+        validate(&[OP_INCOMING_AMOUNT, 32], Mode::Rate),
         Err(ValidateError::TruncatedImmediate { .. })
     ));
 }
@@ -576,11 +624,11 @@ fn rejects_truncated_immediate() {
 #[test]
 fn rejects_stack_underflow() {
     assert!(matches!(
-        validate(&[OP_ADD], Source::PrevBlock),
+        validate(&[OP_ADD], Mode::Rate),
         Err(ValidateError::StackUnderflow { .. })
     ));
     assert!(matches!(
-        validate(&[OP_PUSH, 1, OP_MULDIV], Source::PrevBlock),
+        validate(&[OP_PUSH, 1, OP_MULDIV], Mode::Rate),
         Err(ValidateError::StackUnderflow { .. })
     ));
 }
@@ -594,7 +642,7 @@ fn rejects_stack_overflow() {
         p.push(1);
     }
     assert!(matches!(
-        validate(&p, Source::PrevBlock),
+        validate(&p, Mode::Rate),
         Err(ValidateError::StackOverflow { .. })
     ));
 }
@@ -608,19 +656,19 @@ fn accepts_exactly_max_stack() {
     }
     // Collapse back down to a single residue.
     p.extend(std::iter::repeat_n(OP_ADD, MAX_STACK - 1));
-    assert!(validate(&p, Source::PrevBlock).is_ok());
+    assert!(validate(&p, Mode::Rate).is_ok());
 }
 
 #[test]
 fn rejects_program_that_does_not_leave_exactly_one_value() {
     // Leaves two.
     assert!(matches!(
-        validate(&[OP_PUSH, 1, OP_PUSH, 2], Source::PrevBlock),
+        validate(&[OP_PUSH, 1, OP_PUSH, 2], Mode::Rate),
         Err(ValidateError::BadResidue { depth: 2 })
     ));
     // Leaves none.
     assert!(matches!(
-        validate(&[OP_PUSH, 1, OP_DROP], Source::PrevBlock),
+        validate(&[OP_PUSH, 1, OP_DROP], Mode::Rate),
         Err(ValidateError::BadResidue { depth: 0 })
     ));
 }
@@ -629,47 +677,64 @@ fn rejects_program_that_does_not_leave_exactly_one_value() {
 fn rejects_oversized_program() {
     let p = vec![OP_PUSH; MAX_PROGRAM_WORDS + 1];
     assert!(matches!(
-        validate(&p, Source::PrevBlock),
+        validate(&p, Mode::Rate),
         Err(ValidateError::TooLong { .. })
     ));
 }
 
 #[test]
-fn rejects_unavailable_facts_in_a_sameblock_rule() {
-    // STATUS and OUT_AMOUNT cannot be answered before execution. Failing loudly
-    // at validation is the point: a vector reading a fact that cannot exist is a
-    // bug governance should see before the block, not a silent zero after it.
+fn rejects_unavailable_facts_in_a_split_rule() {
+    // INCOMING_AMOUNT cannot be answered during SPLIT's pre-execution scan, which
+    // is where the block total is computed. Failing loudly at validation is the
+    // point: a vector reading a fact that cannot exist is a bug governance should
+    // see before the block, not a silent zero after it.
     assert!(matches!(
-        validate(&[OP_STATUS], Source::SameBlock),
-        Err(ValidateError::FactUnavailable { .. })
-    ));
-    assert!(matches!(
-        validate(&[OP_OUT_AMOUNT, 4, 1778], Source::SameBlock),
+        validate(&[OP_INCOMING_AMOUNT, 32, 0], Mode::Split),
         Err(ValidateError::FactUnavailable { .. })
     ));
 
-    // Both are fine for a PrevBlock rule.
-    assert!(validate(&[OP_STATUS], Source::PrevBlock).is_ok());
-    assert!(validate(&[OP_OUT_AMOUNT, 4, 1778], Source::PrevBlock).is_ok());
+    // Fine for a RATE rule, where the item is built while the claim executes.
+    assert!(validate(&[OP_INCOMING_AMOUNT, 32, 0], Mode::Rate).is_ok());
 }
 
 #[test]
-fn in_amount_is_available_to_both_sources() {
-    // Incoming amounts ARE recoverable pre-execution: they are what the spent
-    // UTXOs carried, readable from the balance index. Only success and outputs
-    // require execution.
-    assert!(validate(&[OP_IN_AMOUNT, 32, 0], Source::SameBlock).is_ok());
-    assert!(validate(&[OP_IN_AMOUNT, 32, 0], Source::PrevBlock).is_ok());
+fn prior_input_is_available_to_both_modes() {
+    // Declared cellpack inputs ARE recoverable pre-execution — they are just
+    // bytes in the protostone — so a qualifier-driven vector works under SPLIT as
+    // well as RATE. Only realized `incoming_alkanes` require execution.
+    assert!(validate(&[OP_PRIOR_INPUT, 0], Mode::Split).is_ok());
+    assert!(validate(&[OP_PRIOR_INPUT, 0], Mode::Rate).is_ok());
 }
 
 #[test]
-fn convex_program_is_rejected_as_a_sameblock_rule() {
-    // It reads STATUS and OUT_AMOUNT, so it is only meaningful with previous-block
-    // settlement. This is the type system saying so.
-    let p = programs::convex_out((4, 1778), 1, (4, 1778));
-    assert!(validate(&p, Source::PrevBlock).is_ok());
+fn incoming_amount_is_the_only_mode_gated_opcode() {
+    // The availability table is the one place a fact's mode is declared, and
+    // `spec()` is exhaustive over it. If a new fact load ever needs gating this
+    // test is what forces the decision to be deliberate.
+    for op in all_opcodes() {
+        let s = spec(op).expect("known opcode");
+        let want = if op == OP_INCOMING_AMOUNT {
+            AVAIL_RATE
+        } else {
+            AVAIL_ALL
+        };
+        assert_eq!(s.avail, want, "opcode {op} availability");
+        // shape() is a view onto the same table; the two must not drift.
+        assert_eq!(shape(op), Some((s.imm, s.pops, s.pushes)), "opcode {op}");
+    }
+    assert_eq!(AVAIL_ALL, AVAIL_SPLIT | AVAIL_RATE);
+    assert_eq!(Mode::Split.bit(), AVAIL_SPLIT);
+    assert_eq!(Mode::Rate.bit(), AVAIL_RATE);
+}
+
+#[test]
+fn incoming_program_is_rejected_as_a_split_rule() {
+    // It reads INCOMING_AMOUNT, so it is only meaningful once the claim is
+    // executing. This is the type system saying so.
+    let p = programs::linear_on_incoming((32, 0), 1, 1);
+    assert!(validate(&p, Mode::Rate).is_ok());
     assert!(matches!(
-        validate(&p, Source::SameBlock),
+        validate(&p, Mode::Split),
         Err(ValidateError::FactUnavailable { .. })
     ));
 }
@@ -677,7 +742,7 @@ fn convex_program_is_rejected_as_a_sameblock_rule() {
 #[test]
 fn reported_step_count_matches_instructions_executed() {
     let p = programs::identity();
-    let steps = validate(&p, Source::PrevBlock).unwrap();
+    let steps = validate(&p, Mode::Rate).unwrap();
     // 14 words: 11 opcodes + 3 immediates.
     assert_eq!(steps, 11);
     // One step short must starve rather than mis-evaluate.
@@ -715,9 +780,8 @@ fn eval_never_panics_on_random_programs() {
             target_tx: rng.next() as u128,
             opcode: rng.below(200) as u128,
             inputs: vec![rng.next() as u128, 0, u128::MAX],
-            status: rng.below(2) as u128,
-            incoming: vec![(2, 0, rng.next() as u128)],
-            outgoing: vec![(4, 1778, u128::MAX)],
+            prior_inputs: vec![rng.next() as u128, u128::MAX],
+            incoming: vec![(2, 0, rng.next() as u128), (4, 1778, u128::MAX)],
             txindex: rng.next() as u128,
             pstone_index: rng.below(8) as u128,
             height: 950_000,
@@ -735,9 +799,9 @@ fn eval_never_panics_on_adversarial_shapes() {
     let cases: Vec<Vec<u128>> = vec![
         vec![],
         vec![OP_PUSH],
-        vec![OP_IN_AMOUNT],
-        vec![OP_IN_AMOUNT, 1],
-        vec![OP_OUT_AMOUNT, 1],
+        vec![OP_INCOMING_AMOUNT],
+        vec![OP_INCOMING_AMOUNT, 1],
+        vec![OP_PRIOR_INPUT],
         vec![OP_ADD],
         vec![OP_SELECT],
         vec![OP_MULDIV],
@@ -750,6 +814,10 @@ fn eval_never_panics_on_adversarial_shapes() {
         vec![OP_SHR],
         vec![OP_PUSH, 1, OP_SHL],
         vec![OP_INPUT],
+        // Retired opcodes, which eval must refuse rather than mis-execute.
+        vec![20],
+        vec![21, 32, 0],
+        vec![22, 4, 1778],
         // Deep stack pressure, unvalidated.
         [OP_PUSH, 1].repeat(MAX_STACK * 4),
     ];
@@ -767,7 +835,7 @@ fn budget_exhaustion_yields_zero_not_a_hang() {
         p.push(1);
         p.push(OP_ADD);
     }
-    assert!(validate(&p, Source::PrevBlock).is_ok());
+    assert!(validate(&p, Mode::Rate).is_ok());
     assert_eq!(eval(&p, &Item::default(), 10), 0);
 }
 
@@ -777,8 +845,8 @@ fn validate_never_panics_on_random_input() {
     for _ in 0..20_000 {
         let len = rng.below(40) as usize;
         let prog: Vec<u128> = (0..len).map(|_| rng.below(120) as u128).collect();
-        let _ = validate(&prog, Source::PrevBlock);
-        let _ = validate(&prog, Source::SameBlock);
+        let _ = validate(&prog, Mode::Rate);
+        let _ = validate(&prog, Mode::Split);
     }
 }
 
@@ -787,7 +855,7 @@ fn invalid_program_yields_all_zero_weights_not_an_error() {
     // evaluate_table must degrade, because the caller's only safe response to a
     // bad weightmap is "nothing qualifies, fall back to the identity vector".
     let items = vec![mint_item(), mint_item()];
-    let weights = evaluate_table(&[OP_ADD], &items, Source::PrevBlock);
+    let weights = evaluate_table(&[OP_ADD], &items, Mode::Rate);
     assert_eq!(weights, vec![0, 0]);
 }
 
@@ -797,8 +865,8 @@ fn invalid_program_yields_all_zero_weights_not_an_error() {
 
 #[test]
 fn evaluation_is_deterministic() {
-    let p = programs::convex_out((4, 1778), 1, (4, 1778));
-    let it = out_item((4, 1778), 1, (4, 1778), 123_456_789);
+    let p = programs::convex_on_prior(0);
+    let it = prior_item(123_456_789);
     let first = run(&p, &it);
     for _ in 0..100 {
         assert_eq!(run(&p, &it), first);
@@ -809,13 +877,13 @@ fn evaluation_is_deterministic() {
 fn evaluation_does_not_depend_on_item_order() {
     // Weights are per-item and independent; any cross-item dependence would make
     // the block's result order-sensitive and therefore a consensus hazard.
-    let p = programs::convex_out((4, 1778), 1, (4, 1778));
-    let a = out_item((4, 1778), 1, (4, 1778), 10);
-    let b = out_item((4, 1778), 1, (4, 1778), 20);
-    let c = out_item((4, 1778), 1, (4, 1778), 30);
+    let p = programs::convex_on_prior(0);
+    let a = prior_item(10);
+    let b = prior_item(20);
+    let c = prior_item(30);
 
-    let fwd = evaluate_table(&p, &[a.clone(), b.clone(), c.clone()], Source::PrevBlock);
-    let mut rev = evaluate_table(&p, &[c, b, a], Source::PrevBlock);
+    let fwd = evaluate_table(&p, &[a.clone(), b.clone(), c.clone()], Mode::Rate);
+    let mut rev = evaluate_table(&p, &[c, b, a], Mode::Rate);
     rev.reverse();
     assert_eq!(fwd, rev);
 }
@@ -828,15 +896,14 @@ fn evaluation_does_not_depend_on_item_order() {
 fn item_table_roundtrips() {
     let items = vec![
         mint_item(),
-        out_item((4, 1778), 1, (4, 1778), 999),
+        prior_item(999),
         Item {
             target_block: 4,
             target_tx: 1776,
             opcode: 5,
             inputs: vec![1, 2, 3],
-            status: 0,
+            prior_inputs: vec![9, 8],
             incoming: vec![(32, 0, 5), (4, 1776, 6)],
-            outgoing: vec![(4, 1778, 7)],
             txindex: 12,
             pstone_index: 2,
             height: 950_123,
@@ -850,7 +917,7 @@ fn item_table_roundtrips() {
 
 #[test]
 fn codec_rejects_truncation_instead_of_panicking() {
-    let items = vec![mint_item(), out_item((4, 1778), 1, (4, 1778), 1)];
+    let items = vec![mint_item(), prior_item(1)];
     let encoded = encode_items(&items);
     for cut in 1..encoded.len() {
         // Any prefix must either decode to something coherent or return None.
@@ -889,8 +956,8 @@ fn identity_vector_disassembles_readably() {
 
 #[test]
 fn disassembly_renders_alkane_ids_as_block_colon_tx() {
-    let text = disassemble(&[OP_OUT_AMOUNT, 4, 1778]);
-    assert!(text.contains("OUT_AMOUNT 4:1778"), "got:\n{text}");
+    let text = disassemble(&[OP_INCOMING_AMOUNT, 4, 1778]);
+    assert!(text.contains("INCOMING_AMOUNT 4:1778"), "got:\n{text}");
 }
 
 #[test]
@@ -917,16 +984,20 @@ fn disassembly_never_panics_on_random_input() {
 
 #[test]
 fn every_validate_error_renders_and_locates_the_problem() {
-    let cases: Vec<(Vec<u128>, Source, &[&str])> = vec![
-        (vec![], Source::PrevBlock, &["empty"]),
-        (vec![OP_PUSH], Source::PrevBlock, &["immediates", "word 0"]),
-        (vec![9_999_999], Source::PrevBlock, &["unknown opcode", "9999999", "word 0"]),
-        (vec![OP_ADD], Source::PrevBlock, &["underflow", "word 0"]),
-        (vec![OP_PUSH, 1, OP_PUSH, 2], Source::PrevBlock, &["exactly 1", "left 2"]),
-        (vec![OP_STATUS], Source::SameBlock, &["unavailable", "SameBlock"]),
+    let cases: Vec<(Vec<u128>, Mode, &[&str])> = vec![
+        (vec![], Mode::Rate, &["empty"]),
+        (vec![OP_PUSH], Mode::Rate, &["immediates", "word 0"]),
+        (vec![9_999_999], Mode::Rate, &["unknown opcode", "9999999", "word 0"]),
+        (vec![OP_ADD], Mode::Rate, &["underflow", "word 0"]),
+        (vec![OP_PUSH, 1, OP_PUSH, 2], Mode::Rate, &["exactly 1", "left 2"]),
+        (
+            vec![OP_INCOMING_AMOUNT, 32, 0],
+            Mode::Split,
+            &["unavailable", "Split", "word 0"],
+        ),
     ];
-    for (prog, src, needles) in cases {
-        let err = validate(&prog, src).expect_err("must be invalid");
+    for (prog, mode, needles) in cases {
+        let err = validate(&prog, mode).expect_err("must be invalid");
         let text = err.to_string();
         for n in needles {
             assert!(text.contains(n), "{err:?} rendered {text:?}, missing {n:?}");
@@ -941,7 +1012,7 @@ fn stack_overflow_error_reports_the_depth_and_the_limit() {
         p.push(OP_PUSH);
         p.push(1);
     }
-    let text = validate(&p, Source::PrevBlock).unwrap_err().to_string();
+    let text = validate(&p, Mode::Rate).unwrap_err().to_string();
     assert!(text.contains(&MAX_STACK.to_string()), "got {text:?}");
     assert!(text.contains("limit"), "got {text:?}");
 }
@@ -949,7 +1020,7 @@ fn stack_overflow_error_reports_the_depth_and_the_limit() {
 #[test]
 fn too_long_error_reports_the_size_and_the_limit() {
     let p = vec![OP_PUSH; MAX_PROGRAM_WORDS + 1];
-    let text = validate(&p, Source::PrevBlock).unwrap_err().to_string();
+    let text = validate(&p, Mode::Rate).unwrap_err().to_string();
     assert!(text.contains(&(MAX_PROGRAM_WORDS + 1).to_string()), "got {text:?}");
     assert!(text.contains(&MAX_PROGRAM_WORDS.to_string()), "got {text:?}");
 }
@@ -970,7 +1041,7 @@ fn step_budget_error_renders() {
 
 #[test]
 fn describe_shows_the_program_and_a_valid_verdict() {
-    let text = alkanes_std_firevector::describe(&programs::identity(), Source::PrevBlock);
+    let text = alkanes_std_firevector::describe(&programs::identity(), Mode::Rate);
     assert!(text.contains("TARGET_BLOCK"), "got:\n{text}");
     assert!(text.contains("valid"), "got:\n{text}");
     assert!(text.contains("steps/item"), "got:\n{text}");
@@ -980,19 +1051,53 @@ fn describe_shows_the_program_and_a_valid_verdict() {
 fn describe_shows_the_program_and_an_invalid_verdict() {
     // The point: a reviewer sees the offending program AND why it is rejected,
     // in one blob, without needing two calls.
-    let p = programs::convex_out((4, 1778), 1, (4, 1778));
-    let text = alkanes_std_firevector::describe(&p, Source::SameBlock);
-    assert!(text.contains("OUT_AMOUNT 4:1778"), "got:\n{text}");
+    let p = programs::linear_on_incoming((4, 1778), 1, 1);
+    let text = alkanes_std_firevector::describe(&p, Mode::Split);
+    assert!(text.contains("INCOMING_AMOUNT 4:1778"), "got:\n{text}");
     assert!(text.contains("INVALID"), "got:\n{text}");
-    assert!(text.contains("SameBlock"), "got:\n{text}");
+    assert!(text.contains("Split"), "got:\n{text}");
 }
 
 #[test]
 fn describe_is_total() {
     for p in [vec![], vec![u128::MAX], vec![OP_PUSH], vec![OP_ADD]] {
-        let _ = alkanes_std_firevector::describe(&p, Source::PrevBlock);
-        let _ = alkanes_std_firevector::describe(&p, Source::SameBlock);
+        let _ = alkanes_std_firevector::describe(&p, Mode::Rate);
+        let _ = alkanes_std_firevector::describe(&p, Mode::Split);
     }
+}
+
+#[test]
+fn describe_weightmap_shows_the_header_a_voter_needs() {
+    // A disassembly alone is misleading: the same body means "a share of the
+    // block" under SPLIT and "a rate against rate_floor" under RATE, and the
+    // action being subsidised is not in the program at all.
+    let q = Qualifier {
+        target_block: 4,
+        target_tx: 1778,
+        opcode: 1,
+    };
+    let text = alkanes_std_firevector::disasm::describe_weightmap(
+        &programs::convex_on_prior(0),
+        Mode::Rate,
+        Some(q),
+        1_000_000,
+    );
+    assert!(text.contains("Rate"), "got:\n{text}");
+    assert!(text.contains("4:1778"), "got:\n{text}");
+    assert!(text.contains("opcode 1"), "got:\n{text}");
+    assert!(text.contains("rate_floor: 1000000"), "got:\n{text}");
+    assert!(text.contains("PRIOR_INPUT 0"), "got:\n{text}");
+
+    // No qualifier must say so in words rather than by omission, and SPLIT must
+    // not advertise a denominator it does not use.
+    let text = alkanes_std_firevector::disasm::describe_weightmap(
+        &programs::identity(),
+        Mode::Split,
+        None,
+        0,
+    );
+    assert!(text.contains("every DIESEL mint"), "got:\n{text}");
+    assert!(!text.contains("rate_floor"), "got:\n{text}");
 }
 
 // ---------------------------------------------------------------------------
@@ -1010,8 +1115,8 @@ fn all_opcodes() -> Vec<u128> {
 fn immediates_for(op: u128) -> Vec<u128> {
     match op {
         OP_PUSH => vec![5],
-        OP_INPUT => vec![0],
-        OP_IN_AMOUNT | OP_OUT_AMOUNT => vec![2, 0],
+        OP_INPUT | OP_PRIOR_INPUT => vec![0],
+        OP_INCOMING_AMOUNT => vec![2, 0],
         OP_SHR | OP_SHL => vec![1],
         _ => vec![],
     }
@@ -1058,21 +1163,22 @@ fn every_opcode_has_both_a_shape_and_a_mnemonic() {
 
 #[test]
 fn the_instruction_set_is_the_size_it_is_documented_to_be() {
-    // The published opcode table now lists 35 instructions:
-    //   1 constant + 11 fact loads + 10 arithmetic + 6 comparison
+    // The published opcode table now lists 34 instructions:
+    //   1 constant + 10 fact loads + 10 arithmetic + 6 comparison
     //   + 3 logic + 4 stack.
-    // MINT_RANK was the 11th fact load, added so the pre-upgrade
-    // winner-takes-all rule is expressible at all.
+    // The fact loads are TARGET_BLOCK, TARGET_TX, OPCODE, INPUT, TXINDEX,
+    // PSTONE_INDEX, HEIGHT, MINT_RANK, PRIOR_INPUT and INCOMING_AMOUNT. STATUS,
+    // IN_AMOUNT and OUT_AMOUNT were retired, taking the count from 35 to 34.
     // If someone adds one without updating the spec and the governance channel,
     // this fails. (It already caught a published tally of "30".)
-    assert_eq!(all_opcodes().len(), 35);
+    assert_eq!(all_opcodes().len(), 34);
 }
 
 #[test]
 fn every_opcode_is_executable_in_a_valid_program() {
     for op in all_opcodes() {
         let p = minimal_program_for(op);
-        let steps = validate(&p, Source::PrevBlock)
+        let steps = validate(&p, Mode::Rate)
             .unwrap_or_else(|e| panic!("opcode {op} scaffold should validate: {e}"));
         // Must complete: a result reached with the exact budget, and unchanged
         // when given more.
@@ -1108,8 +1214,8 @@ fn every_ordered_pair_of_opcodes_is_survivable() {
             p.push(*b);
             p.extend(immediates_for(*b));
 
-            let _ = validate(&p, Source::PrevBlock);
-            let _ = validate(&p, Source::SameBlock);
+            let _ = validate(&p, Mode::Rate);
+            let _ = validate(&p, Mode::Split);
             let _ = eval(&p, &item, 1000);
             let _ = disassemble(&p);
         }
@@ -1121,18 +1227,25 @@ fn a_validated_program_always_completes_within_its_reported_budget() {
     // The budget returned by validate() is the exact instruction count, so it can
     // never starve a program that validated. If this broke, valid vectors would
     // silently start returning 0 — an emission halt that looks like a policy.
-    let item = out_item((4, 1778), 1, (4, 1778), 12_345);
+    let item = Item {
+        incoming: vec![(2, 0, 12_345)],
+        ..prior_item(12_345)
+    };
     let programs: Vec<Vec<u128>> = vec![
         programs::identity(),
-        programs::convex_out((4, 1778), 1, (4, 1778)),
-        programs::linear_out((4, 1778), 1, (4, 1778), 3, 2),
+        programs::legacy_winner_takes_all(),
+        programs::first_n_mints(3),
+        programs::convex_on_prior(0),
+        programs::linear_on_prior(0, 3, 2),
+        programs::linear_on_incoming((2, 0), 3, 2),
+        programs::piecewise_hinges(&[OP_PRIOR_INPUT, 0], &[(10, 1), (20, 2)]),
     ]
     .into_iter()
     .chain(all_opcodes().into_iter().map(minimal_program_for))
     .collect();
 
     for p in programs {
-        let steps = validate(&p, Source::PrevBlock).expect("fixture must validate");
+        let steps = validate(&p, Mode::Rate).expect("fixture must validate");
         let at_budget = eval(&p, &item, steps);
         let above = eval(&p, &item, steps + 1);
         let far_above = eval(&p, &item, u32::MAX);
@@ -1154,7 +1267,7 @@ fn every_opcode_is_rejected_when_its_operands_are_missing() {
         p.extend(immediates_for(op));
         assert!(
             matches!(
-                validate(&p, Source::PrevBlock),
+                validate(&p, Mode::Rate),
                 Err(ValidateError::StackUnderflow { .. })
             ),
             "bare opcode {op} should underflow"
@@ -1180,12 +1293,12 @@ fn every_opcode_with_immediates_is_rejected_when_they_are_truncated() {
         p.extend(immediates_for(op).into_iter().take(imm - 1));
         assert!(
             matches!(
-                validate(&p, Source::PrevBlock),
+                validate(&p, Mode::Rate),
                 Err(ValidateError::TruncatedImmediate { .. })
             ),
             "opcode {op} with {} of {imm} immediates should be truncated, got {:?}",
             imm - 1,
-            validate(&p, Source::PrevBlock)
+            validate(&p, Mode::Rate)
         );
     }
 }

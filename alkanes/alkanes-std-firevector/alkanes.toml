@@ -9,7 +9,7 @@ disassemble-program = 3
 validate-program = 4
 set-weightmap = 10
 get-weightmap = 11
-get-weightmap-source = 12
+get-weightmap-mode = 12
 get-sigil = 13
 get-name = 99
 get-symbol = 100
@@ -22,7 +22,7 @@ get-symbol = 100
 # for a setter it would otherwise need.
 [views]
 get-weightmap = true
-get-weightmap-source = true
+get-weightmap-mode = true
 get-sigil = true
 evaluate = true
 simulate = true

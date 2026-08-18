@@ -654,10 +654,23 @@ impl AlkanesHostFunctionsImpl {
             if crate::firevector::is_active(height) {
                 let block = context_guard.message.block.clone();
                 let txid = context_guard.message.transaction.compute_txid();
+                // RATE mode weighs what actually arrived. `incoming_alkanes` is
+                // built before `T::handle` runs and is not mutated before this
+                // precompile short-circuits, so this is genuinely the claiming
+                // frame's realized incoming. SPLIT ignores both of these.
+                let vout = context_guard.message.vout;
+                let incoming: Vec<(u128, u128, u128)> = context_guard
+                    .incoming_alkanes
+                    .0
+                    .iter()
+                    .map(|t| (t.id.block, t.id.tx, t.value))
+                    .collect();
                 let denominator = crate::firevector::effective_denominator(
                     &block,
                     height,
                     txid,
+                    vout,
+                    &incoming,
                     &context_guard.message.atomic,
                 );
                 let mut response = CallResponse::default();

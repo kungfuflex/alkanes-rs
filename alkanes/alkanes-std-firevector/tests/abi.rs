@@ -22,19 +22,54 @@ fn mint_item() -> Item {
         target_block: DIESEL.0,
         target_tx: DIESEL.1,
         opcode: MINT,
-        status: 1,
         ..Default::default()
     }
 }
 
-fn lp_item(amount: u128) -> Item {
+/// A protostone that is not a DIESEL mint at all.
+fn pool_item() -> Item {
     Item {
         target_block: POOL.0,
         target_tx: POOL.1,
         opcode: 1,
-        status: 1,
-        outgoing: vec![(POOL.0, POOL.1, amount)],
         ..Default::default()
+    }
+}
+
+/// A DIESEL mint whose qualifying prior action declared `amount` as its first
+/// cellpack input. The target/opcode match that populates `prior_inputs` lives
+/// in the weightmap header's `Qualifier` and is applied by the indexer, so by
+/// the time the VM sees an item only the number is left.
+fn qualified_mint(amount: u128) -> Item {
+    Item {
+        prior_inputs: vec![amount],
+        ..mint_item()
+    }
+}
+
+/// A mint that actually received `amount` of `POOL` — the RATE-only fact.
+fn receiving_mint(amount: u128) -> Item {
+    Item {
+        incoming: vec![(POOL.0, POOL.1, amount)],
+        ..mint_item()
+    }
+}
+
+fn split(program: Vec<u128>) -> Weightmap {
+    Weightmap {
+        mode: Mode::Split,
+        qualifier: None,
+        rate_floor: 0,
+        program,
+    }
+}
+
+fn rate(program: Vec<u128>) -> Weightmap {
+    Weightmap {
+        mode: Mode::Rate,
+        qualifier: None,
+        rate_floor: 1_000_000,
+        program,
     }
 }
 
@@ -57,19 +92,19 @@ impl Lcg {
 }
 
 // ---------------------------------------------------------------------------
-// source discriminant
+// mode discriminant
 // ---------------------------------------------------------------------------
 
 #[test]
-fn source_words_map_to_sources() {
-    assert_eq!(source_from_word(SOURCE_PREV_BLOCK), Ok(Source::PrevBlock));
-    assert_eq!(source_from_word(SOURCE_SAME_BLOCK), Ok(Source::SameBlock));
+fn mode_words_map_to_modes() {
+    assert_eq!(mode_from_word(MODE_RATE), Ok(Mode::Rate));
+    assert_eq!(mode_from_word(MODE_SPLIT), Ok(Mode::Split));
 }
 
 #[test]
-fn unknown_source_is_rejected_and_names_the_value() {
-    assert_eq!(source_from_word(2), Err(AbiError::UnknownSource(2)));
-    let msg = AbiError::UnknownSource(7).to_string();
+fn unknown_mode_is_rejected_and_names_the_value() {
+    assert_eq!(mode_from_word(2), Err(AbiError::UnknownMode(2)));
+    let msg = AbiError::UnknownMode(7).to_string();
     assert!(msg.contains('7'), "error should name the bad value: {msg}");
 }
 
@@ -112,7 +147,7 @@ fn unpacking_rejects_a_partial_trailing_weight() {
 fn evaluate_weights_every_mint_equally_under_the_identity_vector() {
     let items: Vec<Item> = (0..64).map(|_| mint_item()).collect();
     let table = encode_items(&items);
-    let out = evaluate_call(SOURCE_PREV_BLOCK, &programs::identity(), &table).unwrap();
+    let out = evaluate_call(MODE_RATE, &programs::identity(), &table).unwrap();
     let weights = unpack_weights(&out).unwrap();
     assert_eq!(weights.len(), 64);
     assert!(weights.iter().all(|w| *w == 1));
@@ -124,8 +159,8 @@ fn evaluate_returns_one_weight_per_item_including_non_qualifying_ones() {
     // matching weights to items by index would otherwise silently misattribute.
     let mut a = mint_item();
     a.opcode = 78; // does not qualify
-    let items = vec![a, mint_item(), lp_item(5)];
-    let out = evaluate_call(SOURCE_PREV_BLOCK, &programs::identity(), &encode_items(&items)).unwrap();
+    let items = vec![a, mint_item(), pool_item()];
+    let out = evaluate_call(MODE_RATE, &programs::identity(), &encode_items(&items)).unwrap();
     assert_eq!(unpack_weights(&out).unwrap(), vec![0, 1, 0]);
 }
 
@@ -135,25 +170,25 @@ fn an_invalid_program_yields_zero_weights_rather_than_an_error() {
     // qualifies" is a safe outcome the caller can fall back from; an error is
     // something a caller might propagate into a block failure.
     let items = vec![mint_item(), mint_item()];
-    let out = evaluate_call(SOURCE_PREV_BLOCK, &[OP_ADD], &encode_items(&items))
+    let out = evaluate_call(MODE_RATE, &[OP_ADD], &encode_items(&items))
         .expect("invalid program must not be an error");
     assert_eq!(unpack_weights(&out).unwrap(), vec![0, 0]);
 }
 
 #[test]
-fn a_program_using_unavailable_facts_yields_zeros_for_its_source() {
-    // The convex vector reads STATUS and OUT_AMOUNT, so it is meaningless as a
-    // same-block rule. It must produce zeros there, and real weights as a
-    // prev-block rule, from the identical call.
-    let items = vec![lp_item(1_000_000)];
+fn a_program_using_unavailable_facts_yields_zeros_for_its_mode() {
+    // The incoming-amount vector reads a fact that only exists once the claim is
+    // executing, so it is meaningless as a SPLIT rule. It must produce zeros
+    // there, and real weights as a RATE rule, from the identical call.
+    let items = vec![receiving_mint(1_000_000)];
     let table = encode_items(&items);
-    let p = programs::convex_out(POOL, 1, POOL);
+    let p = programs::linear_on_incoming(POOL, 1, 1);
 
-    let same = evaluate_call(SOURCE_SAME_BLOCK, &p, &table).unwrap();
-    assert_eq!(unpack_weights(&same).unwrap(), vec![0]);
+    let as_split = evaluate_call(MODE_SPLIT, &p, &table).unwrap();
+    assert_eq!(unpack_weights(&as_split).unwrap(), vec![0]);
 
-    let prev = evaluate_call(SOURCE_PREV_BLOCK, &p, &table).unwrap();
-    assert!(unpack_weights(&prev).unwrap()[0] > 0);
+    let as_rate = evaluate_call(MODE_RATE, &p, &table).unwrap();
+    assert!(unpack_weights(&as_rate).unwrap()[0] > 0);
 }
 
 #[test]
@@ -162,33 +197,33 @@ fn a_malformed_item_table_is_an_error() {
     // broken. Returning zeros would hide that behind plausible output.
     let p = programs::identity();
     assert_eq!(
-        evaluate_call(SOURCE_PREV_BLOCK, &p, &[]),
+        evaluate_call(MODE_RATE, &p, &[]),
         Err(AbiError::MalformedItemTable)
     );
     // Claims one item, supplies no words for it.
     assert_eq!(
-        evaluate_call(SOURCE_PREV_BLOCK, &p, &[1]),
+        evaluate_call(MODE_RATE, &p, &[1]),
         Err(AbiError::MalformedItemTable)
     );
     // Hostile count.
     assert_eq!(
-        evaluate_call(SOURCE_PREV_BLOCK, &p, &[u128::MAX]),
+        evaluate_call(MODE_RATE, &p, &[u128::MAX]),
         Err(AbiError::MalformedItemTable)
     );
 }
 
 #[test]
-fn an_unknown_source_is_an_error_before_anything_else_happens() {
+fn an_unknown_mode_is_an_error_before_anything_else_happens() {
     let items = encode_items(&[mint_item()]);
     assert_eq!(
         evaluate_call(9, &programs::identity(), &items),
-        Err(AbiError::UnknownSource(9))
+        Err(AbiError::UnknownMode(9))
     );
 }
 
 #[test]
 fn evaluate_handles_an_empty_item_table() {
-    let out = evaluate_call(SOURCE_PREV_BLOCK, &programs::identity(), &[0]).unwrap();
+    let out = evaluate_call(MODE_RATE, &programs::identity(), &[0]).unwrap();
     assert_eq!(out.len(), 0);
     assert_eq!(unpack_weights(&out), Some(vec![]));
 }
@@ -200,9 +235,9 @@ fn evaluate_handles_an_empty_item_table() {
 #[test]
 fn simulate_returns_a_single_weight() {
     let out = simulate_call(
-        SOURCE_PREV_BLOCK,
-        &programs::convex_out(POOL, 1, POOL),
-        &encode_item(&lp_item(1_000_000)),
+        MODE_RATE,
+        &programs::convex_on_prior(0),
+        &encode_item(&qualified_mint(1_000_000)),
     )
     .unwrap();
     let w = unpack_weights(&out).unwrap();
@@ -218,10 +253,10 @@ fn simulate_takes_a_bare_item_not_a_table() {
     // plausible-looking weight — either a decode error or a different answer,
     // never the same number the correct call would give.
     let p = programs::identity();
-    let bare = simulate_call(SOURCE_PREV_BLOCK, &p, &encode_item(&mint_item())).unwrap();
+    let bare = simulate_call(MODE_RATE, &p, &encode_item(&mint_item())).unwrap();
     assert_eq!(unpack_weights(&bare).unwrap(), vec![1]);
 
-    match simulate_call(SOURCE_PREV_BLOCK, &p, &encode_items(&[mint_item()])) {
+    match simulate_call(MODE_RATE, &p, &encode_items(&[mint_item()])) {
         Err(AbiError::MalformedItem) => {}
         Ok(out) => assert_ne!(
             unpack_weights(&out).unwrap(),
@@ -235,11 +270,11 @@ fn simulate_takes_a_bare_item_not_a_table() {
 #[test]
 fn simulate_zeroes_an_invalid_program_but_errors_on_a_malformed_item() {
     let item = encode_item(&mint_item());
-    let out = simulate_call(SOURCE_PREV_BLOCK, &[OP_ADD], &item).unwrap();
+    let out = simulate_call(MODE_RATE, &[OP_ADD], &item).unwrap();
     assert_eq!(unpack_weights(&out).unwrap(), vec![0]);
 
     assert_eq!(
-        simulate_call(SOURCE_PREV_BLOCK, &programs::identity(), &[]),
+        simulate_call(MODE_RATE, &programs::identity(), &[]),
         Err(AbiError::MalformedItem)
     );
 }
@@ -247,13 +282,13 @@ fn simulate_zeroes_an_invalid_program_but_errors_on_a_malformed_item() {
 #[test]
 fn simulate_agrees_with_evaluate_for_the_same_item() {
     // A wallet's preview must match what the indexer will actually compute.
-    let p = programs::convex_out(POOL, 1, POOL);
+    let p = programs::convex_on_prior(0);
     for amount in [0u128, 1, 999, 1_000_000, u128::MAX] {
-        let it = lp_item(amount);
-        let sim = unpack_weights(&simulate_call(SOURCE_PREV_BLOCK, &p, &encode_item(&it)).unwrap())
+        let it = qualified_mint(amount);
+        let sim = unpack_weights(&simulate_call(MODE_RATE, &p, &encode_item(&it)).unwrap())
             .unwrap()[0];
         let ev = unpack_weights(
-            &evaluate_call(SOURCE_PREV_BLOCK, &p, &encode_items(&[it])).unwrap(),
+            &evaluate_call(MODE_RATE, &p, &encode_items(&[it])).unwrap(),
         )
         .unwrap()[0];
         assert_eq!(sim, ev, "amount {amount}");
@@ -266,27 +301,27 @@ fn simulate_agrees_with_evaluate_for_the_same_item() {
 
 #[test]
 fn validate_view_reports_steps_for_a_good_program() {
-    let text = validate_call(SOURCE_PREV_BLOCK, &programs::identity());
+    let text = validate_call(MODE_RATE, &programs::identity());
     assert!(text.starts_with("valid"), "got {text:?}");
     assert!(text.contains("11 steps/item"), "got {text:?}");
 }
 
 #[test]
 fn validate_view_explains_a_bad_program() {
-    let text = validate_call(SOURCE_PREV_BLOCK, &[OP_ADD]);
+    let text = validate_call(MODE_RATE, &[OP_ADD]);
     assert!(text.starts_with("INVALID"), "got {text:?}");
     assert!(text.contains("underflow"), "got {text:?}");
 }
 
 #[test]
-fn validate_view_names_the_unavailable_fact_for_a_sameblock_rule() {
-    let text = validate_call(SOURCE_SAME_BLOCK, &programs::convex_out(POOL, 1, POOL));
+fn validate_view_names_the_unavailable_fact_for_a_split_rule() {
+    let text = validate_call(MODE_SPLIT, &programs::linear_on_incoming(POOL, 1, 1));
     assert!(text.starts_with("INVALID"), "got {text:?}");
     assert!(text.contains("unavailable"), "got {text:?}");
 }
 
 #[test]
-fn validate_view_rejects_an_unknown_source() {
+fn validate_view_rejects_an_unknown_mode() {
     let text = validate_call(42, &programs::identity());
     assert!(text.starts_with("INVALID"), "got {text:?}");
 }
@@ -307,11 +342,7 @@ fn disassemble_view_is_total() {
 #[test]
 fn adoption_gate_accepts_a_vector_that_weights_something() {
     let probes = vec![mint_item()];
-    assert!(is_adoptable(
-        &programs::identity(),
-        SOURCE_PREV_BLOCK,
-        &probes
-    ));
+    assert!(is_adoptable(&rate(programs::identity()), &probes));
 }
 
 #[test]
@@ -319,19 +350,26 @@ fn adoption_gate_rejects_a_vector_that_weights_nothing() {
     // Well-formed but useless. Adopting this would silently halt emission to
     // everybody, which is a governance accident worth blocking at the setter.
     let never = vec![OP_PUSH, 0];
-    assert!(validate(&never, Source::PrevBlock).is_ok());
-    assert!(!is_adoptable(&never, SOURCE_PREV_BLOCK, &[mint_item()]));
+    assert!(validate(&never, Mode::Rate).is_ok());
+    assert!(!is_adoptable(&rate(never), &[mint_item()]));
 
     // Also rejects a vector whose predicate simply never matches the probes.
-    let other_app = programs::convex_out((4, 9999), 1, POOL);
-    assert!(!is_adoptable(&other_app, SOURCE_PREV_BLOCK, &[lp_item(10)]));
+    assert!(!is_adoptable(&rate(programs::identity()), &[pool_item()]));
 }
 
 #[test]
-fn adoption_gate_rejects_invalid_programs_and_sources() {
-    assert!(!is_adoptable(&[OP_ADD], SOURCE_PREV_BLOCK, &[mint_item()]));
-    assert!(!is_adoptable(&programs::identity(), 99, &[mint_item()]));
-    assert!(!is_adoptable(&programs::identity(), SOURCE_PREV_BLOCK, &[]));
+fn adoption_gate_rejects_invalid_programs_and_empty_probes() {
+    assert!(!is_adoptable(&rate(vec![OP_ADD]), &[mint_item()]));
+    assert!(!is_adoptable(&rate(programs::identity()), &[]));
+    // A program that is invalid *for its mode* is refused just as firmly as one
+    // that is invalid outright.
+    assert!(!is_adoptable(
+        &split(programs::linear_on_incoming(POOL, 1, 1)),
+        &[receiving_mint(1_000_000)]
+    ));
+    // An unknown mode is no longer representable — `Weightmap::mode` is a typed
+    // `Mode`, so the wire discriminant is checked once at `mode_from_word` and
+    // cannot reach the gate.
 }
 
 // ---------------------------------------------------------------------------
@@ -343,11 +381,11 @@ fn evaluate_cellpack_layout_matches_the_generated_decoder() {
     use alkanes_support::wit_abi::CellpackDecode;
 
     // What a caller must put in a cellpack for opcode 1, after the opcode word:
-    //   source, program_len, program..., items_len, items...
+    //   mode, program_len, program..., items_len, items...
     let program = programs::identity();
     let items = encode_items(&[mint_item()]);
 
-    let mut inputs: Vec<u128> = vec![SOURCE_PREV_BLOCK];
+    let mut inputs: Vec<u128> = vec![MODE_RATE];
     inputs.push(program.len() as u128);
     inputs.extend_from_slice(&program);
     inputs.push(items.len() as u128);
@@ -355,18 +393,18 @@ fn evaluate_cellpack_layout_matches_the_generated_decoder() {
 
     // Decode exactly as the generated dispatch does.
     let mut off = 0usize;
-    let source = inputs[off];
+    let mode = inputs[off];
     off += 1;
     let decoded_program = <Vec<u128> as CellpackDecode>::decode_cellpack(&inputs, &mut off).unwrap();
     let decoded_items = <Vec<u128> as CellpackDecode>::decode_cellpack(&inputs, &mut off).unwrap();
 
-    assert_eq!(source, SOURCE_PREV_BLOCK);
+    assert_eq!(mode, MODE_RATE);
     assert_eq!(decoded_program, program);
     assert_eq!(decoded_items, items);
     assert_eq!(off, inputs.len(), "layout must consume the whole cellpack");
 
     // And the round trip produces the weight we expect end to end.
-    let out = evaluate_call(source, &decoded_program, &decoded_items).unwrap();
+    let out = evaluate_call(mode, &decoded_program, &decoded_items).unwrap();
     assert_eq!(unpack_weights(&out).unwrap(), vec![1]);
 }
 
@@ -374,23 +412,23 @@ fn evaluate_cellpack_layout_matches_the_generated_decoder() {
 fn simulate_cellpack_layout_matches_the_generated_decoder() {
     use alkanes_support::wit_abi::CellpackDecode;
 
-    let program = programs::convex_out(POOL, 1, POOL);
-    let item = encode_item(&lp_item(10_000));
+    let program = programs::convex_on_prior(0);
+    let item = encode_item(&qualified_mint(10_000));
 
-    let mut inputs: Vec<u128> = vec![SOURCE_PREV_BLOCK];
+    let mut inputs: Vec<u128> = vec![MODE_RATE];
     inputs.push(program.len() as u128);
     inputs.extend_from_slice(&program);
     inputs.push(item.len() as u128);
     inputs.extend_from_slice(&item);
 
     let mut off = 0usize;
-    let source = inputs[off];
+    let mode = inputs[off];
     off += 1;
     let p = <Vec<u128> as CellpackDecode>::decode_cellpack(&inputs, &mut off).unwrap();
     let i = <Vec<u128> as CellpackDecode>::decode_cellpack(&inputs, &mut off).unwrap();
     assert_eq!(off, inputs.len());
 
-    let w = unpack_weights(&simulate_call(source, &p, &i).unwrap()).unwrap();
+    let w = unpack_weights(&simulate_call(mode, &p, &i).unwrap()).unwrap();
     // 10_000^1.5 = 1_000_000
     assert_eq!(w, vec![1_000_000]);
 }
@@ -413,21 +451,43 @@ fn abi_entry_points_never_panic_on_random_words() {
                 _ => rng.below(4) as u128,
             })
             .collect();
-        let source = rng.below(4) as u128;
+        let mode_word = rng.below(4) as u128;
 
-        let _ = evaluate_call(source, &program, &table);
-        let _ = simulate_call(source, &program, &table);
-        let _ = validate_call(source, &program);
+        let _ = evaluate_call(mode_word, &program, &table);
+        let _ = simulate_call(mode_word, &program, &table);
+        let _ = validate_call(mode_word, &program);
         let _ = disassemble_call(&program);
-        let _ = is_adoptable(&program, source, &[mint_item()]);
+
+        if let Ok(mode) = mode_from_word(mode_word) {
+            let w = Weightmap {
+                mode,
+                qualifier: None,
+                rate_floor: rng.below(3) as u128,
+                program,
+            };
+            let _ = is_adoptable(&w, &[mint_item()]);
+            let _ = check_adoptable(&w);
+        }
     }
 }
 
 #[test]
 fn evaluate_never_panics_on_truncated_item_tables() {
-    let table = encode_items(&[mint_item(), lp_item(7), mint_item()]);
+    let table = encode_items(&[mint_item(), qualified_mint(7), mint_item()]);
     for cut in 0..=table.len() {
-        let _ = evaluate_call(SOURCE_PREV_BLOCK, &programs::identity(), &table[..cut]);
+        let _ = evaluate_call(MODE_RATE, &programs::identity(), &table[..cut]);
+    }
+}
+
+#[test]
+fn weightmap_unpacking_never_panics_on_random_bytes() {
+    // The blob comes out of storage, so a corrupt or stale one must decode to
+    // None rather than to a partially-read policy.
+    let mut rng = Lcg(0x5A1E_0BB1);
+    for _ in 0..10_000 {
+        let len = rng.below(200) as usize;
+        let bytes: Vec<u8> = (0..len).map(|_| rng.below(256) as u8).collect();
+        let _ = unpack_weightmap(&bytes);
     }
 }
 
@@ -441,10 +501,13 @@ fn every_abi_error_renders_something_actionable() {
         .to_string()
         .contains("item table"));
     assert!(AbiError::MalformedItem.to_string().contains("item"));
-    let unknown = AbiError::UnknownSource(3).to_string();
+    assert!(AbiError::MalformedWeightmap
+        .to_string()
+        .contains("weightmap"));
+    let unknown = AbiError::UnknownMode(3).to_string();
     assert!(unknown.contains('3'), "got {unknown:?}");
-    assert!(unknown.contains("prev-block"), "got {unknown:?}");
-    assert!(unknown.contains("same-block"), "got {unknown:?}");
+    assert!(unknown.contains("split"), "got {unknown:?}");
+    assert!(unknown.contains("rate"), "got {unknown:?}");
 }
 
 // ---------------------------------------------------------------------------
@@ -452,34 +515,74 @@ fn every_abi_error_renders_something_actionable() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn programs_roundtrip_through_storage_packing() {
-    for p in [
-        programs::identity(),
-        programs::legacy_winner_takes_all(),
-        programs::convex_out(POOL, 1, POOL),
+fn weightmaps_roundtrip_through_storage_packing() {
+    for w in [
+        split(programs::identity()),
+        split(programs::legacy_winner_takes_all()),
+        rate(programs::convex_on_prior(0)),
+        Weightmap {
+            mode: Mode::Rate,
+            qualifier: Some(Qualifier {
+                target_block: POOL.0,
+                target_tx: POOL.1,
+                opcode: 1,
+            }),
+            rate_floor: u128::MAX,
+            program: programs::linear_on_prior(0, 3, 2),
+        },
     ] {
-        assert_eq!(unpack_program(&pack_program(&p)), Some(p));
+        assert_eq!(unpack_weightmap(&pack_weightmap(&w)), Some(w));
     }
 }
 
 #[test]
-fn program_packing_rejects_a_partial_word() {
+fn weightmap_packing_rejects_a_partial_word() {
     // The indexer reads these bytes back directly, so a truncated tail must be
     // refused rather than decoded into a shorter, still-runnable program.
-    assert!(unpack_program(&[0u8; 17]).is_none());
-    assert!(unpack_program(&[0u8; 15]).is_none());
-    assert!(unpack_program(&[]).is_none());
+    assert!(unpack_weightmap(&[0u8; 17]).is_none());
+    assert!(unpack_weightmap(&[0u8; 15]).is_none());
+    assert!(unpack_weightmap(&[]).is_none());
+    // Whole words, but fewer than the fixed header.
+    assert!(unpack_weightmap(&[0u8; 16 * 8]).is_none());
+}
+
+#[test]
+fn a_bare_program_blob_is_rejected_rather_than_reinterpreted() {
+    // The magic exists so a blob written by an older build — a bare program with
+    // no header — is refused instead of having its first opcode silently read as
+    // a mode.
+    let bare: Vec<u8> = programs::identity()
+        .iter()
+        .flat_map(|w| w.to_le_bytes())
+        .collect();
+    assert!(unpack_weightmap(&bare).is_none());
+
+    // And a declared program length that disagrees with what is present is not
+    // truncated to fit.
+    let mut packed = pack_weightmap(&split(programs::identity()));
+    packed.truncate(packed.len() - 16);
+    assert!(unpack_weightmap(&packed).is_none());
 }
 
 #[test]
 fn the_adoption_gate_accepts_the_vectors_we_actually_ship() {
-    check_adoptable(SOURCE_SAME_BLOCK, &programs::identity()).expect("identity must be adoptable");
-    check_adoptable(SOURCE_SAME_BLOCK, &programs::legacy_winner_takes_all())
+    check_adoptable(&split(programs::identity())).expect("identity must be adoptable");
+    check_adoptable(&split(programs::legacy_winner_takes_all()))
         .expect("legacy rule must be adoptable");
-    check_adoptable(SOURCE_SAME_BLOCK, &programs::first_n_mints(3))
-        .expect("first-n must be adoptable");
-    check_adoptable(SOURCE_PREV_BLOCK, &programs::convex_out(POOL, 1, POOL))
-        .expect("convex vector must be adoptable");
+    check_adoptable(&split(programs::first_n_mints(3))).expect("first-n must be adoptable");
+
+    // The magnitude vectors are RATE vectors: SPLIT settles membership only, so
+    // anything returning more than 1 belongs here rather than there.
+    check_adoptable(&rate(programs::convex_on_prior(0))).expect("convex vector must be adoptable");
+    check_adoptable(&rate(programs::linear_on_prior(0, 3, 2)))
+        .expect("linear-on-prior must be adoptable");
+    check_adoptable(&rate(programs::linear_on_incoming((32, 0), 1, 1)))
+        .expect("linear-on-incoming must be adoptable");
+    check_adoptable(&rate(programs::piecewise_hinges(
+        &[OP_PRIOR_INPUT, 0],
+        &[(10, 1), (1_000, 2)],
+    )))
+    .expect("piecewise hinges must be adoptable");
 }
 
 #[test]
@@ -488,19 +591,46 @@ fn the_adoption_gate_refuses_a_vector_that_would_halt_emission() {
     // emission entirely and look like a policy rather than a mistake — so the
     // setter refuses it.
     let never = vec![OP_PUSH, 0];
-    assert!(validate(&never, Source::SameBlock).is_ok());
-    let err = check_adoptable(SOURCE_SAME_BLOCK, &never).unwrap_err();
+    assert!(validate(&never, Mode::Split).is_ok());
+    let err = check_adoptable(&split(never)).unwrap_err();
     assert!(err.contains("halt emission"), "got {err:?}");
 }
 
 #[test]
-fn the_adoption_gate_refuses_invalid_programs_and_sources() {
-    assert!(check_adoptable(SOURCE_SAME_BLOCK, &[OP_ADD]).is_err());
-    assert!(check_adoptable(SOURCE_SAME_BLOCK, &[]).is_err());
-    assert!(check_adoptable(9, &programs::identity()).is_err());
-    // STATUS cannot be answered same-block, so the source and the program
-    // disagree and the write is refused rather than silently weighing zero.
-    assert!(check_adoptable(SOURCE_SAME_BLOCK, &programs::convex_out(POOL, 1, POOL)).is_err());
+fn the_adoption_gate_refuses_invalid_programs() {
+    assert!(check_adoptable(&split(vec![OP_ADD])).is_err());
+    assert!(check_adoptable(&split(vec![])).is_err());
+    // INCOMING_AMOUNT cannot be answered during the pre-execution scan, so the
+    // mode and the program disagree and the write is refused rather than
+    // silently weighing zero.
+    assert!(check_adoptable(&split(programs::linear_on_incoming(POOL, 1, 1))).is_err());
+    // An unknown mode word cannot reach the gate at all: `Weightmap::mode` is a
+    // typed `Mode`, so `mode_from_word` is the single place it is validated.
+    assert!(mode_from_word(9).is_err());
+}
+
+#[test]
+fn the_adoption_gate_refuses_a_rate_vector_with_no_rate_floor() {
+    // rate_floor is the virtual denominator; zero would divide every payout to
+    // nothing, which is the same silent emission halt as a program that weighs
+    // nobody — caught at the setter for the same reason.
+    let w = Weightmap {
+        rate_floor: 0,
+        ..rate(programs::convex_on_prior(0))
+    };
+    let err = check_adoptable(&w).unwrap_err();
+    assert!(err.contains("rate_floor"), "got {err:?}");
+}
+
+#[test]
+fn the_adoption_gate_refuses_a_split_vector_that_returns_more_than_one() {
+    // SPLIT settles membership, not magnitude: the indexer clamps every non-zero
+    // weight to 1. A program returning 1_000_000 there is still safe, but it is
+    // not what its author meant, so the setter says so instead of quietly
+    // flattening it.
+    let err = check_adoptable(&split(programs::convex_on_prior(0))).unwrap_err();
+    assert!(err.contains("clamps"), "got {err:?}");
+    assert!(err.contains("rate mode"), "got {err:?}");
 }
 
 #[test]
@@ -509,6 +639,17 @@ fn the_adoption_gate_is_total() {
     for _ in 0..5_000 {
         let len = rng.below(20) as usize;
         let p: Vec<u128> = (0..len).map(|_| rng.below(120) as u128).collect();
-        let _ = check_adoptable(rng.below(4) as u128, &p);
+        let w = Weightmap {
+            mode: if rng.below(2) == 0 {
+                Mode::Split
+            } else {
+                Mode::Rate
+            },
+            qualifier: None,
+            rate_floor: rng.below(3) as u128,
+            program: p,
+        };
+        let _ = check_adoptable(&w);
+        let _ = unpack_weightmap(&pack_weightmap(&w));
     }
 }

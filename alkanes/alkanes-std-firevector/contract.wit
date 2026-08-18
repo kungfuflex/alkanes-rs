@@ -2,10 +2,14 @@ package alkanes:firevector;
 
 /// FIREVECTOR — the DIESEL emission-weighting VM, addressable at 12:0.
 ///
-/// `source` selects which fact loads are legal: 0 = prev-block (trace-verified,
-/// so STATUS and OUT_AMOUNT are answerable), 1 = same-block (parse-only, so they
-/// are not). Programs are flat `list<u64>` — widened to `Vec<u128>` by the
-/// cellpack ABI, which is the machine's native word.
+/// `mode` selects how weights become payouts, and thereby which fact loads are
+/// legal: 0 = split (weights come from a pre-execution scan of the block, so the
+/// block total is known and emission is divided by it), 1 = rate (weights come
+/// from the claim's own execution, so realized incoming amounts are readable but
+/// no block total can exist).
+///
+/// Programs are flat `list<u64>` — widened to `Vec<u128>` by the cellpack ABI,
+/// which is the machine's native word.
 ///
 /// Weight vectors come back as `list<u8>`: little-endian u128 per weight, the
 /// same packed-struct convention the rest of the system uses.
@@ -17,11 +21,11 @@ interface firevector {
 
     /// Evaluate a program over a whole item table in one pass. This is the shape
     /// the indexer preamble uses — one call per block, never one per item.
-    evaluate: func(source: u64, program: list<u64>, items: list<u64>) -> result<list<u8>, string>;
+    evaluate: func(mode: u64, program: list<u64>, items: list<u64>) -> result<list<u8>, string>;
 
     /// Weight for a single item. This is what a wallet calls to show a user the
     /// weight a transaction will earn before broadcasting it.
-    simulate: func(source: u64, program: list<u64>, item: list<u64>) -> result<list<u8>, string>;
+    simulate: func(mode: u64, program: list<u64>, item: list<u64>) -> result<list<u8>, string>;
 
     /// Render a program as readable pseudocode. The reason emission policy is
     /// auditable by voters and not only by people who read Rust.
@@ -29,19 +33,37 @@ interface firevector {
 
     /// Static verdict on a program: steps-per-item if valid, else an error
     /// naming the offending word. Governance should call this before a vote.
-    validate-program: func(source: u64, program: list<u64>) -> result<string, string>;
+    validate-program: func(mode: u64, program: list<u64>) -> result<string, string>;
 
     /// Install a new weightmap. Gated on possession of the governance sigil,
-    /// which must arrive in `incoming_alkanes`. `source` is 0 = same-block,
-    /// 1 = prev-block. Rejects a program that does not validate, and one that
-    /// weighs nothing at all.
-    set-weightmap: func(source: u64, program: list<u64>) -> result<_, string>;
+    /// which must arrive in `incoming_alkanes`.
+    ///
+    /// Takes the whole policy, not just the program: `mode` decides whether a
+    /// program is legal at all, so storing them separately would admit a torn
+    /// write in which the stored program does not validate against the stored
+    /// mode. `qualifier-*` names the prior action a mint must follow to earn
+    /// anything, with `has-qualifier` = 0 meaning every mint qualifies.
+    /// `rate-floor` is the virtual denominator used in rate mode and ignored in
+    /// split mode.
+    ///
+    /// Rejects a program that does not validate, one that weighs nothing at all,
+    /// a rate weightmap with a zero rate-floor, and a split program that returns
+    /// a value above 1 (split settles membership, not magnitude).
+    set-weightmap: func(
+        mode: u64,
+        has-qualifier: u64,
+        qualifier-block: u64,
+        qualifier-tx: u64,
+        qualifier-opcode: u64,
+        rate-floor: u64,
+        program: list<u64>,
+    ) -> result<_, string>;
 
-    /// The active weightmap, as stored.
+    /// The active weightmap blob, as stored: header words followed by program.
     get-weightmap: func() -> result<list<u8>, string>;
 
-    /// The active weightmap's source discriminant.
-    get-weightmap-source: func() -> result<u64, string>;
+    /// The active weightmap's mode discriminant.
+    get-weightmap-mode: func() -> result<u64, string>;
 
     /// The governance sigil that may call set-weightmap. Set once, at init.
     get-sigil: func() -> result<list<u8>, string>;

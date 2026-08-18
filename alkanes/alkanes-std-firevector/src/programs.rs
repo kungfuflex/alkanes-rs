@@ -70,56 +70,92 @@ pub fn first_n_mints(n: u128) -> Vec<u128> {
     ]
 }
 
-/// Convex weighting of a qualifying action: `weight = size^1.5`.
+/// Weight linearly by the amount declared on the qualifying prior action:
+/// `weight = arg * num / den`.
 ///
-/// `size` is however many units of `token` came *out* of a successful call to
-/// `target` opcode `op` — LP minted, tokens received, whatever the app emits.
-/// Reverts earn nothing because [`OP_STATUS`] gates the result.
+/// `arg` indexes the qualifying call's cellpack inputs — for a swap declaring
+/// `amount_in` as its first argument after the opcode, that is `arg = 0`. There
+/// is no filtering here for the target or the opcode, because that lives in the
+/// weightmap header's `Qualifier` and the indexer has already applied it: an
+/// item that did not qualify never reaches the program.
+///
+/// The declared amount is trustworthy for the reason described on
+/// [`OP_PRIOR_INPUT`] — a caller who overstates it makes their own swap revert,
+/// and a reverted swap drains the transaction's fuel so their mint dies too.
+///
+/// `MULDIV` rather than `MUL` then `DIV` so the intermediate is 256-bit and a
+/// large `num` cannot saturate before the division brings it back into range.
+pub fn linear_on_prior(arg: u128, num: u128, den: u128) -> Vec<u128> {
+    vec![
+        OP_PRIOR_INPUT, arg,
+        OP_PUSH, num, OP_PUSH, den, OP_MULDIV,
+    ]
+}
+
+/// Convex weighting of the qualifying action: `weight = size^1.5`.
 ///
 /// Convexity is the whole point. Because `f(x) = x^1.5` is convex, one action of
 /// size `n` earns strictly more than `k` actions of size `n/k`, so lumping beats
 /// dripping without any minimum-size constant to pick, argue about, or have
 /// gamed. The shape of the curve does the work a threshold would do badly.
-pub fn convex_out(
-    target: (u128, u128),
-    op: u128,
-    token: (u128, u128),
-) -> Vec<u128> {
+pub fn convex_on_prior(arg: u128) -> Vec<u128> {
     vec![
-        // qualify: target matches, opcode matches, and the call succeeded
-        OP_TARGET_BLOCK, OP_PUSH, target.0, OP_EQ,
-        OP_TARGET_TX, OP_PUSH, target.1, OP_EQ, OP_AND,
-        OP_OPCODE, OP_PUSH, op, OP_EQ, OP_AND,
-        OP_STATUS, OP_AND,
-        // size = units of `token` emitted
-        OP_OUT_AMOUNT, token.0, token.1,
+        OP_PRIOR_INPUT, arg,
         // size^1.5 = size * sqrt(size)
         OP_DUP, OP_SQRT, OP_MUL,
-        // gate by the qualify flag (0 or 1)
-        OP_MUL,
     ]
 }
 
-/// Linear weighting at `num/den` of emitted `token`, for a RATE-mode rule.
+/// Weight linearly by the units of `token` that actually **arrived** in the mint
+/// protostone's `incoming_alkanes`. RATE mode only.
 ///
-/// This is the payout curve half of the design: [`convex_out`] and this differ
-/// only in the reduce step, which is why the "normalized split versus fixed rate"
-/// question is a parameter and not an architecture.
-pub fn linear_out(
-    target: (u128, u128),
-    op: u128,
-    token: (u128, u128),
-    num: u128,
-    den: u128,
-) -> Vec<u128> {
+/// Stronger evidence than [`linear_on_prior`]: tokens reach a protostone only if
+/// the protostone that sent them succeeded *and* passed reconciliation, so this
+/// cannot be forged by a malformed header or a reconcile failure — the two ways
+/// the fuel-drain guarantee can be sidestepped.
+///
+/// The trade-off is that it measures *possession*, not activity. `mint()`
+/// forwards its incoming alkanes straight back out, so the same balance can be
+/// presented again in a later transaction of the same block. Prefer
+/// [`linear_on_prior`] when the intent is to reward doing something rather than
+/// holding something.
+pub fn linear_on_incoming(token: (u128, u128), num: u128, den: u128) -> Vec<u128> {
     vec![
-        OP_TARGET_BLOCK, OP_PUSH, target.0, OP_EQ,
-        OP_TARGET_TX, OP_PUSH, target.1, OP_EQ, OP_AND,
-        OP_OPCODE, OP_PUSH, op, OP_EQ, OP_AND,
-        OP_STATUS, OP_AND,
-        OP_OUT_AMOUNT, token.0, token.1,
-        // size * num / den, via MULDIV so the intermediate is 256-bit
+        OP_INCOMING_AMOUNT, token.0, token.1,
         OP_PUSH, num, OP_PUSH, den, OP_MULDIV,
-        OP_MUL,
     ]
+}
+
+/// Sum-of-hinges: `f(x) = Σ slope_i * max(0, x - breakpoint_i)`, where `load` is
+/// the instruction sequence that pushes `x`.
+///
+/// A builder rather than an opcode, because the machine already expresses this:
+/// saturating `SUB` *is* `max(0, x - bp)`, so the piecewise shape needs no
+/// branching at all.
+///
+/// `load` is re-emitted once per hinge rather than the value being duplicated,
+/// and that is load-bearing. The only stack ops are `DUP`/`SWAP`/`DROP`, none of
+/// which can reach past the top two slots — so an accumulator-plus-`DUP` form
+/// cannot get at `x` once it is buried, and the alternative of leaving every
+/// partial term on the stack would cap the builder at `MAX_STACK` hinges.
+/// Reloading holds depth at 2 regardless of length, so with a two-word loader
+/// this is 8 words per breakpoint and ~500 of them fit inside
+/// `MAX_PROGRAM_WORDS` — more resolution than emission policy can use.
+///
+/// Breakpoints should be ascending; nothing enforces it, and out-of-order entries
+/// simply sum to a different (still total, still deterministic) function.
+///
+/// ```text
+/// piecewise_hinges(&[OP_PRIOR_INPUT, 0], &[(10, 1), (20, 2)])
+///   =>  x < 10        : 0
+///       10 <= x < 20  : (x-10)
+///       x >= 20       : (x-10) + 2*(x-20)
+/// ```
+pub fn piecewise_hinges(load: &[u128], breakpoints: &[(u128, u128)]) -> Vec<u128> {
+    let mut out = vec![OP_PUSH, 0];
+    for (bp, slope) in breakpoints {
+        out.extend_from_slice(load);
+        out.extend([OP_PUSH, *bp, OP_SUB, OP_PUSH, *slope, OP_MUL, OP_ADD]);
+    }
+    out
 }

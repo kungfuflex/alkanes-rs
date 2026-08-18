@@ -28,6 +28,7 @@ use alkanes_support::response::CallResponse;
 use anyhow::{anyhow, Result};
 
 use crate::abi;
+use crate::vm::{Mode, Qualifier};
 use generated::FirevectorInterface;
 
 #[derive(Default)]
@@ -38,9 +39,6 @@ impl AlkaneResponder for Firevector {}
 impl Firevector {
     fn weightmap_pointer(&self) -> StoragePointer {
         StoragePointer::from_keyword("/weightmap")
-    }
-    fn weightmap_source_pointer(&self) -> StoragePointer {
-        StoragePointer::from_keyword("/weightmap_source")
     }
     fn sigil_pointer(&self) -> StoragePointer {
         StoragePointer::from_keyword("/sigil")
@@ -93,30 +91,56 @@ impl FirevectorInterface for Firevector {
         self.sigil_pointer().set(Arc::new(bytes));
 
         // Seed with the identity vector so the contract is never in a state where
-        // it has a sigil but no policy. Same-block, matching how the mint count is
-        // derived today.
+        // it has a sigil but no policy. SPLIT with no qualifier, which reproduces
+        // today's equal split among every DIESEL mint exactly.
         self.weightmap_pointer()
-            .set(Arc::new(abi::pack_program(&crate::programs::identity())));
-        self.weightmap_source_pointer()
-            .set(Arc::new(vec![abi::SOURCE_SAME_BLOCK as u8]));
+            .set(Arc::new(abi::pack_weightmap(&abi::Weightmap {
+                mode: Mode::Split,
+                qualifier: None,
+                rate_floor: 0,
+                program: crate::programs::identity(),
+            })));
 
         Ok(CallResponse::forward(&context.incoming_alkanes))
     }
 
-    fn set_weightmap(&self, source: u128, program: Vec<u128>) -> Result<CallResponse> {
+    #[allow(clippy::too_many_arguments)]
+    fn set_weightmap(
+        &self,
+        mode: u128,
+        has_qualifier: u128,
+        qualifier_block: u128,
+        qualifier_tx: u128,
+        qualifier_opcode: u128,
+        rate_floor: u128,
+        program: Vec<u128>,
+    ) -> Result<CallResponse> {
         let context = self.context()?;
         self.require_sigil()?;
+
+        let weightmap = abi::Weightmap {
+            mode: abi::mode_from_word(mode).map_err(|e| anyhow!("{}", e))?,
+            qualifier: match has_qualifier {
+                0 => None,
+                1 => Some(Qualifier {
+                    target_block: qualifier_block,
+                    target_tx: qualifier_tx,
+                    opcode: qualifier_opcode,
+                }),
+                other => return Err(anyhow!("has_qualifier must be 0 or 1, got {}", other)),
+            },
+            rate_floor,
+            program,
+        };
 
         // Reject anything that cannot run, and anything well-formed that weighs
         // nothing — adopting a vector that qualifies no transaction would halt
         // emission to everybody, which is a governance accident worth blocking at
         // the setter rather than discovering a block later.
-        abi::check_adoptable(source, &program).map_err(|e| anyhow!("{}", e))?;
+        abi::check_adoptable(&weightmap).map_err(|e| anyhow!("{}", e))?;
 
         self.weightmap_pointer()
-            .set(Arc::new(abi::pack_program(&program)));
-        self.weightmap_source_pointer()
-            .set(Arc::new(vec![source as u8]));
+            .set(Arc::new(abi::pack_weightmap(&weightmap)));
 
         Ok(CallResponse::forward(&context.incoming_alkanes))
     }
@@ -128,15 +152,15 @@ impl FirevectorInterface for Firevector {
         Ok(response)
     }
 
-    fn get_weightmap_source(&self) -> Result<CallResponse> {
+    fn get_weightmap_mode(&self) -> Result<CallResponse> {
         let context = self.context()?;
         let mut response = CallResponse::forward(&context.incoming_alkanes);
-        let v = self
-            .weightmap_source_pointer()
-            .get()
-            .first()
-            .copied()
-            .unwrap_or(0) as u128;
+        // Decoded from the blob rather than read from a second key, so the answer
+        // can never disagree with the program it applies to.
+        let v = match abi::unpack_weightmap(self.weightmap_pointer().get().as_ref()) {
+            Some(w) => w.mode as u128,
+            None => abi::MODE_SPLIT,
+        };
         response.data = v.to_le_bytes().to_vec();
         Ok(response)
     }
@@ -150,21 +174,21 @@ impl FirevectorInterface for Firevector {
 
     fn evaluate(
         &self,
-        source: u128,
+        mode: u128,
         program: Vec<u128>,
         items: Vec<u128>,
     ) -> Result<CallResponse> {
         let context = self.context()?;
         let mut response = CallResponse::forward(&context.incoming_alkanes);
         response.data =
-            abi::evaluate_call(source, &program, &items).map_err(|e| anyhow!("{}", e))?;
+            abi::evaluate_call(mode, &program, &items).map_err(|e| anyhow!("{}", e))?;
         Ok(response)
     }
 
-    fn simulate(&self, source: u128, program: Vec<u128>, item: Vec<u128>) -> Result<CallResponse> {
+    fn simulate(&self, mode: u128, program: Vec<u128>, item: Vec<u128>) -> Result<CallResponse> {
         let context = self.context()?;
         let mut response = CallResponse::forward(&context.incoming_alkanes);
-        response.data = abi::simulate_call(source, &program, &item).map_err(|e| anyhow!("{}", e))?;
+        response.data = abi::simulate_call(mode, &program, &item).map_err(|e| anyhow!("{}", e))?;
         Ok(response)
     }
 
@@ -175,10 +199,10 @@ impl FirevectorInterface for Firevector {
         Ok(response)
     }
 
-    fn validate_program(&self, source: u128, program: Vec<u128>) -> Result<CallResponse> {
+    fn validate_program(&self, mode: u128, program: Vec<u128>) -> Result<CallResponse> {
         let context = self.context()?;
         let mut response = CallResponse::forward(&context.incoming_alkanes);
-        response.data = abi::validate_call(source, &program).into_bytes();
+        response.data = abi::validate_call(mode, &program).into_bytes();
         Ok(response)
     }
 

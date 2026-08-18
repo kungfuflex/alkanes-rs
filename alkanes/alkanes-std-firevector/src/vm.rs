@@ -46,9 +46,7 @@ pub const OP_TARGET_BLOCK: u128 = 16;
 pub const OP_TARGET_TX: u128 = 17;
 pub const OP_OPCODE: u128 = 18;
 pub const OP_INPUT: u128 = 19;
-pub const OP_STATUS: u128 = 20;
-pub const OP_IN_AMOUNT: u128 = 21;
-pub const OP_OUT_AMOUNT: u128 = 22;
+// 20, 21, 22 are RETIRED — see the `Retired opcodes` note below. Do not reuse.
 pub const OP_TXINDEX: u128 = 23;
 pub const OP_PSTONE_INDEX: u128 = 24;
 pub const OP_HEIGHT: u128 = 25;
@@ -62,6 +60,33 @@ pub const OP_HEIGHT: u128 = 25;
 /// cannot be written as a vector. The indexer already walks transactions in
 /// order to count mints, so computing the rank is free and deterministic.
 pub const OP_MINT_RANK: u128 = 26;
+
+/// Declared cellpack input `i` of the **qualifying prior protostone**: the
+/// nearest protostone before this one in the same transaction matching the
+/// weightmap header's [`Qualifier`]. Yields 0 when there is no qualifier, no
+/// match, or `i` is past the end.
+///
+/// These inputs are trustworthy despite being self-declared, and the reason is
+/// the fuel model rather than anything in this VM. A reverting protostone drains
+/// the transaction's fuel tank, so every later protostone in that transaction
+/// starts with zero fuel and traps. A DIESEL mint therefore only executes if
+/// every alkanes protostone before it succeeded — so if a caller lies about the
+/// size of their swap, the swap reverts and their own mint dies with it.
+///
+/// The guarantee is not airtight; see `Qualifier` for the bypass the indexer has
+/// to filter out.
+pub const OP_PRIOR_INPUT: u128 = 27;
+
+/// Units of alkane `block:tx` that actually arrived in this protostone's
+/// `incoming_alkanes`.
+///
+/// The only fact here that is not recoverable by parsing, which is exactly why
+/// it is worth having: tokens reach a protostone's shadow vout only if the
+/// protostone that sent them both succeeded *and* passed reconciliation, so this
+/// number cannot be forged by any of the ways a declared input can. RATE-only,
+/// because it is unknown during the pre-execution scan that SPLIT's block-total
+/// denominator is computed from.
+pub const OP_INCOMING_AMOUNT: u128 = 28;
 
 // Arithmetic — saturating; division by zero yields zero.
 pub const OP_ADD: u128 = 32;
@@ -94,38 +119,105 @@ pub const OP_SWAP: u128 = 81;
 pub const OP_DROP: u128 = 82;
 pub const OP_SELECT: u128 = 83;
 
-/// Static shape of one instruction: how many immediate words follow it, how many
-/// operands it pops, how many it pushes.
+/// How a weightmap's weights are turned into payouts.
+///
+/// The distinction is not cosmetic: it decides which facts a program may read,
+/// because the two modes are evaluated at different points in a block.
+///
+/// - [`Mode::Split`] weights are computed in a **pre-execution scan** of the
+///   whole block, so the block total `W` is known before any mint runs and
+///   emission can be divided `W / w_i`. Only parse-derivable facts exist yet.
+/// - [`Mode::Rate`] weights are computed **while the claiming mint executes**,
+///   so realized amounts are visible — but no block total can exist, because
+///   later transactions have not run. Payout is a rate against a governance-set
+///   virtual denominator instead of a share.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Mode {
+    Split = 0,
+    Rate = 1,
+}
+
+impl Mode {
+    #[inline]
+    pub const fn bit(self) -> u8 {
+        1 << (self as u8)
+    }
+}
+
+pub const AVAIL_SPLIT: u8 = 1 << 0;
+pub const AVAIL_RATE: u8 = 1 << 1;
+pub const AVAIL_ALL: u8 = AVAIL_SPLIT | AVAIL_RATE;
+
+/// Everything [`validate`] and [`eval`] need to know about one instruction,
+/// statically.
+///
+/// `avail` lives in this struct rather than in a separate lookup deliberately.
+/// The previous design gated facts with a `matches!` in `validate`, which meant
+/// a newly added fact opcode silently defaulted to "legal in every mode" — the
+/// failure being a weightmap that reads a fact which cannot exist and quietly
+/// weighs zero. Making availability a required field of the one exhaustive table
+/// makes that omission a compile error instead.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Spec {
+    pub imm: usize,
+    pub pops: usize,
+    pub pushes: usize,
+    pub avail: u8,
+}
+
+/// Static description of one instruction.
 ///
 /// Returns `None` for an unknown opcode, which is what makes an unknown opcode a
 /// validation failure rather than a runtime one.
-pub fn shape(op: u128) -> Option<(usize, usize, usize)> {
-    let s = match op {
-        OP_PUSH => (1, 0, 1),
+///
+/// # Retired opcodes
+///
+/// 20 (`STATUS`), 21 (`IN_AMOUNT`) and 22 (`OUT_AMOUNT`) are permanently retired.
+/// They described a previous-block trace source that nothing ever populated, so
+/// no program using them could run. They are not reused: an off-chain
+/// disassembler built against the old table would otherwise render a new program
+/// plausibly and wrongly. As unknown opcodes they now fail validation, which is
+/// the correct outcome.
+pub fn spec(op: u128) -> Option<Spec> {
+    let (imm, pops, pushes, avail) = match op {
+        OP_PUSH => (1, 0, 1, AVAIL_ALL),
 
-        OP_TARGET_BLOCK | OP_TARGET_TX | OP_OPCODE | OP_STATUS | OP_TXINDEX | OP_PSTONE_INDEX
-        | OP_HEIGHT | OP_MINT_RANK => (0, 0, 1),
-        OP_INPUT => (1, 0, 1),
-        OP_IN_AMOUNT | OP_OUT_AMOUNT => (2, 0, 1),
+        OP_TARGET_BLOCK | OP_TARGET_TX | OP_OPCODE | OP_TXINDEX | OP_PSTONE_INDEX | OP_HEIGHT
+        | OP_MINT_RANK => (0, 0, 1, AVAIL_ALL),
+        OP_INPUT | OP_PRIOR_INPUT => (1, 0, 1, AVAIL_ALL),
+        // The one execution-derived fact, and so the one that cannot be answered
+        // during SPLIT's pre-execution scan.
+        OP_INCOMING_AMOUNT => (2, 0, 1, AVAIL_RATE),
 
-        OP_ADD | OP_SUB | OP_MUL | OP_DIV | OP_MIN | OP_MAX => (0, 2, 1),
-        OP_SQRT => (0, 1, 1),
-        OP_MULDIV => (0, 3, 1),
-        OP_SHR | OP_SHL => (1, 1, 1),
+        OP_ADD | OP_SUB | OP_MUL | OP_DIV | OP_MIN | OP_MAX => (0, 2, 1, AVAIL_ALL),
+        OP_SQRT => (0, 1, 1, AVAIL_ALL),
+        OP_MULDIV => (0, 3, 1, AVAIL_ALL),
+        OP_SHR | OP_SHL => (1, 1, 1, AVAIL_ALL),
 
-        OP_EQ | OP_NE | OP_LT | OP_GT | OP_LE | OP_GE => (0, 2, 1),
+        OP_EQ | OP_NE | OP_LT | OP_GT | OP_LE | OP_GE => (0, 2, 1, AVAIL_ALL),
 
-        OP_AND | OP_OR => (0, 2, 1),
-        OP_NOT => (0, 1, 1),
+        OP_AND | OP_OR => (0, 2, 1, AVAIL_ALL),
+        OP_NOT => (0, 1, 1, AVAIL_ALL),
 
-        OP_DUP => (0, 1, 2),
-        OP_SWAP => (0, 2, 2),
-        OP_DROP => (0, 1, 0),
-        OP_SELECT => (0, 3, 1),
+        OP_DUP => (0, 1, 2, AVAIL_ALL),
+        OP_SWAP => (0, 2, 2, AVAIL_ALL),
+        OP_DROP => (0, 1, 0, AVAIL_ALL),
+        OP_SELECT => (0, 3, 1, AVAIL_ALL),
 
         _ => return None,
     };
-    Some(s)
+    Some(Spec {
+        imm,
+        pops,
+        pushes,
+        avail,
+    })
+}
+
+/// Immediates, pops and pushes only. Kept so the disassembler and the test suite
+/// do not have to care about availability.
+pub fn shape(op: u128) -> Option<(usize, usize, usize)> {
+    spec(op).map(|s| (s.imm, s.pops, s.pushes))
 }
 
 /// Human-readable mnemonic, for the disassembler.
@@ -136,9 +228,8 @@ pub fn mnemonic(op: u128) -> Option<&'static str> {
         OP_TARGET_TX => "TARGET_TX",
         OP_OPCODE => "OPCODE",
         OP_INPUT => "INPUT",
-        OP_STATUS => "STATUS",
-        OP_IN_AMOUNT => "IN_AMOUNT",
-        OP_OUT_AMOUNT => "OUT_AMOUNT",
+        OP_PRIOR_INPUT => "PRIOR_INPUT",
+        OP_INCOMING_AMOUNT => "INCOMING_AMOUNT",
         OP_TXINDEX => "TXINDEX",
         OP_PSTONE_INDEX => "PSTONE_INDEX",
         OP_HEIGHT => "HEIGHT",
@@ -174,19 +265,34 @@ pub fn mnemonic(op: u128) -> Option<&'static str> {
 // Item — the facts a program can see
 // ---------------------------------------------------------------------------
 
-/// Where a rule's items come from, which determines which fact loads are legal.
+/// The action a weightmap subsidises, named in the header rather than encoded in
+/// the program.
 ///
-/// `PrevBlock` items are drawn from the previous block's committed execution
-/// traces, so success and outgoing amounts are known. `SameBlock` items are
-/// parsed from the current block before anything has executed, so they are not.
-/// Using [`OP_STATUS`] or [`OP_OUT_AMOUNT`] in a `SameBlock` rule is a
-/// validation error rather than a silent zero — a vector that reads a fact that
-/// cannot exist is a bug in the vector, and governance should learn that before
-/// the block, not after.
+/// A mint qualifies when the nearest protostone before it *in the same
+/// transaction* targets `(target_block, target_tx)` with `opcode`. Because a
+/// revert drains the transaction's fuel, a mint that executes at all proves
+/// every protostone before it succeeded — so the match is evidence the action
+/// really happened, and that action's declared inputs become readable through
+/// [`OP_PRIOR_INPUT`].
+///
+/// This lives in the header, not the program, for two reasons. It is the part of
+/// a policy a voter most needs to read, and putting it in a struct means reading
+/// it does not require disassembling RPN. And it lets the indexer enforce the
+/// match, so the "only look backwards" rule is a loop bound in one place rather
+/// than a precondition every opcode has to remember.
+///
+/// # The bypass the indexer must filter
+///
+/// A protostone whose header is malformed (`pointer` or `refund` past
+/// `num_outputs + num_protostones`) is refunded and skipped *before* the message
+/// runs, so it never drains fuel — yet it parses as a perfectly good cellpack.
+/// Matching one would let a caller forge a qualifying action for the price of an
+/// out-of-range integer. Qualifier matching must skip them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Source {
-    PrevBlock,
-    SameBlock,
+pub struct Qualifier {
+    pub target_block: u128,
+    pub target_tx: u128,
+    pub opcode: u128,
 }
 
 /// One weighable unit of activity: a single protocol-tag-1 protostone.
@@ -202,12 +308,12 @@ pub struct Item {
     /// recoverable. [`OP_INPUT`] therefore treats out-of-range and padding
     /// identically, both yielding 0.
     pub inputs: Vec<u128>,
-    /// 1 on success, 0 on revert. Always 0 for `SameBlock` items.
-    pub status: u128,
-    /// `(alkane_block, alkane_tx, amount)` that arrived.
+    /// Cellpack inputs of the qualifying prior protostone, after its opcode.
+    /// Empty when the weightmap sets no [`Qualifier`] or nothing matched.
+    pub prior_inputs: Vec<u128>,
+    /// `(alkane_block, alkane_tx, amount)` that actually arrived. Populated only
+    /// for [`Mode::Rate`], where the item is built while the claim executes.
     pub incoming: Vec<(u128, u128, u128)>,
-    /// `(alkane_block, alkane_tx, amount)` that left. Empty for `SameBlock`.
-    pub outgoing: Vec<(u128, u128, u128)>,
     pub txindex: u128,
     pub pstone_index: u128,
     pub height: u128,
@@ -222,17 +328,22 @@ impl Item {
         sum_amount(&self.incoming, block, tx)
     }
 
-    /// Total units of `block:tx` that left, saturating across transfers.
-    pub fn out_amount(&self, block: u128, tx: u128) -> u128 {
-        sum_amount(&self.outgoing, block, tx)
-    }
-
     /// `inputs[i]`, or 0 when absent. Never panics.
     pub fn input(&self, i: u128) -> u128 {
+        Self::nth(&self.inputs, i)
+    }
+
+    /// `prior_inputs[i]`, or 0 when absent. Never panics.
+    pub fn prior_input(&self, i: u128) -> u128 {
+        Self::nth(&self.prior_inputs, i)
+    }
+
+    #[inline]
+    fn nth(v: &[u128], i: u128) -> u128 {
         if i > usize::MAX as u128 {
             return 0;
         }
-        self.inputs.get(i as usize).copied().unwrap_or(0)
+        v.get(i as usize).copied().unwrap_or(0)
     }
 }
 
@@ -245,9 +356,8 @@ impl Default for Item {
             target_tx: 0,
             opcode: 0,
             inputs: Vec::new(),
-            status: 0,
+            prior_inputs: Vec::new(),
             incoming: Vec::new(),
-            outgoing: Vec::new(),
             txindex: 0,
             pstone_index: 0,
             height: 0,
@@ -280,8 +390,8 @@ pub enum ValidateError {
     StackOverflow { at: usize, op: u128, depth: usize },
     /// The program left something other than exactly one value on the stack.
     BadResidue { depth: usize },
-    /// A fact load that cannot be answered for this rule's [`Source`].
-    FactUnavailable { at: usize, op: u128, source: Source },
+    /// A fact load that cannot be answered in this weightmap's [`Mode`].
+    FactUnavailable { at: usize, op: u128, mode: Mode },
     StepBudget { requested: u32 },
 }
 
@@ -313,10 +423,10 @@ impl core::fmt::Display for ValidateError {
                 "program must leave exactly 1 value on the stack, left {}",
                 depth
             ),
-            ValidateError::FactUnavailable { at, op, source } => write!(
+            ValidateError::FactUnavailable { at, op, mode } => write!(
                 f,
-                "opcode {} at word {} reads a fact unavailable to a {:?} rule",
-                op, at, source
+                "opcode {} at word {} reads a fact unavailable in {:?} mode",
+                op, at, mode
             ),
             ValidateError::StepBudget { requested } => {
                 write!(f, "step budget {} exceeds limit {}", requested, MAX_STEPS_LIMIT)
@@ -333,7 +443,7 @@ impl core::fmt::Display for ValidateError {
 ///
 /// Returns the exact number of instructions, which is also the step count
 /// [`eval`] will charge.
-pub fn validate(program: &[u128], source: Source) -> Result<u32, ValidateError> {
+pub fn validate(program: &[u128], mode: Mode) -> Result<u32, ValidateError> {
     if program.is_empty() {
         return Err(ValidateError::Empty);
     }
@@ -349,26 +459,26 @@ pub fn validate(program: &[u128], source: Source) -> Result<u32, ValidateError> 
 
     while i < program.len() {
         let op = program[i];
-        let (imm, pops, pushes) = shape(op).ok_or(ValidateError::UnknownOpcode { at: i, op })?;
+        let s = spec(op).ok_or(ValidateError::UnknownOpcode { at: i, op })?;
 
-        if source == Source::SameBlock && matches!(op, OP_STATUS | OP_OUT_AMOUNT) {
-            return Err(ValidateError::FactUnavailable { at: i, op, source });
+        if s.avail & mode.bit() == 0 {
+            return Err(ValidateError::FactUnavailable { at: i, op, mode });
         }
 
-        if i + imm >= program.len() {
+        if i + s.imm >= program.len() {
             return Err(ValidateError::TruncatedImmediate { at: i, op });
         }
 
-        if depth < pops {
+        if depth < s.pops {
             return Err(ValidateError::StackUnderflow { at: i, op });
         }
-        depth = depth - pops + pushes;
+        depth = depth - s.pops + s.pushes;
         if depth > MAX_STACK {
             return Err(ValidateError::StackOverflow { at: i, op, depth });
         }
 
         steps = steps.saturating_add(1);
-        i += 1 + imm;
+        i += 1 + s.imm;
     }
 
     if depth != 1 {
@@ -432,8 +542,8 @@ pub fn eval(program: &[u128], item: &Item, budget: u32) -> u128 {
         steps += 1;
 
         let op = program[i];
-        let imm_count = match shape(op) {
-            Some((imm, _, _)) => imm,
+        let imm_count = match spec(op) {
+            Some(s) => s.imm,
             None => return 0,
         };
 
@@ -450,16 +560,14 @@ pub fn eval(program: &[u128], item: &Item, budget: u32) -> u128 {
                 let idx = imm!(1);
                 push!(item.input(idx));
             }
-            OP_STATUS => push!(item.status),
-            OP_IN_AMOUNT => {
+            OP_PRIOR_INPUT => {
+                let idx = imm!(1);
+                push!(item.prior_input(idx));
+            }
+            OP_INCOMING_AMOUNT => {
                 let b = imm!(1);
                 let t = imm!(2);
                 push!(item.in_amount(b, t));
-            }
-            OP_OUT_AMOUNT => {
-                let b = imm!(1);
-                let t = imm!(2);
-                push!(item.out_amount(b, t));
             }
             OP_TXINDEX => push!(item.txindex),
             OP_PSTONE_INDEX => push!(item.pstone_index),

@@ -37,7 +37,7 @@ pub mod vm;
 pub mod alkane;
 
 pub use disasm::{describe, disassemble};
-pub use vm::{eval, isqrt, mul_div_floor, validate, Item, Source, ValidateError};
+pub use vm::{eval, isqrt, mul_div_floor, validate, Item, Mode, Qualifier, ValidateError};
 
 /// Flat `Vec<u128>` codec for [`Item`].
 ///
@@ -50,24 +50,24 @@ pub use vm::{eval, isqrt, mul_div_floor, validate, Item, Source, ValidateError};
 /// Layout, per item:
 ///
 /// ```text
-///   target_block, target_tx, opcode, status, txindex, pstone_index, height,
-///   mint_rank,
-///   n_inputs,   inputs...            (n_inputs words)
-///   n_incoming, (block, tx, amount)* (3 * n_incoming words)
-///   n_outgoing, (block, tx, amount)* (3 * n_outgoing words)
+///   target_block, target_tx, opcode, txindex, pstone_index, height, mint_rank,
+///   n_inputs,       inputs...           (n_inputs words)
+///   n_prior_inputs, prior_inputs...     (n_prior_inputs words)
+///   n_incoming,     (block, tx, amount)* (3 * n_incoming words)
 /// ```
 pub mod codec {
     use super::vm::Item;
 
     /// Number of fixed-position words preceding the variable-length sections.
-    const FIXED: usize = 8;
+    const FIXED: usize = 7;
 
     pub fn encode_item(item: &Item) -> Vec<u128> {
-        let mut out = Vec::with_capacity(FIXED + 3 + item.inputs.len() + 3 * (item.incoming.len() + item.outgoing.len()));
+        let mut out = Vec::with_capacity(
+            FIXED + 3 + item.inputs.len() + item.prior_inputs.len() + 3 * item.incoming.len(),
+        );
         out.push(item.target_block);
         out.push(item.target_tx);
         out.push(item.opcode);
-        out.push(item.status);
         out.push(item.txindex);
         out.push(item.pstone_index);
         out.push(item.height);
@@ -76,15 +76,11 @@ pub mod codec {
         out.push(item.inputs.len() as u128);
         out.extend_from_slice(&item.inputs);
 
+        out.push(item.prior_inputs.len() as u128);
+        out.extend_from_slice(&item.prior_inputs);
+
         out.push(item.incoming.len() as u128);
         for (b, t, a) in &item.incoming {
-            out.push(*b);
-            out.push(*t);
-            out.push(*a);
-        }
-
-        out.push(item.outgoing.len() as u128);
-        for (b, t, a) in &item.outgoing {
             out.push(*b);
             out.push(*t);
             out.push(*a);
@@ -130,7 +126,6 @@ pub mod codec {
         item.target_block = take(&mut i)?;
         item.target_tx = take(&mut i)?;
         item.opcode = take(&mut i)?;
-        item.status = take(&mut i)?;
         item.txindex = take(&mut i)?;
         item.pstone_index = take(&mut i)?;
         item.height = take(&mut i)?;
@@ -142,20 +137,18 @@ pub mod codec {
             item.inputs.push(take(&mut i)?);
         }
 
+        let n_prior = take_len(&mut i)?;
+        item.prior_inputs.reserve(n_prior);
+        for _ in 0..n_prior {
+            item.prior_inputs.push(take(&mut i)?);
+        }
+
         let n_incoming = take_len(&mut i)?;
         for _ in 0..n_incoming {
             let b = take(&mut i)?;
             let t = take(&mut i)?;
             let a = take(&mut i)?;
             item.incoming.push((b, t, a));
-        }
-
-        let n_outgoing = take_len(&mut i)?;
-        for _ in 0..n_outgoing {
-            let b = take(&mut i)?;
-            let t = take(&mut i)?;
-            let a = take(&mut i)?;
-            item.outgoing.push((b, t, a));
         }
 
         Some((item, i))
@@ -187,8 +180,8 @@ pub mod codec {
 /// The program is validated once here, not once per item. An invalid program
 /// yields all-zero weights, which the caller must treat as "nothing qualifies"
 /// and fall back to the identity vector — never as a reason to abort the block.
-pub fn evaluate_table(program: &[u128], items: &[Item], source: Source) -> Vec<u128> {
-    match validate(program, source) {
+pub fn evaluate_table(program: &[u128], items: &[Item], mode: Mode) -> Vec<u128> {
+    match validate(program, mode) {
         Err(_) => vec![0; items.len()],
         Ok(steps) => {
             let budget = steps.max(1);

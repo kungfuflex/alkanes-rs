@@ -11,9 +11,9 @@
 use crate::firevector::{
     clear_weights_cache, compute_block_weights, effective_denominator, legacy_mint_count,
     DENOMINATOR_NO_CLAIM, DIESEL_ID, DIESEL_MINT_OPCODE, FIREVECTOR_ID, WEIGHTMAP_KEY,
-    WEIGHTMAP_SOURCE_KEY,
 };
 use crate::tests::helpers::{self as alkane_helpers, clear};
+use alkanes_std_firevector::abi::{pack_weightmap, Weightmap};
 use alkanes_std_firevector::programs;
 use alkanes_std_firevector::vm::*;
 use alkanes_support::cellpack::Cellpack;
@@ -57,6 +57,53 @@ fn tx_with(cellpacks: Vec<Cellpack>, nonce: u32) -> Transaction {
     )
 }
 
+/// As [`tx_with`], but protostone 0 gets a `pointer` far past
+/// `num_outputs + num_protostones`.
+///
+/// Such a protostone is refunded and skipped by `process_message` before its
+/// message runs, so it never executes and never drains fuel — yet it still
+/// decodes here as a well-formed cellpack. It is the cheapest way to fake a
+/// qualifying action, which is why the qualifier must refuse to match it.
+fn tx_with_malformed_first_protostone(cellpacks: Vec<Cellpack>, nonce: u32) -> Transaction {
+    use ordinals::Runestone;
+    use protorune_support::protostone::{Protostone, Protostones};
+
+    let n = cellpacks.len();
+    let protostones: Vec<Protostone> = cellpacks
+        .into_iter()
+        .enumerate()
+        .map(|(i, cellpack)| Protostone {
+            message: cellpack.encipher(),
+            pointer: Some(if i == 0 { 100 } else { 0 }),
+            refund: Some(0),
+            edicts: vec![],
+            from: None,
+            burn: None,
+            protocol_tag: 1u128,
+        })
+        .collect();
+    assert!(n >= 1);
+
+    let runestone: ScriptBuf = (Runestone {
+        etching: None,
+        pointer: Some(0),
+        edicts: Vec::new(),
+        mint: None,
+        protocol: protostones.encipher().ok(),
+    })
+    .encipher();
+
+    let mut tx = tx_with(vec![mint_cellpack()], nonce);
+    // Swap in our hand-built OP_RETURN, keeping the distinct prevout so the txid
+    // stays unique.
+    let last = tx.output.len() - 1;
+    tx.output[last] = bitcoin::TxOut {
+        value: bitcoin::Amount::from_sat(0),
+        script_pubkey: runestone,
+    };
+    tx
+}
+
 /// Commit the header to the transactions it contains.
 ///
 /// `create_block_with_coinbase_tx` fixes the header at construction, so pushing
@@ -81,28 +128,64 @@ fn block_of_mints(n: usize) -> Block {
 
 /// Write a weightmap into FIREVECTOR's contract storage, exactly where
 /// `set_weightmap` on 12:0 puts it.
-fn set_weightmap(program: &[u128], source_byte: u8) {
-    let mut bytes = Vec::with_capacity(program.len() * 16);
-    for w in program {
-        bytes.extend_from_slice(&w.to_le_bytes());
-    }
-    set_weightmap_raw(bytes, source_byte);
+///
+/// Defaults to SPLIT with no qualifier, which is what the equivalence tests need:
+/// every DIESEL mint qualifies and the payout is the plain equal split.
+fn set_weightmap(program: &[u128]) {
+    set_weightmap_full(&Weightmap {
+        mode: Mode::Split,
+        qualifier: None,
+        rate_floor: 0,
+        program: program.to_vec(),
+    });
 }
 
-fn set_weightmap_raw(bytes: Vec<u8>, source_byte: u8) {
-    let base = IndexPointer::default()
-        .keyword("/alkanes/")
-        .select(&<AlkaneId as Into<Vec<u8>>>::into(FIREVECTOR_ID))
-        .keyword("/storage/");
-    base.select(&WEIGHTMAP_KEY.to_vec()).set(Arc::new(bytes));
-    base.select(&WEIGHTMAP_SOURCE_KEY.to_vec())
-        .set(Arc::new(vec![source_byte]));
+fn set_weightmap_full(wm: &Weightmap) {
+    set_weightmap_raw(pack_weightmap(wm));
+}
+
+fn set_weightmap_raw(bytes: Vec<u8>) {
+    write_weightmap_bytes(bytes);
     clear_weights_cache();
 }
 
+/// Write the storage slot WITHOUT dropping the per-block caches.
+///
+/// Models a `set_weightmap` landing partway through a block: the bytes change,
+/// but the block-start snapshot taken by `index_block` does not.
+fn write_weightmap_bytes(bytes: Vec<u8>) {
+    IndexPointer::default()
+        .keyword("/alkanes/")
+        .select(&<AlkaneId as Into<Vec<u8>>>::into(FIREVECTOR_ID))
+        .keyword("/storage/")
+        .select(&WEIGHTMAP_KEY.to_vec())
+        .set(Arc::new(bytes));
+}
+
+/// The denominator the precompile hands transaction `txindex`.
+///
+/// `vout` and `incoming` are the RATE-mode inputs; SPLIT ignores both, so the
+/// equivalence tests pass a protostone vout and no alkanes.
 fn denominator_for(block: &Block, txindex: usize) -> u128 {
-    let txid = block.txdata[txindex].compute_txid();
-    effective_denominator(block, 880_000, txid, &IndexPointer::default())
+    denominator_for_claim(block, txindex, 0, &[])
+}
+
+fn denominator_for_claim(
+    block: &Block,
+    txindex: usize,
+    pstone: u32,
+    incoming: &[(u128, u128, u128)],
+) -> u128 {
+    let tx = &block.txdata[txindex];
+    let vout = tx.output.len() as u32 + 1 + pstone;
+    effective_denominator(
+        block,
+        880_000,
+        tx.compute_txid(),
+        vout,
+        incoming,
+        &IndexPointer::default(),
+    )
 }
 
 /// The weight a program assigns a transaction, via the same path the precompile
@@ -124,7 +207,7 @@ fn identity_vector_returns_exactly_the_legacy_count() {
         let expected = legacy_mint_count(&block);
         assert_eq!(expected, n as u128, "fixture sanity: {n} mints");
 
-        set_weightmap(&programs::identity(), 0);
+        set_weightmap(&programs::identity());
         for i in 1..=n {
             assert_eq!(
                 denominator_for(&block, i),
@@ -154,7 +237,7 @@ fn the_reply_is_sixteen_bytes() {
     // the width is part of the contract, not an implementation detail.
     clear();
     let block = block_of_mints(3);
-    set_weightmap(&programs::identity(), 0);
+    set_weightmap(&programs::identity());
     assert_eq!(denominator_for(&block, 1).to_le_bytes().len(), 16);
 }
 
@@ -169,11 +252,11 @@ fn a_malformed_weightmap_falls_back_to_the_legacy_count() {
     let block = block_of_mints(4);
 
     // Not a multiple of 16 bytes, so not a whole number of u128 words.
-    set_weightmap_raw(vec![0u8; 17], 0);
+    set_weightmap_raw(vec![0u8; 17]);
     assert_eq!(denominator_for(&block, 1), 4);
 
     // Empty.
-    set_weightmap_raw(vec![], 0);
+    set_weightmap_raw(vec![]);
     assert_eq!(denominator_for(&block, 1), 4);
 }
 
@@ -183,7 +266,7 @@ fn an_invalid_program_falls_back_to_the_legacy_count() {
     clear();
     let block = block_of_mints(4);
     // ADD with nothing on the stack — fails validation.
-    set_weightmap(&[OP_ADD], 0);
+    set_weightmap(&[OP_ADD]);
     assert_eq!(denominator_for(&block, 1), 4);
 }
 
@@ -192,9 +275,10 @@ fn an_invalid_program_falls_back_to_the_legacy_count() {
 fn a_program_reading_unavailable_facts_falls_back() {
     clear();
     let block = block_of_mints(4);
-    // STATUS is not knowable in a same-block scan; the program is rejected for
-    // this source rather than silently reading zero.
-    set_weightmap(&[OP_STATUS], 0);
+    // Realized incoming amounts are not knowable during SPLIT's pre-execution
+    // scan; the program is rejected for that mode rather than silently reading
+    // zero, and the rejection degrades to today's count.
+    set_weightmap(&[OP_INCOMING_AMOUNT, 32, 0]);
     assert_eq!(denominator_for(&block, 1), 4);
 }
 
@@ -210,9 +294,307 @@ fn a_vector_that_weights_nothing_falls_back_to_the_communist_mint() {
         OP_TARGET_BLOCK, OP_PUSH, 4, OP_EQ,
         OP_TARGET_TX, OP_PUSH, 9999, OP_EQ, OP_AND,
     ];
-    assert!(validate(&other_app, Source::SameBlock).is_ok());
-    set_weightmap(&other_app, 0);
+    assert!(validate(&other_app, Mode::Split).is_ok());
+    set_weightmap(&other_app);
     assert_eq!(denominator_for(&block, 1), 6);
+}
+
+// ---------------------------------------------------------------------------
+// The two policies this system exists to express
+// ---------------------------------------------------------------------------
+
+/// A pool contract a weightmap can subsidise.
+const POOL: (u128, u128) = (4, 1778);
+/// Its swap opcode.
+const SWAP_OP: u128 = 3;
+
+fn swap_cellpack(amount_in: u128) -> Cellpack {
+    Cellpack {
+        target: AlkaneId {
+            block: POOL.0,
+            tx: POOL.1,
+        },
+        inputs: vec![SWAP_OP, amount_in],
+    }
+}
+
+fn pool_qualifier() -> Qualifier {
+    Qualifier {
+        target_block: POOL.0,
+        target_tx: POOL.1,
+        opcode: SWAP_OP,
+    }
+}
+
+/// A block where `swappers` transactions do `[swap(amount), mint]` and
+/// `plain` transactions do `[mint]` alone.
+fn block_of_swaps(amounts: &[u128], plain: usize) -> Block {
+    let mut block = create_block_with_coinbase_tx(880_000);
+    for (i, amt) in amounts.iter().enumerate() {
+        block
+            .txdata
+            .push(tx_with(vec![swap_cellpack(*amt), mint_cellpack()], i as u32));
+    }
+    for j in 0..plain {
+        block
+            .txdata
+            .push(tx_with(vec![mint_cellpack()], (amounts.len() + j) as u32));
+    }
+    finalize(block)
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[wasm_bindgen_test]
+fn scenario_equal_split_among_callers_of_an_opcode() {
+    // "Split the block equally among everyone who called this opcode."
+    //
+    // The program is a bare membership constant; all the selectivity lives in
+    // the header's qualifier, which the indexer resolves by looking backwards
+    // from each mint. A mint with no preceding swap is not qualified and earns
+    // nothing, even though the program would happily return 1 for it — which is
+    // exactly why the qualifier has to gate the item rather than just hand it
+    // `prior_inputs`.
+    clear();
+    let block = block_of_swaps(&[100, 200, 300], 2); // 3 swappers, 2 plain mints
+    set_weightmap_full(&Weightmap {
+        mode: Mode::Split,
+        qualifier: Some(pool_qualifier()),
+        rate_floor: 0,
+        program: vec![OP_PUSH, 1],
+    });
+
+    let w = weights_of(&block);
+    assert_eq!(w.total, 3, "only the three swappers qualify");
+
+    for i in 1..=3 {
+        assert_eq!(
+            denominator_for(&block, i),
+            3,
+            "swapper {i} takes an equal third"
+        );
+    }
+    for i in 4..=5 {
+        assert_eq!(
+            denominator_for(&block, i),
+            DENOMINATOR_NO_CLAIM,
+            "a mint with no preceding swap earns nothing"
+        );
+    }
+
+    // And the block still pays out exactly once over.
+    let paid: u128 = (1..=3).map(|i| EMISSION / denominator_for(&block, i)).sum();
+    assert!(paid <= EMISSION, "paid {paid} against emission {EMISSION}");
+    assert!(paid + 3 >= EMISSION, "at most one sub-unit of dust per claimant");
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[wasm_bindgen_test]
+fn scenario_linear_in_the_amount_swapped() {
+    // "Pay linearly in the amount that was swapped."
+    //
+    // RATE mode, because a proportional payout cannot be settled through the
+    // `emission / k` channel as a share: only the uniform split lands exactly on
+    // that ladder. Against a fixed `rate_floor` it can, because `ceil` rounds the
+    // denominator up and so rounds every payout DOWN.
+    //
+    // The amount is read from the swap's own declared cellpack input. That is
+    // trustworthy for a reason outside this VM: a reverting protostone drains the
+    // transaction's fuel, so a caller who overstates their swap makes the swap
+    // revert and their own mint dies with it.
+    clear();
+    let rate_floor = 1_000u128;
+    let block = block_of_swaps(&[500, 300, 100], 1);
+    set_weightmap_full(&Weightmap {
+        mode: Mode::Rate,
+        qualifier: Some(pool_qualifier()),
+        rate_floor,
+        // weight = the declared amount_in, scaled 1:1
+        program: programs::linear_on_prior(0, 1, 1),
+    });
+
+    // Weights 500 / 300 / 100 against a floor of 1000 -> denominators
+    // ceil(1000/500)=2, ceil(1000/300)=4, ceil(1000/100)=10.
+    let d1 = denominator_for_claim(&block, 1, 1, &[]);
+    let d2 = denominator_for_claim(&block, 2, 1, &[]);
+    let d3 = denominator_for_claim(&block, 3, 1, &[]);
+    assert_eq!((d1, d2, d3), (2, 4, 10));
+
+    // Bigger swap, bigger payout, and monotone in the declared amount.
+    let (p1, p2, p3) = (EMISSION / d1, EMISSION / d2, EMISSION / d3);
+    assert!(p1 > p2 && p2 > p3, "payout must increase with size: {p1} {p2} {p3}");
+
+    // The mint with no swap in front of it earns nothing.
+    assert_eq!(
+        denominator_for_claim(&block, 4, 0, &[]),
+        DENOMINATOR_NO_CLAIM
+    );
+
+    // Conservation. sum(1/d_i) <= sum(w_i)/rate_floor <= 1, so the block cannot
+    // over-mint no matter what the curve returns.
+    let paid = p1 + p2 + p3;
+    assert!(
+        paid <= EMISSION,
+        "rate mode paid {paid} against emission {EMISSION}"
+    );
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[wasm_bindgen_test]
+fn rate_mode_never_overmints_however_large_the_weights() {
+    // The conservation guarantee has to hold when demand exceeds the floor, which
+    // is the case the clamp exists for: cumulative weight is capped at
+    // `rate_floor`, so claimants past the cap earn nothing rather than the block
+    // paying out twice over.
+    clear();
+    let rate_floor = 1_000u128;
+    // Four swappers each declaring 400 -> 1600 of demand against a floor of 1000.
+    let block = block_of_swaps(&[400, 400, 400, 400], 0);
+    set_weightmap_full(&Weightmap {
+        mode: Mode::Rate,
+        qualifier: Some(pool_qualifier()),
+        rate_floor,
+        program: programs::linear_on_prior(0, 1, 1),
+    });
+
+    let paid: u128 = (1..=4)
+        .map(|i| {
+            let d = denominator_for_claim(&block, i, 1, &[]);
+            if d == DENOMINATOR_NO_CLAIM || d == 0 {
+                0
+            } else {
+                EMISSION / d
+            }
+        })
+        .sum();
+    assert!(
+        paid <= EMISSION,
+        "over-subscribed rate block paid {paid} against emission {EMISSION}"
+    );
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[wasm_bindgen_test]
+fn rate_reservations_are_idempotent() {
+    // `effective_denominator` is reachable more than once for the same claim --
+    // a view-path replay, a trace re-render, a contract calling the precompile
+    // twice. A bare running total would consume the budget again each time and
+    // hand the same claimant a worse denominator on every repeat.
+    clear();
+    let block = block_of_swaps(&[500, 500], 0);
+    set_weightmap_full(&Weightmap {
+        mode: Mode::Rate,
+        qualifier: Some(pool_qualifier()),
+        rate_floor: 1_000,
+        program: programs::linear_on_prior(0, 1, 1),
+    });
+
+    let first = denominator_for_claim(&block, 1, 1, &[]);
+    for _ in 0..5 {
+        assert_eq!(
+            denominator_for_claim(&block, 1, 1, &[]),
+            first,
+            "a repeated query must not consume the rate budget again"
+        );
+    }
+    // The second claimant still gets its full share.
+    assert_eq!(denominator_for_claim(&block, 2, 1, &[]), 2);
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[wasm_bindgen_test]
+fn a_forged_qualifier_earns_nothing() {
+    // H1: a protostone whose header is malformed is refunded and skipped BEFORE
+    // its message runs, so it never drains fuel and the mint after it executes
+    // normally -- while still parsing here as a perfectly good swap cellpack.
+    //
+    // Without the header check in `resolve_qualifier`, one out-of-range integer
+    // in the OP_RETURN would buy a qualifying action that provably never
+    // happened. `crates/alkanes/src/tests/firevector_ordering.rs` proves the
+    // fuel half of this; here we prove the weightmap refuses to pay for it.
+    clear();
+    let mut block = create_block_with_coinbase_tx(880_000);
+    block
+        .txdata
+        .push(tx_with(vec![swap_cellpack(100), mint_cellpack()], 0));
+    block.txdata.push(tx_with_malformed_first_protostone(
+        vec![swap_cellpack(u128::MAX), mint_cellpack()],
+        1,
+    ));
+    let block = finalize(block);
+
+    // Sanity, or the whole test passes vacuously: BOTH transactions must parse
+    // as carrying a DIESEL mint. If the malformed fixture simply failed to
+    // decode, tx 2 would earn nothing for an entirely uninteresting reason.
+    assert_eq!(
+        legacy_mint_count(&block),
+        2,
+        "both fixtures must decode as mint-bearing transactions"
+    );
+
+    set_weightmap_full(&Weightmap {
+        mode: Mode::Split,
+        qualifier: Some(pool_qualifier()),
+        rate_floor: 0,
+        program: vec![OP_PUSH, 1],
+    });
+
+    let w = weights_of(&block);
+    assert_eq!(
+        w.total, 1,
+        "only the honest swap qualifies; the malformed one is not evidence of anything"
+    );
+    assert_eq!(denominator_for(&block, 1), 1, "honest swapper takes the block");
+    assert_eq!(
+        denominator_for(&block, 2),
+        DENOMINATOR_NO_CLAIM,
+        "a skipped protostone must not qualify the mint behind it"
+    );
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[wasm_bindgen_test]
+fn a_weightmap_set_mid_block_does_not_take_effect_until_the_next_block() {
+    // Emission policy must not change underneath a block that is already
+    // running. Reading the map through the executing message's atomic pointer
+    // would make a governance write visible to every mint ordered after it and
+    // invisible to every mint before it — so the effective activation point
+    // would be "the first mint following the setter", a boundary chosen by
+    // whoever orders the block rather than by governance.
+    clear();
+    let block = block_of_mints(3);
+
+    // Block-start state: the plain equal split.
+    set_weightmap(&programs::identity());
+    crate::firevector::snapshot_weightmap(&block);
+
+    // Governance lands a map partway through the block that pays ONLY tx 3.
+    // It has to produce a genuinely different answer from the identity vector,
+    // or the test proves nothing: a map that merely qualifies nobody falls back
+    // to the legacy count, which is 3 — the same number the equal split gives.
+    write_weightmap_bytes(pack_weightmap(&Weightmap {
+        mode: Mode::Split,
+        qualifier: None,
+        rate_floor: 0,
+        program: qualify_from_txindex(3),
+    }));
+
+    // This block still settles under the map it started with: three equal shares.
+    for i in 1..=3 {
+        assert_eq!(
+            denominator_for(&block, i),
+            3,
+            "mint {i} must settle under the block-start weightmap, not the one \
+             written while the block was running"
+        );
+    }
+
+    // A later block picks the new map up, and it pays differently: only the
+    // transaction at txindex 3 qualifies, so it takes the whole block.
+    let next = block_of_mints(3);
+    clear_weights_cache();
+    crate::firevector::snapshot_weightmap(&next);
+    assert_eq!(denominator_for(&next, 1), DENOMINATOR_NO_CLAIM);
+    assert_eq!(denominator_for(&next, 3), 1);
 }
 
 // ---------------------------------------------------------------------------
@@ -220,7 +602,10 @@ fn a_vector_that_weights_nothing_falls_back_to_the_communist_mint() {
 // ---------------------------------------------------------------------------
 
 /// Weight a mint by its protostone index, so that transactions in the same block
-/// get deliberately different weights.
+/// get deliberately different raw weights.
+///
+/// Under SPLIT the clamp flattens all of these to 1; the fixture is still useful
+/// for exercising the memo, since the *table* is still computed per transaction.
 fn weight_by_txindex() -> Vec<u128> {
     // qualify as a DIESEL mint, then weight = txindex
     vec![
@@ -232,6 +617,17 @@ fn weight_by_txindex() -> Vec<u128> {
     ]
 }
 
+/// Qualify only the mints at or after `from`, so a block contains both claimants
+/// and non-claimants.
+fn qualify_from_txindex(from: u128) -> Vec<u128> {
+    vec![
+        OP_TARGET_BLOCK, OP_PUSH, 2, OP_EQ,
+        OP_TARGET_TX, OP_PUSH, 0, OP_EQ, OP_AND,
+        OP_OPCODE, OP_PUSH, 77, OP_EQ, OP_AND,
+        OP_TXINDEX, OP_PUSH, from, OP_GE, OP_AND,
+    ]
+}
+
 #[cfg_attr(not(target_arch = "wasm32"), test)]
 #[wasm_bindgen_test]
 fn different_transactions_get_different_denominators() {
@@ -239,25 +635,156 @@ fn different_transactions_get_different_denominators() {
     // reply *bytes*, which is fine while the answer is block-global and
     // catastrophic once it is per-transaction: the first mint would populate the
     // cache and every later mint would be handed the first one's denominator.
+    //
+    // SPLIT clamps weights to 0/1, so two *qualifying* transactions now share a
+    // denominator by design — that is the equal split working, not a cache hit.
+    // The distinguishing case is therefore qualifier vs non-qualifier, which is
+    // what this fixture builds: tx 1 earns nothing, tx 2 and tx 3 split the block.
     clear();
     let block = block_of_mints(3); // txindex 1, 2, 3
-    set_weightmap(&weight_by_txindex(), 0);
+    set_weightmap(&qualify_from_txindex(2));
 
     let w = weights_of(&block);
-    assert_eq!(w.total, 1 + 2 + 3);
+    assert_eq!(w.total, 2, "two qualifiers, each weighing exactly 1");
 
     let d1 = denominator_for(&block, 1);
     let d2 = denominator_for(&block, 2);
     let d3 = denominator_for(&block, 3);
 
-    // W / w_i
-    assert_eq!(d1, 6 / 1);
-    assert_eq!(d2, 6 / 2);
-    assert_eq!(d3, 6 / 3);
+    assert_eq!(d1, DENOMINATOR_NO_CLAIM, "tx 1 does not qualify");
+    assert_eq!(d2, 2);
+    assert_eq!(d3, 2);
     assert!(
-        d1 != d2 && d2 != d3,
+        d1 != d2,
         "per-transaction answers must not collapse to one cached value: {d1} {d2} {d3}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Conservation: the sum of what everybody is paid must not exceed the emission
+// ---------------------------------------------------------------------------
+
+/// The block reward at height 880_000: `50e8 / 2^(880000/210000)` = `50e8 / 16`.
+///
+/// The real emission is `block_reward - diesel_fee`, but the fee carve-out is a
+/// constant across every mint in a block and so cancels out of the ratio these
+/// tests assert. Using the reward directly keeps them independent of the
+/// coinbase fixture.
+const EMISSION: u128 = 312_500_000;
+
+/// Weight a qualifying mint `hi` if its txindex is below `split_at`, else `lo`.
+///
+/// Exists because the only non-uniform fixture in this file (`weight_by_txindex`)
+/// produces `[1,2,3]`, where `W = 6` is divisible by every weight — the one shape
+/// that conserves by accident. Real weightmaps have no such property.
+fn weight_hi_lo(hi: u128, lo: u128, split_at: u128) -> Vec<u128> {
+    vec![
+        OP_TARGET_BLOCK, OP_PUSH, 2, OP_EQ,
+        OP_TARGET_TX, OP_PUSH, 0, OP_EQ, OP_AND,
+        OP_OPCODE, OP_PUSH, 77, OP_EQ, OP_AND,
+        // hi - (hi - lo) * (txindex >= split_at)
+        OP_PUSH, hi,
+        OP_TXINDEX, OP_PUSH, split_at, OP_GE,
+        OP_PUSH, hi - lo, OP_MUL,
+        OP_SUB,
+        OP_MUL,
+    ]
+}
+
+/// Total paid out across the block, as the DIESEL contract would compute it:
+/// each mint independently gets `emission / denominator`, with no cross-mint
+/// residual accounting and no block-level cap.
+fn total_paid(block: &Block, n_mints: usize) -> u128 {
+    (1..=n_mints)
+        .map(|i| {
+            let d = denominator_for(block, i);
+            if d == 0 { 0 } else { EMISSION / d }
+        })
+        .sum()
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[wasm_bindgen_test]
+fn split_conserves_emission() {
+    // A normalized split must divide the emission, never multiply it. The
+    // contract computes `emission / denominator` per mint and calls
+    // `increase_total_supply` each time, so paying out more than `emission`
+    // inflates DIESEL past its halving schedule.
+    //
+    // Flooring the DENOMINATOR rounds the PAYOUT up: `floor(W/w_i) <= W/w_i`,
+    // so `emission / floor(W/w_i) >= emission * w_i / W` for every claimant at
+    // once. Exact conservation holds iff `w_i` divides `W` for all `i`.
+    clear();
+    let block = block_of_mints(3); // txindex 1, 2, 3
+
+    // The program returns raw weights [3, 1, 1]. Before the clamp that gave
+    // W = 5 and denominators 5/3=1, 5/1=5, 5/1=5, i.e. the first claimant took
+    // the WHOLE block and the other two took a fifth each -- 1.40x emission.
+    // The clamp flattens it to [1, 1, 1], so W = 3 and everyone gets E/3.
+    set_weightmap(&weight_hi_lo(3, 1, 2));
+    assert_eq!(
+        weights_of(&block).total,
+        3,
+        "SPLIT clamps every non-zero weight to 1, so W is the qualifier count"
+    );
+
+    let paid = total_paid(&block, 3);
+    assert!(
+        paid <= EMISSION,
+        "block paid out {} against an emission of {} ({:.2}x) -- a normalized \
+         split must never mint more than the block reward",
+        paid,
+        EMISSION,
+        paid as f64 / EMISSION as f64
+    );
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[wasm_bindgen_test]
+fn split_conserves_emission_across_weight_shapes() {
+    // The failure is systematic, not a quirk of one fixture. Each case is a
+    // (hi, lo, split_at, n_mints) whose weight multiset is stated in the
+    // comment; none of them is exotic.
+    clear();
+    for (hi, lo, split_at, n) in [
+        (3u128, 1u128, 2u128, 3usize), // [3,1,1]   W=5
+        (2, 1, 2, 2),                  // [2,1]     W=3
+        (2, 1, 2, 4),                  // [2,1,1,1] W=5
+        (100, 99, 2, 2),               // [100,99]  W=199
+    ] {
+        let block = block_of_mints(n);
+        set_weightmap(&weight_hi_lo(hi, lo, split_at));
+
+        let paid = total_paid(&block, n);
+        assert!(
+            paid <= EMISSION,
+            "hi={} lo={} n={}: paid {} against emission {} ({:.2}x)",
+            hi, lo, n, paid, EMISSION,
+            paid as f64 / EMISSION as f64
+        );
+    }
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[wasm_bindgen_test]
+fn uniform_weights_conserve_exactly() {
+    // The control. Every qualifier weighing the same is the one shape the
+    // `emission / k` delivery channel can settle exactly, and it is what the
+    // identity vector produces -- which is why activation is payout-neutral.
+    clear();
+    for n in 1..=6usize {
+        let block = block_of_mints(n);
+        set_weightmap(&programs::identity());
+
+        let paid = total_paid(&block, n);
+        assert!(paid <= EMISSION, "n={}: paid {} > emission {}", n, paid, EMISSION);
+        // Dust is at most one sub-unit per claimant, from the single floor.
+        assert!(
+            paid + (n as u128) >= EMISSION,
+            "n={}: paid {} leaves more than {} dust unminted",
+            n, paid, n
+        );
+    }
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), test)]
@@ -265,7 +792,7 @@ fn different_transactions_get_different_denominators() {
 fn the_memo_survives_repeated_queries_without_drifting() {
     clear();
     let block = block_of_mints(3);
-    set_weightmap(&weight_by_txindex(), 0);
+    set_weightmap(&weight_by_txindex());
 
     let first: Vec<u128> = (1..=3).map(|i| denominator_for(&block, i)).collect();
     for _ in 0..5 {
@@ -286,7 +813,7 @@ fn a_mint_with_zero_weight_claims_nothing() {
         OP_TXINDEX, OP_PUSH, 1, OP_SUB,
         OP_MUL,
     ];
-    set_weightmap(&p, 0);
+    set_weightmap(&p);
 
     assert_eq!(
         denominator_for(&block, 1),
@@ -320,7 +847,7 @@ fn a_transaction_with_two_mint_protostones_still_counts_once() {
     let block = finalize(block);
     assert_eq!(legacy_mint_count(&block), 2, "two transactions, not three mints");
 
-    set_weightmap(&programs::identity(), 0);
+    set_weightmap(&programs::identity());
     let w = weights_of(&block);
     assert_eq!(w.total, 2);
     assert_eq!(denominator_for(&block, 1), 2);
@@ -346,7 +873,7 @@ fn non_mint_transactions_do_not_contribute_to_the_denominator() {
 
     let block = finalize(block);
     assert_eq!(legacy_mint_count(&block), 2);
-    set_weightmap(&programs::identity(), 0);
+    set_weightmap(&programs::identity());
     assert_eq!(weights_of(&block).total, 2);
     assert_eq!(denominator_for(&block, 1), 2);
 }
@@ -360,7 +887,7 @@ fn a_transaction_with_no_runestone_is_ignored() {
     let block = finalize(block);
     // The coinbase carries no runestone and must not be scanned as a mint.
     assert_eq!(legacy_mint_count(&block), 1);
-    set_weightmap(&programs::identity(), 0);
+    set_weightmap(&programs::identity());
     assert_eq!(denominator_for(&block, 1), 1);
 }
 
@@ -370,11 +897,11 @@ fn an_empty_block_yields_a_zero_count_without_panicking() {
     clear();
     let block = finalize(create_block_with_coinbase_tx(880_000));
     assert_eq!(legacy_mint_count(&block), 0);
-    set_weightmap(&programs::identity(), 0);
+    set_weightmap(&programs::identity());
     // No claimant, so nothing to divide; must not panic or divide by zero.
     let txid = block.txdata[0].compute_txid();
     assert_eq!(
-        effective_denominator(&block, 880_000, txid, &IndexPointer::default()),
+        effective_denominator(&block, 880_000, txid, 0, &[], &IndexPointer::default()),
         0
     );
 }
@@ -386,10 +913,10 @@ fn an_unknown_caller_claims_nothing() {
     // contract calling the precompile out of curiosity.
     clear();
     let block = block_of_mints(3);
-    set_weightmap(&programs::identity(), 0);
+    set_weightmap(&programs::identity());
     let stranger = create_block_with_coinbase_tx(999_999).txdata[0].compute_txid();
     assert_eq!(
-        effective_denominator(&block, 880_000, stranger, &IndexPointer::default()),
+        effective_denominator(&block, 880_000, stranger, 0, &[], &IndexPointer::default()),
         DENOMINATOR_NO_CLAIM
     );
 }
@@ -414,33 +941,48 @@ fn adversarial_weightmaps_never_panic() {
         [u128::MAX.to_le_bytes(), 0u128.to_le_bytes()].concat(),
     ];
     for bytes in cases {
-        set_weightmap_raw(bytes.clone(), 0);
-        let _ = denominator_for(&block, 1);
-        set_weightmap_raw(bytes, 1);
+        set_weightmap_raw(bytes);
         let _ = denominator_for(&block, 1);
     }
+
+    // Blobs that survive the magic check but are internally inconsistent: a
+    // declared program length that does not match the words present, an unknown
+    // mode, an out-of-range qualifier flag.
+    let mut header = vec![
+        alkanes_std_firevector::abi::WEIGHTMAP_MAGIC,
+        alkanes_std_firevector::abi::WEIGHTMAP_VERSION,
+        0, 0, 0, 0, 0, 0, 99,
+    ];
+    for (i, v) in [(2u128, 7u128), (3, 5), (8, u128::MAX)] {
+        let mut words = header.clone();
+        words[i as usize] = v;
+        let bytes: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
+        set_weightmap_raw(bytes);
+        let _ = denominator_for(&block, 1);
+    }
+    header[8] = 0;
+    let bytes: Vec<u8> = header.iter().flat_map(|w| w.to_le_bytes()).collect();
+    set_weightmap_raw(bytes);
+    let _ = denominator_for(&block, 1);
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), test)]
 #[wasm_bindgen_test]
-fn the_source_byte_selects_which_facts_are_legal() {
+fn the_mode_selects_which_facts_are_legal() {
     clear();
     let block = block_of_mints(3);
 
-    // A prev-block program reading STATUS is legal for source=1 but rejected for
-    // source=0. It weighs nothing here either way (the scan cannot set status),
-    // so both end up at the legacy count — the point is that neither panics and
-    // neither silently mis-evaluates.
-    let p = vec![
-        OP_TARGET_BLOCK, OP_PUSH, 2, OP_EQ,
-        OP_STATUS, OP_AND,
-    ];
-    assert!(validate(&p, Source::PrevBlock).is_ok());
-    assert!(validate(&p, Source::SameBlock).is_err());
+    // A program reading realized incoming amounts is legal in RATE and rejected
+    // in SPLIT, because SPLIT's weights come from a scan that runs before any
+    // message executes. Rejection is deliberate: a vector reading a fact that
+    // cannot exist is a bug in the vector, and governance should learn that at
+    // the setter rather than discover it as silently-zero weights a block later.
+    let p = vec![OP_INCOMING_AMOUNT, 32, 0];
+    assert!(validate(&p, Mode::Rate).is_ok());
+    assert!(validate(&p, Mode::Split).is_err());
 
-    set_weightmap(&p, 0);
-    assert_eq!(denominator_for(&block, 1), 3);
-    set_weightmap(&p, 1);
+    // Rejected in SPLIT -> falls back to the communist mint.
+    set_weightmap(&p);
     assert_eq!(denominator_for(&block, 1), 3);
 }
 
@@ -457,7 +999,7 @@ fn the_memo_is_keyed_by_block_and_never_serves_a_stale_table() {
     // This is also the failure the fixture originally masked: a block whose
     // header does not commit to its transactions hashes the same as any other.
     clear();
-    set_weightmap(&programs::identity(), 0);
+    set_weightmap(&programs::identity());
 
     let small = block_of_mints(3);
     let large = block_of_mints(9);
@@ -483,7 +1025,7 @@ fn the_legacy_rule_is_expressible_end_to_end() {
     // MINT_RANK in transaction order.
     clear();
     let block = block_of_mints(5);
-    set_weightmap(&programs::legacy_winner_takes_all(), 0);
+    set_weightmap(&programs::legacy_winner_takes_all());
 
     let w = weights_of(&block);
     assert_eq!(w.total, 1, "exactly one winner");
@@ -518,12 +1060,12 @@ fn mint_rank_follows_transaction_order_and_skips_non_minters() {
     block.txdata.push(tx_with(vec![mint_cellpack()], 2)); // rank 1
     let block = finalize(block);
 
-    set_weightmap(&programs::first_n_mints(2), 0);
+    set_weightmap(&programs::first_n_mints(2));
     let w = weights_of(&block);
     assert_eq!(w.total, 2, "both mints are within the first two");
 
     // Now only the first mint qualifies; the second must still be rank 1.
-    set_weightmap(&programs::legacy_winner_takes_all(), 0);
+    set_weightmap(&programs::legacy_winner_takes_all());
     assert_eq!(weights_of(&block).total, 1);
     assert_eq!(denominator_for(&block, 1), 1);
     assert_eq!(denominator_for(&block, 3), DENOMINATOR_NO_CLAIM);
@@ -534,7 +1076,7 @@ fn mint_rank_follows_transaction_order_and_skips_non_minters() {
 fn first_n_mints_splits_between_exactly_n_winners() {
     clear();
     let block = block_of_mints(6);
-    set_weightmap(&programs::first_n_mints(3), 0);
+    set_weightmap(&programs::first_n_mints(3));
 
     assert_eq!(weights_of(&block).total, 3);
     for i in 1..=3 {

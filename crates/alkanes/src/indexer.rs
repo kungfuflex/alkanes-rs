@@ -107,6 +107,11 @@ pub fn index_block(block: &Block, height: u32) -> Result<()> {
         setup_firevector(block, height as u64)?;
         check_and_upgrade_precompiled(height)?;
         FuelTank::initialize(&block, height);
+        // After the deploy, so an activation block sees its own seeded identity
+        // vector; before any message runs, so a `set_weightmap` in THIS block
+        // takes effect at H+1 rather than at whichever transaction a miner
+        // happened to order it before.
+        crate::firevector::snapshot_weightmap(block);
     }
     // Get the set of updated addresses from the indexing process
     let _updated_addresses =

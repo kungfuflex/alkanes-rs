@@ -10,7 +10,7 @@
 //! disassemble to explicit `<...>` markers rather than erroring, because someone
 //! auditing a bad vector needs to see where it goes wrong.
 
-use crate::vm::{mnemonic, shape, Source, OP_IN_AMOUNT, OP_OUT_AMOUNT};
+use crate::vm::{mnemonic, shape, Mode, OP_INCOMING_AMOUNT};
 
 /// Render a program as one instruction per line.
 pub fn disassemble(program: &[u128]) -> String {
@@ -41,10 +41,11 @@ pub fn disassemble(program: &[u128]) -> String {
             }
             match op {
                 // Alkane ids read as block:tx rather than as two bare numbers.
-                OP_IN_AMOUNT | OP_OUT_AMOUNT => {
+                OP_INCOMING_AMOUNT => {
                     out.push_str(&format!(" {}:{}", program[i + 1], program[i + 2]));
                 }
-                // Everything else — PUSH, INPUT, SHR, SHL — is plain operands.
+                // Everything else — PUSH, INPUT, PRIOR_INPUT, SHR, SHL — is
+                // plain operands.
                 _ => {
                     for k in 1..=imm {
                         out.push_str(&format!(" {}", program[i + k]));
@@ -62,12 +63,41 @@ pub fn disassemble(program: &[u128]) -> String {
 
 /// Disassembly plus a validation verdict — what a governance UI should show
 /// before a vote.
-pub fn describe(program: &[u128], source: Source) -> String {
+pub fn describe(program: &[u128], mode: Mode) -> String {
     let mut out = disassemble(program);
     out.push('\n');
-    match crate::vm::validate(program, source) {
-        Ok(steps) => out.push_str(&format!("valid ({:?}, {} steps/item)\n", source, steps)),
-        Err(e) => out.push_str(&format!("INVALID ({:?}): {}\n", source, e)),
+    match crate::vm::validate(program, mode) {
+        Ok(steps) => out.push_str(&format!("valid ({:?}, {} steps/item)\n", mode, steps)),
+        Err(e) => out.push_str(&format!("INVALID ({:?}): {}\n", mode, e)),
     }
+    out
+}
+
+/// Disassembly plus the header fields, which is what a voter actually needs.
+///
+/// The header carries the two things the program body cannot show: which action
+/// is being subsidised, and how weights become payouts. A disassembly on its own
+/// is misleading — the same body means "a share of the block" under
+/// [`Mode::Split`] and "a rate against `rate_floor`" under [`Mode::Rate`].
+pub fn describe_weightmap(
+    program: &[u128],
+    mode: Mode,
+    qualifier: Option<crate::vm::Qualifier>,
+    rate_floor: u128,
+) -> String {
+    let mut out = String::new();
+    out.push_str(&format!("mode: {:?}\n", mode));
+    match qualifier {
+        Some(q) => out.push_str(&format!(
+            "qualifies: a prior protostone calling {}:{} opcode {}\n",
+            q.target_block, q.target_tx, q.opcode
+        )),
+        None => out.push_str("qualifies: every DIESEL mint (no prior action required)\n"),
+    }
+    if mode == Mode::Rate {
+        out.push_str(&format!("rate_floor: {}\n", rate_floor));
+    }
+    out.push('\n');
+    out.push_str(&describe(program, mode));
     out
 }
