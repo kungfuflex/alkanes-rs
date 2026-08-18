@@ -42,7 +42,13 @@ use protorune_support::protostone::{Protostone, Protostones};
 use std::sync::{Mutex, MutexGuard};
 use wasm_bindgen_test::wasm_bindgen_test;
 
-use crate::firevector::{DIESEL_ID, DIESEL_MINT_OPCODE};
+use crate::firevector::{DIESEL_ID, DIESEL_MINT_OPCODE, FIREVECTOR_ID, WEIGHTMAP_KEY};
+use alkanes_std_firevector::abi::{pack_weightmap, Weightmap};
+use alkanes_std_firevector::vm::{
+    Mode, OP_AND, OP_EQ, OP_GE, OP_MUL, OP_OPCODE, OP_PUSH, OP_SUB, OP_TARGET_BLOCK,
+    OP_TARGET_TX, OP_TXINDEX,
+};
+use std::sync::Arc;
 
 /// Serialises these tests against each other.
 ///
@@ -362,6 +368,140 @@ fn malformed_header_protostone_does_not_drain_fuel() -> Result<()> {
         succeeded(&outpoint(&tx, 1)),
         "H1: a malformed-header protostone does not drain fuel, so the mint \
          after it runs -- the ordering guarantee cannot be relied on alone"
+    );
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Supply: a block may never mint more than its reward
+// ---------------------------------------------------------------------------
+
+/// DIESEL's running total, read straight out of contract storage.
+///
+/// Read rather than modelled. The conservation tests in `tests::firevector`
+/// divide `EMISSION / denominator` in the test itself, which checks the
+/// denominators are sane but assumes the contract does what we think with them.
+/// This reads what was actually minted.
+fn total_supply() -> u128 {
+    IndexPointer::default()
+        .keyword("/alkanes/")
+        .select(&DIESEL_ID.into())
+        .keyword("/storage/")
+        .select(&b"/totalsupply".to_vec())
+        .get_value::<u128>()
+}
+
+/// `50e8 / 2^(height / 210000)` — the schedule `ChainConfiguration::block_reward`
+/// implements, and the ceiling a block's total issuance must respect.
+fn block_reward_at(height: u32) -> u128 {
+    (50e8 as u128) / (1u128 << ((height as u128) / 210_000u128))
+}
+
+fn install_weightmap(wm: &Weightmap) {
+    IndexPointer::default()
+        .keyword("/alkanes/")
+        .select(&<AlkaneId as Into<Vec<u8>>>::into(FIREVECTOR_ID))
+        .keyword("/storage/")
+        .select(&WEIGHTMAP_KEY.to_vec())
+        .set(Arc::new(pack_weightmap(wm)));
+}
+
+/// A block of `n` independent DIESEL mint transactions.
+fn mint_block(height: u32, n: usize) -> Block {
+    let mut block = create_block_with_coinbase_tx(height);
+    let cb = block.txdata[0].compute_txid();
+    for i in 0..n {
+        block.txdata.push(tx_with_protostones(
+            vec![message(mint_cellpack())],
+            OutPoint::new(cb, i as u32),
+        ));
+    }
+    block
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[wasm_bindgen_test]
+fn a_block_never_mints_more_than_the_block_reward() -> Result<()> {
+    // The end-to-end form of the conservation claim: run real blocks through
+    // `index_block` and assert what `/totalsupply` actually moved by.
+    //
+    // This is the assertion that would have caught the `floor(W/w_i)` bug, which
+    // over-minted by 1.40x for weights [3,1,1]. Every mint calls
+    // `increase_total_supply`, and `observe_upgraded_mint` adds `diesel_fee`
+    // once, so a block's issuance is `sum(value_per_mint) + diesel_fee`. The
+    // contract divides `block_reward - diesel_fee` by our denominator, so
+    // holding `sum(1/d_i) <= 1` bounds the whole thing at `block_reward`.
+    let _g = serial();
+    clear();
+    setup_diesel()?;
+
+    let mut height = BASE + 2;
+    for n in [1usize, 2, 3, 5] {
+        let before = total_supply();
+        let block = mint_block(height, n);
+        index_block(&block, height)?;
+        let minted = total_supply() - before;
+
+        assert!(
+            minted > 0,
+            "n={n}: fixture minted nothing, so the bound proves nothing"
+        );
+        assert!(
+            minted <= block_reward_at(height),
+            "n={n}: block minted {minted} against a reward of {}",
+            block_reward_at(height)
+        );
+        height += 1;
+    }
+    Ok(())
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[wasm_bindgen_test]
+fn a_non_uniform_weightmap_never_mints_more_than_the_block_reward() -> Result<()> {
+    // The teeth. A boolean weightmap would pass this bound even with the old
+    // arithmetic, because an even split happened to conserve; only a genuinely
+    // NON-uniform program breaks it.
+    //
+    // This program returns raw weights [3, 1, 1]. Under `floor(W/w_i)` that gave
+    // W = 5 and denominators 5/3=1, 5/1=5, 5/1=5, so the first claimant took the
+    // entire block and the other two took a fifth each -- 1.40x issuance, every
+    // block, compounding into total supply. The SPLIT clamp flattens it to
+    // [1, 1, 1] and the block pays exactly once over.
+    let _g = serial();
+    clear();
+    setup_diesel()?;
+
+    let height = BASE + 2;
+    install_weightmap(&Weightmap {
+        mode: Mode::Split,
+        qualifier: None,
+        rate_floor: 0,
+        // 3 - 2 * (txindex >= 2)  ->  3 for the first mint, 1 for the rest
+        program: vec![
+            OP_TARGET_BLOCK, OP_PUSH, 2, OP_EQ,
+            OP_TARGET_TX, OP_PUSH, 0, OP_EQ, OP_AND,
+            OP_OPCODE, OP_PUSH, 77, OP_EQ, OP_AND,
+            OP_PUSH, 3,
+            OP_TXINDEX, OP_PUSH, 2, OP_GE,
+            OP_PUSH, 2, OP_MUL,
+            OP_SUB,
+            OP_MUL,
+        ],
+    });
+
+    let before = total_supply();
+    let block = mint_block(height, 3);
+    index_block(&block, height)?;
+    let minted = total_supply() - before;
+    let reward = block_reward_at(height);
+
+    assert!(minted > 0, "nothing minted, so the bound proves nothing");
+    assert!(
+        minted <= reward,
+        "non-uniform weightmap minted {minted} against a reward of {reward} \
+         ({:.2}x) -- emission is no longer bounded by the halving schedule",
+        minted as f64 / reward as f64
     );
     Ok(())
 }
