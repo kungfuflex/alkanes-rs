@@ -1,0 +1,17 @@
+[contract]
+name = "FvOrbital"
+
+# Deliberately no opcode 1. The canonical auth token puts `authenticate` there,
+# and that callback returns two tokens where one went in — every authentication
+# inflates the thing that is supposed to be unique. There is nothing to call
+# here, so that bug is unreachable rather than merely unused.
+[opcodes]
+initialize = 0
+get-name = 99
+get-symbol = 100
+get-total-supply = 101
+
+[views]
+get-name = true
+get-symbol = true
+get-total-supply = true

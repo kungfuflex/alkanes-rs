@@ -1,4 +1,4 @@
-//! DSIGIL — the governance capability for FIREVECTOR, at 12:1.
+//! The FIREVECTOR orbital, at 12:1 — the permission to update the emission vector.
 //!
 //! A single-supply bearer token and nothing else. It has no behaviour to speak
 //! of, which is the point: authority is possession, verified by the holder
@@ -8,6 +8,12 @@
 //! Holding it does not let you mint DIESEL, change the emission schedule, the
 //! halving or the supply cap, touch the protocol fee pot, or move anyone's
 //! funds. Those all live in the genesis alkane, which FIREVECTOR never modifies.
+//!
+//! Deliberately NOT the same token as DSIGIL. DSIGIL exists on chain already and
+//! carries the DIESEL treasury permission; it is spent into 12:0 once to claim
+//! this orbital and is handed straight back. Keeping them separate means the
+//! treasury key and the emission-policy key can be held by different parties, and
+//! transferred to governance on different schedules.
 
 #[allow(unused_imports, dead_code, clippy::all)]
 mod generated {
@@ -25,23 +31,23 @@ use alkanes_support::{parcel::AlkaneTransfer, response::CallResponse};
 use anyhow::Result;
 use metashrew_support::index_pointer::KeyValuePointer;
 
-use generated::DsigilInterface;
+use generated::FvOrbitalInterface;
 
 /// The only supply that will ever exist.
 pub const SUPPLY: u128 = 1;
 
 #[derive(Default)]
-pub struct Dsigil(());
+pub struct FvOrbital(());
 
-impl Dsigil {
+impl FvOrbital {
     fn total_supply_pointer(&self) -> StoragePointer {
         StoragePointer::from_keyword("/totalsupply")
     }
 }
 
-impl AlkaneResponder for Dsigil {}
+impl AlkaneResponder for FvOrbital {}
 
-impl DsigilInterface for Dsigil {
+impl FvOrbitalInterface for FvOrbital {
     /// Mint the one unit. `observe_initialization` makes this callable exactly
     /// once, so there is no second path to supply.
     fn initialize(&self) -> Result<CallResponse> {
@@ -61,14 +67,14 @@ impl DsigilInterface for Dsigil {
     fn get_name(&self) -> Result<CallResponse> {
         let context = self.context()?;
         let mut response = CallResponse::forward(&context.incoming_alkanes);
-        response.data = String::from("DSIGIL").into_bytes();
+        response.data = String::from("FIREVECTOR").into_bytes();
         Ok(response)
     }
 
     fn get_symbol(&self) -> Result<CallResponse> {
         let context = self.context()?;
         let mut response = CallResponse::forward(&context.incoming_alkanes);
-        response.data = String::from("DSIGIL").into_bytes();
+        response.data = String::from("FIREVECTOR").into_bytes();
         Ok(response)
     }
 

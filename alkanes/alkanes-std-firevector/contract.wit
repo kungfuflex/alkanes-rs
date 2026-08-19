@@ -17,7 +17,31 @@ interface firevector {
     /// `sigil` is the alkane whose possession authorises set-weightmap.
     /// Set here and never settable again — a mutable setter would leave a window
     /// in which anyone could claim the capability.
-    initialize: func(sigil-block: u64, sigil-tx: u64) -> result<_, string>;
+    /// `vector-authority` is the alkane whose possession authorises
+    /// `set-weightmap` — the 12:1 FIREVECTOR orbital, which genesis mints into
+    /// this contract's own balance.
+    ///
+    /// `claim-authority` is the alkane that can retrieve that orbital: DSIGIL,
+    /// which already exists on chain and separately holds the DIESEL treasury
+    /// permission. Spending it into `claim-vector-orbital` hands out the orbital
+    /// and returns DSIGIL unchanged, so DSIGIL keeps its treasury role.
+    ///
+    /// Both are set here and never settable again — a mutable setter would leave
+    /// a window in which anyone could claim the capability. A claim-authority of
+    /// 0:0 means the orbital is unclaimable and stays locked here.
+    initialize: func(
+        vector-authority-block: u64,
+        vector-authority-tx: u64,
+        claim-authority-block: u64,
+        claim-authority-tx: u64,
+    ) -> result<_, string>;
+
+    /// Spend DSIGIL in, receive the 12:1 FIREVECTOR orbital. DSIGIL is returned
+    /// by the same call. Callable once — afterwards the orbital has left.
+    claim-vector-orbital: func() -> result<_, string>;
+
+    /// The alkane that may call `claim-vector-orbital` (DSIGIL).
+    get-claim-authority: func() -> result<list<u8>, string>;
 
     /// Evaluate a program over a whole item table in one pass. This is the shape
     /// the indexer preamble uses — one call per block, never one per item.
@@ -66,7 +90,7 @@ interface firevector {
     /// The active weightmap's mode discriminant.
     get-weightmap-mode: func() -> result<u64, string>;
 
-    /// The governance sigil that may call set-weightmap. Set once, at init.
+    /// The alkane whose possession authorises `set-weightmap` (the 12:1 orbital).
     get-sigil: func() -> result<list<u8>, string>;
 
     get-name: func() -> result<string, string>;

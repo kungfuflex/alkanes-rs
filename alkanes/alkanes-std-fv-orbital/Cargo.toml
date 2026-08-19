@@ -1,5 +1,5 @@
 [package]
-name = "alkanes-std-dsigil"
+name = "alkanes-std-fv-orbital"
 version.workspace = true
 edition.workspace = true
 

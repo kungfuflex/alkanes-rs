@@ -1,6 +1,13 @@
-package alkanes:dsigil;
+package alkanes:fv-orbital;
 
-/// DSIGIL — the capability that authorises `set-weightmap` on the FIREVECTOR VM.
+/// The FIREVECTOR orbital, at 12:1 — the permission to update the emission
+/// vector, and nothing else.
+///
+/// Distinct from DSIGIL, which already exists on chain and holds the DIESEL
+/// treasury permission. DSIGIL keeps that role; it is spent into 12:0 once to
+/// claim this orbital, and is returned by the same call. Splitting them means
+/// the treasury key and the emission-policy key can live in different hands and
+/// be handed to governance independently.
 ///
 /// Exactly one unit exists, minted at initialisation and never again. Authority
 /// is possession: holding the unit and spending it into a call is the proof.
@@ -18,13 +25,13 @@ package alkanes:dsigil;
 /// is no callback to call, so "exactly one DSIGIL exists" is an invariant the
 /// contract actually holds. The FIREVECTOR VM checks possession directly and
 /// never calls back here.
-interface dsigil {
+interface fv-orbital {
     initialize: func() -> result<_, string>;
     get-name: func() -> result<string, string>;
     get-symbol: func() -> result<string, string>;
     get-total-supply: func() -> result<u64, string>;
 }
 
-world dsigil-world {
-    export dsigil;
+world fv-orbital-world {
+    export fv-orbital;
 }

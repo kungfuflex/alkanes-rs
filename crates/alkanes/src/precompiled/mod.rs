@@ -21,7 +21,7 @@ pub mod fr_btc_build_v1_3_0;
 pub mod fr_btc_build_v1_3_1;
 pub mod fr_sigil_build;
 pub mod firevector_build;
-pub mod dsigil_build;
+pub mod fv_orbital_build;
 pub mod free_mint_build;
 pub mod alkanes_std_recycle_build;
 

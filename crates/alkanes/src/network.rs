@@ -11,10 +11,10 @@ use crate::precompiled::{
     alkanes_std_genesis_alkane_upgraded_eoa_mainnet_build,
     alkanes_std_genesis_alkane_upgraded_eoa_regtest_build,
     alkanes_std_genesis_alkane_upgraded_mainnet_build,
-    alkanes_std_genesis_alkane_upgraded_regtest_build, dsigil_build, firevector_build,
+    alkanes_std_genesis_alkane_upgraded_regtest_build, firevector_build, fv_orbital_build,
     fr_btc_build, fr_sigil_build,
 };
-use crate::utils::pipe_storagemap_to;
+use crate::utils::{balance_pointer, pipe_storagemap_to};
 use crate::view::simulate_parcel;
 use crate::vm::utils::sequence_pointer;
 use alkanes_support::cellpack::Cellpack;
@@ -115,9 +115,13 @@ pub fn firevector_bytes() -> Vec<u8> {
     firevector_build::get_bytes()
 }
 
-/// DSIGIL, the governance capability, deployed at 12:1.
-pub fn dsigil_bytes() -> Vec<u8> {
-    dsigil_build::get_bytes()
+/// The FIREVECTOR orbital (12:1) — the permission to update the emission vector.
+///
+/// Distinct from DSIGIL, which already exists on chain and holds the DIESEL
+/// treasury permission. DSIGIL is spent into 12:0 once to claim this, and is
+/// handed straight back.
+pub fn fv_orbital_bytes() -> Vec<u8> {
+    fv_orbital_build::get_bytes()
 }
 
 #[cfg(feature = "mainnet")]
@@ -264,7 +268,22 @@ pub mod genesis {
     /// vector loaded, `W / w_i == N`, and the DIESEL contract is not modified at
     /// all, so its metered instruction count and the 16-byte reply size are
     /// unchanged.
-    pub const FIREVECTOR_FORK_HEIGHT: u32 = u32::MAX;
+    /// FIREVECTOR activates at the DIESEL v2 upgrade.
+    ///
+    /// Retroactive on purpose, and safe for a specific reason: the LEGACY mint
+    /// path calls neither precompile. `create_mint_transfer` uses only
+    /// `observe_mint()` and `current_block_reward()` — it never asks for the
+    /// mint count or the miner fee. So below the upgrade the contract does not
+    /// consult FIREVECTOR at all, and above it the seeded identity vector
+    /// returns exactly the count `_get_number_diesel_mints` would have returned.
+    ///
+    /// The upgraded binary activates at GENESIS_UPGRADE_BLOCK_HEIGHT, but the
+    /// communist split is state-triggered by `/upgrade_initialized`, which the
+    /// `upgrade` transaction set later (h=913043). Between the two the upgraded
+    /// binary still runs the legacy first-come path — which, again, asks
+    /// FIREVECTOR nothing. Activating at the binary swap is therefore both
+    /// earlier than it needs to be and harmless.
+    pub const FIREVECTOR_FORK_HEIGHT: u32 = GENESIS_UPGRADE_BLOCK_HEIGHT;
     /// Height at which 12:0 (the VM) and 12:1 (DSIGIL) are deployed.
     ///
     /// Separate from, and necessarily earlier than, FIREVECTOR_FORK_HEIGHT: the
@@ -273,7 +292,7 @@ pub mod genesis {
     /// writes two contracts and mints the single DSIGIL onto the genesis
     /// outpoint — so it is gated rather than unconditional, and is likewise
     /// UNSCHEDULED until governance picks a block.
-    pub const FIREVECTOR_DEPLOY_HEIGHT: u32 = u32::MAX;
+    pub const FIREVECTOR_DEPLOY_HEIGHT: u32 = GENESIS_UPGRADE_BLOCK_HEIGHT;
     /// v3 fork: removes the `max_virtual_vout = num_outputs + 100` protostone
     /// cap in `protorune::protostone::process_message`. That cap is an artifact
     /// of the old 80-byte OP_RETURN standardness limit and has no protocol
@@ -470,7 +489,7 @@ pub fn setup_firevector(block: &Block, height: u64) -> Result<()> {
         return Ok(());
     }
     let firevector = AlkaneId { block: 12, tx: 0 };
-    let dsigil = AlkaneId { block: 12, tx: 1 };
+    let orbital = AlkaneId { block: 12, tx: 1 };
 
     let mut vm_ptr = IndexPointer::from_keyword("/alkanes/").select(&firevector.clone().into());
     if vm_ptr.get().len() != 0 {
@@ -478,8 +497,8 @@ pub fn setup_firevector(block: &Block, height: u64) -> Result<()> {
     }
     vm_ptr.set(Arc::new(compress(firevector_bytes())?));
 
-    let mut sigil_ptr = IndexPointer::from_keyword("/alkanes/").select(&dsigil.clone().into());
-    sigil_ptr.set(Arc::new(compress(dsigil_bytes())?));
+    let mut orbital_ptr = IndexPointer::from_keyword("/alkanes/").select(&orbital.clone().into());
+    orbital_ptr.set(Arc::new(compress(fv_orbital_bytes())?));
 
     let mut atomic: AtomicPointer = AtomicPointer::default();
     let empty_tx = Transaction {
@@ -489,8 +508,8 @@ pub fn setup_firevector(block: &Block, height: u64) -> Result<()> {
         lock_time: bitcoin::absolute::LockTime::ZERO,
     };
 
-    // DSIGIL first: it mints the single unit that authorises the VM's setter.
-    let sigil_parcel = MessageContextParcel {
+    // The orbital first: it mints the single unit that authorises set_weightmap.
+    let orbital_parcel = MessageContextParcel {
         atomic: atomic.derive(&IndexPointer::default()),
         runes: vec![],
         transaction: empty_tx.clone(),
@@ -499,7 +518,7 @@ pub fn setup_firevector(block: &Block, height: u64) -> Result<()> {
         pointer: 0,
         refund_pointer: 0,
         calldata: (Cellpack {
-            target: dsigil.clone(),
+            target: orbital.clone(),
             inputs: vec![0],
         })
         .encipher(),
@@ -508,7 +527,7 @@ pub fn setup_firevector(block: &Block, height: u64) -> Result<()> {
         vout: 0,
         runtime_balances: Box::<BalanceSheet<AtomicPointer>>::new(BalanceSheet::default()),
     };
-    let (sigil_response, _) = simulate_parcel(&sigil_parcel, u64::MAX)?;
+    let (orbital_response, _) = simulate_parcel(&orbital_parcel, u64::MAX)?;
 
     // Then the VM, told which alkane holds authority over its weightmap. The
     // sigil id is set here and is not settable afterwards — a mutable setter
@@ -523,7 +542,7 @@ pub fn setup_firevector(block: &Block, height: u64) -> Result<()> {
         refund_pointer: 0,
         calldata: (Cellpack {
             target: firevector.clone(),
-            inputs: vec![0, dsigil.block, dsigil.tx],
+            inputs: vec![0, orbital.block, orbital.tx, crate::firevector::DSIGIL_ID.block, crate::firevector::DSIGIL_ID.tx],
         })
         .encipher(),
         sheets: Box::<BalanceSheet<AtomicPointer>>::new(BalanceSheet::default()),
@@ -541,34 +560,28 @@ pub fn setup_firevector(block: &Block, height: u64) -> Result<()> {
         ));
     }
 
-    // Merge the DSIGIL unit into the genesis outpoint's existing chunk. MERGE,
-    // not overwrite: `setup_diesel` wrote the DIESEL premine to that outpoint
-    // first, and a plain chunked write drops it — which happened once and
-    // snowballed into supply drift.
-    let outpoint_bytes = outpoint_encode(&OutPoint {
-        txid: tx_hex_to_txid(genesis::GENESIS_OUTPOINT)?,
-        vout: 0,
-    })?;
-    let sheet: BalanceSheet<AtomicPointer> =
-        <AlkaneTransferParcel as TryInto<BalanceSheet<AtomicPointer>>>::try_into(
-            sigil_response.alkanes.into(),
-        )?;
-    save_chunked_merging(
-        &sheet,
-        &mut atomic.derive(
-            &RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
-                .OUTPOINT_TO_RUNES
-                .select(&outpoint_bytes),
-        ),
-        false,
-    )?;
+    // The DSIGIL unit lands in 12:0's own balance, not on the genesis outpoint.
+    //
+    // Two reasons. Writing to the genesis outpoint means merging into a chunk
+    // that `setup_diesel` already wrote the premine into — a rewrite of historic
+    // state, and the exact operation that once dropped the premine and snowballed
+    // into supply drift. And an alkane's balance is lazily materialized, so
+    // nothing needs reindexing for 12:0 to hold it.
+    //
+    // It also puts the capability somewhere with a defined release path rather
+    // than on an outpoint whose spender is decided by history.
+    for transfer in orbital_response.alkanes.0.iter() {
+        let mut ptr = balance_pointer(&mut atomic, &firevector, &transfer.id);
+        let existing = ptr.get_value::<u128>();
+        ptr.set_value::<u128>(existing.saturating_add(transfer.value));
+    }
 
     // Persist both contracts' storage: DSIGIL's supply, and the VM's sigil id
     // plus its seeded identity weightmap. Without this the initialize writes are
     // discarded and the VM comes up with no policy and no authority.
     pipe_storagemap_to(
-        &sigil_response.storage,
-        &mut atomic.derive(&IndexPointer::from_keyword("/alkanes/").select(&dsigil.clone().into())),
+        &orbital_response.storage,
+        &mut atomic.derive(&IndexPointer::from_keyword("/alkanes/").select(&orbital.clone().into())),
     );
     pipe_storagemap_to(
         &vm_response.storage,

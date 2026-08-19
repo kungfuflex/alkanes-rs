@@ -8,7 +8,7 @@
 //! Everything else here is about the ways that claim could quietly stop being
 //! true.
 
-use crate::firevector::{
+use crate::firevector::{DSIGIL_ID, FV_ORBITAL_ID, 
     clear_weights_cache, compute_block_weights, effective_denominator, legacy_mint_count,
     DENOMINATOR_NO_CLAIM, DIESEL_ID, DIESEL_MINT_OPCODE, FIREVECTOR_ID, WEIGHTMAP_KEY,
 };
@@ -1441,5 +1441,179 @@ fn treasury_routing_leaves_the_split_among_minters_untouched() {
     });
     for i in 1..=4 {
         assert_eq!(denominator_for(&block, i), 4, "still an equal 4-way split");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The two capabilities: DSIGIL claims the orbital, the orbital sets the vector
+// ---------------------------------------------------------------------------
+
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[wasm_bindgen_test]
+fn the_orbital_is_held_by_the_vm_not_by_an_outpoint() {
+    // Genesis mints 12:1 into 12:0's own balance rather than onto the genesis
+    // outpoint. Two reasons: the outpoint already holds the DIESEL premine and
+    // rewriting that chunk is what once dropped it, and an alkane balance is
+    // lazily materialized so nothing needs reindexing. It also gives the
+    // capability a defined release path instead of belonging to whoever spends a
+    // historic UTXO.
+    clear();
+    let block = finalize(create_block_with_coinbase_tx(880_000));
+    crate::network::setup_firevector(&block, 880_000).expect("setup");
+
+    let held = IndexPointer::from_keyword("/alkanes/")
+        .select(&<AlkaneId as Into<Vec<u8>>>::into(FV_ORBITAL_ID))
+        .keyword("/balances/")
+        .select(&<AlkaneId as Into<Vec<u8>>>::into(FIREVECTOR_ID))
+        .get_value::<u128>();
+    assert_eq!(held, 1, "12:0 must hold exactly one 12:1 orbital");
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[wasm_bindgen_test]
+fn the_vm_records_both_authorities_separately() {
+    // The emission-policy key (12:1) and the key that can retrieve it (DSIGIL)
+    // are different tokens on purpose. DSIGIL keeps the DIESEL treasury
+    // permission it already has; the orbital only ever governs the vector.
+    clear();
+    let block = finalize(create_block_with_coinbase_tx(880_000));
+    crate::network::setup_firevector(&block, 880_000).expect("setup");
+
+    let read = |key: &[u8]| {
+        IndexPointer::from_keyword("/alkanes/")
+            .select(&<AlkaneId as Into<Vec<u8>>>::into(FIREVECTOR_ID))
+            .keyword("/storage/")
+            .select(&key.to_vec())
+            .get()
+            .as_ref()
+            .clone()
+    };
+    let id_of = |b: Vec<u8>| AlkaneId {
+        block: u128::from_le_bytes(b[0..16].try_into().unwrap()),
+        tx: u128::from_le_bytes(b[16..32].try_into().unwrap()),
+    };
+
+    assert_eq!(id_of(read(b"/sigil")), FV_ORBITAL_ID, "vector authority is 12:1");
+    assert_eq!(
+        id_of(read(b"/claim_authority")),
+        DSIGIL_ID,
+        "claim authority is DSIGIL"
+    );
+    assert_ne!(
+        FV_ORBITAL_ID, DSIGIL_ID,
+        "the two capabilities must not be the same token"
+    );
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[wasm_bindgen_test]
+fn an_unset_dsigil_leaves_the_orbital_locked() {
+    // DSIGIL_ID is 0:0 until its real on-chain id is filled in. That must mean
+    // "nobody can claim", not "anybody can" — shipping unconfigured has to fail
+    // closed, because the thing being handed out is the emission-policy key.
+    assert_eq!(
+        DSIGIL_ID,
+        AlkaneId { block: 0, tx: 0 },
+        "if this has been set, update this test and the deployment checklist"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Retroactive equivalence from the DIESEL v2 upgrade
+// ---------------------------------------------------------------------------
+
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[wasm_bindgen_test]
+fn the_legacy_mint_path_never_consults_firevector() {
+    // The reason activating retroactively is safe. `create_mint_transfer` — the
+    // pre-upgrade winner-takes-all path — uses only `observe_mint()` and
+    // `current_block_reward()`. It asks for neither the mint count nor the miner
+    // fee, so below the v2 upgrade the contract does not consult FIREVECTOR at
+    // all and nothing FIREVECTOR does can change historical emission.
+    //
+    // Asserted against the contract source so it fails if that path ever starts
+    // calling a precompile.
+    let src = include_str!(
+        "../../../../alkanes/alkanes-std-genesis-alkane-upgraded-eoa/src/lib.rs"
+    );
+    let start = src
+        .find("pub fn create_mint_transfer")
+        .expect("legacy mint path must exist");
+    let body = &src[start..start + 900];
+    let end = body.find("\n    }").expect("function must terminate");
+    let body = &body[..end];
+
+    assert!(
+        !body.contains("number_diesel_mints"),
+        "legacy path must not consult 800000000:2"
+    );
+    assert!(
+        !body.contains("total_miner_fee"),
+        "legacy path must not consult 800000000:3"
+    );
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[wasm_bindgen_test]
+fn activation_sits_at_the_v2_upgrade_and_both_precompiles_are_inert_below_it() {
+    // Deploy and fork are both the v2 upgrade height, and deploy must not be
+    // later than fork or the vector would be consulted before it exists.
+    assert!(
+        crate::network::genesis::FIREVECTOR_DEPLOY_HEIGHT
+            <= crate::network::genesis::FIREVECTOR_FORK_HEIGHT,
+        "code must exist before the denominator changes meaning"
+    );
+
+    clear();
+    let block = block_of_mints(5);
+    set_weightmap(&programs::identity());
+    clear_weights_cache();
+
+    let below = crate::network::genesis::FIREVECTOR_FORK_HEIGHT as u64;
+    if below > 0 {
+        let h = below - 1;
+        let txid = block.txdata[1].compute_txid();
+        // Below the fork the denominator is the plain mint count...
+        assert_eq!(
+            effective_denominator(&block, h, txid, 0, &[], &IndexPointer::default()),
+            legacy_mint_count(&block)
+        );
+        // ...and the reported miner fee is the true coinbase total, untouched.
+        assert_eq!(
+            effective_miner_fee(&block, h, 123_456, &IndexPointer::default()),
+            123_456
+        );
+    }
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[wasm_bindgen_test]
+fn the_identity_vector_is_idempotent_across_the_activation_boundary() {
+    // "Equivalent for every transaction since the v2 upgrade": at and above the
+    // fork, with the seeded identity vector, the denominator is the same mint
+    // count the old precompile returned — so every payout, and therefore every
+    // fuel charge in the unmodified contract, is unchanged.
+    clear();
+    set_weightmap(&programs::identity());
+    let fork = crate::network::genesis::FIREVECTOR_FORK_HEIGHT as u64;
+
+    for n in [1usize, 3, 20] {
+        let block = block_of_mints(n);
+        for h in [fork, fork + 1, fork + 5_000] {
+            clear_weights_cache();
+            for i in 1..=n {
+                let txid = block.txdata[i].compute_txid();
+                assert_eq!(
+                    effective_denominator(&block, h, txid, 0, &[], &IndexPointer::default()),
+                    n as u128,
+                    "n={n} h={h}"
+                );
+            }
+            assert_eq!(
+                effective_miner_fee(&block, h, 999, &IndexPointer::default()),
+                999,
+                "identity vector must not divert anything to the treasury"
+            );
+        }
     }
 }

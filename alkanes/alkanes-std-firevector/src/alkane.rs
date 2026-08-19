@@ -24,7 +24,7 @@ use alkanes_runtime::{
     println,
     stdio::{stdout, Write},
 };
-use alkanes_support::response::CallResponse;
+use alkanes_support::{parcel::AlkaneTransfer, response::CallResponse};
 use anyhow::{anyhow, Result};
 
 use crate::abi;
@@ -40,8 +40,33 @@ impl Firevector {
     fn weightmap_pointer(&self) -> StoragePointer {
         StoragePointer::from_keyword("/weightmap")
     }
+    /// The 12:1 orbital, whose possession authorises `set_weightmap`.
     fn sigil_pointer(&self) -> StoragePointer {
         StoragePointer::from_keyword("/sigil")
+    }
+    /// DSIGIL, whose possession authorises retrieving that orbital.
+    fn claim_authority_pointer(&self) -> StoragePointer {
+        StoragePointer::from_keyword("/claim_authority")
+    }
+    fn orbital_claimed_pointer(&self) -> StoragePointer {
+        StoragePointer::from_keyword("/orbital_claimed")
+    }
+
+    fn read_id(raw: &[u8]) -> Option<AlkaneId> {
+        if raw.len() < 32 {
+            return None;
+        }
+        Some(AlkaneId {
+            block: u128::from_le_bytes(raw[0..16].try_into().ok()?),
+            tx: u128::from_le_bytes(raw[16..32].try_into().ok()?),
+        })
+    }
+
+    fn write_id(id: &AlkaneId) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(32);
+        bytes.extend_from_slice(&id.block.to_le_bytes());
+        bytes.extend_from_slice(&id.tx.to_le_bytes());
+        bytes
     }
 
     fn sigil(&self) -> Result<AlkaneId> {
@@ -81,14 +106,25 @@ impl Firevector {
 }
 
 impl FirevectorInterface for Firevector {
-    fn initialize(&self, sigil_block: u128, sigil_tx: u128) -> Result<CallResponse> {
+    fn initialize(
+        &self,
+        vector_authority_block: u128,
+        vector_authority_tx: u128,
+        claim_authority_block: u128,
+        claim_authority_tx: u128,
+    ) -> Result<CallResponse> {
         self.observe_initialization()?;
         let context = self.context()?;
 
-        let mut bytes = Vec::with_capacity(32);
-        bytes.extend_from_slice(&sigil_block.to_le_bytes());
-        bytes.extend_from_slice(&sigil_tx.to_le_bytes());
-        self.sigil_pointer().set(Arc::new(bytes));
+        self.sigil_pointer().set(Arc::new(Self::write_id(&AlkaneId {
+            block: vector_authority_block,
+            tx: vector_authority_tx,
+        })));
+        self.claim_authority_pointer()
+            .set(Arc::new(Self::write_id(&AlkaneId {
+                block: claim_authority_block,
+                tx: claim_authority_tx,
+            })));
 
         // Seed with the identity vector so the contract is never in a state where
         // it has a sigil but no policy. SPLIT with no qualifier, which reproduces
@@ -165,6 +201,60 @@ impl FirevectorInterface for Firevector {
             None => abi::MODE_SPLIT,
         };
         response.data = v.to_le_bytes().to_vec();
+        Ok(response)
+    }
+
+    /// Spend DSIGIL in, receive the 12:1 FIREVECTOR orbital.
+    ///
+    /// The orbital is minted into this contract's balance at genesis rather than
+    /// onto an outpoint, so the emission-policy capability starts with a defined
+    /// release path instead of belonging to whoever spends a historic UTXO. This
+    /// is that path.
+    ///
+    /// DSIGIL is returned by `CallResponse::forward`, so claiming does not
+    /// consume it and it keeps its DIESEL treasury permission. That separation is
+    /// the point: after this call the treasury key and the emission-policy key
+    /// are two different tokens that can be held by different parties and handed
+    /// to governance on different schedules.
+    fn claim_vector_orbital(&self) -> Result<CallResponse> {
+        let context = self.context()?;
+
+        let authority = Self::read_id(self.claim_authority_pointer().get().as_ref())
+            .filter(|a| *a != AlkaneId { block: 0, tx: 0 })
+            .ok_or_else(|| anyhow!("no claim authority is set; the orbital is not claimable"))?;
+
+        if !context
+            .incoming_alkanes
+            .0
+            .iter()
+            .any(|t| t.id == authority && t.value > 0)
+        {
+            return Err(anyhow!(
+                "claim authority (DSIGIL) not present in incoming alkanes"
+            ));
+        }
+
+        // Once. Not because a second claim could mint anything — there is one
+        // orbital and it has already left — but so a repeat is an explicit revert
+        // rather than a silent no-op that reads as success.
+        if !self.orbital_claimed_pointer().get().is_empty() {
+            return Err(anyhow!("the vector orbital has already been claimed"));
+        }
+        self.orbital_claimed_pointer().set(Arc::new(vec![0x01]));
+
+        let orbital = self.sigil()?;
+        let mut response = CallResponse::forward(&context.incoming_alkanes);
+        response.alkanes.0.push(AlkaneTransfer {
+            id: orbital,
+            value: 1,
+        });
+        Ok(response)
+    }
+
+    fn get_claim_authority(&self) -> Result<CallResponse> {
+        let context = self.context()?;
+        let mut response = CallResponse::forward(&context.incoming_alkanes);
+        response.data = self.claim_authority_pointer().get().as_ref().clone();
         Ok(response)
     }
 

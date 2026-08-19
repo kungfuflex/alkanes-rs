@@ -11,6 +11,8 @@ set-weightmap = 10
 get-weightmap = 11
 get-weightmap-mode = 12
 get-sigil = 13
+claim-vector-orbital = 14
+get-claim-authority = 15
 get-name = 99
 get-symbol = 100
 
@@ -24,6 +26,7 @@ get-symbol = 100
 get-weightmap = true
 get-weightmap-mode = true
 get-sigil = true
+get-claim-authority = true
 evaluate = true
 simulate = true
 disassemble-program = true
