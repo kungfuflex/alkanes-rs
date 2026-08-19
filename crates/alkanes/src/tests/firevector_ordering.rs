@@ -524,3 +524,166 @@ fn diesel_is_not_gasless() {
          protostone-ordering invariant FIREVECTOR's qualifier depends on"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Fuel parity
+// ---------------------------------------------------------------------------
+// The claim that makes this safe to activate on a live chain: FIREVECTOR does
+// not change what a DIESEL mint costs in fuel.
+//
+// It rests on three things, and until now all three were argued rather than
+// measured. The genesis alkane is not modified, so its metered instruction count
+// cannot move. `handle_extcall` short-circuits `800000000:*` at :762, before
+// `compute_extcall_fuel` at :815, so a precompile call pays no FUEL_EXTCALL and
+// the callee reports `fuel_used = 0`. And the reply stays 16 bytes, so
+// `returndatacopy` (FUEL_PER_LOAD_BYTE, 2/byte) charges what it charged before.
+//
+// The live risk is the third one plus a fourth nobody stated: that the CONTENT
+// of a weightmap could reach the mint's fuel. A governance write is not a
+// consensus upgrade, so if a large or expensive vector made mints cost more,
+// governance could shift fuel accounting — and therefore which other protostones
+// in a block succeed — without anyone treating it as a fork.
+
+/// Index one block of `n` mints under `wm` and return the gas each DIESEL mint
+/// actually burned, straight from `fuel_probe`.
+///
+/// Not from the trace: a message's `ReturnContext.fuel_used` is 0 for the
+/// outermost call, so reading traces here compares zeroes and proves nothing.
+/// `fuel_probe::record` is called from `run_after_special` with the real
+/// `gas_used`, which is the number the FuelTank is actually charged.
+fn mint_fuel_under(wm: &Weightmap, n: usize, height: u32) -> Result<Vec<u64>> {
+    let mut block = create_block_with_coinbase_tx(height);
+    let cb = block.txdata[0].compute_txid();
+    let mut txs = Vec::new();
+    for i in 0..n {
+        let tx = tx_with_protostones(vec![message(mint_cellpack())], OutPoint::new(cb, i as u32));
+        txs.push(tx.clone());
+        block.txdata.push(tx);
+    }
+    if let Some(root) = block.compute_merkle_root() {
+        block.header.merkle_root = root;
+    }
+    install_weightmap(wm);
+    crate::fuel_probe::clear();
+    index_block(&block, height)?;
+
+    // Only the DIESEL mints. Setup and any other alkane traffic is noise here.
+    let mints: Vec<u64> = crate::fuel_probe::snapshot()
+        .into_iter()
+        .filter(|r| r.target == AlkaneId { block: 2, tx: 0 } && r.opcode == 77)
+        .map(|r| r.gas_used)
+        .collect();
+
+    // Every mint must have executed, or a comparison of empty vectors would pass
+    // while proving nothing — which is exactly how the first version of this test
+    // was vacuous.
+    assert_eq!(
+        mints.len(),
+        txs.len(),
+        "expected {} mints to execute, got {}",
+        txs.len(),
+        mints.len()
+    );
+    assert!(
+        mints.iter().all(|g| *g > 0),
+        "a mint reporting zero gas means the probe is not seeing real execution: {mints:?}"
+    );
+    Ok(mints)
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn weightmap_content_cannot_change_what_a_mint_costs() -> Result<()> {
+    let _g = serial();
+
+    // Same block, same mints, three very different vectors: the seeded identity,
+    // one carrying a qualifier and a long convex program, and one diverting half
+    // the reward to the treasury. If any of these moved the mint's fuel, a
+    // governance write could change fuel accounting without a consensus upgrade.
+    let identity = Weightmap {
+        mode: alkanes_std_firevector::vm::Mode::Split,
+        qualifier: None,
+        rate_floor: 0,
+        treasury_bps: 0,
+        program: alkanes_std_firevector::programs::identity(),
+    };
+    let heavy = Weightmap {
+        mode: alkanes_std_firevector::vm::Mode::Split,
+        qualifier: Some(alkanes_std_firevector::vm::Qualifier {
+            target_block: 4,
+            target_tx: 1778,
+            opcode: 1,
+        }),
+        rate_floor: 0,
+        treasury_bps: 0,
+        program: alkanes_std_firevector::programs::convex_on_prior(0),
+    };
+    let taxing = Weightmap {
+        treasury_bps: 5000,
+        ..identity.clone()
+    };
+
+    let mut seen: Vec<(&str, Vec<u64>)> = Vec::new();
+    for (name, wm) in [("identity", &identity), ("heavy", &heavy), ("taxing", &taxing)] {
+        clear();
+        setup_diesel()?;
+        seen.push((name, mint_fuel_under(wm, 3, BASE + 1)?));
+    }
+
+    let (_, baseline) = &seen[0];
+    assert!(
+        !baseline.is_empty(),
+        "fixture produced no executed mints — the test proves nothing"
+    );
+    for (name, fuel) in &seen[1..] {
+        assert_eq!(
+            fuel, baseline,
+            "weightmap '{name}' changed mint fuel: {fuel:?} vs {baseline:?}"
+        );
+    }
+    Ok(())
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn the_precompiles_report_no_fuel_and_a_sixteen_byte_reply() -> Result<()> {
+    let _g = serial();
+    clear();
+    setup_diesel()?;
+
+    let identity = Weightmap {
+        mode: alkanes_std_firevector::vm::Mode::Split,
+        qualifier: None,
+        rate_floor: 0,
+        treasury_bps: 0,
+        program: alkanes_std_firevector::programs::identity(),
+    };
+    install_weightmap(&identity);
+
+    let height = BASE + 1;
+    let mut block = create_block_with_coinbase_tx(height);
+    let cb = block.txdata[0].compute_txid();
+    let tx = tx_with_protostones(vec![message(mint_cellpack())], OutPoint::new(cb, 0));
+    block.txdata.push(tx.clone());
+    if let Some(root) = block.compute_merkle_root() {
+        block.header.merkle_root = root;
+    }
+    index_block(&block, height)?;
+
+    // Every nested call the mint made. The precompile answers are the ones whose
+    // response is exactly 16 bytes and whose fuel_used is 0 — widening either
+    // would silently reintroduce the divergence this design exists to avoid.
+    let evs = events(&outpoint(&tx, 0));
+    let free_16_byte_replies = evs
+        .iter()
+        .filter(|e| {
+            matches!(e, TraceEvent::ReturnContext(r)
+                if r.fuel_used == 0 && r.inner.data.len() == 16)
+        })
+        .count();
+    assert!(
+        free_16_byte_replies >= 2,
+        "expected the mint-count and miner-fee precompiles to answer free and \
+         16 bytes wide; found {free_16_byte_replies} such replies in {} events",
+        evs.len()
+    );
+    Ok(())
+}
