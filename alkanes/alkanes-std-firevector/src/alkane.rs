@@ -98,6 +98,7 @@ impl FirevectorInterface for Firevector {
                 mode: Mode::Split,
                 qualifier: None,
                 rate_floor: 0,
+                treasury_bps: 0,
                 program: crate::programs::identity(),
             })));
 
@@ -113,6 +114,7 @@ impl FirevectorInterface for Firevector {
         qualifier_tx: u128,
         qualifier_opcode: u128,
         rate_floor: u128,
+        treasury_bps: u128,
         program: Vec<u128>,
     ) -> Result<CallResponse> {
         let context = self.context()?;
@@ -130,6 +132,7 @@ impl FirevectorInterface for Firevector {
                 other => return Err(anyhow!("has_qualifier must be 0 or 1, got {}", other)),
             },
             rate_floor,
+            treasury_bps,
             program,
         };
 

@@ -56,6 +56,7 @@ interface firevector {
         qualifier-tx: u64,
         qualifier-opcode: u64,
         rate-floor: u64,
+        treasury-bps: u64,
         program: list<u64>,
     ) -> result<_, string>;
 

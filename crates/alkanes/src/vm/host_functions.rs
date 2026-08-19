@@ -624,8 +624,34 @@ impl AlkanesHostFunctionsImpl {
             .map(|out| out.value.to_sat() as u128)
             .sum();
 
+        // FIREVECTOR fork: a weightmap may route part of the block reward to the
+        // DIESEL treasury instead of to minters. It does that by raising what
+        // this precompile reports, because the contract derives
+        // `diesel_fee = min(block_reward/2, reported - block_reward)` and credits
+        // it to `/fees` via `observe_upgraded_mint` — a mechanism that already
+        // exists and is not modified here.
+        //
+        // Inert below the fork and whenever `treasury_bps` is 0, in which case
+        // the true coinbase total is returned unchanged. The reply stays 16
+        // bytes, so `returndatacopy` charges exactly what it charges today.
+        let reported = {
+            let context_guard = caller.data_mut().context.lock().unwrap();
+            let height = context_guard.message.height;
+            if crate::firevector::is_active(height) {
+                let block = context_guard.message.block.clone();
+                crate::firevector::effective_miner_fee(
+                    &block,
+                    height,
+                    total_fees,
+                    &context_guard.message.atomic,
+                )
+            } else {
+                total_fees
+            }
+        };
+
         let mut response = CallResponse::default();
-        response.data = total_fees.to_le_bytes().to_vec();
+        response.data = reported.to_le_bytes().to_vec();
         Ok(response)
     }
 

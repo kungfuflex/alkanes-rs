@@ -34,10 +34,10 @@ pub const MODE_RATE: u128 = 1;
 pub const WEIGHTMAP_MAGIC: u128 = 0x4649_5245_5645_4354;
 
 /// Current weightmap encoding version.
-pub const WEIGHTMAP_VERSION: u128 = 1;
+pub const WEIGHTMAP_VERSION: u128 = 2;
 
 /// Fixed header words preceding the program.
-const HEADER_WORDS: usize = 9;
+const HEADER_WORDS: usize = 10;
 
 /// A complete emission policy: how to weigh, what to weigh, and how weights
 /// become payouts.
@@ -52,8 +52,34 @@ pub struct Weightmap {
     /// block is clamped here so the block can never pay out more than once over.
     /// Ignored in [`Mode::Split`].
     pub rate_floor: u128,
+    /// Share of the block reward, in basis points, routed to the DIESEL treasury
+    /// instead of to minters. Capped at 5000 by the contract, which takes
+    /// `min(block_reward / 2, total_tx_fee)` — half the reward is the most that
+    /// can ever be diverted this way.
+    ///
+    /// This is how "communist mint, but far less of it" is expressed. The
+    /// mechanism already exists and is untouched: the genesis alkane credits
+    /// `diesel_fee` to `/fees` once per block via `observe_upgraded_mint`, and
+    /// `collect_fees` (opcode 78) drains it. All FIREVECTOR does is set what the
+    /// contract believes the block's fees were.
+    ///
+    /// **0 is exactly today.** At zero the precompile returns the true coinbase
+    /// total unchanged, so the contract computes the same `diesel_fee` it
+    /// computes now.
+    ///
+    /// Note the excess is still MINTED — it moves from minters to the treasury,
+    /// it does not vanish. Total issuance per block is unchanged, which is why
+    /// the conservation bound still holds.
+    pub treasury_bps: u128,
     pub program: Vec<u128>,
 }
+
+/// The contract caps `diesel_fee` at `block_reward / 2`, so anything above this
+/// is silently clamped there. Rejected at the setter instead, so a voter who
+/// writes 8000 finds out immediately rather than wondering why the treasury got
+/// half.
+pub const MAX_TREASURY_BPS: u128 = 5000;
+pub const BPS_DENOM: u128 = 10_000;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AbiError {
@@ -153,6 +179,7 @@ pub fn pack_weightmap(w: &Weightmap) -> Vec<u8> {
         q.target_tx,
         q.opcode,
         w.rate_floor,
+        w.treasury_bps,
         w.program.len() as u128,
     ];
     let mut out = Vec::with_capacity((words.len() + w.program.len()) * 16);
@@ -189,7 +216,11 @@ pub fn unpack_weightmap(bytes: &[u8]) -> Option<Weightmap> {
         _ => return None,
     };
     let rate_floor = words[7];
-    let len = words[8];
+    let treasury_bps = words[8];
+    if treasury_bps > MAX_TREASURY_BPS {
+        return None;
+    }
+    let len = words[9];
     // Bound against what is actually present before indexing, so a huge declared
     // length cannot drive an allocation or an out-of-range slice.
     if len != (words.len() - HEADER_WORDS) as u128 {
@@ -199,6 +230,7 @@ pub fn unpack_weightmap(bytes: &[u8]) -> Option<Weightmap> {
         mode,
         qualifier,
         rate_floor,
+        treasury_bps,
         program: words[HEADER_WORDS..].to_vec(),
     })
 }

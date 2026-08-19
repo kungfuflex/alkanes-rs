@@ -477,6 +477,7 @@ fn a_non_uniform_weightmap_never_mints_more_than_the_block_reward() -> Result<()
         mode: Mode::Split,
         qualifier: None,
         rate_floor: 0,
+        treasury_bps: 0,
         // 3 - 2 * (txindex >= 2)  ->  3 for the first mint, 1 for the rest
         program: vec![
             OP_TARGET_BLOCK, OP_PUSH, 2, OP_EQ,

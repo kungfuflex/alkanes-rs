@@ -1081,6 +1081,7 @@ fn describe_weightmap_shows_the_header_a_voter_needs() {
         Mode::Rate,
         Some(q),
         1_000_000,
+        0,
     );
     assert!(text.contains("Rate"), "got:\n{text}");
     assert!(text.contains("4:1778"), "got:\n{text}");
@@ -1094,6 +1095,7 @@ fn describe_weightmap_shows_the_header_a_voter_needs() {
         &programs::identity(),
         Mode::Split,
         None,
+        0,
         0,
     );
     assert!(text.contains("every DIESEL mint"), "got:\n{text}");
@@ -1301,4 +1303,29 @@ fn every_opcode_with_immediates_is_rejected_when_they_are_truncated() {
             validate(&p, Mode::Rate)
         );
     }
+}
+
+#[test]
+fn describe_weightmap_states_the_treasury_share_in_words() {
+    // A voter reading a proposal has to be able to see that emission is being
+    // diverted, without a disassembler and without knowing the header layout.
+    let text = alkanes_std_firevector::disasm::describe_weightmap(
+        &programs::identity(),
+        Mode::Split,
+        None,
+        0,
+        2500,
+    );
+    assert!(text.contains("treasury"), "got:\n{text}");
+    assert!(text.contains("25.00%"), "got:\n{text}");
+
+    // And says nothing at all when nothing is diverted.
+    let text = alkanes_std_firevector::disasm::describe_weightmap(
+        &programs::identity(),
+        Mode::Split,
+        None,
+        0,
+        0,
+    );
+    assert!(!text.contains("treasury"), "got:\n{text}");
 }

@@ -48,7 +48,7 @@
 //! in here may return `Err`.
 
 use crate::network::genesis;
-use alkanes_std_firevector::abi::{unpack_weightmap, Weightmap};
+use alkanes_std_firevector::abi::{BPS_DENOM, MAX_TREASURY_BPS, unpack_weightmap, Weightmap};
 use alkanes_std_firevector::vm::{eval, validate, Item, Mode, Qualifier};
 use alkanes_support::id::AlkaneId;
 use bitcoin::{Block, BlockHash, Txid};
@@ -113,7 +113,12 @@ pub const DENOMINATOR_NO_CLAIM: u128 = u128::MAX;
 /// unlikely.
 struct CachedWeights {
     block_hash: BlockHash,
-    weights: BlockWeights,
+    /// `Arc` rather than a bare value: `block_weights` is called once per mint,
+    /// and the table now carries the whole block's scan index. Returning it by
+    /// clone made every claim copy every mint item — turning the memo that fixed
+    /// RATE's quadratic into a fresh quadratic for SPLIT (measured 0.074 ms/mint
+    /// flat, regressed to 0.277 ms/mint and climbing at 400 mints).
+    weights: Arc<BlockWeights>,
 }
 
 static WEIGHTS_CACHE: LazyLock<Arc<RwLock<Option<CachedWeights>>>> =
@@ -174,8 +179,29 @@ fn active_weightmap<T: KeyValuePointer>(block: &Block, atomic: &T) -> Option<Wei
 }
 
 /// Weights for one block, keyed by the transaction that may claim them.
+/// One transaction's scan result, computed once per block.
+///
+/// RATE previously rebuilt all of this per claim — a `compute_txid()` sweep of
+/// the block to find the caller, a full re-scan of its protostones, and a second
+/// full sweep to count its mint rank. That is O(N) work inside an O(N) loop.
+/// Measured 0.36 ms/mint at 50 mints rising to 2.23 ms/mint at 400 — quadratic,
+/// extrapolating to ~90-140s for the 4-5k-mint blocks this chain actually sees,
+/// which makes reindexing impossible.
+#[derive(Clone, Debug)]
+pub struct TxScan {
+    pub txindex: u32,
+    /// Rank among the block's mint-bearing transactions.
+    pub mint_rank: u128,
+    /// Qualified DIESEL-mint protostones only, by `pstone_index`.
+    pub mint_items: Vec<(u128, Item)>,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct BlockWeights {
+    /// Every mint-bearing transaction in the block, keyed by txid. Built in the
+    /// same single pass that computes the weights, so a RATE claim is a hash
+    /// lookup rather than a rescan.
+    pub by_txid: HashMap<Txid, TxScan>,
     /// Weight per claiming transaction. Only transactions carrying a DIESEL mint
     /// appear — a transaction that cannot claim must not contribute to `total`,
     /// or its share of the emission would simply be burned.
@@ -231,7 +257,26 @@ struct ScannedItem {
 /// - `decode_varint_list` errors → skip
 /// - fewer than 2 varints → skip
 /// - `TryInto<Cellpack>` fails → skip
+/// Counts `scan_transaction` calls so a test can assert the block is scanned
+/// once per transaction rather than once per transaction per claim. The
+/// quadratic this guards against is invisible to a correctness test — every
+/// answer stays right, it just gets slower until reindexing is impossible.
+#[cfg(test)]
+pub static SCAN_CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+#[cfg(test)]
+pub fn reset_scan_calls() {
+    SCAN_CALLS.store(0, std::sync::atomic::Ordering::SeqCst);
+}
+
+#[cfg(test)]
+pub fn scan_calls() -> usize {
+    SCAN_CALLS.load(std::sync::atomic::Ordering::SeqCst)
+}
+
 fn scan_transaction(tx: &bitcoin::Transaction, txindex: u32, height: u64) -> Vec<ScannedItem> {
+    #[cfg(test)]
+    SCAN_CALLS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     let mut out = Vec::new();
 
     let runestone = match Runestone::decipher(tx) {
@@ -404,26 +449,23 @@ fn load_weightmap<T: KeyValuePointer>(atomic: &T) -> Option<Weightmap> {
 /// 3. It stops anyone splitting one action across many protostones to inflate a
 ///    weight cheaply.
 pub(crate) fn compute_block_weights<T: KeyValuePointer>(block: &Block, height: u64, atomic: &T) -> BlockWeights {
-    let legacy_count = legacy_mint_count(block);
-
     let mut weights = BlockWeights {
+        by_txid: HashMap::new(),
         per_tx: HashMap::new(),
         total: 0,
-        legacy_count,
+        legacy_count: 0,
     };
 
-    let Some(wm) = active_weightmap(block, atomic) else {
-        return weights;
+    let wm = active_weightmap(block, atomic);
+    // SPLIT pre-computes a block total; RATE settles per claim as it executes and
+    // must not be evaluated here. Both still need the scan index built below, so
+    // this only decides whether weights are scored, never whether we scan.
+    let split_eval = match &wm {
+        Some(w) if w.mode == Mode::Split => validate(&w.program, Mode::Split)
+            .ok()
+            .map(|steps| (w.clone(), steps.max(1))),
+        _ => None,
     };
-    // RATE settles per claim while the claim executes; it has no block total to
-    // pre-compute and must not be evaluated here.
-    if wm.mode != Mode::Split {
-        return weights;
-    }
-    let Ok(steps) = validate(&wm.program, Mode::Split) else {
-        return weights;
-    };
-    let budget = steps.max(1);
 
     // Rank among mint-bearing transactions, assigned in transaction order. This
     // is the one fact a program can read that is not local to its own item, and
@@ -437,14 +479,43 @@ pub(crate) fn compute_block_weights<T: KeyValuePointer>(block: &Block, height: u
             // Cannot claim, so must not contribute to the denominator.
             continue;
         }
+        // The legacy count is the number of mint-bearing TRANSACTIONS, which is
+        // exactly what this loop already visits — computing it here rather than
+        // in a separate `legacy_mint_count` pass removes a second full scan of
+        // every block.
+        weights.legacy_count += 1;
+
         for s in scanned.iter_mut() {
             s.item.mint_rank = mint_rank;
         }
         mint_rank += 1;
 
-        if let Some(q) = wm.qualifier {
+        // The qualifier comes from the active weightmap regardless of mode: RATE
+        // needs `prior_inputs` and `qualified` resolved here too, since that is
+        // now the only place the block is scanned.
+        if let Some(q) = wm.as_ref().and_then(|w| w.qualifier) {
             resolve_qualifier(&mut scanned, &q);
         }
+
+        let txid = tx.compute_txid();
+        weights.by_txid.insert(
+            txid,
+            TxScan {
+                txindex: txindex as u32,
+                mint_rank: mint_rank - 1,
+                mint_items: scanned
+                    .iter()
+                    .filter(|s| s.is_diesel_mint && s.qualified)
+                    .map(|s| (s.item.pstone_index, s.item.clone()))
+                    .collect(),
+            },
+        );
+
+        let Some((wm_split, budget)) = split_eval.as_ref() else {
+            continue;
+        };
+        let wm = wm_split;
+        let budget = *budget;
 
         // Only mint protostones are weighed. Previously every protostone of a
         // mint-bearing transaction was evaluated, which was harmless while the
@@ -478,7 +549,7 @@ pub(crate) fn compute_block_weights<T: KeyValuePointer>(block: &Block, height: u
             continue;
         }
         weights.total = weights.total.saturating_add(w);
-        weights.per_tx.insert(tx.compute_txid(), w);
+        weights.per_tx.insert(txid, w);
     }
 
     weights
@@ -488,27 +559,112 @@ pub(crate) fn compute_block_weights<T: KeyValuePointer>(block: &Block, height: u
 ///
 /// The memo only answers for the block it was computed from; anything else
 /// recomputes rather than returning a plausible-looking wrong table.
-fn block_weights<T: KeyValuePointer>(block: &Block, height: u64, atomic: &T) -> BlockWeights {
+fn block_weights<T: KeyValuePointer>(
+    block: &Block,
+    height: u64,
+    atomic: &T,
+) -> Arc<BlockWeights> {
     let block_hash = block.block_hash();
 
     if let Ok(guard) = WEIGHTS_CACHE.read() {
         if let Some(cached) = guard.as_ref() {
             if cached.block_hash == block_hash {
-                return cached.weights.clone();
+                return Arc::clone(&cached.weights);
             }
         }
     }
-    let computed = compute_block_weights(block, height, atomic);
+    let computed = Arc::new(compute_block_weights(block, height, atomic));
     if let Ok(mut guard) = WEIGHTS_CACHE.write() {
         *guard = Some(CachedWeights {
             block_hash,
-            weights: computed.clone(),
+            weights: Arc::clone(&computed),
         });
     }
     computed
 }
 
 /// Is FIREVECTOR weighting active at this height?
+/// The DIESEL block reward at `height`.
+///
+/// A deliberate mirror of `ChainConfiguration::block_reward` on the genesis
+/// alkane, which FIREVECTOR cannot call — the contract is wasm, this is the
+/// indexer, and the whole design rests on not modifying the contract. The two
+/// must agree exactly, because [`treasury_target`] converts a basis-point share
+/// of this into the fee the contract will compute. `block_reward_matches_the_contract`
+/// pins the values at known heights and halving boundaries.
+pub fn block_reward(height: u64) -> u128 {
+    #[cfg(any(feature = "mainnet", not(any(
+        feature = "dogecoin",
+        feature = "fractal",
+        feature = "luckycoin",
+        feature = "bellscoin"
+    ))))]
+    {
+        (50e8 as u128) / (1u128 << ((height as u128) / 210_000u128))
+    }
+    #[cfg(feature = "dogecoin")]
+    {
+        let _ = height;
+        1_000_000_000_000u128
+    }
+    #[cfg(feature = "fractal")]
+    {
+        (25e8 as u128) / (1u128 << ((height as u128) / 2_100_000u128))
+    }
+    #[cfg(any(feature = "luckycoin", feature = "bellscoin"))]
+    {
+        let _ = height;
+        1_000_000_000u128
+    }
+}
+
+/// What `800000000:3` should report so the contract credits `treasury_bps` of
+/// the block reward to `/fees`.
+///
+/// The contract does:
+///
+/// ```text
+///   total_tx_fee = max(0, reported - block_reward)
+///   diesel_fee   = min(block_reward / 2, total_tx_fee)
+///   minters get   (block_reward - diesel_fee) / denominator
+/// ```
+///
+/// so reporting `block_reward + target` makes `diesel_fee == target`, as long as
+/// `target <= block_reward / 2` — which [`MAX_TREASURY_BPS`] guarantees.
+///
+/// `max` with the true coinbase total is what keeps this a floor rather than a
+/// replacement: a genuinely high-fee block still credits its real fees, exactly
+/// as today. And at `treasury_bps == 0` the target is 0, so the result is
+/// `max(true_total, block_reward)` — which yields the same `total_tx_fee` the
+/// contract computes today for every input, high-fee or low. **Zero is a no-op.**
+pub fn reported_miner_fee(true_coinbase_total: u128, height: u64, treasury_bps: u128) -> u128 {
+    let reward = block_reward(height);
+    let bps = core::cmp::min(treasury_bps, MAX_TREASURY_BPS);
+    let target = reward.saturating_mul(bps) / BPS_DENOM;
+    core::cmp::max(true_coinbase_total, reward.saturating_add(target))
+}
+
+/// The value `800000000:3` returns.
+///
+/// Inert below the fork and whenever no weightmap sets `treasury_bps`.
+pub fn effective_miner_fee<T: KeyValuePointer>(
+    block: &Block,
+    height: u64,
+    true_coinbase_total: u128,
+    atomic: &T,
+) -> u128 {
+    if !is_active(height) {
+        return true_coinbase_total;
+    }
+    let bps = active_weightmap(block, atomic)
+        .map(|wm| wm.treasury_bps)
+        .unwrap_or(0);
+    if bps == 0 {
+        return true_coinbase_total;
+    }
+    reported_miner_fee(true_coinbase_total, height, bps)
+}
+
 pub fn is_active(height: u64) -> bool {
     height >= genesis::FIREVECTOR_FORK_HEIGHT as u64
 }
@@ -626,7 +782,7 @@ fn rate_denominator<T: KeyValuePointer>(
     let Ok(steps) = validate(&wm.program, Mode::Rate) else {
         // An unrunnable weightmap falls back to today's emission, never to an
         // error and never to a silent zero for everybody.
-        return legacy_mint_count(block);
+        return block_weights(block, height, atomic).legacy_count;
     };
 
     let base = storage_base(atomic);
@@ -646,7 +802,19 @@ fn rate_denominator<T: KeyValuePointer>(
         return u128::from_le_bytes(existing[..16].try_into().expect("len checked"));
     }
 
-    let Some(item) = rate_item(block, height, txid, vout, incoming, wm) else {
+    // The block scan is memoized, so this is a hash lookup rather than the
+    // O(N) rebuild it used to be. `tx_output_len` is needed to invert the shadow
+    // vout and is the only thing still read off the transaction itself.
+    let weights = block_weights(block, height, atomic);
+    let Some(tx_output_len) = weights
+        .by_txid
+        .get(&txid)
+        .and_then(|scan| block.txdata.get(scan.txindex as usize))
+        .map(|tx| tx.output.len())
+    else {
+        return DENOMINATOR_NO_CLAIM;
+    };
+    let Some(item) = rate_item(&weights, txid, vout, tx_output_len, incoming) else {
         return DENOMINATOR_NO_CLAIM;
     };
     let w = eval(&wm.program, &item, steps.max(1));
@@ -683,44 +851,24 @@ fn rate_denominator<T: KeyValuePointer>(
 /// Build the item for a RATE claim: this protostone, with its realized incoming
 /// alkanes and its qualifying prior action.
 fn rate_item(
-    block: &Block,
-    height: u64,
+    weights: &BlockWeights,
     txid: Txid,
     vout: u32,
+    tx_output_len: usize,
     incoming: &[(u128, u128, u128)],
-    wm: &Weightmap,
 ) -> Option<Item> {
-    let (txindex, tx) = block
-        .txdata
-        .iter()
-        .enumerate()
-        .find(|(_, t)| t.compute_txid() == txid)?;
+    let scan = weights.by_txid.get(&txid)?;
 
     // Invert `shadow_vout = pstone_index + tx.output.len() + 1`.
-    let pstone_index = (vout as usize).checked_sub(tx.output.len() + 1)?;
+    let pstone_index = (vout as usize).checked_sub(tx_output_len + 1)? as u128;
 
-    let mut scanned = scan_transaction(tx, txindex as u32, height);
-    if let Some(q) = wm.qualifier {
-        resolve_qualifier(&mut scanned, &q);
-    }
-
-    let mut item = scanned
-        .into_iter()
-        .find(|s| s.item.pstone_index == pstone_index as u128 && s.is_diesel_mint && s.qualified)
-        .map(|s| s.item)?;
-
-    // Rank is block-scoped, so it needs the transactions before this one.
-    item.mint_rank = block
-        .txdata
+    let mut item = scan
+        .mint_items
         .iter()
-        .take(txindex)
-        .filter(|t| {
-            scan_transaction(t, 0, height)
-                .iter()
-                .any(|s| s.is_diesel_mint)
-        })
-        .count() as u128;
+        .find(|(idx, _)| *idx == pstone_index)
+        .map(|(_, it)| it.clone())?;
 
+    item.mint_rank = scan.mint_rank;
     item.incoming = incoming.to_vec();
     Some(item)
 }

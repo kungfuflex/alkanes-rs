@@ -84,9 +84,17 @@ pub fn describe_weightmap(
     mode: Mode,
     qualifier: Option<crate::vm::Qualifier>,
     rate_floor: u128,
+    treasury_bps: u128,
 ) -> String {
     let mut out = String::new();
     out.push_str(&format!("mode: {:?}\n", mode));
+    if treasury_bps > 0 {
+        out.push_str(&format!(
+            "treasury: {}.{:02}% of the block reward is routed to the DIESEL treasury\n",
+            treasury_bps / 100,
+            treasury_bps % 100
+        ));
+    }
     match qualifier {
         Some(q) => out.push_str(&format!(
             "qualifies: a prior protostone calling {}:{} opcode {}\n",

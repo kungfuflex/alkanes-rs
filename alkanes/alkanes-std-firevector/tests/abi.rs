@@ -60,6 +60,7 @@ fn split(program: Vec<u128>) -> Weightmap {
         mode: Mode::Split,
         qualifier: None,
         rate_floor: 0,
+        treasury_bps: 0,
         program,
     }
 }
@@ -69,6 +70,7 @@ fn rate(program: Vec<u128>) -> Weightmap {
         mode: Mode::Rate,
         qualifier: None,
         rate_floor: 1_000_000,
+        treasury_bps: 0,
         program,
     }
 }
@@ -463,6 +465,7 @@ fn abi_entry_points_never_panic_on_random_words() {
                 mode,
                 qualifier: None,
                 rate_floor: rng.below(3) as u128,
+                treasury_bps: 0,
                 program,
             };
             let _ = is_adoptable(&w, &[mint_item()]);
@@ -528,6 +531,7 @@ fn weightmaps_roundtrip_through_storage_packing() {
                 opcode: 1,
             }),
             rate_floor: u128::MAX,
+            treasury_bps: 0,
             program: programs::linear_on_prior(0, 3, 2),
         },
     ] {
@@ -616,6 +620,7 @@ fn the_adoption_gate_refuses_a_rate_vector_with_no_rate_floor() {
     // nobody — caught at the setter for the same reason.
     let w = Weightmap {
         rate_floor: 0,
+        treasury_bps: 0,
         ..rate(programs::convex_on_prior(0))
     };
     let err = check_adoptable(&w).unwrap_err();
@@ -647,6 +652,7 @@ fn the_adoption_gate_is_total() {
             },
             qualifier: None,
             rate_floor: rng.below(3) as u128,
+            treasury_bps: 0,
             program: p,
         };
         let _ = check_adoptable(&w);
