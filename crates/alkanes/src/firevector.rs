@@ -67,13 +67,18 @@ use alkanes_support::cellpack::Cellpack;
 pub const DIESEL_ID: AlkaneId = AlkaneId { block: 2, tx: 0 };
 /// DSIGIL — the token that may claim the 12:1 orbital.
 ///
-/// **UNSET.** DSIGIL already exists on chain and holds the DIESEL treasury
-/// permission; this needs its real AlkaneId before deployment. `0:0` means "no
-/// claim authority", which leaves the orbital locked inside 12:0 forever —
-/// deliberately the safe default, so shipping without filling this in fails
-/// closed rather than handing the emission-policy capability to whoever calls
-/// first.
-pub const DSIGIL_ID: AlkaneId = AlkaneId { block: 0, tx: 0 };
+/// Already deployed on chain, and separately holds the DIESEL treasury
+/// permission. It is spent into `claim_vector_orbital` once and handed straight
+/// back, so claiming does not cost it that role.
+///
+/// `0:0` would mean "no claim authority", leaving the orbital locked inside 12:0
+/// forever — the fail-closed default this replaced. A wrong id here is the one
+/// way to lose the emission-policy capability permanently, so it is asserted
+/// rather than assumed.
+pub const DSIGIL_ID: AlkaneId = AlkaneId {
+    block: 2,
+    tx: 69805,
+};
 
 /// The FIREVECTOR orbital at 12:1 — possession authorises `set_weightmap`.
 pub const FV_ORBITAL_ID: AlkaneId = AlkaneId { block: 12, tx: 1 };

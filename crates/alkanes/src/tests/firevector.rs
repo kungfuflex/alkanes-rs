@@ -1507,15 +1507,32 @@ fn the_vm_records_both_authorities_separately() {
 
 #[cfg_attr(not(target_arch = "wasm32"), test)]
 #[wasm_bindgen_test]
-fn an_unset_dsigil_leaves_the_orbital_locked() {
-    // DSIGIL_ID is 0:0 until its real on-chain id is filled in. That must mean
-    // "nobody can claim", not "anybody can" — shipping unconfigured has to fail
-    // closed, because the thing being handed out is the emission-policy key.
-    assert_eq!(
+fn the_claim_authority_is_a_real_deployed_alkane() {
+    // A wrong id here is the one way to lose the emission-policy capability
+    // permanently: the orbital sits in 12:0 and only the configured authority can
+    // release it, so a typo locks it forever with no recovery path.
+    assert_eq!(DSIGIL_ID, AlkaneId { block: 2, tx: 69805 });
+
+    // 0:0 is the fail-closed sentinel and must never be the configured value.
+    assert_ne!(
         DSIGIL_ID,
         AlkaneId { block: 0, tx: 0 },
-        "if this has been set, update this test and the deployment checklist"
+        "0:0 means unclaimable — the orbital would be locked in 12:0 forever"
     );
+
+    // Block 2 is the deployed-instance space, which is where `deploy_auth_token`
+    // places an auth token (`AlkaneId { block: 2, tx: sequence }`). An id outside
+    // it could not resolve to real code.
+    assert_eq!(DSIGIL_ID.block, 2, "DSIGIL must live in the deployed space");
+
+    // And it must not collide with anything else the system addresses.
+    for (other, what) in [
+        (FIREVECTOR_ID, "the VM"),
+        (FV_ORBITAL_ID, "the vector orbital"),
+        (DIESEL_ID, "DIESEL itself"),
+    ] {
+        assert_ne!(DSIGIL_ID, other, "DSIGIL must not collide with {what}");
+    }
 }
 
 // ---------------------------------------------------------------------------
