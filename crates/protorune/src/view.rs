@@ -40,6 +40,47 @@ pub fn core_outpoint_to_proto(outpoint: &OutPoint) -> Outpoint {
     }
 }
 
+/// Resolve the (height, txindex) pair for an outpoint response.
+///
+/// PERF (2026-08-20, subfrost mainnet incident — wallet blackout for a
+/// 27-UTXO wallet): the original code ALWAYS ran the expensive path —
+/// `HEIGHT_TO_TRANSACTION_IDS.get_list()` walks EVERY txid in the
+/// outpoint's block through the host KV interface (one read per
+/// transaction) and then linear-searches for this txid — and then, for
+/// any outpoint whose balance sheet is non-empty, DISCARDED the result
+/// and overwrote (height, txindex) with the first rune id (a wire-format
+/// convention consumers rely on: live mainnet responses carry e.g.
+/// height=2/32 — rune blocks, not real heights). Measured on mainnet: a
+/// balance-bearing outpoint in a 4,385-tx block took ~15.1s (3/3,
+/// deterministic) and tripped the edge's 15s budget (-32011), while the
+/// per-entry balance load itself is milliseconds. The scan is now LAZY:
+/// taken only when the balance sheet is empty — where the unindexed-
+/// outpoint short-circuit (height=0 → tiny list) keeps it cheap.
+/// Responses are byte-identical in every case.
+fn resolve_height_txindex(
+    outpoint: &OutPoint,
+    outpoint_bytes: &Vec<u8>,
+    first_rune: Option<(u128, u128)>,
+) -> Result<(u128, u128)> {
+    if let Some((block, tx)) = first_rune {
+        return Ok((block, tx));
+    }
+    let height: u128 = tables::RUNES
+        .OUTPOINT_TO_HEIGHT
+        .select(outpoint_bytes)
+        .get_value::<u64>()
+        .into();
+    let txindex: u128 = tables::RUNES
+        .HEIGHT_TO_TRANSACTION_IDS
+        .select_value::<u64>(height as u64)
+        .get_list()
+        .into_iter()
+        .position(|v| v.as_ref().to_vec() == outpoint.txid.as_byte_array().to_vec())
+        .ok_or("")
+        .map_err(|_| anyhow!("txid not indexed in table"))? as u128;
+    Ok((height, txindex))
+}
+
 pub fn protorune_outpoint_to_outpoint_response(
     outpoint: &OutPoint,
     protocol_id: u128,
@@ -53,24 +94,12 @@ pub fn protorune_outpoint_to_outpoint_response(
             .select(&outpoint_bytes),
     );
 
-    let mut height: u128 = tables::RUNES
-        .OUTPOINT_TO_HEIGHT
-        .select(&outpoint_bytes)
-        .get_value::<u64>()
-        .into();
-    let mut txindex: u128 = tables::RUNES
-        .HEIGHT_TO_TRANSACTION_IDS
-        .select_value::<u64>(height as u64)
-        .get_list()
-        .into_iter()
-        .position(|v| v.as_ref().to_vec() == outpoint.txid.as_byte_array().to_vec())
-        .ok_or("")
-        .map_err(|_| anyhow!("txid not indexed in table"))? as u128;
-
-    if let Some((rune_id, _)) = balance_sheet.balances().iter().next() {
-        height = rune_id.block.into();
-        txindex = rune_id.tx.into();
-    }
+    let first_rune = balance_sheet
+        .balances()
+        .iter()
+        .next()
+        .map(|(rune_id, _)| (rune_id.block.into(), rune_id.tx.into()));
+    let (height, txindex) = resolve_height_txindex(outpoint, &outpoint_bytes, first_rune)?;
     let decoded_output: Output = Output::decode(
         tables::OUTPOINT_TO_OUTPUT
             .select(&outpoint_bytes)
@@ -92,24 +121,12 @@ pub fn rune_outpoint_to_outpoint_response(outpoint: &OutPoint) -> Result<Outpoin
     // v3 chunked-outpoint read.
     let balance_sheet = load_sheet_chunked(&tables::RUNES.OUTPOINT_TO_RUNES.select(&outpoint_bytes));
 
-    let mut height: u128 = tables::RUNES
-        .OUTPOINT_TO_HEIGHT
-        .select(&outpoint_bytes)
-        .get_value::<u64>()
-        .into();
-    let mut txindex: u128 = tables::RUNES
-        .HEIGHT_TO_TRANSACTION_IDS
-        .select_value::<u64>(height as u64)
-        .get_list()
-        .into_iter()
-        .position(|v| v.as_ref().to_vec() == outpoint.txid.as_byte_array().to_vec())
-        .ok_or("")
-        .map_err(|_| anyhow!("txid not indexed in table"))? as u128;
-
-    if let Some((rune_id, _)) = balance_sheet.balances().iter().next() {
-        height = rune_id.block.into();
-        txindex = rune_id.tx.into();
-    }
+    let first_rune = balance_sheet
+        .balances()
+        .iter()
+        .next()
+        .map(|(rune_id, _)| (rune_id.block.into(), rune_id.tx.into()));
+    let (height, txindex) = resolve_height_txindex(outpoint, &outpoint_bytes, first_rune)?;
     let decoded_output: Output = Output::decode(
         tables::OUTPOINT_TO_OUTPUT
             .select(&outpoint_bytes)
@@ -130,24 +147,12 @@ pub fn outpoint_to_outpoint_response(outpoint: &OutPoint) -> Result<OutpointResp
     let outpoint_bytes = outpoint_to_bytes(outpoint)?;
     // v3 chunked-outpoint read.
     let balance_sheet = load_sheet_chunked(&tables::RUNES.OUTPOINT_TO_RUNES.select(&outpoint_bytes));
-    let mut height: u128 = tables::RUNES
-        .OUTPOINT_TO_HEIGHT
-        .select(&outpoint_bytes)
-        .get_value::<u64>()
-        .into();
-    let mut txindex: u128 = tables::RUNES
-        .HEIGHT_TO_TRANSACTION_IDS
-        .select_value::<u64>(height as u64)
-        .get_list()
-        .into_iter()
-        .position(|v| v.as_ref().to_vec() == outpoint.txid.as_byte_array().to_vec())
-        .ok_or("")
-        .map_err(|_| anyhow!("txid not indexed in table"))? as u128;
-
-    if let Some((rune_id, _)) = balance_sheet.balances().iter().next() {
-        height = rune_id.block;
-        txindex = rune_id.tx;
-    }
+    let first_rune = balance_sheet
+        .balances()
+        .iter()
+        .next()
+        .map(|(rune_id, _)| (rune_id.block, rune_id.tx));
+    let (height, txindex) = resolve_height_txindex(outpoint, &outpoint_bytes, first_rune)?;
     let decoded_output: Output = Output::decode(
         tables::OUTPOINT_TO_OUTPUT
             .select(&outpoint_bytes)
