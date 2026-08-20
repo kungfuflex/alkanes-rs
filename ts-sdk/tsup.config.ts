@@ -1,7 +1,14 @@
 import { defineConfig } from 'tsup';
 
 export default defineConfig({
-  entry: ['src/index.ts'],
+  // `src/walletconnect/index.ts` is a thin re-export of
+  // `@subfrost/walletconnect` — it needs its own build entry so the
+  // `./walletconnect` subpath export declared in package.json resolves
+  // to a real `dist/walletconnect/index.{js,mjs}` file. tsup preserves
+  // the source-relative directory structure for array entries, so
+  // `src/walletconnect/index.ts` lands at `dist/walletconnect/index.*`
+  // automatically.
+  entry: ['src/index.ts', 'src/walletconnect/index.ts'],
   format: ['cjs', 'esm'],
   dts: false, // Disabled due to WASM module resolution issues - types available via source
   clean: true,

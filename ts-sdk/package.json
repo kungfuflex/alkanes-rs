@@ -44,7 +44,7 @@
     "build": "npm run build:wasm && npm run build:vendor && npm run build:ts && npm run build:cli",
     "build:wasm": "cd ../crates/alkanes-web-sys && wasm-pack build --target bundler --out-dir ../../ts-sdk/build/wasm && cd ../../ts-sdk && cp -r build/wasm/* wasm/",
     "build:vendor": "node scripts/vendor-wasms.js",
-    "build:ts": "tsup src/index.ts --format cjs,esm --clean",
+    "build:ts": "tsup src/index.ts src/walletconnect/index.ts --format cjs,esm --clean && printf 'export * from \"@subfrost/walletconnect\";\\n' > dist/walletconnect/index.d.ts",
     "build:cli": "tsup src/cli/index.ts --config none --format cjs --target node18 --platform node --out-dir dist --entry.cli=src/cli/index.ts --no-dts --external '../wasm/*' --external '@alkanes/ts-sdk/wasm' --external '*/wasm/*'",
     "dev": "tsup src/index.ts --format cjs,esm --dts --watch",
     "cli:dev": "npm run build:cli && node dist/cli.js",
