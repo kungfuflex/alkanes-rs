@@ -439,7 +439,14 @@ impl GenesisAlkane {
         if let Some(gate) = self.mint_gate() {
             let forward_calldata: Vec<u128> =
                 context.inputs.iter().skip(1).cloned().collect();
-            if !forward_calldata.is_empty() {
+            // Forward ONLY when the gate opcode (the first word after 77) is
+            // non-zero. Calldata is zero-padded on the wire, so a bare mint
+            // ([77]) arrives as [77, 0, 0, ...]; treating that as "has calldata"
+            // would forward every ordinary mint into the gate with a zero
+            // opcode and revert it — freezing normal minting the moment a gate
+            // is set. A zero lead word is never a real dispatch opcode
+            // (opcode 0 is Initialize), so this is also the correct guard.
+            if forward_calldata.first().is_some_and(|&op| op != 0) {
                 let parcel = AlkaneTransferParcel(vec![transfer]);
                 let cellpack = Cellpack {
                     target: gate,
