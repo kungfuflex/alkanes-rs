@@ -6,9 +6,14 @@ use alkanes_runtime::{
     stdio::{stdout, Write},
 };
 use alkanes_runtime::{runtime::AlkaneResponder, storage::StoragePointer, token::Token};
+use alkanes_support::cellpack::Cellpack;
 use alkanes_support::id::AlkaneId;
 use alkanes_support::utils::overflow_error;
-use alkanes_support::{context::Context, parcel::AlkaneTransfer, response::CallResponse};
+use alkanes_support::{
+    context::Context,
+    parcel::{AlkaneTransfer, AlkaneTransferParcel},
+    response::CallResponse,
+};
 use anyhow::{anyhow, Result};
 use bitcoin::hashes::Hash;
 use bitcoin::{Block, Txid};
@@ -17,6 +22,7 @@ use metashrew_support::block::AuxpowBlock;
 use metashrew_support::compat::{to_arraybuffer_layout, to_passback_ptr};
 use metashrew_support::index_pointer::KeyValuePointer;
 use std::io::Cursor;
+use std::sync::Arc;
 pub mod chain;
 use crate::chain::{ChainConfiguration, CONTEXT_HANDLE};
 
@@ -39,6 +45,12 @@ enum GenesisAlkaneMessage {
 
     #[opcode(79)]
     Burn { amount: u128 },
+
+    #[opcode(80)]
+    SetMintGate {
+        gate_block: u128,
+        gate_tx: u128,
+    },
 
     #[opcode(99)]
     #[returns(String)]
@@ -170,6 +182,10 @@ impl ChainConfiguration for GenesisAlkane {
         20e14 as u128
     }
 }
+
+/// Dead-man's switch: a governance-set mint gate auto-expires to the default
+/// (off) if not re-affirmed within this many blocks (~1 year at 6 blk/hr).
+const GATE_TTL: u64 = 52_560;
 
 impl GenesisAlkane {
     pub fn claimable_fees_pointer(&self) -> StoragePointer {
@@ -392,20 +408,43 @@ impl GenesisAlkane {
     // Method that matches the MessageDispatch enum
     fn mint(&self) -> Result<CallResponse> {
         let context = self.context()?;
-        let mut response = CallResponse::forward(&context.incoming_alkanes);
-        if StoragePointer::from_keyword("/upgrade_initialized")
+        let transfer = if StoragePointer::from_keyword("/upgrade_initialized")
             .get()
             .len()
             == 0
         {
-            response.alkanes.0.push(self.create_mint_transfer()?);
+            self.create_mint_transfer()?
         } else {
-            response
-                .alkanes
-                .0
-                .push(self.create_upgraded_mint_transfer()?);
+            self.create_upgraded_mint_transfer()?
+        };
+
+        // Mint gate: when governance has set a live gate, forward the freshly
+        // minted DIESEL to it as incoming_alkanes and pass the calldata FOLLOWING
+        // the mint opcode (77) through as the gate's cellpack inputs. The gate
+        // (e.g. a share-token contract) receives the mint WITHOUT subcalling
+        // DIESEL back, while the user still calls the real [2,0] contract. The
+        // gate only ever sees the minted DIESEL; whatever it returns, plus any
+        // stray tokens attached to the mint, are handed back to the caller.
+        if let Some(gate) = self.mint_gate() {
+            let forward_calldata: Vec<u128> =
+                context.inputs.iter().skip(1).cloned().collect();
+            if !forward_calldata.is_empty() {
+                let parcel = AlkaneTransferParcel(vec![transfer]);
+                let cellpack = Cellpack {
+                    target: gate,
+                    inputs: forward_calldata,
+                };
+                let mut response = self.call(&cellpack, &parcel, self.fuel())?;
+                response
+                    .alkanes
+                    .0
+                    .extend(context.incoming_alkanes.0.iter().cloned());
+                return Ok(response);
+            }
         }
 
+        let mut response = CallResponse::forward(&context.incoming_alkanes);
+        response.alkanes.0.push(transfer);
         Ok(response)
     }
 
@@ -419,6 +458,55 @@ impl GenesisAlkane {
         });
         self.set_claimable_fees(0);
         Ok(response)
+    }
+
+    // ---- Mint gate: one governance-set forward target ------------------------
+
+    fn mint_gate_pointer(&self) -> StoragePointer {
+        StoragePointer::from_keyword("/mint-gate")
+    }
+
+    fn mint_gate_height_pointer(&self) -> StoragePointer {
+        StoragePointer::from_keyword("/mint-gate-height")
+    }
+
+    /// The live mint-gate target, or None. None when unset, cleared (0:0), or
+    /// EXPIRED: the gate reverts to the default (off) if governance has not
+    /// re-affirmed it within `GATE_TTL` blocks — a dead-man's switch so a gate
+    /// can never outlive governance's attention.
+    fn mint_gate(&self) -> Option<AlkaneId> {
+        let raw = self.mint_gate_pointer().get();
+        if raw.len() == 0 {
+            return None;
+        }
+        let gate = AlkaneId::try_from(raw.as_ref().clone()).ok()?;
+        if gate.block == 0 && gate.tx == 0 {
+            return None;
+        }
+        let set_height = self.mint_gate_height_pointer().get_value::<u64>();
+        if self.height() > set_height.saturating_add(GATE_TTL) {
+            return None;
+        }
+        Some(gate)
+    }
+
+    /// Owner-only switch (auth token in incoming_alkanes). Point DIESEL's mint
+    /// gate at `gate_block:gate_tx`, or `0:0` to turn it off. Stamps the current
+    /// height, resetting the dead-man's-switch TTL; governance must re-affirm
+    /// before `GATE_TTL` blocks elapse or the gate auto-expires to off.
+    fn set_mint_gate(&self, gate_block: u128, gate_tx: u128) -> Result<CallResponse> {
+        self.only_owner()?;
+        let context = self.context()?;
+        let gate = AlkaneId::new(gate_block, gate_tx);
+        let bytes: Vec<u8> = if gate.block == 0 && gate.tx == 0 {
+            Vec::new()
+        } else {
+            gate.into()
+        };
+        self.mint_gate_pointer().set(Arc::new(bytes));
+        self.mint_gate_height_pointer()
+            .set_value::<u64>(self.height());
+        Ok(CallResponse::forward(&context.incoming_alkanes))
     }
 
     fn burn(&self, amount: u128) -> Result<CallResponse> {
