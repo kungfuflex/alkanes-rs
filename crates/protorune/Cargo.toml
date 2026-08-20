@@ -69,8 +69,19 @@ hex = { workspace = true }
 prost = { workspace = true }
 prost-types = { workspace = true }
 
+# NOTE: `wasm-bindgen-cli` was previously listed here as a dev-dependency.
+# That imported the CLI crate as a LIBRARY into every test build — nothing in
+# this crate uses it as a library (the actual test runner binary is installed
+# separately: CI does `cargo install wasm-bindgen-cli --locked`), and because
+# wasm-bindgen-cli's version is chained to the runtime `wasm-bindgen` via
+# `wasm-bindgen-shared = =x.y.z` exact pins, the lock resolved it to 0.2.125,
+# whose ureq -> rustls dependency does not compile for wasm32-unknown-unknown
+# (rustls-pki-types `UnixTime::now` is not available there). That made
+# `cargo test -p protorune --features test-utils --target wasm32-unknown-unknown`
+# — the ONLY invocation that actually runs the src/tests/ suite, since
+# #[wasm_bindgen_test] emits no #[test] on host targets — unbuildable.
+# Removing the useless dev-dep restores the wasm test build.
 [dev-dependencies]
 metashrew-core = { workspace = true, features = ["test-utils"] }
-wasm-bindgen-cli = "0.2.99"
 getrandom = { version = "0.2.15", features = ["js"] }
 protorune = { path = ".", features = ["test-utils"] }
