@@ -63,6 +63,10 @@ enum GenesisAlkaneMessage {
     #[opcode(101)]
     #[returns(u128)]
     GetTotalSupply,
+
+    #[opcode(102)]
+    #[returns(Vec<u8>)]
+    GetMintGate,
 }
 
 impl Token for GenesisAlkane {
@@ -507,6 +511,40 @@ impl GenesisAlkane {
         self.mint_gate_height_pointer()
             .set_value::<u64>(self.height());
         Ok(CallResponse::forward(&context.incoming_alkanes))
+    }
+
+    /// Read-only audit view of the mint gate: the stored target, the height it
+    /// was set at, its expiry (`set_height + GATE_TTL`), the current height, and
+    /// whether it is live right now. Lets anyone verify what governance has set
+    /// — and when it lapses — without trusting it. Fixed LE layout:
+    ///   [0..16)  gate_block u128   [16..32) gate_tx u128
+    ///   [32..40) set_height u64    [40..48) expiry_height u64
+    ///   [48..56) current_height u64  [56..57) active u8 (1 = live)
+    /// A cleared/expired gate reports its raw stored id with active = 0.
+    fn get_mint_gate(&self) -> Result<CallResponse> {
+        let context = self.context()?;
+        let mut response = CallResponse::forward(&context.incoming_alkanes);
+
+        let raw = self.mint_gate_pointer().get();
+        let stored = if raw.len() == 0 {
+            AlkaneId::new(0, 0)
+        } else {
+            AlkaneId::try_from(raw.as_ref().clone()).unwrap_or(AlkaneId::new(0, 0))
+        };
+        let set_height = self.mint_gate_height_pointer().get_value::<u64>();
+        let expiry = set_height.saturating_add(GATE_TTL);
+        let current = self.height();
+        let active: u8 = if self.mint_gate().is_some() { 1 } else { 0 };
+
+        let mut data = Vec::with_capacity(57);
+        data.extend_from_slice(&stored.block.to_le_bytes());
+        data.extend_from_slice(&stored.tx.to_le_bytes());
+        data.extend_from_slice(&set_height.to_le_bytes());
+        data.extend_from_slice(&expiry.to_le_bytes());
+        data.extend_from_slice(&current.to_le_bytes());
+        data.push(active);
+        response.data = data;
+        Ok(response)
     }
 
     fn burn(&self, amount: u128) -> Result<CallResponse> {
