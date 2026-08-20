@@ -192,11 +192,11 @@ impl ChainConfiguration for GenesisAlkane {
 const GATE_TTL: u64 = 52_560;
 
 /// Timelock on gate changes: a newly set gate only takes effect after this many
-/// blocks (~1 day at 6 blk/hr). Every change is therefore publicly visible (via
+/// blocks (~1 week at 6 blk/hr). Every change is therefore publicly visible (via
 /// `get_mint_gate`) BEFORE any emission flows through it, giving the community
-/// real time to react. Turning the gate OFF (0:0) is exempt and immediate:
-/// returning to the safe default must never wait out a delay.
-const GATE_DELAY: u64 = 144;
+/// real time to notice, discuss and react. Turning the gate OFF (0:0) is exempt
+/// and immediate: returning to the safe default must never wait out a delay.
+const GATE_DELAY: u64 = 1_008;
 
 impl GenesisAlkane {
     pub fn claimable_fees_pointer(&self) -> StoragePointer {
