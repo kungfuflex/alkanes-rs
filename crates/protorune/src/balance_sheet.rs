@@ -268,6 +268,57 @@ mod view_bound_tests {
     }
 
     #[test]
+    fn load_sheet_bounded_boundary_at_view_cap() {
+        metashrew_core::clear();
+        // Exactly VIEW_SHEET_MAX_ENTRIES real entries: loads fine.
+        let ptr = IndexPointer::from_keyword("/test/bounded-boundary");
+        let mut sheet: BalanceSheet<IndexPointer> = BalanceSheet::default();
+        for i in 0..VIEW_SHEET_MAX_ENTRIES {
+            sheet.set(&ProtoruneRuneId::new(2, i as u128), 1);
+        }
+        sheet.save(&ptr, false);
+        let loaded = load_sheet_bounded(&ptr, VIEW_SHEET_MAX_ENTRIES).unwrap();
+        assert_eq!(loaded.balances().len(), VIEW_SHEET_MAX_ENTRIES as usize);
+
+        // One past the cap (forged counter on the same record): refused
+        // before any entry read.
+        ptr.keyword("/runes")
+            .length_key()
+            .set_value::<u32>(VIEW_SHEET_MAX_ENTRIES + 1);
+        let err = load_sheet_bounded(&ptr, VIEW_SHEET_MAX_ENTRIES).unwrap_err();
+        assert!(err.to_string().contains("exceeds view cap"));
+    }
+
+    #[test]
+    fn view_outpoint_response_refuses_corrupt_record_instead_of_walking() {
+        // End-to-end through the ACTUAL converted view path (the function
+        // that hung on mainnet outpoint 2a1538bf…2e28:0): a protocol-1
+        // OUTPOINT_TO_RUNES record with a forged length must surface as a
+        // fast view Err — the same error class as the known per-outpoint
+        // panics — never an unbounded walk.
+        use bitcoin::hashes::Hash;
+        metashrew_core::clear();
+        let outpoint = bitcoin::OutPoint {
+            txid: bitcoin::Txid::all_zeros(),
+            vout: 0,
+        };
+        let outpoint_bytes = crate::view::outpoint_to_bytes(&outpoint).unwrap();
+        crate::tables::RuneTable::for_protocol(1)
+            .OUTPOINT_TO_RUNES
+            .select(&outpoint_bytes)
+            .keyword("/runes")
+            .length_key()
+            .set_value::<u32>(u32::MAX);
+
+        let err = crate::view::protorune_outpoint_to_outpoint_response(&outpoint, 1)
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("exceeds view cap"),
+            "expected the bounded-loader refusal, got: {err}"
+        );
+    }
+
+    #[test]
     fn load_sheet_bounded_refuses_corrupt_length_fast() {
         metashrew_core::clear();
         // Forge the 2026-08-22 hang-incident shape: a stored /runes/length
