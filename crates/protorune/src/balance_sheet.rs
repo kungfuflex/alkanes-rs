@@ -183,6 +183,54 @@ pub fn load_sheet<T: KeyValuePointer + Clone>(ptr: &T) -> BalanceSheet<T> {
     result
 }
 
+/// Maximum entry count a VIEW read will walk in a stored balance sheet.
+///
+/// A healthy outpoint carries a handful of protorune balances; a stored
+/// `/runes` length counter in the thousands-and-up is a corruption signature,
+/// not a real wallet. Incident (mainnet, 2026-08-22): the protocol-1
+/// OUTPOINT_TO_RUNES record for outpoint 2a1538bf…2e28:0 (h961009, written
+/// during the 2026-08-07 reconcile-rollback window) carries a pathological
+/// entry list; `load_sheet`'s unbounded walk — two host KV reads per entry —
+/// made `protorunesbyoutpoint` HANG until the JSON-RPC layer's 60s timeout,
+/// on every request, pinning a view-runtime permit each time. Sibling vouts
+/// of the same tx (healthy records) answered in <1s.
+pub const VIEW_SHEET_MAX_ENTRIES: u32 = 4096;
+
+/// Bounded, fallible variant of [`load_sheet`] for VIEW paths only.
+///
+/// Refuses (fast, with a diagnostic error the JSON-RPC layer surfaces as a
+/// normal view error) instead of walking a corrupt stored length. This turns
+/// the hang class above into the same fast-error class as the known
+/// `option::unwrap_failed` per-outpoint panics, which downstream consumers
+/// already tolerate per-outpoint.
+///
+/// CONSENSUS SAFETY: the indexer keeps calling the unbounded [`load_sheet`] —
+/// this function must only ever be reached from view functions. Never swap it
+/// into block-application paths: refusing a sheet during indexing would
+/// change indexed state.
+pub fn load_sheet_bounded<T: KeyValuePointer + Clone>(
+    ptr: &T,
+    max_entries: u32,
+) -> Result<BalanceSheet<T>> {
+    let runes_ptr = ptr.keyword("/runes");
+    let balances_ptr = ptr.keyword("/balances");
+    let length = runes_ptr.length();
+    if length > max_entries {
+        return Err(anyhow!(
+            "balance sheet entry count {} exceeds view cap {} — corrupt stored record, refusing unbounded walk",
+            length,
+            max_entries
+        ));
+    }
+    let mut result = BalanceSheet::default();
+    for i in 0..length {
+        let rune = ProtoruneRuneId::from(runes_ptr.select_index(i).get());
+        let balance = balances_ptr.select_index(i).get_value::<u128>();
+        result.set(&rune, balance);
+    }
+    Ok(result)
+}
+
 pub fn clear_balances<T: KeyValuePointer>(ptr: &T) {
     let runes_ptr = ptr.keyword("/runes");
     let balances_ptr = ptr.keyword("/balances");
@@ -197,3 +245,41 @@ pub fn clear_balances<T: KeyValuePointer>(ptr: &T) {
 }
 
 impl<P: KeyValuePointer + Clone + std::fmt::Debug> PersistentRecord for BalanceSheet<P> {}
+
+#[cfg(test)]
+mod view_bound_tests {
+    use super::*;
+    use protorune_support::balance_sheet::BalanceSheetOperations;
+
+    #[test]
+    fn load_sheet_bounded_matches_load_sheet_on_healthy_records() {
+        metashrew_core::clear();
+        let ptr = IndexPointer::from_keyword("/test/bounded-ok");
+        let mut sheet: BalanceSheet<IndexPointer> = BalanceSheet::default();
+        sheet.set(&ProtoruneRuneId::new(2, 0), 1_000);
+        sheet.set(&ProtoruneRuneId::new(32, 7), 5);
+        sheet.save(&ptr, false);
+
+        let bounded = load_sheet_bounded(&ptr, VIEW_SHEET_MAX_ENTRIES).unwrap();
+        let unbounded = load_sheet(&ptr);
+        assert_eq!(bounded.balances(), unbounded.balances());
+        assert_eq!(bounded.get_cached(&ProtoruneRuneId::new(2, 0)), 1_000);
+        assert_eq!(bounded.get_cached(&ProtoruneRuneId::new(32, 7)), 5);
+    }
+
+    #[test]
+    fn load_sheet_bounded_refuses_corrupt_length_fast() {
+        metashrew_core::clear();
+        // Forge the 2026-08-22 hang-incident shape: a stored /runes/length
+        // far beyond any real wallet, with no matching entries. The
+        // unbounded walker would spin for length iterations (two host reads
+        // each); the bounded loader must refuse before the first read.
+        let ptr = IndexPointer::from_keyword("/test/bounded-corrupt");
+        ptr.keyword("/runes")
+            .length_key()
+            .set_value::<u32>(u32::MAX);
+
+        let err = load_sheet_bounded(&ptr, VIEW_SHEET_MAX_ENTRIES).unwrap_err();
+        assert!(err.to_string().contains("exceeds view cap"));
+    }
+}
