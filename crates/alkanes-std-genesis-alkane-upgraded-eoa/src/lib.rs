@@ -6,9 +6,14 @@ use alkanes_runtime::{
     stdio::{stdout, Write},
 };
 use alkanes_runtime::{runtime::AlkaneResponder, storage::StoragePointer, token::Token};
+use alkanes_support::cellpack::Cellpack;
 use alkanes_support::id::AlkaneId;
 use alkanes_support::utils::overflow_error;
-use alkanes_support::{context::Context, parcel::AlkaneTransfer, response::CallResponse};
+use alkanes_support::{
+    context::Context,
+    parcel::{AlkaneTransfer, AlkaneTransferParcel},
+    response::CallResponse,
+};
 use anyhow::{anyhow, Result};
 use bitcoin::hashes::Hash;
 use bitcoin::{Block, Txid};
@@ -17,6 +22,7 @@ use metashrew_support::block::AuxpowBlock;
 use metashrew_support::compat::{to_arraybuffer_layout, to_passback_ptr};
 use metashrew_support::index_pointer::KeyValuePointer;
 use std::io::Cursor;
+use std::sync::Arc;
 pub mod chain;
 use crate::chain::{ChainConfiguration, CONTEXT_HANDLE};
 
@@ -40,6 +46,12 @@ enum GenesisAlkaneMessage {
     #[opcode(79)]
     Burn { amount: u128 },
 
+    #[opcode(80)]
+    SetMintGate {
+        gate_block: u128,
+        gate_tx: u128,
+    },
+
     #[opcode(99)]
     #[returns(String)]
     GetName,
@@ -51,6 +63,10 @@ enum GenesisAlkaneMessage {
     #[opcode(101)]
     #[returns(u128)]
     GetTotalSupply,
+
+    #[opcode(102)]
+    #[returns(Vec<u8>)]
+    GetMintGate,
 }
 
 impl Token for GenesisAlkane {
@@ -170,6 +186,17 @@ impl ChainConfiguration for GenesisAlkane {
         20e14 as u128
     }
 }
+
+/// Dead-man's switch: a governance-set mint gate auto-expires to the default
+/// (off) if not re-affirmed within this many blocks (~1 year at 6 blk/hr).
+const GATE_TTL: u64 = 52_560;
+
+/// Timelock on gate changes: a newly set gate only takes effect after this many
+/// blocks (~1 week at 6 blk/hr). Every change is therefore publicly visible (via
+/// `get_mint_gate`) BEFORE any emission flows through it, giving the community
+/// real time to notice, discuss and react. Turning the gate OFF (0:0) is exempt
+/// and immediate: returning to the safe default must never wait out a delay.
+const GATE_DELAY: u64 = 1_008;
 
 impl GenesisAlkane {
     pub fn claimable_fees_pointer(&self) -> StoragePointer {
@@ -392,20 +419,50 @@ impl GenesisAlkane {
     // Method that matches the MessageDispatch enum
     fn mint(&self) -> Result<CallResponse> {
         let context = self.context()?;
-        let mut response = CallResponse::forward(&context.incoming_alkanes);
-        if StoragePointer::from_keyword("/upgrade_initialized")
+        let transfer = if StoragePointer::from_keyword("/upgrade_initialized")
             .get()
             .len()
             == 0
         {
-            response.alkanes.0.push(self.create_mint_transfer()?);
+            self.create_mint_transfer()?
         } else {
-            response
-                .alkanes
-                .0
-                .push(self.create_upgraded_mint_transfer()?);
+            self.create_upgraded_mint_transfer()?
+        };
+
+        // Mint gate: when governance has set a live gate, forward the freshly
+        // minted DIESEL to it as incoming_alkanes and pass the calldata FOLLOWING
+        // the mint opcode (77) through as the gate's cellpack inputs. The gate
+        // (e.g. a share-token contract) receives the mint WITHOUT subcalling
+        // DIESEL back, while the user still calls the real [2,0] contract. The
+        // gate only ever sees the minted DIESEL; whatever it returns, plus any
+        // stray tokens attached to the mint, are handed back to the caller.
+        if let Some(gate) = self.mint_gate() {
+            let forward_calldata: Vec<u128> =
+                context.inputs.iter().skip(1).cloned().collect();
+            // Forward ONLY when the gate opcode (the first word after 77) is
+            // non-zero. Calldata is zero-padded on the wire, so a bare mint
+            // ([77]) arrives as [77, 0, 0, ...]; treating that as "has calldata"
+            // would forward every ordinary mint into the gate with a zero
+            // opcode and revert it — freezing normal minting the moment a gate
+            // is set. A zero lead word is never a real dispatch opcode
+            // (opcode 0 is Initialize), so this is also the correct guard.
+            if forward_calldata.first().is_some_and(|&op| op != 0) {
+                let parcel = AlkaneTransferParcel(vec![transfer]);
+                let cellpack = Cellpack {
+                    target: gate,
+                    inputs: forward_calldata,
+                };
+                let mut response = self.call(&cellpack, &parcel, self.fuel())?;
+                response
+                    .alkanes
+                    .0
+                    .extend(context.incoming_alkanes.0.iter().cloned());
+                return Ok(response);
+            }
         }
 
+        let mut response = CallResponse::forward(&context.incoming_alkanes);
+        response.alkanes.0.push(transfer);
         Ok(response)
     }
 
@@ -418,6 +475,153 @@ impl GenesisAlkane {
             value: self.claimable_fees(),
         });
         self.set_claimable_fees(0);
+        Ok(response)
+    }
+
+    // ---- Mint gate: one governance-set forward target ------------------------
+    //
+    // Two slots. `/mint-gate` holds the latest governance-set target and its
+    // set height; it only GOVERNS once `GATE_DELAY` blocks have passed.
+    // `/mint-gate-prev` holds the last target that actually activated, and
+    // governs during a newer target's pending window. Only an ACTIVATED slot is
+    // ever demoted to prev — re-setting within the window cannot promote a
+    // never-activated target past its own delay.
+
+    fn mint_gate_pointer(&self) -> StoragePointer {
+        StoragePointer::from_keyword("/mint-gate")
+    }
+
+    fn mint_gate_height_pointer(&self) -> StoragePointer {
+        StoragePointer::from_keyword("/mint-gate-height")
+    }
+
+    fn mint_gate_prev_pointer(&self) -> StoragePointer {
+        StoragePointer::from_keyword("/mint-gate-prev")
+    }
+
+    fn mint_gate_prev_height_pointer(&self) -> StoragePointer {
+        StoragePointer::from_keyword("/mint-gate-prev-height")
+    }
+
+    fn read_gate_slot(ptr: StoragePointer) -> AlkaneId {
+        let raw = ptr.get();
+        if raw.len() == 0 {
+            return AlkaneId::new(0, 0);
+        }
+        AlkaneId::try_from(raw.as_ref().clone()).unwrap_or(AlkaneId::new(0, 0))
+    }
+
+    /// The slot that governs mints at the current height: the latest set target
+    /// once its `GATE_DELAY` timelock has elapsed, else the previously
+    /// activated one.
+    fn governing_slot(&self) -> (AlkaneId, u64) {
+        let cur_h = self.mint_gate_height_pointer().get_value::<u64>();
+        if self.height() >= cur_h.saturating_add(GATE_DELAY) {
+            (Self::read_gate_slot(self.mint_gate_pointer()), cur_h)
+        } else {
+            (
+                Self::read_gate_slot(self.mint_gate_prev_pointer()),
+                self.mint_gate_prev_height_pointer().get_value::<u64>(),
+            )
+        }
+    }
+
+    /// The live mint-gate target, or None. None when unset, cleared (0:0),
+    /// still inside its timelock, or EXPIRED: the gate reverts to the default
+    /// (off) if governance has not re-affirmed it within `GATE_TTL` blocks — a
+    /// dead-man's switch so a gate can never outlive governance's attention.
+    fn mint_gate(&self) -> Option<AlkaneId> {
+        let (gate, set_height) = self.governing_slot();
+        if gate.block == 0 && gate.tx == 0 {
+            return None;
+        }
+        if self.height() > set_height.saturating_add(GATE_TTL) {
+            return None;
+        }
+        Some(gate)
+    }
+
+    /// Owner-only switch (auth token in incoming_alkanes). Point DIESEL's mint
+    /// gate at `gate_block:gate_tx` — the change is TIMELOCKED and only takes
+    /// effect `GATE_DELAY` blocks later, publicly visible in `get_mint_gate`
+    /// the whole time. `0:0` turns the gate off IMMEDIATELY (both slots
+    /// cleared): the safe default is never delayed. Every set stamps the
+    /// height, resetting the dead-man's-switch TTL.
+    fn set_mint_gate(&self, gate_block: u128, gate_tx: u128) -> Result<CallResponse> {
+        self.only_owner()?;
+        let context = self.context()?;
+        let gate = AlkaneId::new(gate_block, gate_tx);
+        let now = self.height();
+
+        if gate.block == 0 && gate.tx == 0 {
+            self.mint_gate_pointer().set(Arc::new(Vec::new()));
+            self.mint_gate_prev_pointer().set(Arc::new(Vec::new()));
+            self.mint_gate_height_pointer().set_value::<u64>(now);
+            self.mint_gate_prev_height_pointer().set_value::<u64>(now);
+            return Ok(CallResponse::forward(&context.incoming_alkanes));
+        }
+
+        // Demote the current slot to fallback ONLY if it has activated.
+        let cur_h = self.mint_gate_height_pointer().get_value::<u64>();
+        if now >= cur_h.saturating_add(GATE_DELAY) {
+            self.mint_gate_prev_pointer()
+                .set(self.mint_gate_pointer().get());
+            self.mint_gate_prev_height_pointer().set_value::<u64>(cur_h);
+        }
+
+        self.mint_gate_pointer()
+            .set(Arc::new(<AlkaneId as Into<Vec<u8>>>::into(gate)));
+        self.mint_gate_height_pointer().set_value::<u64>(now);
+        Ok(CallResponse::forward(&context.incoming_alkanes))
+    }
+
+    /// Read-only audit view of the mint gate. Shows BOTH the governing gate and
+    /// any pending (timelocked) change, so every switch is publicly visible for
+    /// the full `GATE_DELAY` window before emission flows through it. Fixed LE
+    /// layout:
+    ///   [0..16)  governing gate block u128 (0:0 = none)
+    ///   [16..32) governing gate tx u128
+    ///   [32..40) governing set_height u64 (0 if none)
+    ///   [40..48) governing expiry u64 = set_height + GATE_TTL (0 if none)
+    ///   [48..64) pending gate block u128 (0:0 = nothing pending)
+    ///   [64..80) pending gate tx u128
+    ///   [80..88) pending activation height u64 = set_height + GATE_DELAY
+    ///   [88..96) current height u64
+    ///   [96]     live u8 (1 = the governing gate is in force right now)
+    fn get_mint_gate(&self) -> Result<CallResponse> {
+        let context = self.context()?;
+        let mut response = CallResponse::forward(&context.incoming_alkanes);
+        let now = self.height();
+
+        let (gov, gov_h) = self.governing_slot();
+        let live: u8 = if self.mint_gate().is_some() { 1 } else { 0 };
+        let (gov_set, gov_exp) = if gov.block == 0 && gov.tx == 0 {
+            (0u64, 0u64)
+        } else {
+            (gov_h, gov_h.saturating_add(GATE_TTL))
+        };
+
+        let cur_h = self.mint_gate_height_pointer().get_value::<u64>();
+        let (pend, pend_act) = if now >= cur_h.saturating_add(GATE_DELAY) {
+            (AlkaneId::new(0, 0), 0u64)
+        } else {
+            (
+                Self::read_gate_slot(self.mint_gate_pointer()),
+                cur_h.saturating_add(GATE_DELAY),
+            )
+        };
+
+        let mut data = Vec::with_capacity(97);
+        data.extend_from_slice(&gov.block.to_le_bytes());
+        data.extend_from_slice(&gov.tx.to_le_bytes());
+        data.extend_from_slice(&gov_set.to_le_bytes());
+        data.extend_from_slice(&gov_exp.to_le_bytes());
+        data.extend_from_slice(&pend.block.to_le_bytes());
+        data.extend_from_slice(&pend.tx.to_le_bytes());
+        data.extend_from_slice(&pend_act.to_le_bytes());
+        data.extend_from_slice(&now.to_le_bytes());
+        data.push(live);
+        response.data = data;
         Ok(response)
     }
 
