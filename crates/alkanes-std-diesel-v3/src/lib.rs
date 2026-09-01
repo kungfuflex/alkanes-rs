@@ -49,6 +49,9 @@ enum GenesisAlkaneMessage {
     #[opcode(80)]
     SetMintGate { gate_block: u128, gate_tx: u128 },
 
+    #[opcode(81)]
+    SetMaxMintsPerBlock { max: u128 },
+
     #[opcode(99)]
     #[returns(String)]
     GetName,
@@ -64,6 +67,10 @@ enum GenesisAlkaneMessage {
     #[opcode(102)]
     #[returns(Vec<u8>)]
     GetMintGate,
+
+    #[opcode(103)]
+    #[returns(u128)]
+    GetMaxMintsPerBlock,
 }
 
 impl Token for GenesisAlkane {
@@ -184,6 +191,12 @@ impl ChainConfiguration for GenesisAlkane {
     }
 }
 
+/// How many mints a block's DIESEL reward is sized for by default. Each mint is
+/// paid `reward / this`, so this is the number of minters it takes to hand out a
+/// whole block reward; below that, the remainder goes to the DSIGIL treasury.
+/// Owner-settable at runtime via `set_max_mints_per_block` (opcode 81).
+const DEFAULT_MAX_MINTS_PER_BLOCK: u128 = 5_000;
+
 impl GenesisAlkane {
     pub fn claimable_fees_pointer(&self) -> StoragePointer {
         StoragePointer::from_keyword("/fees")
@@ -250,7 +263,13 @@ impl GenesisAlkane {
         }
     }
 
-    pub fn observe_upgraded_mint(&self, diesel_fee: u128) -> Result<()> {
+    /// Once-per-block accrual to the treasury. `diesel_fee` is the tx-fee-derived
+    /// cut as before; `excess` is the part of the block's reward that the block's
+    /// minters did not claim, because each of them is paid a fixed share sized
+    /// for `max_mints_per_block` rather than an even split of the whole pot.
+    /// Both are minted straight into the contract's claimable-fees balance for
+    /// the DSIGIL owner.
+    pub fn observe_upgraded_mint(&self, diesel_fee: u128, excess: u128) -> Result<()> {
         let height = self.height().to_le_bytes().to_vec();
         let mut pointer = self.upgraded_seen_pointer(&height);
         if pointer.get().len() == 0 {
@@ -258,8 +277,9 @@ impl GenesisAlkane {
             if self.claimable_fees_pointer().get().len() == 0 {
                 self.set_claimable_fees(0);
             }
-            self.increase_claimable_fees(diesel_fee)?;
-            self.increase_total_supply(diesel_fee)?;
+            let to_treasury = overflow_error(diesel_fee.checked_add(excess))?;
+            self.increase_claimable_fees(to_treasury)?;
+            self.increase_total_supply(to_treasury)?;
         }
         Ok(())
     }
@@ -335,6 +355,12 @@ impl GenesisAlkane {
         self.enforce_no_upgraded_mints_with_legacy_mints()?;
 
         let total_mints = self.number_diesel_mints()?;
+        if total_mints == 0 {
+            // Unreachable while we are servicing a mint (the host counts this
+            // very protostone), but the value comes from a host call, so never
+            // let it reach the divisions below.
+            return Err(anyhow!("no diesel mints counted in this block"));
+        }
         let total_miner_fee = self.total_miner_fee()?;
         let block_reward = self.current_block_reward();
         let total_tx_fee = if total_miner_fee > block_reward {
@@ -343,8 +369,23 @@ impl GenesisAlkane {
             0
         };
         let diesel_fee = std::cmp::min(block_reward / 2, total_tx_fee); // fee is capped at 50% of the block reward
-        let value_per_mint = (block_reward - diesel_fee) / total_mints;
-        self.observe_upgraded_mint(diesel_fee)?;
+        let distributable = block_reward - diesel_fee;
+
+        // Each minter is paid a FIXED share — the pot split across the target
+        // max mints per block — rather than an even split of the whole pot
+        // among however many minters showed up. A block with fewer minters
+        // therefore does not pay each of them more; the undistributed remainder
+        // is the `excess` and accrues to the DSIGIL treasury below.
+        //
+        // The even split is kept as a cap so that a block with MORE than the
+        // target number of minters still never pays out more than the reward:
+        // past the target the pot is shared out evenly and everyone gets a
+        // smaller (but non-zero) amount. Equivalently this is
+        // `distributable / max(target, total_mints)`.
+        let fixed_per_mint = distributable / self.max_mints_per_block();
+        let value_per_mint = std::cmp::min(fixed_per_mint, distributable / total_mints);
+        let excess = distributable - value_per_mint * total_mints;
+        self.observe_upgraded_mint(diesel_fee, excess)?;
 
         if self.total_supply() >= self.max_supply() {
             return Err(anyhow!("total supply has been reached"));
@@ -464,6 +505,46 @@ impl GenesisAlkane {
             value: self.claimable_fees(),
         });
         self.set_claimable_fees(0);
+        Ok(response)
+    }
+
+    // ---- Per-block mint target -----------------------------------------------
+
+    fn max_mints_per_block_pointer(&self) -> StoragePointer {
+        StoragePointer::from_keyword("/max-mints-per-block")
+    }
+
+    /// The denominator used to size each mint's fixed payout. Unset (or 0, which
+    /// can only come from state predating this contract) reads as
+    /// `DEFAULT_MAX_MINTS_PER_BLOCK`, so the value is never zero at the division
+    /// site.
+    fn max_mints_per_block(&self) -> u128 {
+        let v = self.max_mints_per_block_pointer().get_value::<u128>();
+        if v == 0 {
+            DEFAULT_MAX_MINTS_PER_BLOCK
+        } else {
+            v
+        }
+    }
+
+    /// Owner-only. Retune how many mints a block's reward is sized for. Raising
+    /// it shrinks each mint's fixed payout and sends more to the treasury;
+    /// lowering it does the opposite. Zero is rejected — it is both meaningless
+    /// and a division-by-zero.
+    fn set_max_mints_per_block(&self, max: u128) -> Result<CallResponse> {
+        self.only_owner()?;
+        if max == 0 {
+            return Err(anyhow!("max mints per block must be non-zero"));
+        }
+        let context = self.context()?;
+        self.max_mints_per_block_pointer().set_value::<u128>(max);
+        Ok(CallResponse::forward(&context.incoming_alkanes))
+    }
+
+    fn get_max_mints_per_block(&self) -> Result<CallResponse> {
+        let context = self.context()?;
+        let mut response = CallResponse::forward(&context.incoming_alkanes);
+        response.data = self.max_mints_per_block().to_le_bytes().to_vec();
         Ok(response)
     }
 

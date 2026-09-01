@@ -49,6 +49,28 @@ const DIESEL: AlkaneId = AlkaneId { block: 2, tx: 0 };
 const GATE: AlkaneId = AlkaneId { block: 2, tx: 2 };
 /// Donate — the std-test opcode that swallows every incoming alkane.
 const OP_DONATE: u128 = 7;
+/// TestOrderedIncoming — the std-test opcode that forwards its incoming alkanes
+/// straight back out. As a gate it is a passthrough, which makes the exact
+/// per-mint payout observable on the minter's sheet.
+const OP_FORWARD: u128 = 6;
+/// The regtest emission schedule: `50e8 >> (height / 210_000)`, mirroring
+/// `ChainConfiguration::block_reward` in the contract.
+fn block_reward_at(height: u32) -> u128 {
+    5_000_000_000u128 >> (height / 210_000)
+}
+
+/// The pot the block's minters actually share, i.e. the reward minus the
+/// tx-fee-derived `diesel_fee` cut that goes to the treasury regardless.
+///
+/// `diesel_fee = min(reward / 2, miner_fee - reward)`. These test blocks carry a
+/// full 50 BTC coinbase while the reward this far into the halving schedule is
+/// only ~9.7M sats, so the implied fee is enormous and the 50% cap always binds
+/// here. That is a property of the harness, not of mainnet — on mainnet the cut
+/// is the real fee and usually far below the cap.
+fn distributable_at(height: u32) -> u128 {
+    let reward = block_reward_at(height);
+    reward - reward / 2
+}
 /// First height at which `2:0` executes the diesel-v3 binary.
 const V3: u32 = genesis::DIESEL_V3_BLOCK_HEIGHT;
 
@@ -158,6 +180,30 @@ fn set_gate(height: u32, auth: OutPoint, gate_block: u128, gate_tx: u128) -> Res
     Ok(out)
 }
 
+/// As `set_gate`, but also hands back the block so callers can read the owner's
+/// pre-collect DIESEL balance off it.
+fn set_gate_b(
+    height: u32,
+    auth: OutPoint,
+    gate_block: u128,
+    gate_tx: u128,
+) -> Result<(Block, OutPoint)> {
+    let (block, out, _) = call_diesel(height, vec![80, gate_block, gate_tx], auth)?;
+    Ok((block, out))
+}
+
+/// Call set_max_mints_per_block (opcode 81) with the auth token attached.
+fn set_max_mints(height: u32, auth: OutPoint, max: u128) -> Result<OutPoint> {
+    let (_, out, _) = call_diesel(height, vec![81, max], auth)?;
+    Ok(out)
+}
+
+/// As `set_max_mints`, but also hands back the block (see `set_gate_b`).
+fn set_max_mints_b(height: u32, auth: OutPoint, max: u128) -> Result<(Block, OutPoint)> {
+    let (block, out, _) = call_diesel(height, vec![81, max], auth)?;
+    Ok((block, out))
+}
+
 /// Call collect_fees (opcode 78) with the auth token attached. Returns the
 /// outpoint carrying the payout + the forwarded auth token.
 fn collect_fees(height: u32, auth: OutPoint) -> Result<(Block, OutPoint)> {
@@ -189,6 +235,17 @@ fn mint_with_tail(height: u32, tail: &[u128]) -> Result<Block> {
 fn minter_diesel(block: &Block) -> Result<u128> {
     let sheet = get_sheet_for_outpoint(block, 1, 0)?;
     Ok(sheet.get(&ProtoruneRuneId { block: 2, tx: 0 }))
+}
+
+/// DIESEL on the response output of any of these one-tx blocks.
+///
+/// NOTE for treasury assertions: the owner's outpoint is not a clean slate. The
+/// 50M premine spent into `upgrade()` is forwarded straight back out with the
+/// auth token and then rides along through every subsequent owner call, so the
+/// raw balance after a `collect_fees` includes it. Measure the treasury as a
+/// DELTA across the collect, never as the raw payout balance.
+fn diesel_at(block: &Block) -> Result<u128> {
+    minter_diesel(block)
 }
 
 // ---------------------------------------------------------------- tests ----
@@ -427,6 +484,144 @@ fn test_view_reports_gate() -> Result<()> {
         assert_eq!(u128::from_le_bytes(d[16..32].try_into()?), GATE.tx);
         assert_eq!(u64::from_le_bytes(d[32..40].try_into()?), height as u64);
         assert_eq!(d[40], 1, "gate is live");
+        Ok(())
+    })?;
+    Ok(())
+}
+
+// ------------------------------------------------- fixed per-mint payout ----
+
+#[wasm_bindgen_test]
+fn test_fixed_payout_and_excess_to_treasury() -> Result<()> {
+    clear();
+    setup_pre_upgrade()?;
+    let auth = upgrade()?;
+    deploy_gate(2)?;
+    let (owner_block, auth) = set_gate_b(V3, auth, GATE.block, GATE.tx)?;
+    // Baseline: the owner's outpoint already holds the forwarded premine.
+    let before = diesel_at(&owner_block)?;
+
+    // A single minter, through a passthrough gate. It must be paid the FIXED
+    // share — the reward sized for DEFAULT_MAX_MINTS_PER_BLOCK (5000) — and NOT
+    // the whole block reward, which is what an even split among one minter
+    // would have handed over.
+    let h = V3 + 1;
+    let reward = block_reward_at(h);
+    let b = mint_with_tail(h, &[OP_FORWARD])?;
+    let paid = minter_diesel(&b)?;
+    assert_eq!(
+        paid,
+        distributable_at(h) / 5_000,
+        "sole minter gets the fixed share"
+    );
+    assert!(paid > 0, "the fixed share must be non-zero");
+    // The point of the change: a lone minter no longer walks off with the pot.
+    assert!(
+        paid < reward / 1_000,
+        "a sole minter must NOT receive an even split of the reward"
+    );
+
+    // The undistributed remainder accrued to the DSIGIL treasury. Payout plus
+    // treasury is EXACTLY the block reward: nothing minted beyond it, nothing
+    // silently dropped.
+    let (block, _) = collect_fees(h + 1, auth)?;
+    let treasury = diesel_at(&block)? - before;
+    assert_eq!(paid + treasury, reward, "payout + treasury == block reward");
+    Ok(())
+}
+
+#[wasm_bindgen_test]
+fn test_max_mints_per_block_is_settable() -> Result<()> {
+    clear();
+    setup_pre_upgrade()?;
+    let auth = upgrade()?;
+    deploy_gate(2)?;
+    let auth = set_gate(V3, auth, GATE.block, GATE.tx)?;
+
+    // Retune the target: a smaller denominator means a bigger fixed share.
+    let (owner_block, auth) = set_max_mints_b(V3 + 1, auth, 1_000)?;
+    let before = diesel_at(&owner_block)?;
+    let h = V3 + 2;
+    let reward = block_reward_at(h);
+    let b = mint_with_tail(h, &[OP_FORWARD])?;
+    let paid = minter_diesel(&b)?;
+    assert_eq!(
+        paid,
+        distributable_at(h) / 1_000,
+        "payout follows the new target"
+    );
+    assert!(
+        paid > distributable_at(h) / 5_000,
+        "a smaller target pays more per mint"
+    );
+
+    let (block, _) = collect_fees(h + 1, auth)?;
+    let treasury = diesel_at(&block)? - before;
+    assert_eq!(paid + treasury, reward, "invariant holds at any target");
+    Ok(())
+}
+
+#[wasm_bindgen_test]
+fn test_set_max_mints_requires_auth_and_rejects_zero() -> Result<()> {
+    clear();
+    setup_pre_upgrade()?;
+    let auth = upgrade()?;
+
+    // No auth token → only_owner reverts the retune.
+    let height = V3;
+    let (_, _, txid) = call_diesel(
+        height,
+        vec![81, 10],
+        OutPoint::new(create_coinbase_transaction(height).compute_txid(), 0),
+    )?;
+    assert_revert_context(
+        &OutPoint { txid, vout: 3 },
+        "Auth token is not in incoming alkanes",
+    )?;
+
+    // Zero is rejected even from the owner: it is a division-by-zero at the
+    // payout site, so it must never reach storage.
+    let auth = set_max_mints(V3 + 1, auth, 0)?;
+    assert_revert_context(
+        &OutPoint {
+            txid: auth.txid,
+            vout: 3,
+        },
+        "max mints per block must be non-zero",
+    )?;
+    Ok(())
+}
+
+#[wasm_bindgen_test]
+fn test_view_reports_max_mints_per_block() -> Result<()> {
+    clear();
+    setup_pre_upgrade()?;
+    let auth = upgrade()?;
+
+    // Defaults to 5000 with nothing ever set.
+    let height = V3;
+    let (_, _, txid) = call_diesel(
+        height,
+        vec![103],
+        OutPoint::new(create_coinbase_transaction(height).compute_txid(), 0),
+    )?;
+    alkane_helpers::assert_return_context(&OutPoint { txid, vout: 3 }, |trace_response| {
+        let d = &trace_response.inner.data;
+        assert_eq!(u128::from_le_bytes(d[0..16].try_into()?), 5_000);
+        Ok(())
+    })?;
+
+    // …and reflects a retune.
+    set_max_mints(V3 + 1, auth, 250)?;
+    let height = V3 + 2;
+    let (_, _, txid) = call_diesel(
+        height,
+        vec![103],
+        OutPoint::new(create_coinbase_transaction(height).compute_txid(), 0),
+    )?;
+    alkane_helpers::assert_return_context(&OutPoint { txid, vout: 3 }, |trace_response| {
+        let d = &trace_response.inner.data;
+        assert_eq!(u128::from_le_bytes(d[0..16].try_into()?), 250);
         Ok(())
     })?;
     Ok(())
