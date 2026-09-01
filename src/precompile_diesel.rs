@@ -160,6 +160,15 @@ pub fn matches_precompile_for_ctx(ctx: &AlkanesRuntimeContext) -> bool {
     if !matches_precompile(&ctx.myself, opcode) {
         return false;
     }
+    // This precompile shadows the `alkanes-std-genesis-alkane-upgraded-eoa`
+    // binary. From `DIESEL_V3_BLOCK_HEIGHT` on, `2:0` executes
+    // `alkanes-std-diesel-v3` instead, whose mint semantics differ (gate
+    // forwarding, and an ungated mint accruing to claimable fees rather than
+    // paying the caller). Reject those heights so a `fastpath` build always
+    // walks the wasm path there rather than silently applying v2 semantics.
+    if ctx.message.height as u32 >= crate::network::genesis::DIESEL_V3_BLOCK_HEIGHT {
+        return false;
+    }
     if opcode == 77 {
         // Count mint protostones in this transaction
         if count_mint_protostones_in_tx(&ctx.message.transaction)

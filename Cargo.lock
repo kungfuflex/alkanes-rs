@@ -683,6 +683,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "alkanes-std-diesel-v3"
+version = "2.2.1-rc.4"
+dependencies = [
+ "alkanes-runtime",
+ "alkanes-support",
+ "anyhow",
+ "bitcoin 0.32.5",
+ "hex",
+ "metashrew-support",
+ "protorune-support",
+]
+
+[[package]]
 name = "alkanes-std-factory-support"
 version = "2.2.1-rc.4"
 dependencies = [
