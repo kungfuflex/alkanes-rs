@@ -1,24 +1,23 @@
-//! Mint-gate (diesel-gate branch) — governance-set forward target on the EOA
-//! genesis mint, with a one-week timelock, immediate off, and a dead-man's
-//! switch. Each test locks in one edge of the design:
+//! Mint gate on the DIESEL v3 genesis alkane (`alkanes-std-diesel-v3`, active
+//! at `2:0` from `genesis::DIESEL_V3_BLOCK_HEIGHT`). Each test locks in one edge
+//! of the design:
 //!
-//!   - default OFF: no gate → the mint pays the caller, byte-for-byte today's
-//!     behaviour;
-//!   - set_mint_gate is only_owner: no auth token in the incoming alkanes, no
-//!     switch;
-//!   - a set gate is PENDING for GATE_DELAY (1008) blocks: mints inside the
-//!     window still pay the caller; after activation they forward to the gate
-//!     with the calldata that follows opcode 77;
-//!   - a bare mint ([77] with no trailing calldata) stays an ordinary mint even
-//!     with a live gate;
-//!   - re-setting within the pending window cannot promote a never-activated
-//!     target past its own delay (no timelock bypass by double-set), and a
-//!     broken gate reverts the mint atomically once it DOES activate;
-//!   - clearing (0:0) is immediate — the safe default is never delayed;
-//!   - the gate auto-expires to OFF after GATE_TTL (52_560) blocks without a
-//!     re-affirm (dead-man's switch).
+//!   - default (no gate): the mint is NOT paid to the caller — it accrues to the
+//!     contract's claimable-fees balance, which only the DSIGIL auth-token
+//!     holder can withdraw via `collect_fees` (opcode 78, `only_owner`);
+//!   - `set_mint_gate` (opcode 80) is `only_owner`: no auth token in the
+//!     incoming alkanes, no switch;
+//!   - a set gate takes effect IMMEDIATELY — there is no timelock and no expiry
+//!     in v3 — and mints forward to it with the calldata that follows opcode 77;
+//!   - a bare mint (`[77]` with no trailing calldata) does not forward even with
+//!     a live gate; it falls back to the accrue-to-owner default;
+//!   - a broken gate reverts the mint atomically (no fall-back to an ordinary
+//!     mint, which would be the abusable path);
+//!   - clearing (`0:0`) returns to the default;
+//!   - below `DIESEL_V3_BLOCK_HEIGHT` the pre-v3 eoa binary still governs and
+//!     pays the minter, which pins the fork boundary itself.
 //!
-//! The gate target used here is alkanes-std-test whose opcode 7 (Donate)
+//! The gate target used here is alkanes-std-test, whose opcode 7 (Donate)
 //! swallows every incoming alkane — so "the gate got the mint" is observable as
 //! the minter's sheet holding zero DIESEL.
 
@@ -48,10 +47,10 @@ const DIESEL: AlkaneId = AlkaneId { block: 2, tx: 0 };
 /// Where the std-test gate lands: the auth token took sequence slot 2:1, the
 /// next created alkane is 2:2.
 const GATE: AlkaneId = AlkaneId { block: 2, tx: 2 };
-const GATE_DELAY: u64 = 1_008;
-const GATE_TTL: u64 = 52_560;
 /// Donate — the std-test opcode that swallows every incoming alkane.
 const OP_DONATE: u128 = 7;
+/// First height at which `2:0` executes the diesel-v3 binary.
+const V3: u32 = genesis::DIESEL_V3_BLOCK_HEIGHT;
 
 // ---------------------------------------------------------------- setup ----
 
@@ -74,6 +73,11 @@ fn setup_pre_upgrade() -> Result<()> {
 
 /// Block 1: spend the premine into the upgrade; the owner's 5 auth-token units
 /// land on the returned outpoint. (Same flow as tests::genesis_upgrade.)
+///
+/// This runs below `DIESEL_V3_BLOCK_HEIGHT`, i.e. against the pre-v3 eoa
+/// binary. That is deliberate and is exactly how mainnet will cross the fork:
+/// `/upgrade_initialized` and the auth token are already-established state that
+/// v3 inherits, since the swap changes the code at `2:0` and not its storage.
 fn upgrade() -> Result<OutPoint> {
     let block_height = 1;
     let outpoint = OutPoint {
@@ -122,27 +126,43 @@ fn deploy_gate(height: u32) -> Result<()> {
     Ok(())
 }
 
-/// Call set_mint_gate(gate) with the auth token attached; returns the outpoint
-/// the (forwarded) auth token now sits on. Reverted calls still consume the
-/// outpoint per protorune accounting, so callers chain the returned value.
-fn set_gate(height: u32, auth: OutPoint, gate_block: u128, gate_tx: u128) -> Result<OutPoint> {
+/// Run one cellpack against DIESEL in its own block, spending `input`.
+/// Returns the block and the outpoint the response landed on (vout 0).
+fn call_diesel(
+    height: u32,
+    inputs: Vec<u128>,
+    input: OutPoint,
+) -> Result<(Block, OutPoint, Txid)> {
     let cellpack = Cellpack {
         target: DIESEL,
-        inputs: vec![80, gate_block, gate_tx],
+        inputs,
     };
     let mut test_block = create_block_with_coinbase_tx(height);
     let tx = alkane_helpers::create_multiple_cellpack_with_witness_and_in(
         Witness::new(),
         vec![cellpack],
-        auth,
+        input,
         false,
     );
     test_block.txdata.push(tx.clone());
     index_block(&test_block, height)?;
-    Ok(OutPoint {
-        txid: tx.compute_txid(),
-        vout: 0,
-    })
+    let txid = tx.compute_txid();
+    Ok((test_block, OutPoint { txid, vout: 0 }, txid))
+}
+
+/// Call set_mint_gate(gate) with the auth token attached; returns the outpoint
+/// the (forwarded) auth token now sits on. Reverted calls still consume the
+/// outpoint per protorune accounting, so callers chain the returned value.
+fn set_gate(height: u32, auth: OutPoint, gate_block: u128, gate_tx: u128) -> Result<OutPoint> {
+    let (_, out, _) = call_diesel(height, vec![80, gate_block, gate_tx], auth)?;
+    Ok(out)
+}
+
+/// Call collect_fees (opcode 78) with the auth token attached. Returns the
+/// outpoint carrying the payout + the forwarded auth token.
+fn collect_fees(height: u32, auth: OutPoint) -> Result<(Block, OutPoint)> {
+    let (block, out, _) = call_diesel(height, vec![78], auth)?;
+    Ok((block, out))
 }
 
 /// One mint tx in its own block: calldata `[77, tail...]`.
@@ -174,14 +194,65 @@ fn minter_diesel(block: &Block) -> Result<u128> {
 // ---------------------------------------------------------------- tests ----
 
 #[wasm_bindgen_test]
-fn test_gate_default_off() -> Result<()> {
+fn test_pre_v3_still_pays_minter() -> Result<()> {
     clear();
     setup_pre_upgrade()?;
     upgrade()?;
-    // No gate was ever set: a mint (even with trailing calldata) pays the
-    // caller — today's behaviour is the default.
+    // Below the fork the eoa binary governs: a mint pays the caller, exactly as
+    // it does on mainnet today. This pins the boundary — without it, a v3
+    // regression that also happened to be active pre-fork would go unnoticed.
     let b = mint_with_tail(2, &[OP_DONATE])?;
-    assert!(minter_diesel(&b)? > 0, "default: minter must be paid");
+    assert!(
+        minter_diesel(&b)? > 0,
+        "pre-v3 mints must still pay the minter"
+    );
+    Ok(())
+}
+
+#[wasm_bindgen_test]
+fn test_no_gate_accrues_to_owner() -> Result<()> {
+    clear();
+    setup_pre_upgrade()?;
+    let auth = upgrade()?;
+
+    // v3 default: no gate is set, so the mint pays the caller NOTHING.
+    let b = mint_with_tail(V3, &[OP_DONATE])?;
+    assert_eq!(
+        minter_diesel(&b)?,
+        0,
+        "v3 default must not pay the minter"
+    );
+
+    // The emission is not lost: it accrued to claimable fees, and the DSIGIL
+    // auth-token holder can withdraw it.
+    let (block, _) = collect_fees(V3 + 1, auth)?;
+    let collected = get_sheet_for_outpoint(&block, 1, 0)?.get(&ProtoruneRuneId { block: 2, tx: 0 });
+    assert!(
+        collected > 0,
+        "the owner must be able to collect the accrued mint"
+    );
+    Ok(())
+}
+
+#[wasm_bindgen_test]
+fn test_collect_fees_requires_auth() -> Result<()> {
+    clear();
+    setup_pre_upgrade()?;
+    upgrade()?;
+    mint_with_tail(V3, &[OP_DONATE])?;
+
+    // Accrued fees are only_owner: without the auth token the collect reverts,
+    // so the balance cannot be swept by an arbitrary caller.
+    let height = V3 + 1;
+    let (_, _, txid) = call_diesel(
+        height,
+        vec![78],
+        OutPoint::new(create_coinbase_transaction(height).compute_txid(), 0),
+    )?;
+    assert_revert_context(
+        &OutPoint { txid, vout: 3 },
+        "Auth token is not in incoming alkanes",
+    )?;
     Ok(())
 }
 
@@ -190,59 +261,42 @@ fn test_set_gate_requires_auth() -> Result<()> {
     clear();
     setup_pre_upgrade()?;
     upgrade()?;
+    deploy_gate(2)?;
+
     // No auth token attached → only_owner must revert the switch.
-    let cellpack = Cellpack {
-        target: DIESEL,
-        inputs: vec![80, GATE.block, GATE.tx],
-    };
-    let height = 2;
-    let mut test_block = create_block_with_coinbase_tx(height);
-    let tx = alkane_helpers::create_multiple_cellpack_with_witness_and_in(
-        Witness::new(),
-        vec![cellpack],
+    let height = V3;
+    let (_, _, txid) = call_diesel(
+        height,
+        vec![80, GATE.block, GATE.tx],
         OutPoint::new(create_coinbase_transaction(height).compute_txid(), 0),
-        false,
-    );
-    test_block.txdata.push(tx.clone());
-    index_block(&test_block, height)?;
+    )?;
     assert_revert_context(
-        &OutPoint {
-            txid: tx.compute_txid(),
-            vout: 3,
-        },
+        &OutPoint { txid, vout: 3 },
         "Auth token is not in incoming alkanes",
     )?;
-    // And the gate must still be off.
-    let b = mint_with_tail(3, &[OP_DONATE])?;
-    assert!(minter_diesel(&b)? > 0, "gate must not have been set");
+
+    // And the gate must still be off: a mint accrues rather than forwarding.
+    let b = mint_with_tail(V3 + 1, &[OP_DONATE])?;
+    assert_eq!(minter_diesel(&b)?, 0, "gate must not have been set");
     Ok(())
 }
 
 #[wasm_bindgen_test]
-fn test_gate_timelock_pending_then_active() -> Result<()> {
+fn test_gate_forwards_immediately() -> Result<()> {
     clear();
     setup_pre_upgrade()?;
     let auth = upgrade()?;
     deploy_gate(2)?;
-    let set_h: u32 = 3;
-    set_gate(set_h, auth, GATE.block, GATE.tx)?;
+    set_gate(V3, auth, GATE.block, GATE.tx)?;
 
-    // Inside the pending window: the mint still pays the caller.
-    let b = mint_with_tail(set_h + 1, &[OP_DONATE])?;
-    assert!(
-        minter_diesel(&b)? > 0,
-        "pending gate must not intercept mints"
-    );
-
-    // After GATE_DELAY: the mint forwards to the gate (Donate swallows it) —
-    // and it is a SUCCESS, not a revert (sheet-empty alone cannot tell those
-    // apart, so pin the return context too).
-    let active_h = set_h + (GATE_DELAY as u32) + 1;
-    let b = mint_with_tail(active_h, &[OP_DONATE])?;
+    // No timelock in v3: the very next block already forwards to the gate,
+    // where Donate swallows the mint. Sheet-empty alone cannot distinguish a
+    // swallowed mint from a reverted one, so pin the return context too.
+    let b = mint_with_tail(V3 + 1, &[OP_DONATE])?;
     assert_eq!(
         minter_diesel(&b)?,
         0,
-        "active gate must receive the whole mint"
+        "an active gate must receive the whole mint"
     );
     alkane_helpers::assert_return_context(
         &OutPoint {
@@ -251,45 +305,48 @@ fn test_gate_timelock_pending_then_active() -> Result<()> {
         },
         |_| Ok(()),
     )?;
-
-    // A bare mint (no trailing calldata) stays an ordinary mint even with a
-    // live gate: calldata is zero-padded on the wire, so [77] arrives as
-    // [77, 0, ...]; a zero gate-opcode must NOT trigger a forward (that would
-    // freeze ordinary minting once a gate is set).
-    let b = mint_with_tail(active_h + 1, &[])?;
-    assert!(minter_diesel(&b)? > 0, "bare mint must stay ordinary");
     Ok(())
 }
 
 #[wasm_bindgen_test]
-fn test_double_set_cannot_bypass_timelock() -> Result<()> {
+fn test_bare_mint_does_not_forward() -> Result<()> {
     clear();
     setup_pre_upgrade()?;
     let auth = upgrade()?;
     deploy_gate(2)?;
-    // Activate the good gate A.
-    let auth = set_gate(3, auth, GATE.block, GATE.tx)?;
-    let a_active: u32 = 3 + (GATE_DELAY as u32) + 1;
+    set_gate(V3, auth, GATE.block, GATE.tx)?;
 
-    // Point at a BROKEN gate B (nothing deployed at 2:99), twice in a row.
-    // If the second set promoted the first (never-activated) B into the
-    // fallback slot, mints would start reverting immediately.
-    let auth = set_gate(a_active, auth, 2, 99)?;
-    let _auth = set_gate(a_active + 1, auth, 2, 99)?;
+    // Calldata is zero-padded on the wire, so a bare mint ([77]) arrives as
+    // [77, 0, ...]. A zero gate-opcode must NOT trigger a forward — that would
+    // call the gate with opcode 0 (Initialize) and revert. It falls back to the
+    // accrue-to-owner default instead, so this is a SUCCESS with no payout.
+    let b = mint_with_tail(V3 + 1, &[])?;
+    assert_eq!(minter_diesel(&b)?, 0, "bare mint must not pay the minter");
+    alkane_helpers::assert_return_context(
+        &OutPoint {
+            txid: b.txdata[1].compute_txid(),
+            vout: 3,
+        },
+        |_| Ok(()),
+    )?;
+    Ok(())
+}
 
-    // Still inside B's window: mints must run through A (swallowed, not
-    // reverted, not paid to the miner).
-    let b = mint_with_tail(a_active + 2, &[OP_DONATE])?;
-    assert_eq!(minter_diesel(&b)?, 0, "gate A must still govern");
+#[wasm_bindgen_test]
+fn test_broken_gate_reverts_mint() -> Result<()> {
+    clear();
+    setup_pre_upgrade()?;
+    let auth = upgrade()?;
+    // Point at a gate that does not exist (nothing deployed at 2:99).
+    set_gate(V3, auth, 2, 99)?;
 
-    // Once B activates, the broken gate reverts the mint ATOMICALLY — no
-    // fall-back to an ordinary mint (that would be the abusable path). A
-    // swallowed mint and a reverted mint both leave the minter's sheet empty,
+    // The mint reverts ATOMICALLY — it must NOT silently fall back to an
+    // ordinary mint or to the accrual default (either would be the abusable
+    // path). A swallowed mint and a reverted mint both leave the sheet empty,
     // so assert the REVERT itself: the trace's last event must be a
     // RevertContext (the empty needle matches any message; the event type is
-    // what distinguishes revert from Donate's silent success).
-    let b_active = a_active + 1 + (GATE_DELAY as u32) + 1;
-    let b = mint_with_tail(b_active, &[OP_DONATE])?;
+    // what distinguishes revert from a silent success).
+    let b = mint_with_tail(V3 + 1, &[OP_DONATE])?;
     assert_revert_context(
         &OutPoint {
             txid: b.txdata[1].compute_txid(),
@@ -302,90 +359,75 @@ fn test_double_set_cannot_bypass_timelock() -> Result<()> {
 }
 
 #[wasm_bindgen_test]
-fn test_clear_is_immediate() -> Result<()> {
+fn test_clear_returns_to_default() -> Result<()> {
     clear();
     setup_pre_upgrade()?;
     let auth = upgrade()?;
     deploy_gate(2)?;
-    let auth = set_gate(3, auth, GATE.block, GATE.tx)?;
-    let active_h: u32 = 3 + (GATE_DELAY as u32) + 1;
+    let auth = set_gate(V3, auth, GATE.block, GATE.tx)?;
+
     // Gate is live…
-    let b = mint_with_tail(active_h, &[OP_DONATE])?;
+    let b = mint_with_tail(V3 + 1, &[OP_DONATE])?;
     assert_eq!(minter_diesel(&b)?, 0);
-    // …turn it OFF: takes effect at once, no pending window.
-    let _auth = set_gate(active_h + 1, auth, 0, 0)?;
-    let b = mint_with_tail(active_h + 2, &[OP_DONATE])?;
-    assert!(minter_diesel(&b)? > 0, "0:0 must switch off immediately");
-    Ok(())
-}
 
-#[wasm_bindgen_test]
-fn test_ttl_dead_mans_switch() -> Result<()> {
-    clear();
-    setup_pre_upgrade()?;
-    let auth = upgrade()?;
-    deploy_gate(2)?;
-    let set_h: u32 = 3;
-    set_gate(set_h, auth, GATE.block, GATE.tx)?;
-    // Live after the delay…
-    let b = mint_with_tail(set_h + (GATE_DELAY as u32) + 1, &[OP_DONATE])?;
-    assert_eq!(minter_diesel(&b)?, 0);
-    // …but with no re-affirm for GATE_TTL blocks the gate lapses to OFF.
-    let expired_h = set_h + (GATE_TTL as u32) + 1;
-    let b = mint_with_tail(expired_h, &[OP_DONATE])?;
-    assert!(
-        minter_diesel(&b)? > 0,
-        "an unaffirmed gate must expire to the default"
-    );
-    Ok(())
-}
-
-#[wasm_bindgen_test]
-fn test_view_shows_pending_before_active() -> Result<()> {
-    clear();
-    setup_pre_upgrade()?;
-    let auth = upgrade()?;
-    deploy_gate(2)?;
-    let set_h: u32 = 3;
-    set_gate(set_h, auth, GATE.block, GATE.tx)?;
-
-    // Inside the window get_mint_gate must expose the pending switch: nothing
-    // governs yet (live = 0), while the pending target and its activation
-    // height are public — the whole point of the timelock.
-    let height = set_h + 1;
-    let view_cellpack = Cellpack {
-        target: DIESEL,
-        inputs: vec![102],
-    };
-    let mut test_block = create_block_with_coinbase_tx(height);
-    let tx = alkane_helpers::create_multiple_cellpack_with_witness_and_in(
-        Witness::new(),
-        vec![view_cellpack],
-        OutPoint::new(create_coinbase_transaction(height).compute_txid(), 0),
-        false,
-    );
-    test_block.txdata.push(tx.clone());
-    index_block(&test_block, height)?;
-
+    // …turn it OFF. Back to the default: the mint accrues to the owner rather
+    // than forwarding, so it still does not pay the minter — but it is a
+    // success, not a revert, and the owner can collect it.
+    let auth = set_gate(V3 + 2, auth, 0, 0)?;
+    let b = mint_with_tail(V3 + 3, &[OP_DONATE])?;
+    assert_eq!(minter_diesel(&b)?, 0, "cleared gate returns to accrual");
     alkane_helpers::assert_return_context(
         &OutPoint {
-            txid: tx.compute_txid(),
+            txid: b.txdata[1].compute_txid(),
             vout: 3,
         },
-        |trace_response| {
-            let d = &trace_response.inner.data;
-            assert_eq!(d.len(), 97, "view layout is 97 bytes");
-            let gov_block = u128::from_le_bytes(d[0..16].try_into()?);
-            let gov_tx = u128::from_le_bytes(d[16..32].try_into()?);
-            let pend_block = u128::from_le_bytes(d[48..64].try_into()?);
-            let pend_tx = u128::from_le_bytes(d[64..80].try_into()?);
-            let pend_act = u64::from_le_bytes(d[80..88].try_into()?);
-            let live = d[96];
-            assert_eq!((gov_block, gov_tx), (0, 0), "nothing governs yet");
-            assert_eq!((pend_block, pend_tx), (GATE.block, GATE.tx));
-            assert_eq!(pend_act, set_h as u64 + GATE_DELAY);
-            assert_eq!(live, 0);
-            Ok(())
-        },
-    )
+        |_| Ok(()),
+    )?;
+    let (block, _) = collect_fees(V3 + 4, auth)?;
+    let collected = get_sheet_for_outpoint(&block, 1, 0)?.get(&ProtoruneRuneId { block: 2, tx: 0 });
+    assert!(collected > 0, "post-clear mints must be collectable");
+    Ok(())
+}
+
+#[wasm_bindgen_test]
+fn test_view_reports_gate() -> Result<()> {
+    clear();
+    setup_pre_upgrade()?;
+    let auth = upgrade()?;
+    deploy_gate(2)?;
+
+    // Before any set: the view reports no gate.
+    let height = V3;
+    let (_, _, txid) = call_diesel(
+        height,
+        vec![102],
+        OutPoint::new(create_coinbase_transaction(height).compute_txid(), 0),
+    )?;
+    alkane_helpers::assert_return_context(&OutPoint { txid, vout: 3 }, |trace_response| {
+        let d = &trace_response.inner.data;
+        assert_eq!(d.len(), 41, "view layout is 41 bytes");
+        assert_eq!(u128::from_le_bytes(d[0..16].try_into()?), 0);
+        assert_eq!(u128::from_le_bytes(d[16..32].try_into()?), 0);
+        assert_eq!(d[40], 0, "no gate is live");
+        Ok(())
+    })?;
+
+    // After the set: the target and the live flag are public immediately.
+    set_gate(V3 + 1, auth, GATE.block, GATE.tx)?;
+    let height = V3 + 2;
+    let (_, _, txid) = call_diesel(
+        height,
+        vec![102],
+        OutPoint::new(create_coinbase_transaction(height).compute_txid(), 0),
+    )?;
+    alkane_helpers::assert_return_context(&OutPoint { txid, vout: 3 }, move |trace_response| {
+        let d = &trace_response.inner.data;
+        assert_eq!(d.len(), 41);
+        assert_eq!(u128::from_le_bytes(d[0..16].try_into()?), GATE.block);
+        assert_eq!(u128::from_le_bytes(d[16..32].try_into()?), GATE.tx);
+        assert_eq!(u64::from_le_bytes(d[32..40].try_into()?), height as u64);
+        assert_eq!(d[40], 1, "gate is live");
+        Ok(())
+    })?;
+    Ok(())
 }

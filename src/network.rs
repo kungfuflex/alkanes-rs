@@ -5,6 +5,7 @@ use crate::precompiled::fr_btc_build_v1_3_0;
 use crate::precompiled::fr_btc_build_v1_3_1;
 #[allow(unused_imports)]
 use crate::precompiled::{
+    alkanes_std_diesel_v3_mainnet_build, alkanes_std_diesel_v3_regtest_build,
     alkanes_std_genesis_alkane_dogecoin_build, alkanes_std_genesis_alkane_fractal_build,
     alkanes_std_genesis_alkane_luckycoin_build, alkanes_std_genesis_alkane_mainnet_build,
     alkanes_std_genesis_alkane_regtest_build,
@@ -166,6 +167,23 @@ pub fn genesis_alkane_upgrade_bytes_eoa() -> Vec<u8> {
     alkanes_std_genesis_alkane_upgraded_eoa_regtest_build::get_bytes()
 }
 
+#[cfg(feature = "mainnet")]
+pub fn diesel_v3_bytes() -> Vec<u8> {
+    alkanes_std_diesel_v3_mainnet_build::get_bytes()
+}
+
+//use if regtest
+#[cfg(all(
+    not(feature = "mainnet"),
+    not(feature = "dogecoin"),
+    not(feature = "bellscoin"),
+    not(feature = "fractal"),
+    not(feature = "luckycoin")
+))]
+pub fn diesel_v3_bytes() -> Vec<u8> {
+    alkanes_std_diesel_v3_regtest_build::get_bytes()
+}
+
 /// Height-versioned static genesis-alkane / DIESEL (`2:0`) code map.
 ///
 /// Boundaries are `>=` and mirror the historical one-shot byte-swaps that used
@@ -174,7 +192,9 @@ pub fn genesis_alkane_upgrade_bytes_eoa() -> Vec<u8> {
 /// activation block), so the bytes returned here are byte-identical to what
 /// execution historically saw at every height.
 pub fn genesis_alkane_wasm_for_height(height: u32) -> Vec<u8> {
-    if height >= genesis::GENESIS_UPGRADE_EOA_BLOCK_HEIGHT {
+    if height >= genesis::DIESEL_V3_BLOCK_HEIGHT {
+        diesel_v3_bytes()
+    } else if height >= genesis::GENESIS_UPGRADE_EOA_BLOCK_HEIGHT {
         genesis_alkane_upgrade_bytes_eoa()
     } else if height >= genesis::GENESIS_UPGRADE_BLOCK_HEIGHT {
         genesis_alkane_upgrade_bytes()
@@ -214,6 +234,20 @@ pub mod genesis {
     pub const GENESIS_OUTPOINT_BLOCK_HEIGHT: u64 = 0;
     pub const GENESIS_UPGRADE_BLOCK_HEIGHT: u32 = 0;
     pub const GENESIS_UPGRADE_EOA_BLOCK_HEIGHT: u32 = 0;
+    /// DIESEL v3 fork: activates `alkanes-std-diesel-v3` at `2:0` — the
+    /// governance-set mint gate, and the new default where an ungated mint
+    /// accrues to the contract's claimable fees for the DSIGIL owner instead of
+    /// paying the caller.
+    ///
+    /// Deliberately NOT genesis-coincident on regtest, unlike the other forks
+    /// here: the existing DIESEL suite asserts the pre-v3 pay-the-minter
+    /// behaviour, and some of it indexes at realistic mainnet-ish heights
+    /// (`tests::merkle_distributor` mints at 840_001,
+    /// `tests::genesis_upgrade` at 890_000). This sits above all of them so
+    /// those tests keep exercising the eoa binary, while `tests::mint_gate`
+    /// indexes past it to opt into v3. Keep it under 2_100_000 so the halving
+    /// schedule in `block_reward` still yields a non-zero reward.
+    pub const DIESEL_V3_BLOCK_HEIGHT: u32 = 2_000_000;
     /// v2.2.0 fork: activates the slim fr_btc.wasm precompile + the
     /// extcall-child-revert containment fix (ports of kungfuflex/v2.1.8 +
     /// kungfuflex/v2.1.8-slim-frbtc). On regtest the fork is genesis-coincident
@@ -235,6 +269,13 @@ pub mod genesis {
     pub const GENESIS_UPGRADE_BLOCK_HEIGHT: u32 = 908_888;
 
     pub const GENESIS_UPGRADE_EOA_BLOCK_HEIGHT: u32 = 917_888;
+    /// DIESEL v3 mainnet fork: activates `alkanes-std-diesel-v3` at `2:0` — the
+    /// governance-set mint gate (opcode 80 / audit view 102), and the new
+    /// default where an ungated mint accrues to the contract's claimable fees
+    /// for the DSIGIL owner (opcode 78, `only_owner`) instead of paying the
+    /// caller. Future block — coordinated hard fork; all indexers MUST ship this
+    /// activation before this height or they diverge at 2:0.
+    pub const DIESEL_V3_BLOCK_HEIGHT: u32 = 966_000;
     /// v2.2.0 mainnet fork: slim fr_btc.wasm + extcall revert containment.
     pub const V220_FORK_HEIGHT: u32 = 950_000;
     /// v2.2.1-alpha.3 mainnet fork: activates fr_btc v1.3.0. Future block —
@@ -252,6 +293,7 @@ pub mod genesis {
     pub const GENESIS_OUTPOINT_BLOCK_HEIGHT: u64 = 228_194;
     pub const GENESIS_UPGRADE_BLOCK_HEIGHT: u32 = 228_194;
     pub const GENESIS_UPGRADE_EOA_BLOCK_HEIGHT: u32 = 228_194;
+    pub const DIESEL_V3_BLOCK_HEIGHT: u32 = 0;
     pub const V220_FORK_HEIGHT: u32 = 0;
     /// v2.2.1-alpha.3 fork: activates fr_btc v1.3.0. Genesis-coincident on
     /// non-mainnet chains, so the static frBTC version map resolves to v1.3.0
@@ -268,6 +310,7 @@ pub mod genesis {
     pub const GENESIS_OUTPOINT_BLOCK_HEIGHT: u64 = 872_101;
     pub const GENESIS_UPGRADE_BLOCK_HEIGHT: u32 = 872_101;
     pub const GENESIS_UPGRADE_EOA_BLOCK_HEIGHT: u32 = 872_101;
+    pub const DIESEL_V3_BLOCK_HEIGHT: u32 = 0;
     pub const V220_FORK_HEIGHT: u32 = 0;
     /// v2.2.1-alpha.3 fork: activates fr_btc v1.3.0. Genesis-coincident on
     /// non-mainnet chains, so the static frBTC version map resolves to v1.3.0
@@ -284,6 +327,7 @@ pub mod genesis {
     pub const GENESIS_OUTPOINT_BLOCK_HEIGHT: u64 = 872_101;
     pub const GENESIS_UPGRADE_BLOCK_HEIGHT: u32 = 872_101;
     pub const GENESIS_UPGRADE_EOA_BLOCK_HEIGHT: u32 = 872_101;
+    pub const DIESEL_V3_BLOCK_HEIGHT: u32 = 0;
     pub const V220_FORK_HEIGHT: u32 = 0;
     /// v2.2.1-alpha.3 fork: activates fr_btc v1.3.0. Genesis-coincident on
     /// non-mainnet chains, so the static frBTC version map resolves to v1.3.0
@@ -300,6 +344,7 @@ pub mod genesis {
     pub const GENESIS_OUTPOINT_BLOCK_HEIGHT: u64 = 288_906;
     pub const GENESIS_UPGRADE_BLOCK_HEIGHT: u32 = 288_906;
     pub const GENESIS_UPGRADE_EOA_BLOCK_HEIGHT: u32 = 288_906;
+    pub const DIESEL_V3_BLOCK_HEIGHT: u32 = 0;
     pub const V220_FORK_HEIGHT: u32 = 0;
     /// v2.2.1-alpha.3 fork: activates fr_btc v1.3.0. Genesis-coincident on
     /// non-mainnet chains, so the static frBTC version map resolves to v1.3.0

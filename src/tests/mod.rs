@@ -49,7 +49,7 @@ pub mod genesis_upgrade;
 pub mod memory_security_tests;
 #[cfg(test)]
 pub mod merkle_distributor;
-
+#[cfg(test)]
 pub mod mint_gate;
 #[cfg(test)]
 pub mod networks;
