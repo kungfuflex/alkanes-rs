@@ -180,14 +180,17 @@ pub enum Commands {
     Upload {
         /// Path to a BuildInfo JSON (as emitted by `build-info`).
         build_info: String,
-        /// Explorer API key. `sfadm_…` admin key for attest/verify.
+        /// Explorer API key. ANY active key works with `--verify`; only the
+        /// default (attest) path needs an `sfadm_…` admin key.
         #[arg(long)]
         api_key: String,
         /// Explorer base URL. Defaults to https://explorer.subfrost.io.
         #[arg(long)]
         explorer_url: Option<String>,
         /// Instead of attest, POST the full fixture set to `/verify` so the
-        /// server rebuilds + diffs in-sandbox.
+        /// server rebuilds + diffs in-sandbox. Needs only an ordinary API key —
+        /// the rebuild is sandboxed and the diff engine promotes ONLY on a byte
+        /// match, so an unprivileged key buys compute, not trust.
         #[arg(long)]
         verify: bool,
     },
