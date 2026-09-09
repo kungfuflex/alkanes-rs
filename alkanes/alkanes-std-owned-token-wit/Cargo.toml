@@ -1,0 +1,24 @@
+[package]
+name = "alkanes-std-owned-token-wit"
+version.workspace = true
+edition.workspace = true
+description = "WIT-based owned token standard contract (proof of concept)"
+license.workspace = true
+repository.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+alkanes-runtime = { workspace = true }
+alkanes-support = { workspace = true }
+alkanes-std-factory-support = { path = "../alkanes-std-factory-support" }
+metashrew-support = { workspace = true }
+anyhow = { workspace = true }
+
+[build-dependencies]
+alkanes-wit-build = { path = "../../crates/alkanes-wit-build" }
+
+[features]
+default = []
+panic-hook = ["alkanes-runtime/panic-hook"]

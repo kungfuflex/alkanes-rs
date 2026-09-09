@@ -27,6 +27,13 @@ tabled = { workspace = true }
 anyhow = { workspace = true }
 prost = { workspace = true }
 
+# ── native reproducible-build `upload` path (feature `attest-upload`) ──
+# Optional so the default build (and any non-native consumer) doesn't
+# pull the h2/TLS client. NO curl, NO reqwest — the vendored tlsfetch
+# h2 client does a plain server-auth h2 POST.
+tlsfetch-h2-client = { path = "../../vendor/tlsfetch-h2-client", optional = true }
+bytes = { version = "1", optional = true }
+
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "fs", "io-util"] }
 
@@ -37,3 +44,9 @@ tokio = { workspace = true, features = ["macros", "rt", "sync"] }
 # Default-on persistent sqlite cache. Disable with `--no-default-features`.
 default = ["cache-sqlite"]
 cache-sqlite = ["alkanes-cli-common/cache-sqlite"]
+# Native reproducible-build `upload` path: POST a BuildInfo JSON to the
+# explorer `/api/v1/<key>/{attest,verify}` endpoints over the vendored
+# tlsfetch h2 client. Opt-in — enabled by the `alkanes-cli` binary, NOT
+# by `alkanes-web-sys` (which shares alkanes-cli-common but not this
+# crate), so the web build never pulls the HTTP/TLS stack.
+attest-upload = ["dep:tlsfetch-h2-client", "dep:bytes"]

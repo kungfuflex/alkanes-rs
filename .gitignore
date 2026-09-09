@@ -1,3 +1,4 @@
+**/node_modules
 reference
 *.swp
 *.swo
@@ -5,6 +6,9 @@ target
 src/tests/std/**/*.rs
 memory-bank/activeContext.md
 memory-bank/progress.md
+scripts/.addresses.json
+.pkgenv
+pkg-sa-key.json
 
 # Reproducible build outputs from scripts/build.sh. The canonical sha256
 # is tracked via dist/SHA256SUMS; the wasm bytes themselves are shipped
@@ -12,9 +16,3 @@ memory-bank/progress.md
 dist/alkanes.wasm
 .verify-a/
 .verify-b/
-
-# align-main: native build artifact of the root indexer package. build.rs
-# derives its scratch output dir as <repo>/alkanes when the root `alkanes`
-# crate is built for the host target (e.g. `cargo check --workspace`). Not
-# source (this branch keeps std contracts under crates/alkanes-std-*).
-/alkanes/

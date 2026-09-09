@@ -130,6 +130,12 @@ pub enum Commands {
     /// Protorunes subcommands
     #[command(subcommand)]
     Protorunes(Protorunes),
+    /// BTC/USD: market data, quoting, swaps, both bridge arms, and watching.
+    ///
+    /// Reads go through `metashrew_view` — never an `alkanes_*` JSON-RPC
+    /// method, which is a different code path from what production reads.
+    #[command(subcommand)]
+    Btcusd(alkanes_cli_common::btcusd::BtcusdCommands),
     /// Wallet subcommands
     #[command(subcommand)]
     Wallet(WalletCommands),
@@ -162,6 +168,31 @@ pub enum Commands {
         /// Show raw JSON output
         #[arg(long)]
         raw: bool,
+    },
+    /// Reproducible-build workbench: reverse an alkane's build environment from its
+    /// bytecode (id or local .wasm), reconstruct it in a controlled sandbox, diff, and
+    /// emit the canonical BuildInfo JSON. Offline unless fetching an on-chain target.
+    #[command(subcommand)]
+    BuildInfo(alkanes_cli_common::buildinfo::cli::BuildInfoCommands),
+    /// Upload a BuildInfo JSON to the explorer as an attestation (default) or a
+    /// full rebuild-verify request. POSTs over the vendored tlsfetch h2 client
+    /// (no curl, no reqwest). Attest is admin-gated (needs an `sfadm_…` key).
+    Upload {
+        /// Path to a BuildInfo JSON (as emitted by `build-info`).
+        build_info: String,
+        /// Explorer API key. ANY active key works with `--verify`; only the
+        /// default (attest) path needs an `sfadm_…` admin key.
+        #[arg(long)]
+        api_key: String,
+        /// Explorer base URL. Defaults to https://explorer.subfrost.io.
+        #[arg(long)]
+        explorer_url: Option<String>,
+        /// Instead of attest, POST the full fixture set to `/verify` so the
+        /// server rebuilds + diffs in-sandbox. Needs only an ordinary API key —
+        /// the rebuild is sandboxed and the diff engine promotes ONLY on a byte
+        /// match, so an unprivileged key buys compute, not trust.
+        #[arg(long)]
+        verify: bool,
     },
 }
 
@@ -3323,6 +3354,9 @@ impl Commands {
             Commands::Runestone(_) => false,
             // Protorunes queries don't need wallet
             Commands::Protorunes(_) => false,
+            // Reads and EVM-side work need no Bitcoin wallet; the trade
+            // commands do, and they refuse early if one is missing.
+            Commands::Btcusd(_) => false,
             // Wallet commands need the wallet
             Commands::Wallet(cmd) => cmd.requires_wallet(),
             // Metashrew queries don't need wallet
@@ -3342,6 +3376,10 @@ impl Commands {
             Commands::Wc(_) => false,
             // PSBT decoding doesn't need wallet
             Commands::Decodepsbt { .. } => false,
+            // build-info workbench doesn't need wallet
+            Commands::BuildInfo(_) => false,
+            // upload just POSTs a JSON artifact — no wallet
+            Commands::Upload { .. } => false,
         }
     }
 }

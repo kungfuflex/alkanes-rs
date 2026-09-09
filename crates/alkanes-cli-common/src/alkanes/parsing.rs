@@ -49,7 +49,10 @@ pub fn parse_input_requirements(input_str: &str) -> Result<Vec<InputRequirement>
                 .context("Invalid block number in alkanes requirement")?;
             let tx = parts[1].parse::<u64>()
                 .context("Invalid tx number in alkanes requirement")?;
-            let amount = parts[2].parse::<u64>()
+            // u128: alkane amounts are u128 on chain. Parsing as u64 made any
+            // amount above 2^64-1 sub-units fail outright — 18.4467 units of an
+            // 18-decimal token was the ceiling.
+            let amount = parts[2].parse::<u128>()
                 .context("Invalid amount in alkanes requirement")?;
             
             requirements.push(InputRequirement::Alkanes { block, tx, amount });
@@ -234,7 +237,7 @@ fn parse_edict(edict_str: &str) -> Result<ProtostoneEdict> {
             .context("Invalid block number in bracketed edict")?;
         let tx = parts[1].parse::<u64>()
             .context("Invalid tx number in bracketed edict")?;
-        let amount = parts[2].parse::<u64>()
+        let amount = parts[2].parse::<u128>()
             .context("Invalid amount in bracketed edict")?;
         let target = parse_output_target(parts[3])?;
         
@@ -254,7 +257,7 @@ fn parse_edict(edict_str: &str) -> Result<ProtostoneEdict> {
             .context("Invalid block number in edict")?;
         let tx = parts[1].parse::<u64>()
             .context("Invalid tx number in edict")?;
-        let amount = parts[2].parse::<u64>()
+        let amount = parts[2].parse::<u128>()
             .context("Invalid amount in edict")?;
         let target = parse_output_target(parts[3])?;
         
@@ -325,4 +328,83 @@ fn split_respecting_brackets(input: &str, delimiter: char) -> Result<Vec<String>
     }
     
     Ok(parts)
+}
+
+#[cfg(test)]
+mod u128_amount_regression {
+    use super::*;
+    use crate::alkanes::types::InputRequirement;
+
+    /// The exact amount that was frozen on mainnet: 23.0137 units of an
+    /// 18-decimal token = 23_013_700_000_000_000_000 sub-units, which is
+    /// ABOVE u64::MAX (18_446_744_073_709_551_615).
+    const FROZEN_LP_SUBUNITS: u128 = 23_013_700_000_000_000_000;
+
+    #[test]
+    fn the_frozen_amount_really_does_exceed_u64() {
+        // Guards the premise of every test below: if this ever stops being
+        // true the regression tests are vacuous.
+        assert!(FROZEN_LP_SUBUNITS > u64::MAX as u128);
+    }
+
+    #[test]
+    fn input_requirement_round_trips_an_amount_above_u64_max() {
+        let spec = format!("2:1778:{FROZEN_LP_SUBUNITS}");
+        let reqs = parse_input_requirements(&spec).expect("must parse; u64 could not");
+        assert_eq!(reqs.len(), 1);
+        match &reqs[0] {
+            InputRequirement::Alkanes { block, tx, amount } => {
+                assert_eq!(*block, 2);
+                assert_eq!(*tx, 1778);
+                assert_eq!(*amount, FROZEN_LP_SUBUNITS, "amount must not be truncated");
+            }
+            other => panic!("expected Alkanes requirement, got {other:?}"),
+        }
+    }
+
+    /// u128::MAX must survive too — the ceiling is the chain's, not ours.
+    #[test]
+    fn input_requirement_accepts_u128_max() {
+        let spec = format!("2:0:{}", u128::MAX);
+        let reqs = parse_input_requirements(&spec).unwrap();
+        match &reqs[0] {
+            InputRequirement::Alkanes { amount, .. } => assert_eq!(*amount, u128::MAX),
+            other => panic!("expected Alkanes, got {other:?}"),
+        }
+    }
+
+    /// Overflowing u128 must still be a clean parse ERROR, not a wrap to 0 —
+    /// `unwrap_or(0)` on the espo path is what turned a real balance into
+    /// "Insufficient alkanes: need X, have 0".
+    #[test]
+    fn amount_above_u128_max_is_an_error_not_a_silent_zero() {
+        let spec = format!("2:0:{}0", u128::MAX); // one decimal digit too many
+        assert!(parse_input_requirements(&spec).is_err());
+    }
+
+    /// Bitcoin amounts stay u64 on purpose — sats fit, and widening them would
+    /// be churn with no payoff.
+    #[test]
+    fn bitcoin_requirements_are_unchanged() {
+        let reqs = parse_input_requirements("B:10000").unwrap();
+        match &reqs[0] {
+            InputRequirement::Bitcoin { amount } => assert_eq!(*amount, 10_000u64),
+            other => panic!("expected Bitcoin, got {other:?}"),
+        }
+    }
+
+    /// Edicts carry alkane amounts too, and protorune's on-chain `Edict.amount`
+    /// is u128 — a narrow edict would truncate the transfer itself.
+    #[test]
+    fn edicts_round_trip_an_amount_above_u64_max() {
+        for spec in [
+            format!("[2:1778:{FROZEN_LP_SUBUNITS}:v0]"),
+            format!("2:1778:{FROZEN_LP_SUBUNITS}:v0"),
+        ] {
+            let e = parse_edict(&spec).unwrap_or_else(|e| panic!("{spec} failed: {e}"));
+            assert_eq!(e.alkane_id.block, 2);
+            assert_eq!(e.alkane_id.tx, 1778);
+            assert_eq!(e.amount, FROZEN_LP_SUBUNITS, "edict amount truncated: {spec}");
+        }
+    }
 }

@@ -38,8 +38,7 @@ pub use super::types::{
 use super::envelope::AlkanesEnvelope;
 use anyhow::anyhow;
 use ordinals::Runestone;
-use protorune_support::protostone::{Protostone, ProtostoneEdict as ProtoruneEdict};
-use crate::alkanes::protostone_ext::Protostones;
+use protorune_support::protostone::{Protostones, Protostone, ProtostoneEdict as ProtoruneEdict};
 use protorune_support::balance_sheet::ProtoruneRuneId;
 
 const MAX_FEE_SATS: u64 = 100_000; // 0.001 BTC. Cap to avoid "absurdly high fee rate" errors.
@@ -131,6 +130,42 @@ impl BtcHeadroom {
 /// must never be built below this floor.
 const MIN_RELAY_FEE_RATE: f32 = 1.0;
 
+/// Fee-rate floor, in sat/vB, for the **parent** of a split-tx CPFP package
+/// (Tx A, the wrap).
+///
+/// Tx A is a *structural* CPFP parent — Tx B has to spend its carrier output,
+/// so the pair exists by construction and is not a stuck-tx rescue. CPFP fixes
+/// a transaction's mining PRIORITY, never its RELAY: every node drops anything
+/// below its own `-minrelaytxfee` (1 sat/vB by default), so a sub-1-sat/vB
+/// parent simply never reaches most miners' mempools and a high-fee child
+/// cannot rescue a transaction they never received (1p1c package relay is not
+/// universally deployed). The parent must therefore clear min-relay
+/// STANDALONE.
+///
+/// 1.25 = the 1 sat/vB Core default plus ~25% margin, so the parent also
+/// clears stricter-than-default node policies and absorbs vsize-estimate
+/// drift. Ported from `CPFP_PARENT_MIN_FEE_RATE` in subfrost-app
+/// (`hooks/useEphemeralWrapPackage.ts`), where a 0.151 sat/vB parent
+/// (mainnet 81396b59…e7960cae, 2026-06-26) sat unconfirmed indefinitely
+/// while its child was fine.
+///
+/// NOTE: static floor — it does not track a rising `mempoolminfee` under
+/// congestion. A `max(1.25, live mempoolminfee)` floor would.
+const CPFP_PARENT_MIN_FEE_RATE: f32 = 1.25;
+
+/// The rate the split-tx CPFP **parent** (Tx A) must actually be built at.
+///
+/// The user's requested rate drives the *package*; the parent additionally has
+/// to relay on its own, hence the floor. Anything at or above the floor is
+/// passed through unchanged.
+fn parent_fee_rate_for_package(target_rate: f32) -> f32 {
+    if target_rate.is_finite() {
+        target_rate.max(CPFP_PARENT_MIN_FEE_RATE)
+    } else {
+        CPFP_PARENT_MIN_FEE_RATE
+    }
+}
+
 /// Compute the fee rate the CPFP **child** (Tx B) must pay so that the whole
 /// parent+child *package* clears the user's target fee rate, then floor the
 /// result at the network min-relay rate.
@@ -148,6 +183,33 @@ const MIN_RELAY_FEE_RATE: f32 = 1.0;
 /// makes up the difference. The result is floored at `MIN_RELAY_FEE_RATE` so
 /// the child is always individually relayable even if its parent confirms
 /// first and the child is briefly evaluated on its own.
+///
+/// # The child-inversion guard
+///
+/// The package can never be targeted BELOW what the parent already pays. Since
+/// the parent is floored at [`CPFP_PARENT_MIN_FEE_RATE`] independently of the
+/// user's `target_rate`, a user rate at or under that floor makes the naive
+/// shortfall `target_rate * package_vsize - parent_fee` go negative; the child
+/// then collapses to `target_rate` — a rate BELOW its own parent's. Observed
+/// on mainnet (subfrost-app, tx cd6ec685…154d981f, 2026-06-30):
+///
+/// ```text
+///   parent 5841c419…4282b6 : fee 975,  vsize 776  -> 1.256 sat/vB
+///   child  cd6ec685…d981f  : fee 117,  vsize ~316 -> 0.370 sat/vB  <- INVERTED
+///   package                : fee 1092, vsize 1092 -> 1.000 sat/vB
+/// ```
+///
+/// A CPFP child that under-bids its parent drags the package's effective rate
+/// DOWN — the package is then worth less to a miner than the parent alone, so
+/// the whole construction is pointless. Targeting
+/// `effective_rate = max(target_rate, parent_rate)` makes the shortfall always
+/// at least `effective_rate * child_vsize`, which pins the invariant
+///
+/// ```text
+///   child_rate >= package_rate >= parent_rate
+/// ```
+///
+/// at every requested rate.
 fn child_fee_rate_for_package(
     target_rate: f32,
     parent_fee: u64,
@@ -155,14 +217,24 @@ fn child_fee_rate_for_package(
     child_vsize: u64,
 ) -> f32 {
     let child_vsize = child_vsize.max(1) as f32;
+    // The parent's REALIZED rate. It is a published, already-paid cost the
+    // package inherits — the package target can never sit below it.
+    let parent_rate = if parent_vsize == 0 {
+        target_rate
+    } else {
+        parent_fee as f32 / parent_vsize as f32
+    };
+    let effective_rate = target_rate.max(parent_rate);
     let package_vsize = parent_vsize as f32 + child_vsize;
-    let required_package_fee = target_rate * package_vsize;
+    let required_package_fee = effective_rate * package_vsize;
     // What the child must contribute on top of the parent's actual fee.
+    // Because `effective_rate >= parent_rate`, this is always at least
+    // `effective_rate * child_vsize` — never negative, never inverted.
     let required_child_fee = (required_package_fee - parent_fee as f32).max(0.0);
     let child_rate = required_child_fee / child_vsize;
-    // Never below min-relay, and never below the user's own target either —
-    // a CPFP child should at minimum pay the target rate for itself.
-    child_rate.max(target_rate).max(MIN_RELAY_FEE_RATE)
+    // Never below min-relay, and never below the effective package rate
+    // either, so estimator drift cannot let the child slip under the target.
+    child_rate.max(effective_rate).max(MIN_RELAY_FEE_RATE)
 }
 
 /// frBTC, frZEC, frETH and any other cross-chain wrap target lives at block 32
@@ -443,9 +515,9 @@ pub(crate) struct UtxoSelectionResult {
     /// PSBT construction can avoid getrawtransaction fallback fetches.
     pub(crate) txouts: alloc::collections::BTreeMap<OutPoint, TxOut>,
     /// Actual alkanes balances found in the selected UTXOs (aggregate)
-    pub(crate) alkanes_found: alloc::collections::BTreeMap<AlkaneId, u64>,
+    pub(crate) alkanes_found: alloc::collections::BTreeMap<AlkaneId, u128>,
     /// Per-UTXO alkane balances (for alkane-aware ordinals splitting)
-    pub(crate) per_utxo_alkanes: alloc::collections::BTreeMap<OutPoint, Vec<(AlkaneId, u64)>>,
+    pub(crate) per_utxo_alkanes: alloc::collections::BTreeMap<OutPoint, Vec<(AlkaneId, u128)>>,
 }
 
 
@@ -559,7 +631,7 @@ fn build_prefetched_alkanes_map(
 /// — same conservative posture as `build_prefetched_alkanes_map`'s callers.
 fn prefetched_covers_alkanes_needed(
     prefetched_utxos: &[PrefetchedUtxo],
-    alkanes_needed: &alloc::collections::BTreeMap<(u64, u64), u64>,
+    alkanes_needed: &alloc::collections::BTreeMap<(u64, u64), u128>,
 ) -> bool {
     if alkanes_needed.is_empty() {
         return true;
@@ -857,8 +929,21 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         }
 
         // ---- Tx A: wrap-only ----------------------------------------------
+        // Resolve the user's package target BEFORE building Tx A: the parent
+        // has to relay standalone, so it is built at the floored parent rate
+        // (see parent_fee_rate_for_package), not at the raw package target.
+        let target_rate = self.resolve_fee_rate(params.fee_rate).await?;
+        let parent_rate = parent_fee_rate_for_package(target_rate);
+        if parent_rate > target_rate {
+            log::info!(
+                "[split-tx] parent fee rate floored at {:.3} sat/vB (requested {:.3}) — a sub-min-relay parent never reaches miners",
+                parent_rate, target_rate
+            );
+        }
+
         let mut tx_a_params = params.clone();
         tx_a_params.split_transactions = false;
+        tx_a_params.fee_rate = Some(parent_rate);
 
         // The wrap protostone's pointer typically targets p1 (forward to the
         // next protostone in the original atomic flow). In split mode we
@@ -901,7 +986,6 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         // clears the target rate, floored at min-relay — see
         // child_fee_rate_for_package. Decode Tx A from its broadcast hex to get
         // the parent's true vsize; fall back to an estimate if hex is missing.
-        let target_rate = self.resolve_fee_rate(params.fee_rate).await?;
         let parent_vsize = tx_a_result
             .reveal_tx_hex
             .as_ref()
@@ -1008,8 +1092,20 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             ));
         }
 
+        // Same parent floor as execute_split: Tx A must clear min-relay on its
+        // own or the child can never rescue it. See parent_fee_rate_for_package.
+        let target_rate = self.resolve_fee_rate(params.fee_rate).await?;
+        let parent_rate = parent_fee_rate_for_package(target_rate);
+        if parent_rate > target_rate {
+            log::info!(
+                "[split-tx:psbt] parent fee rate floored at {:.3} sat/vB (requested {:.3}) — a sub-min-relay parent never reaches miners",
+                parent_rate, target_rate
+            );
+        }
+
         let mut tx_a_params = params.clone();
         tx_a_params.split_transactions = false;
+        tx_a_params.fee_rate = Some(parent_rate);
 
         let mut wrap_proto = params.protostones[0].clone();
         wrap_proto.pointer = Some(OutputTarget::Output(1));
@@ -1041,7 +1137,6 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         // rate so it pays for both itself and any parent shortfall.
         let parent_vsize = tx_a_state.psbt.unsigned_tx.vsize() as u64;
         let parent_fee = tx_a_state.fee;
-        let target_rate = self.resolve_fee_rate(params.fee_rate).await?;
         // Estimate Tx B's vsize: it spends Tx A's alkane carrier + BTC change
         // (~2 inputs) and produces the execute output(s) + change + runestone.
         let child_vsize_estimate = Self::estimate_transaction_vsize(
@@ -1597,7 +1692,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                         }
 
                         // Collect alkane data for inscribed UTXOs being split
-                        let split_utxo_alkanes: alloc::collections::BTreeMap<OutPoint, Vec<(AlkaneId, u64)>> = plans.iter()
+                        let split_utxo_alkanes: alloc::collections::BTreeMap<OutPoint, Vec<(AlkaneId, u128)>> = plans.iter()
                             .filter_map(|plan| {
                                 utxo_selection.per_utxo_alkanes.get(&plan.outpoint)
                                     .map(|alkanes| (plan.outpoint, alkanes.clone()))
@@ -2410,9 +2505,9 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                 bitcoin_collected += $amount;
             }};
         }
-        let mut alkanes_collected: alloc::collections::BTreeMap<(u64, u64), u64> = alloc::collections::BTreeMap::new();
-        let mut alkanes_found: alloc::collections::BTreeMap<AlkaneId, u64> = alloc::collections::BTreeMap::new();
-        let mut per_utxo_alkanes: alloc::collections::BTreeMap<OutPoint, Vec<(AlkaneId, u64)>> = alloc::collections::BTreeMap::new();
+        let mut alkanes_collected: alloc::collections::BTreeMap<(u64, u64), u128> = alloc::collections::BTreeMap::new();
+        let mut alkanes_found: alloc::collections::BTreeMap<AlkaneId, u128> = alloc::collections::BTreeMap::new();
+        let mut per_utxo_alkanes: alloc::collections::BTreeMap<OutPoint, Vec<(AlkaneId, u128)>> = alloc::collections::BTreeMap::new();
 
         // If we need alkanes, query protorunes_by_address directly to find UTXOs with balances
         // This bypasses the lua batch script which has issues with individual outpoint queries
@@ -2494,7 +2589,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                 let requirements_covered =
                     |utxo_balances: &alloc::collections::BTreeMap<String, serde_json::Value>|
                      -> bool {
-                        let mut totals: alloc::collections::BTreeMap<(u64, u64), u64> =
+                        let mut totals: alloc::collections::BTreeMap<(u64, u64), u128> =
                             alloc::collections::BTreeMap::new();
                         for utxo_data in utxo_balances.values() {
                             let Some(arr) = utxo_data.get("balances").and_then(|v| v.as_array()) else {
@@ -2507,9 +2602,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                                 let tx = b.get("tx").and_then(|v| {
                                     v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok()))
                                 });
-                                let amount = b.get("amount").and_then(|v| {
-                                    v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok()))
-                                });
+                                let amount = b.get("amount").and_then(json_u128);
                                 if let (Some(block), Some(tx), Some(amount)) = (block, tx, amount) {
                                     let e = totals.entry((block, tx)).or_insert(0);
                                     *e = e.saturating_add(amount);
@@ -2726,11 +2819,16 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                                                 let parts: Vec<&str> = alkane_str.split(':').collect();
                                                 if parts.len() == 2 {
                                                     if let (Ok(block), Ok(tx)) = (parts[0].parse::<u64>(), parts[1].parse::<u64>()) {
-                                                        let amount = amount_str.parse::<u64>().unwrap_or(0);
+                                                        // u128, and re-emitted as a STRING: a JSON
+                                                        // number cannot carry u128, and the reader
+                                                        // above already accepts the string form.
+                                                        // `unwrap_or(0)` here is what silently turned a
+                                                        // real balance into "have 0".
+                                                        let amount = amount_str.parse::<u128>().unwrap_or(0);
                                                         balances_array.push(serde_json::json!({
                                                             "block": block,
                                                             "tx": tx,
-                                                            "amount": amount
+                                                            "amount": amount.to_string()
                                                         }));
                                                     }
                                                 }
@@ -2902,10 +3000,8 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                             let tx = b.get("tx").and_then(|v| {
                                 v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok()))
                             })?;
-                            // Handle amount as either number or string
-                            let amount = b.get("amount").and_then(|v| {
-                                v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok()))
-                            })?;
+                            // Handle amount as either number or string.
+                            let amount = b.get("amount").and_then(json_u128)?;
                             Some(((block, tx), amount))
                         }).collect::<Vec<_>>()
                     }).unwrap_or_default();
@@ -3275,7 +3371,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
     }
 
     /// Calculate alkanes needed from input requirements
-    fn calculate_alkanes_needed(&self, requirements: &[InputRequirement]) -> alloc::collections::BTreeMap<AlkaneId, u64> {
+    fn calculate_alkanes_needed(&self, requirements: &[InputRequirement]) -> alloc::collections::BTreeMap<AlkaneId, u128> {
         let mut needed = alloc::collections::BTreeMap::new();
         
         for requirement in requirements {
@@ -3296,9 +3392,9 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
     /// Calculate excess alkanes (found - needed)
     fn calculate_excess(
         &self,
-        alkanes_found: &alloc::collections::BTreeMap<AlkaneId, u64>,
-        alkanes_needed: &alloc::collections::BTreeMap<AlkaneId, u64>,
-    ) -> alloc::collections::BTreeMap<AlkaneId, u64> {
+        alkanes_found: &alloc::collections::BTreeMap<AlkaneId, u128>,
+        alkanes_needed: &alloc::collections::BTreeMap<AlkaneId, u128>,
+    ) -> alloc::collections::BTreeMap<AlkaneId, u128> {
         let mut excess = alloc::collections::BTreeMap::new();
         
         for (alkane_id, found_amount) in alkanes_found {
@@ -3323,8 +3419,8 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
     /// Generate automatic protostone for alkanes change
     async fn generate_alkanes_change_protostone(
         &mut self,
-        alkanes_needed: &alloc::collections::BTreeMap<AlkaneId, u64>,
-        alkanes_found: &alloc::collections::BTreeMap<AlkaneId, u64>,
+        alkanes_needed: &alloc::collections::BTreeMap<AlkaneId, u128>,
+        alkanes_found: &alloc::collections::BTreeMap<AlkaneId, u128>,
         alkanes_change_output_index: u32,
     ) -> Result<ProtostoneSpec> {
         log::info!("Generating automatic split protostone for {} needed alkane types, {} found alkane types",
@@ -3881,8 +3977,8 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         extra_funding_utxos: &[(OutPoint, TxOut)],
         fee_rate: f32,
         params: &EnhancedExecuteParams,
-        split_utxo_alkanes: &alloc::collections::BTreeMap<OutPoint, Vec<(AlkaneId, u64)>>,
-    ) -> Result<(Psbt, u64, Vec<OutPoint>, Vec<(OutPoint, Vec<(AlkaneId, u64)>)>, Vec<OutPoint>)> {
+        split_utxo_alkanes: &alloc::collections::BTreeMap<OutPoint, Vec<(AlkaneId, u128)>>,
+    ) -> Result<(Psbt, u64, Vec<OutPoint>, Vec<(OutPoint, Vec<(AlkaneId, u128)>)>, Vec<OutPoint>)> {
         use bitcoin::transaction::Version;
 
         // Get safe address for split outputs
@@ -3963,7 +4059,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         // clean alkane output and a protostone OP_RETURN to route alkanes there.
         // This prevents alkanes from being lost when their UTXO is split for inscriptions.
         let has_alkanes = !split_utxo_alkanes.is_empty();
-        let mut alkane_outpoints_with_balances: Vec<(OutPoint, Vec<(AlkaneId, u64)>)> = Vec::new();
+        let mut alkane_outpoints_with_balances: Vec<(OutPoint, Vec<(AlkaneId, u128)>)> = Vec::new();
 
         if has_alkanes {
             // Add a clean alkane output at the end (before OP_RETURN)
@@ -3974,7 +4070,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             });
 
             // Aggregate all alkanes from inscribed UTXOs
-            let mut aggregated_alkanes: alloc::collections::BTreeMap<AlkaneId, u64> = alloc::collections::BTreeMap::new();
+            let mut aggregated_alkanes: alloc::collections::BTreeMap<AlkaneId, u128> = alloc::collections::BTreeMap::new();
             for (_outpoint, alkanes) in split_utxo_alkanes {
                 for (alkane_id, amount) in alkanes {
                     *aggregated_alkanes.entry(alkane_id.clone()).or_insert(0) += amount;
@@ -5038,6 +5134,114 @@ mod tests {
         // Very low target still clamps to min-relay.
         let low = child_fee_rate_for_package(0.1, 0, 200, 150);
         assert!(low >= MIN_RELAY_FEE_RATE);
+    }
+
+    /// REGRESSION — mainnet tx cd6ec685…154d981f (2026-06-30).
+    ///
+    /// The parent is floored at CPFP_PARENT_MIN_FEE_RATE independently of the
+    /// user's target, so a target at/below that floor used to make the child
+    /// collapse to a rate BELOW its parent's. Reproduce the exact on-chain
+    /// numbers and assert the child now out-bids the parent.
+    #[test]
+    fn cpfp_child_never_underbids_its_parent_mainnet_cd6ec685() {
+        // parent: fee 975 sats over 776 vB = 1.256 sat/vB (the floored parent)
+        // child : ~316 vB. User asked for 1.0 sat/vB during a quiet mempool.
+        let parent_fee = 975u64;
+        let parent_vsize = 776u64;
+        let child_vsize = 316u64;
+        let target_rate = 1.0f32;
+
+        let parent_rate = parent_fee as f32 / parent_vsize as f32;
+        let child_rate =
+            child_fee_rate_for_package(target_rate, parent_fee, parent_vsize, child_vsize);
+
+        // The incident value was 0.370 sat/vB — below the parent's 1.256.
+        assert!(
+            child_rate >= parent_rate,
+            "child {child_rate} must not under-bid parent {parent_rate} (incident: 0.370 vs 1.256)"
+        );
+
+        // ...and the package must not be worth LESS to a miner than the parent
+        // alone. The incident package rate was 1.000 vs a 1.256 parent.
+        let package_rate = (parent_fee as f32 + child_rate * child_vsize as f32)
+            / (parent_vsize + child_vsize) as f32;
+        assert!(
+            package_rate >= parent_rate - 0.001,
+            "package {package_rate} must not drag the parent {parent_rate} down"
+        );
+        assert!(package_rate >= target_rate);
+    }
+
+    /// The invariant `child_rate >= package_rate >= parent_rate` must hold at
+    /// every requested rate — below, at, and far above the parent floor.
+    #[test]
+    fn cpfp_package_invariant_holds_across_the_rate_range() {
+        let parent_vsize = 776u64;
+        let child_vsize = 316u64;
+
+        for &requested in &[0.1f32, 0.5, 1.0, 1.24, 1.25, 1.26, 2.0, 5.0, 25.0, 100.0] {
+            // Build the parent the way the split path now does: at the floor.
+            let parent_build_rate = parent_fee_rate_for_package(requested);
+            let parent_fee = (parent_build_rate * parent_vsize as f32).ceil() as u64;
+            let parent_rate = parent_fee as f32 / parent_vsize as f32;
+
+            let child_rate =
+                child_fee_rate_for_package(requested, parent_fee, parent_vsize, child_vsize);
+            let package_rate = (parent_fee as f32 + child_rate * child_vsize as f32)
+                / (parent_vsize + child_vsize) as f32;
+
+            assert!(
+                child_rate >= package_rate - 0.001,
+                "requested {requested}: child {child_rate} < package {package_rate}"
+            );
+            assert!(
+                package_rate >= parent_rate - 0.001,
+                "requested {requested}: package {package_rate} < parent {parent_rate}"
+            );
+            assert!(
+                child_rate >= MIN_RELAY_FEE_RATE,
+                "requested {requested}: child {child_rate} below min-relay"
+            );
+            assert!(
+                package_rate >= requested - 0.001,
+                "requested {requested}: package {package_rate} below the user's target"
+            );
+        }
+    }
+
+    /// REGRESSION — mainnet tx 81396b59…e7960cae (2026-06-26).
+    ///
+    /// A parent built at the raw target sat unconfirmed at ~0.151 sat/vB: CPFP
+    /// fixes mining priority, never relay, so a sub-min-relay parent never
+    /// reaches the miners its child is trying to bribe. The parent must be
+    /// RAISED to the floor, never refused, and never left below it.
+    #[test]
+    fn cpfp_parent_is_floored_to_relay_standalone() {
+        // The incident rate, and everything else under the floor.
+        for &requested in &[0.0f32, 0.15, 0.151, 0.5, 1.0, 1.2499] {
+            let built = parent_fee_rate_for_package(requested);
+            assert!(
+                built >= CPFP_PARENT_MIN_FEE_RATE,
+                "requested {requested} produced a {built} sat/vB parent — below the floor"
+            );
+            assert!(built >= MIN_RELAY_FEE_RATE, "parent must clear Core min-relay");
+        }
+
+        // At or above the floor the user's rate is passed through untouched.
+        for &requested in &[1.25f32, 1.26, 3.0, 50.0] {
+            assert_eq!(parent_fee_rate_for_package(requested), requested);
+        }
+
+        // A non-finite rate must not leak NaN into a fee computation.
+        assert_eq!(parent_fee_rate_for_package(f32::NAN), CPFP_PARENT_MIN_FEE_RATE);
+
+        // And the floored parent really does clear min-relay in absolute sats.
+        let parent_vsize = 776u64;
+        let fee = (parent_fee_rate_for_package(0.15) * parent_vsize as f32).ceil() as u64;
+        assert!(
+            fee as f32 / parent_vsize as f32 >= MIN_RELAY_FEE_RATE,
+            "floored parent pays {fee} sats over {parent_vsize} vB"
+        );
     }
 
     /// `is_wrap_protostone` must reliably distinguish frBTC/frZEC/frETH wraps
@@ -6207,7 +6411,7 @@ mod tests {
             Some(vec![mk_alkane(2, 0, "5000")]),
         )];
         let mut needed = alloc::collections::BTreeMap::new();
-        needed.insert((2u64, 0u64), 5000u64);
+        needed.insert((2u64, 0u64), 5000u128);
         assert!(prefetched_covers_alkanes_needed(&prefetched, &needed));
     }
 
@@ -6220,7 +6424,7 @@ mod tests {
             mk_prefetched(&format!("{}:1", TXID_B), Some(vec![mk_alkane(2, 0, "700")])),
         ];
         let mut needed = alloc::collections::BTreeMap::new();
-        needed.insert((2u64, 0u64), 1000u64);
+        needed.insert((2u64, 0u64), 1000u128);
         assert!(prefetched_covers_alkanes_needed(&prefetched, &needed));
     }
 
@@ -6233,7 +6437,7 @@ mod tests {
             Some(vec![mk_alkane(2, 0, "999")]),
         )];
         let mut needed = alloc::collections::BTreeMap::new();
-        needed.insert((2u64, 0u64), 1000u64);
+        needed.insert((2u64, 0u64), 1000u128);
         assert!(!prefetched_covers_alkanes_needed(&prefetched, &needed));
     }
 
@@ -6246,7 +6450,7 @@ mod tests {
             Some(vec![mk_alkane(2, 0, "9999")]),
         )];
         let mut needed = alloc::collections::BTreeMap::new();
-        needed.insert((2u64, 1u64), 1u64);
+        needed.insert((2u64, 1u64), 1u128);
         assert!(!prefetched_covers_alkanes_needed(&prefetched, &needed));
     }
 
@@ -6259,8 +6463,8 @@ mod tests {
             mk_prefetched(&format!("{}:0", TXID_B), Some(vec![mk_alkane(2, 1, "10")])),
         ];
         let mut needed = alloc::collections::BTreeMap::new();
-        needed.insert((2u64, 0u64), 4000u64);
-        needed.insert((2u64, 1u64), 100u64);
+        needed.insert((2u64, 0u64), 4000u128);
+        needed.insert((2u64, 1u64), 100u128);
         assert!(!prefetched_covers_alkanes_needed(&prefetched, &needed));
     }
 
@@ -6271,7 +6475,7 @@ mod tests {
         // fall back to sync rather than silently treating cache as authoritative.
         let prefetched = vec![mk_prefetched(&format!("{}:0", TXID_A_COV), None)];
         let mut needed = alloc::collections::BTreeMap::new();
-        needed.insert((2u64, 0u64), 1u64);
+        needed.insert((2u64, 0u64), 1u128);
         assert!(!prefetched_covers_alkanes_needed(&prefetched, &needed));
     }
 
@@ -6281,7 +6485,7 @@ mod tests {
         // Doesn't cover any DIESEL requirement, so coverage check returns false.
         let prefetched = vec![mk_prefetched(&format!("{}:0", TXID_A_COV), Some(vec![]))];
         let mut needed = alloc::collections::BTreeMap::new();
-        needed.insert((2u64, 0u64), 1u64);
+        needed.insert((2u64, 0u64), 1u128);
         assert!(!prefetched_covers_alkanes_needed(&prefetched, &needed));
     }
 
@@ -6295,7 +6499,7 @@ mod tests {
             Some(vec![mk_alkane(2, 0, "not-a-number")]),
         )];
         let mut needed = alloc::collections::BTreeMap::new();
-        needed.insert((2u64, 0u64), 1u64);
+        needed.insert((2u64, 0u64), 1u128);
         assert!(!prefetched_covers_alkanes_needed(&prefetched, &needed));
     }
 
@@ -6315,9 +6519,9 @@ mod tests {
             ),
         ];
         let mut needed = alloc::collections::BTreeMap::new();
-        needed.insert((2u64, 0u64), 100u64);
-        needed.insert((32u64, 0u64), 200u64);
-        needed.insert((2u64, 4u64), 50u64);
+        needed.insert((2u64, 0u64), 100u128);
+        needed.insert((32u64, 0u64), 200u128);
+        needed.insert((2u64, 4u64), 50u128);
         assert!(prefetched_covers_alkanes_needed(&prefetched, &needed));
     }
 

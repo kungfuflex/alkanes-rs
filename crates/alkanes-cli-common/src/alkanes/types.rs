@@ -96,8 +96,14 @@ pub enum OrdinalsStrategy {
 /// Input requirement specification
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum InputRequirement {
-    /// Alkanes token requirement: (block, tx, amount) where 0 means ALL
-    Alkanes { block: u64, tx: u64, amount: u64 },
+    /// Alkanes token requirement: (block, tx, amount) where 0 means ALL.
+    ///
+    /// `amount` is u128 because alkane amounts are u128 ON CHAIN. Narrowing it
+    /// to u64 froze real balances: any UTXO holding more than 18.4467 units of
+    /// an 18-decimal token exceeds 2^64-1 in sub-units, so it either failed to
+    /// parse or silently became 0 and the wallet reported "have 0" for coins it
+    /// could see.
+    Alkanes { block: u64, tx: u64, amount: u128 },
     /// Bitcoin requirement: amount in satoshis
     Bitcoin { amount: u64 },
     /// Bitcoin output assignment: amount in satoshis to specific output target
@@ -119,7 +125,10 @@ pub enum OutputTarget {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProtostoneEdict {
     pub alkane_id: AlkaneId,
-    pub amount: u64,
+    /// u128 to match the chain: protorune's `Edict.amount` is u128 and the
+    /// runestone encoder varint-encodes it as such (`ordinals/src/runestone.rs`).
+    /// A u64 here truncated any edict above 2^64-1 sub-units.
+    pub amount: u128,
     pub target: OutputTarget,
 }
 

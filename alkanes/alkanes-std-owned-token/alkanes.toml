@@ -1,0 +1,18 @@
+[contract]
+name = "OwnedToken"
+
+[opcodes]
+initialize = 0
+initialize-with-name-symbol = 1
+mint = 77
+burn = 88
+get-name = 99
+get-symbol = 100
+get-total-supply = 101
+get-data = 1000
+
+[views]
+get-name = true
+get-symbol = true
+get-total-supply = true
+get-data = true

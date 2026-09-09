@@ -1,0 +1,47 @@
+package example:test;
+
+interface logger-alkane {
+    record alkane-id {
+        block: u64,
+        block-hi: u64,
+        tx: u64,
+        tx-hi: u64,
+    }
+
+    initialize: func() -> result<_, string>;
+    self-call: func() -> result<_, string>;
+    check-incoming: func() -> result<_, string>;
+    mint-tokens: func() -> result<_, string>;
+    return-data1: func() -> result<list<u8>, string>;
+    test-ordered-incoming: func() -> result<list<u8>, string>;
+    donate: func() -> result<_, string>;
+    process-numbers: func(numbers: list<u64>) -> result<_, string>;
+    process-strings: func(strings: list<string>) -> result<_, string>;
+    process-nested-vec: func(nested: list<list<u64>>) -> result<_, string>;
+    test-infinite-loop: func() -> result<_, string>;
+    test-infinite-extcall: func() -> result<_, string>;
+    test-self-mint: func(amount: u64) -> result<_, string>;
+    test-arbitrary-mint: func(alkane: alkane-id, amount: u64) -> result<_, string>;
+    test-ext-call: func(target: alkane-id, inputs: list<u64>) -> result<_, string>;
+    test-ext-delegate-call: func(target: alkane-id, inputs: list<u64>) -> result<_, string>;
+    test-static-call: func(target: alkane-id, inputs: list<u64>) -> result<_, string>;
+    test-multiple-ext-call: func(target: alkane-id, inputs: list<u64>, target2: alkane-id, inputs2: list<u64>) -> result<_, string>;
+    test-large-transfer-parcel: func() -> result<_, string>;
+    test-large-transfer-parcel-extcall: func() -> result<_, string>;
+    get-transaction: func() -> result<_, string>;
+    hash-loop: func() -> result<_, string>;
+    return-default-data: func() -> result<list<u8>, string>;
+    revert: func() -> result<_, string>;
+    my-get-block-header: func() -> result<_, string>;
+    my-get-coinbase-tx: func() -> result<_, string>;
+    claimable-fees: func() -> result<_, string>;
+    set-claimable-fees: func(v: u64) -> result<_, string>;
+    inc-claimable-fees: func() -> result<_, string>;
+    my-get-number-diesel-mints: func() -> result<_, string>;
+    my-get-total-miner-fee: func() -> result<_, string>;
+    test-ext-call-return-leftovers: func(target: alkane-id, inputs: list<u64>) -> result<_, string>;
+}
+
+world test-world {
+    export logger-alkane;
+}

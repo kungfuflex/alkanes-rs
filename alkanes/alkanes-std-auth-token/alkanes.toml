@@ -1,0 +1,12 @@
+[contract]
+name = "AuthToken"
+
+[opcodes]
+initialize = 0
+authenticate = 1
+get-name = 99
+get-symbol = 100
+
+[views]
+get-name = true
+get-symbol = true

@@ -1,0 +1,20 @@
+package alkanes:merkle-distributor;
+
+interface merkle-distributor {
+    record alkane-id {
+        block: u64,
+        block-hi: u64,
+        tx: u64,
+        tx-hi: u64,
+    }
+
+    initialize: func(input-alkane: alkane-id, input-amount: u64, end-height: u64, root-first-half: u64, root-second-half: u64) -> result<_, string>;
+    claim: func() -> result<_, string>;
+    auth-cleanup: func(alkane: alkane-id) -> result<_, string>;
+    forward-incoming: func() -> result<_, string>;
+    donate: func() -> result<_, string>;
+}
+
+world merkle-distributor-world {
+    export merkle-distributor;
+}

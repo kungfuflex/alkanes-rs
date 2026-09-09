@@ -1,0 +1,9 @@
+[contract]
+name = "MerkleDistributor"
+
+[opcodes]
+initialize = 0
+claim = 1
+auth-cleanup = 2
+forward-incoming = 50
+donate = 51

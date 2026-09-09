@@ -96,6 +96,11 @@ impl<P: KeyValuePointer + Clone> From<BalanceSheet<P>> for crate::proto::protoru
                     balance: Some((*v).into()),
                 })
                 .collect::<Vec<BalanceSheetItem>>(),
+            // v3: unset by default. The indexer rewrites the chunk with
+            // `spent_at_height = Some(h)` when the owning outpoint is
+            // consumed as an input — see crates/protorune/src/lib.rs
+            // index_spendables.
+            spent_at_height: None,
         }
     }
 }

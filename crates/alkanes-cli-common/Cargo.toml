@@ -40,7 +40,7 @@ alkanes-asc = { path = "../alkanes-asc" }
 alkanes-pretty-print-macro = { path = "../alkanes-pretty-print-macro" }
  
 # Cryptography and wallet functionality
-secp256k1 = { workspace = true }
+secp256k1 = { workspace = true, features = ["recovery"] }  # `recovery` is required for EIP-1559 y_parity — see src/evm_signer.rs
 bip39 = { workspace = true }
 pbkdf2 = { version = "0.12" }
 aes-gcm = { workspace = true }

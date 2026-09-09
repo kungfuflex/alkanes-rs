@@ -1,0 +1,7 @@
+[contract]
+name = "Upgradeable"
+
+[opcodes]
+initialize = 32767
+upgrade = 32766
+forward = 36863

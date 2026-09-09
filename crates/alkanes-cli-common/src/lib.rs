@@ -60,6 +60,17 @@ pub mod network;
 pub mod rpc;
 pub mod alkanes;
 pub mod bridge;
+/// BTC/USD trading: the CryptoSwap pool, both bridge arms, and the watch
+/// surface. Money-path validation lives here so it is checked once, before a
+/// transaction is built.
+pub mod btcusd;
+/// Local EIP-1559 signing + PRIVATE submission via the ethereum-builder route,
+/// so the EVM leg never touches the public mempool.
+pub mod evm_signer;
+/// Execution for `alkanes btcusd`. Read plane + EVM deposit are wired; the
+/// Bitcoin-side trade construction REFUSES rather than emitting a plausible
+/// no-op — see the module docs.
+pub mod btcusd_exec;
 pub mod brc20_prog;
 #[cfg(feature = "std")]
 pub mod brc20_prog_rpc;
@@ -89,6 +100,8 @@ pub mod byte_view;
 pub mod proto;
 pub mod subfrost;
 pub mod ordinals;
+#[cfg(feature = "std")]
+pub mod buildinfo;
 
 // New-protocol WalletConnect signer for SUBFROST mobile vc=419+.
 // Gated on the wc-signer feature so non-WC consumers don't pay the

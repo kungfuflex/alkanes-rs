@@ -91,12 +91,12 @@ pub async fn init_pool(
         super::types::InputRequirement::Alkanes {
             block: params.token0.block,
             tx: params.token0.tx,
-            amount: params.amount0 as u64,
+            amount: params.amount0,
         },
         super::types::InputRequirement::Alkanes {
             block: params.token1.block,
             tx: params.token1.tx,
-            amount: params.amount1 as u64,
+            amount: params.amount1,
         },
     ];
     
@@ -207,7 +207,7 @@ pub async fn execute_swap(
         super::types::InputRequirement::Alkanes {
             block: input_token.block,
             tx: input_token.tx,
-            amount: params.input_amount as u64,
+            amount: params.input_amount,
         },
     ];
     

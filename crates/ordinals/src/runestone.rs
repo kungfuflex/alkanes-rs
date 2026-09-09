@@ -21,11 +21,14 @@ enum Payload {
 }
 
 impl Runestone {
-    #[cfg(not(feature = "dogecoin"))]
+    #[cfg(not(any(feature = "dogecoin", feature = "zcash")))]
     pub const MAGIC_NUMBER: opcodes::Opcode = opcodes::all::OP_PUSHNUM_13;
 
     #[cfg(feature = "dogecoin")]
     pub const PROTOCOL_ID: &'static [u8] = b"D";
+    
+    #[cfg(feature = "zcash")]
+    pub const PROTOCOL_ID: &'static [u8] = b"Z";
 
     pub const COMMIT_CONFIRMATIONS: u16 = 6;
 
@@ -101,9 +104,11 @@ impl Runestone {
         });
 
         let pointer = Tag::Pointer.take(&mut fields, |[pointer]| {
-            let pointer = u32::try_from(pointer).ok()?;
-            (u64::from(pointer) < u64::try_from(transaction.output.len()).unwrap())
-                .then_some(pointer)
+            // Allow extended pointer values beyond physical outputs.
+            // Protorune uses shadow vouts (pointer >= tx.output.len()) to route
+            // tokens to protomessage execution contexts. The ordinals spec rejects
+            // these, but we need them for alkane/protorune token routing.
+            u32::try_from(pointer).ok()
         });
 
         if etching
@@ -205,7 +210,7 @@ impl Runestone {
             }
         }
 
-        #[cfg(not(feature = "dogecoin"))]
+        #[cfg(not(any(feature = "dogecoin", feature = "zcash")))]
         let mut builder = script::Builder::new()
             .push_opcode(opcodes::all::OP_RETURN)
             .push_opcode(Runestone::MAGIC_NUMBER);
@@ -213,6 +218,10 @@ impl Runestone {
         let mut builder = script::Builder::new()
             .push_opcode(opcodes::all::OP_RETURN)
             .push_slice(b"D");
+        #[cfg(feature = "zcash")]
+        let mut builder = script::Builder::new()
+            .push_opcode(opcodes::all::OP_RETURN)
+            .push_slice(b"Z");
 
         for chunk in payload.chunks(MAX_SCRIPT_ELEMENT_SIZE) {
             let push: &script::PushBytes = chunk.try_into().unwrap();
@@ -232,7 +241,7 @@ impl Runestone {
                 continue;
             }
 
-            #[cfg(not(feature = "dogecoin"))]
+            #[cfg(not(any(feature = "dogecoin", feature = "zcash")))]
             {
                 // Bitcoin: check for magic number
                 if instructions.next() != Some(Ok(Instruction::Op(Runestone::MAGIC_NUMBER))) {
@@ -243,6 +252,16 @@ impl Runestone {
             #[cfg(feature = "dogecoin")]
             {
                 // Dogecoin: check for "D" protocol identifier
+                match instructions.next() {
+                    Some(Ok(Instruction::PushBytes(push)))
+                        if push.as_bytes() == Self::PROTOCOL_ID => {}
+                    _ => continue,
+                }
+            }
+            
+            #[cfg(feature = "zcash")]
+            {
+                // Zcash: check for "Z" protocol identifier
                 match instructions.next() {
                     Some(Ok(Instruction::PushBytes(push)))
                         if push.as_bytes() == Self::PROTOCOL_ID => {}
