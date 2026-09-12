@@ -1,5 +1,7 @@
 #[cfg(any(feature = "test-utils", test))]
 pub mod helpers;
+#[cfg(test)]
+pub mod hashlock;
 // `diesel_divergence_repro` references symbols (`DieselEoa`,
 // `_test_only_max_supply`, `_test_only_number_diesel_mints`) that were
 // renamed/removed from `precompile_diesel.rs` after the v3 fastpath

@@ -112,6 +112,22 @@ pub fn init_test_with_cellpack(cellpack: Cellpack) -> Block {
     test_block
 }
 
+/// Like `init_test_with_cellpack`, but carries the contract wasm through the
+/// BIP-110-resistant hashlock envelope instead of the legacy OP_FALSE OP_IF envelope.
+#[cfg(test)]
+pub fn init_test_with_cellpack_hashlock(cellpack: Cellpack) -> Block {
+    let block_height = 0;
+    let mut test_block = create_block_with_coinbase_tx(block_height);
+
+    let wasm_binary = alkanes_std_test_build::get_bytes();
+    let witness = RawEnvelope::hashlock_witness(wasm_binary, true).unwrap();
+
+    test_block
+        .txdata
+        .push(create_cellpack_with_witness(witness, cellpack));
+    test_block
+}
+
 /// A struct that combines a binary and its corresponding cellpack for cleaner initialization
 #[derive(Debug, Clone)]
 pub struct BinaryAndCellpack {
