@@ -80,13 +80,19 @@ impl fmt::Display for AlkaneId {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, clap::ValueEnum)]
 #[serde(rename_all = "lowercase")]
 pub enum OrdinalsStrategy {
-    /// Exclude inscribed UTXOs from selection (default)
-    /// Fails if no clean UTXOs are available to satisfy requirements
-    #[default]
+    /// Exclude inscribed UTXOs from coin selection.
+    /// Fails if no clean UTXOs are available to satisfy requirements.
     Exclude,
-    /// Preserve inscriptions by splitting UTXOs before spending
-    /// Creates a split transaction that sends inscribed sats to a safe output
-    /// Uses sendrawtransactions to atomically broadcast split + main transaction
+    /// Preserve what the UTXO carries, then spend the rest (default).
+    ///
+    /// Inscribed sats are split onto an output of their own and rune
+    /// balances are edicted onto theirs; the split and main transactions are
+    /// then broadcast together via `sendrawtransactions`.
+    ///
+    /// This is the default because refusing to spend is not protection — it
+    /// leaves the user stuck holding funds they cannot move, which is what
+    /// pushes people towards `burn`.
+    #[default]
     Preserve,
     /// Allow spending inscribed UTXOs without protection (burns the inscription)
     /// Use with caution - this will destroy any inscriptions on spent UTXOs
@@ -327,8 +333,8 @@ pub struct EnhancedExecuteParams {
     pub mine_enabled: bool,
     pub auto_confirm: bool,
     /// Strategy for handling UTXOs that contain ordinal inscriptions
-    /// - exclude: Fail if we must spend inscribed UTXOs (default)
-    /// - preserve: Split UTXOs to protect inscriptions, use sendrawtransactions
+    /// - exclude: Fail if we must spend inscribed UTXOs
+    /// - preserve: (default) Split UTXOs to protect inscriptions, use sendrawtransactions
     /// - burn: Allow spending inscribed UTXOs without protection
     #[serde(default)]
     pub ordinals_strategy: OrdinalsStrategy,

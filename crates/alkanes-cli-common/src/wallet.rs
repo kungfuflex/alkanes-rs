@@ -328,8 +328,8 @@ pub struct SendParams {
     pub rebar_tier: u8,
     pub lock_alkanes: bool,
     /// Strategy for handling UTXOs that contain ordinal inscriptions
-    /// - 'exclude': (default) Fail if inscribed UTXOs must be spent
-    /// - 'preserve': Split inscribed UTXOs to protect inscriptions
+    /// - 'exclude': Fail if inscribed UTXOs must be spent
+    /// - 'preserve': (default) Split inscribed sats off, edict runes to safety
     /// - 'burn': Allow spending inscribed UTXOs (destroys inscriptions)
     pub ordinals_strategy: crate::alkanes::types::OrdinalsStrategy,
     /// Enable mempool indexer for tracing inscription state of pending UTXOs

@@ -1243,6 +1243,15 @@ mod tests {
     }
 
     #[test]
+    fn preserve_is_the_default_strategy() {
+        // Refusing to spend is not protection: it strands the user holding
+        // funds they cannot move, which is what pushes people to reach for
+        // `burn`. Splitting is the default so the safe path is also the
+        // automatic one. Pinned here so a future change has to be deliberate.
+        assert_eq!(OrdinalsStrategy::default(), OrdinalsStrategy::Preserve);
+    }
+
+    #[test]
     fn nothing_to_route_emits_no_runestone() {
         // The caller must not add an OP_RETURN in this case.
         assert!(assemble_runestone(None, None).is_none());
