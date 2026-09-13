@@ -775,7 +775,7 @@ export function registerAlkanesCommands(program: Command): void {
     .option('--pointer <pointer>', 'Pointer value')
     .option('--refund-pointer <pointer>', 'Refund pointer')
     .option('--feeRate <rate>', 'Fee rate in sat/vB')
-    .option('--ordinals-strategy <strategy>', 'Strategy for inscribed UTXOs: exclude (default), preserve, burn')
+    .option('--ordinals-strategy <strategy>', 'Strategy for inscribed UTXOs: burn (default for this command via SDK), exclude, preserve')
     .option('--mempool-indexer', 'Enable mempool tracing for pending UTXO inscriptions')
     .option('--raw', 'Output raw JSON')
     .action(async (options, command) => {
@@ -825,7 +825,7 @@ export function registerAlkanesCommands(program: Command): void {
     .command('wrap-btc <amount>')
     .description('Wrap BTC to frBTC')
     .option('--feeRate <rate>', 'Fee rate in sat/vB')
-    .option('--ordinals-strategy <strategy>', 'Strategy for inscribed UTXOs: exclude (default), preserve, burn')
+    .option('--ordinals-strategy <strategy>', 'Strategy for inscribed UTXOs: burn (default for this command via SDK), exclude, preserve')
     .option('--mempool-indexer', 'Enable mempool tracing for pending UTXO inscriptions')
     .option('--raw', 'Output raw JSON')
     .action(async (amount, options, command) => {
@@ -861,7 +861,7 @@ export function registerAlkanesCommands(program: Command): void {
     .command('transfer <alkane-id> <amount> <to-address>')
     .description('Transfer alkane tokens to another address')
     .option('--feeRate <rate>', 'Fee rate in sat/vB')
-    .option('--ordinals-strategy <strategy>', 'Strategy for inscribed UTXOs: exclude (default), preserve, burn')
+    .option('--ordinals-strategy <strategy>', 'Strategy for inscribed UTXOs: burn (default for this command via SDK), exclude, preserve')
     .option('--mempool-indexer', 'Enable mempool tracing for pending UTXO inscriptions')
     .option('--pointer <target>', 'Override protostone pointer (e.g., v0, p0). Controls where alkane remainder goes')
     .option('--refund <target>', 'Override protostone refund (e.g., v0, p0). Controls where tokens go on failure')
@@ -915,7 +915,7 @@ export function registerAlkanesCommands(program: Command): void {
     .option('--amount0 <amount>', 'Amount of first token')
     .option('--amount1 <amount>', 'Amount of second token')
     .option('--feeRate <rate>', 'Fee rate in sat/vB')
-    .option('--ordinals-strategy <strategy>', 'Strategy for inscribed UTXOs: exclude (default), preserve, burn')
+    .option('--ordinals-strategy <strategy>', 'Strategy for inscribed UTXOs: burn (default for this command via SDK), exclude, preserve')
     .option('--mempool-indexer', 'Enable mempool tracing for pending UTXO inscriptions')
     .option('--raw', 'Output raw JSON')
     .action(async (options, command) => {
@@ -962,7 +962,7 @@ export function registerAlkanesCommands(program: Command): void {
     .option('--amount-in <amount>', 'Amount to swap')
     .option('--min-amount-out <amount>', 'Minimum output amount')
     .option('--feeRate <rate>', 'Fee rate in sat/vB')
-    .option('--ordinals-strategy <strategy>', 'Strategy for inscribed UTXOs: exclude (default), preserve, burn')
+    .option('--ordinals-strategy <strategy>', 'Strategy for inscribed UTXOs: burn (default for this command via SDK), exclude, preserve')
     .option('--mempool-indexer', 'Enable mempool tracing for pending UTXO inscriptions')
     .option('--raw', 'Output raw JSON')
     .action(async (options, command) => {
@@ -1006,7 +1006,7 @@ export function registerAlkanesCommands(program: Command): void {
     .description('Execute a tx-script with WASM bytecode')
     .option('--bytecode <hex>', 'WASM bytecode hex')
     .option('--feeRate <rate>', 'Fee rate in sat/vB')
-    .option('--ordinals-strategy <strategy>', 'Strategy for inscribed UTXOs: exclude (default), preserve, burn')
+    .option('--ordinals-strategy <strategy>', 'Strategy for inscribed UTXOs: burn (default for this command via SDK), exclude, preserve')
     .option('--mempool-indexer', 'Enable mempool tracing for pending UTXO inscriptions')
     .option('--raw', 'Output raw JSON')
     .action(async (options, command) => {

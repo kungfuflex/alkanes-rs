@@ -340,7 +340,7 @@ export function registerWalletCommands(program: Command): void {
     .description('Send BTC to an address. Address can be p2tr:0, p2wpkh:0, or a raw Bitcoin address.')
     .option('--fee-rate <sats/vB>', 'Fee rate in satoshis per virtual byte', '1')
     .option('--from <spec>', 'Source addresses (e.g., p2tr:0-5)')
-    .option('--ordinals-strategy <strategy>', 'How to handle inscribed UTXOs: exclude (default), preserve, burn', 'exclude')
+    .option('--ordinals-strategy <strategy>', 'How to handle inscribed UTXOs: preserve (default, splits and protects inscriptions/runes), exclude, burn', 'preserve')
     .option('--mempool-indexer', 'Enable mempool indexer for tracing inscription state of pending UTXOs')
     .action(async (address, amount, options, command) => {
       try {
@@ -419,7 +419,7 @@ export function registerWalletCommands(program: Command): void {
             amount: Math.round(parseFloat(amount) * 100_000_000),  // Convert BTC to satoshis
             fee_rate: parseFloat(options.feeRate),
             from: resolvedFrom,
-            ordinals_strategy: options.ordinalsStrategy || 'exclude',
+            ordinals_strategy: options.ordinalsStrategy || 'preserve',
             mempool_indexer: options.mempoolIndexer || false,
           };
 
