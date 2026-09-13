@@ -1789,6 +1789,10 @@ impl ConcreteProvider {
                         &extras,
                         &cfg,
                         &std::collections::BTreeMap::new(),
+                        // Rune routing is wired up separately; until then
+                        // rune-bearing UTXOs stay excluded by step 4 rather
+                        // than being spent unprotected.
+                        &[],
                     ).await?;
 
                     log::info!(

@@ -4065,6 +4065,10 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             extra_funding_utxos,
             &cfg,
             split_utxo_alkanes,
+            // The alkanes execute path routes no runes, so its runestone
+            // keeps its existing shape: protostones only, pointer on the
+            // alkane output.
+            &[],
         ).await
     }
 

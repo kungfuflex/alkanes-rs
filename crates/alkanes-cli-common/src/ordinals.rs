@@ -20,7 +20,7 @@ use crate::traits::{OrdProvider, EsploraProvider, DeezelProvider};
 use bitcoin::{OutPoint, TxOut, Transaction, ScriptBuf, Address, Txid};
 use bitcoin::hashes::Hash;
 use bitcoin::psbt::Psbt;
-use ordinals::Runestone;
+use ordinals::{Runestone, RuneId, Edict};
 use protorune_support::protostone::{Protostones, Protostone, ProtostoneEdict as ProtoruneEdict};
 use protorune_support::balance_sheet::ProtoruneRuneId;
 
@@ -87,6 +87,10 @@ pub struct SplitResult {
     /// Clean outpoints carrying alkanes routed off the inscribed UTXOs,
     /// with the balances that landed on each.
     pub alkane_outpoints: Vec<(OutPoint, Vec<(AlkaneId, u128)>)>,
+    /// Where rune balances were routed, if any rune-bearing inputs were
+    /// consumed. Deliberately NOT part of `clean_utxos`: funding the main
+    /// transaction from it would spend the runes straight back out again.
+    pub rune_outpoint: Option<(OutPoint, Vec<(RuneId, u128)>)>,
     /// Extras consumed as additional inputs. The caller MUST remove these
     /// from the main transaction's inputs — they are spent by the split, so
     /// leaving them in place builds a transaction that double-spends them.
@@ -108,6 +112,57 @@ pub struct SplitConfig<'a> {
     pub fee_rate: f32,
     /// Skip appending the default DIESEL mint protostone.
     pub skip_diesel_mint: bool,
+}
+
+/// A rune-bearing UTXO to be spent by the split, with its balances routed to
+/// an output of their own.
+///
+/// Runes are not protected the way inscriptions are. An inscription rides a
+/// specific sat, so it is saved by cutting the UTXO at an offset. A rune
+/// balance has no sat position at all — it moves by runestone edict — so the
+/// only way to preserve it is to spend the UTXO and edict the balance onto a
+/// dedicated output. `calculate_split`'s offset arithmetic is meaningless
+/// here, which is why these arrive separately from [`SplitPlan`].
+pub struct RuneInput {
+    /// The outpoint being spent.
+    pub outpoint: OutPoint,
+    /// Its `TxOut`, for the input's `witness_utxo` and the funding maths.
+    pub txout: TxOut,
+    /// Rune balances it carries, as `(id, amount)`.
+    pub balances: Vec<(RuneId, u128)>,
+}
+
+/// Assemble the single runestone OP_RETURN a split transaction may carry.
+///
+/// A transaction can hold only ONE runestone, so alkane routing (which
+/// travels in `protocol` as encoded protostones) and rune routing (which
+/// travels in `edicts`) have to share it rather than each emitting their own.
+///
+/// `pointer` is the RUNE pointer: it directs any rune balance the edicts did
+/// not allocate. So when runes are being routed it must name the rune output
+/// — leaving it on the alkane output would hand an unallocated rune remainder
+/// to the wrong place. With no runes in play it keeps naming the alkane
+/// output, which is what the alkanes execute path already relies on.
+///
+/// Returns `None` when there is nothing to encode, in which case the caller
+/// must not emit an OP_RETURN at all.
+pub(crate) fn assemble_runestone(
+    alkane: Option<(u32, Vec<u128>)>,
+    runes: Option<(u32, Vec<Edict>)>,
+) -> Option<Runestone> {
+    if alkane.is_none() && runes.is_none() {
+        return None;
+    }
+    let pointer = runes
+        .as_ref()
+        .map(|(vout, _)| *vout)
+        .or_else(|| alkane.as_ref().map(|(vout, _)| *vout));
+    Some(Runestone {
+        protocol: alkane.map(|(_, values)| values),
+        edicts: runes.map(|(_, edicts)| edicts).unwrap_or_default(),
+        pointer,
+        ..Default::default()
+    })
 }
 
 /// Handler for ordinal inscriptions on UTXOs
@@ -812,6 +867,7 @@ pub async fn build_split_psbt(
     extra_funding_utxos: &[(OutPoint, TxOut)],
     cfg: &SplitConfig<'_>,
     split_utxo_alkanes: &BTreeMap<OutPoint, Vec<(AlkaneId, u128)>>,
+    rune_inputs: &[RuneInput],
 ) -> Result<SplitResult> {
     use bitcoin::transaction::Version;
 
@@ -874,11 +930,27 @@ pub async fn build_split_psbt(
         ));
     }
 
+    // Rune-bearing inputs. Unlike an inscription there is nothing to cut:
+    // a rune balance has no sat position, so the UTXO is spent whole and the
+    // balance edicted onto an output of its own. Appended AFTER the plan loop
+    // so the `idx * 2 + 1` indexing of clean outputs stays valid.
+    for rune_input in rune_inputs {
+        total_input_value += rune_input.txout.value.to_sat();
+        inputs.push(bitcoin::TxIn {
+            previous_output: rune_input.outpoint,
+            script_sig: ScriptBuf::new(),
+            sequence: bitcoin::Sequence::ENABLE_RBF_NO_LOCKTIME,
+            witness: bitcoin::Witness::new(),
+        });
+        input_txouts.push(rune_input.txout.clone());
+    }
+
     // Alkane-aware split: route any alkanes on the inscribed UTXOs to a
     // dedicated clean output, so splitting for an inscription doesn't burn
     // tokens that happened to share the UTXO.
     let has_alkanes = !split_utxo_alkanes.is_empty();
     let mut alkane_outpoints: Vec<(OutPoint, Vec<(AlkaneId, u128)>)> = Vec::new();
+    let mut alkane_routing: Option<(u32, Vec<u128>)> = None;
 
     if has_alkanes {
         let alkane_output_index = outputs.len() as u32;
@@ -924,17 +996,7 @@ pub async fn build_split_psbt(
         if !cfg.skip_diesel_mint {
             split_protostones.push(diesel_mint_protostone(alkane_output_index));
         }
-        let protocol_values = split_protostones.encipher()?;
-        let runestone = Runestone {
-            protocol: Some(protocol_values),
-            pointer: Some(alkane_output_index),
-            ..Default::default()
-        };
-
-        outputs.push(TxOut {
-            value: bitcoin::Amount::ZERO,
-            script_pubkey: runestone.encipher(),
-        });
+        alkane_routing = Some((alkane_output_index, split_protostones.encipher()?));
 
         alkane_outpoints.push((
             OutPoint {
@@ -944,8 +1006,58 @@ pub async fn build_split_psbt(
             alkane_output_balances,
         ));
 
-        log::info!("🔗 Added alkane routing: {} alkane types → clean output v{} with OP_RETURN protostone",
+        log::info!("🔗 Added alkane routing: {} alkane type(s) → clean output v{}",
             aggregated_alkanes.len(), alkane_output_index);
+    }
+
+    // Rune routing: one dedicated output, one edict per rune id. This output
+    // is deliberately kept out of `clean_utxos` — funding the main
+    // transaction from it would spend the runes straight back out.
+    let mut rune_outpoint: Option<(OutPoint, Vec<(RuneId, u128)>)> = None;
+    let mut rune_routing: Option<(u32, Vec<Edict>)> = None;
+
+    if !rune_inputs.is_empty() {
+        let rune_output_index = outputs.len() as u32;
+        outputs.push(TxOut {
+            value: bitcoin::Amount::from_sat(DUST_LIMIT),
+            script_pubkey: safe_script.clone(),
+        });
+
+        let mut aggregated_runes: BTreeMap<RuneId, u128> = BTreeMap::new();
+        for rune_input in rune_inputs {
+            for (id, amount) in &rune_input.balances {
+                *aggregated_runes.entry(*id).or_insert(0) += *amount;
+            }
+        }
+
+        let mut edicts = Vec::new();
+        let mut rune_balances = Vec::new();
+        for (id, amount) in &aggregated_runes {
+            edicts.push(Edict { id: *id, amount: *amount, output: rune_output_index });
+            rune_balances.push((*id, *amount));
+            log::info!("  Split rune edict: {} × {} → v{}", id, amount, rune_output_index);
+        }
+
+        rune_routing = Some((rune_output_index, edicts));
+        rune_outpoint = Some((
+            OutPoint {
+                txid: Txid::from_byte_array([0u8; 32]), // placeholder, set below
+                vout: rune_output_index,
+            },
+            rune_balances,
+        ));
+
+        log::info!("🪙 Added rune routing: {} rune(s) → output v{}",
+            aggregated_runes.len(), rune_output_index);
+    }
+
+    // ONE runestone carries both, or none is emitted at all. See
+    // `assemble_runestone` for why the pointer follows the runes.
+    if let Some(runestone) = assemble_runestone(alkane_routing, rune_routing) {
+        outputs.push(TxOut {
+            value: bitcoin::Amount::ZERO,
+            script_pubkey: runestone.encipher(),
+        });
     }
 
     let total_output_value: u64 = outputs.iter().map(|o| o.value.to_sat()).sum();
@@ -1047,6 +1159,9 @@ pub async fn build_split_psbt(
     for (outpoint, _) in &mut alkane_outpoints {
         outpoint.txid = txid;
     }
+    if let Some((outpoint, _)) = &mut rune_outpoint {
+        outpoint.txid = txid;
+    }
 
     log::info!(
         "Built split PSBT: {} inputs ({} inscribed + {} extras) → {} outputs (alkane:{}, top-up owed: {} sats, fee: {})",
@@ -1064,6 +1179,7 @@ pub async fn build_split_psbt(
         fee: estimated_fee,
         clean_utxos,
         alkane_outpoints,
+        rune_outpoint,
         consumed_extras,
     })
 }
@@ -1120,5 +1236,45 @@ mod tests {
     #[test]
     fn no_inscriptions_means_no_split_is_needed() {
         assert!(calculate_split(op(), 10_000, &[], 1.0).is_none());
+    }
+
+    fn rid(block: u64, tx: u32) -> RuneId {
+        RuneId { block, tx }
+    }
+
+    #[test]
+    fn nothing_to_route_emits_no_runestone() {
+        // The caller must not add an OP_RETURN in this case.
+        assert!(assemble_runestone(None, None).is_none());
+    }
+
+    #[test]
+    fn alkanes_alone_keep_the_pointer_on_the_alkane_output() {
+        let rs = assemble_runestone(Some((3, vec![7u128, 8u128])), None).expect("runestone");
+        assert_eq!(rs.pointer, Some(3));
+        assert_eq!(rs.protocol, Some(vec![7u128, 8u128]));
+        assert!(rs.edicts.is_empty());
+    }
+
+    #[test]
+    fn runes_take_the_pointer_even_when_alkanes_are_present() {
+        // `pointer` is the RUNE pointer: it directs unallocated rune
+        // balance. Leaving it on the alkane output would hand a rune
+        // remainder to the wrong place.
+        let edicts = vec![Edict { id: rid(840_000, 1), amount: 5, output: 4 }];
+        let rs = assemble_runestone(Some((3, vec![7u128])), Some((4, edicts.clone())))
+            .expect("runestone");
+        assert_eq!(rs.pointer, Some(4), "the rune output must win");
+        assert_eq!(rs.protocol, Some(vec![7u128]), "alkane protostones still ride along");
+        assert_eq!(rs.edicts, edicts);
+    }
+
+    #[test]
+    fn runes_alone_point_at_the_rune_output() {
+        let edicts = vec![Edict { id: rid(840_000, 9), amount: 1, output: 2 }];
+        let rs = assemble_runestone(None, Some((2, edicts.clone()))).expect("runestone");
+        assert_eq!(rs.pointer, Some(2));
+        assert!(rs.protocol.is_none());
+        assert_eq!(rs.edicts, edicts);
     }
 }
