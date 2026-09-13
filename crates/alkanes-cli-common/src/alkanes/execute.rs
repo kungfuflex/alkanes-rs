@@ -1793,13 +1793,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                         );
 
                         // Build split transaction PSBT (alkane-aware, extras-aware)
-                        let (
-                            split_psbt_result,
-                            split_fee_result,
-                            clean_outpoints,
-                            alkane_outpoints,
-                            consumed_extra_outpoints,
-                        ) = self.build_split_psbt(
+                        let split = self.build_split_psbt(
                             &plans,
                             &funding_utxos_with_txout,
                             &extra_funding_utxos,
@@ -1813,7 +1807,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                         // outpoints are now spent in the split tx and can't
                         // appear in the main tx's input list.
                         let consumed_extras_set: std::collections::HashSet<OutPoint> =
-                            consumed_extra_outpoints.iter().copied().collect();
+                            split.consumed_extras.iter().copied().collect();
                         let mut new_outpoints = Vec::new();
 
                         // Keep non-inscribed, non-consumed UTXOs
@@ -1824,10 +1818,13 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                                 new_outpoints.push(*outpoint);
                             }
                         }
-                        // Add clean BTC UTXOs from split (for fee funding)
-                        new_outpoints.extend(clean_outpoints);
+                        // Add clean BTC UTXOs from split (for fee funding).
+                        // The builder also hands back each one's TxOut; this
+                        // path re-fetches prevouts by outpoint, so only the
+                        // outpoints are needed here.
+                        new_outpoints.extend(split.clean_utxos.iter().map(|(op, _)| *op));
                         // Add clean alkane UTXOs from split (for alkane spending)
-                        new_outpoints.extend(alkane_outpoints.iter().map(|(op, _)| *op));
+                        new_outpoints.extend(split.alkane_outpoints.iter().map(|(op, _)| *op));
 
                         // Update alkanes_found: remove alkanes from inscribed UTXOs, add from alkane outpoints
                         for plan in &plans {
@@ -1847,19 +1844,19 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                         for plan in &plans {
                             utxo_selection.per_utxo_alkanes.remove(&plan.outpoint);
                         }
-                        for (outpoint, alkanes) in &alkane_outpoints {
+                        for (outpoint, alkanes) in &split.alkane_outpoints {
                             utxo_selection.per_utxo_alkanes.insert(*outpoint, alkanes.clone());
                         }
 
                         log::info!(
                             "🔀 Split transaction built: {} clean BTC UTXOs + {} clean alkane UTXOs replace {} inscribed UTXOs ({} extras consumed)",
                             plans.len(),
-                            alkane_outpoints.len(),
+                            split.alkane_outpoints.len(),
                             inscribed_outpoints.len(),
                             consumed_extras_set.len(),
                         );
 
-                        (Some(split_psbt_result), Some(split_fee_result), new_outpoints)
+                        (Some(split.psbt), Some(split.fee), new_outpoints)
                     }
                     Err(e) => {
                         // Strategy is Exclude and inscribed UTXOs were found - fail
@@ -3996,15 +3993,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
 
     async fn sign_and_finalize_psbt(&mut self, mut psbt: bitcoin::psbt::Psbt) -> Result<Transaction> {
         let signed_psbt = self.provider.sign_psbt(&mut psbt).await?;
-        let mut tx = signed_psbt.clone().extract_tx()?;
-        for (i, psbt_input) in signed_psbt.inputs.iter().enumerate() {
-            if let Some(tap_key_sig) = &psbt_input.tap_key_sig {
-                tx.input[i].witness = bitcoin::Witness::p2tr_key_spend(tap_key_sig);
-            } else if let Some(final_script_witness) = &psbt_input.final_script_witness {
-                tx.input[i].witness = final_script_witness.clone();
-            }
-        }
-        Ok(tx)
+        crate::psbt_utils::finalize_signed_psbt(&signed_psbt)
     }
 
     /// Build a split PSBT to protect inscribed UTXOs.
@@ -4044,303 +4033,39 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         fee_rate: f32,
         params: &EnhancedExecuteParams,
         split_utxo_alkanes: &alloc::collections::BTreeMap<OutPoint, Vec<(AlkaneId, u128)>>,
-    ) -> Result<(Psbt, u64, Vec<OutPoint>, Vec<(OutPoint, Vec<(AlkaneId, u128)>)>, Vec<OutPoint>)> {
-        use bitcoin::transaction::Version;
-
-        // Get safe address for split outputs
-        let safe_address_str = params.change_address.as_ref()
-            .map(|s| s.as_str())
-            .unwrap_or("p2tr:0");
+    ) -> Result<crate::ordinals::SplitResult> {
         use crate::traits::AddressResolver;
-        let resolved_addr = self.provider.resolve_all_identifiers(safe_address_str).await?;
-        let safe_address = Address::from_str(&resolved_addr)?.require_network(self.provider.get_network())?;
 
-        // Get alkane change address for alkane outputs
-        let alkane_change_addr_str = params.alkanes_change_address.as_ref()
-            .or(params.change_address.as_ref())
-            .map(|s| s.as_str())
+        // Resolve the `p2tr:0`-style identifiers here; the builder itself
+        // takes concrete addresses so the wallet-send path — which already
+        // has one — can call it without going through these params.
+        let safe_address_str = params.change_address.as_deref().unwrap_or("p2tr:0");
+        let resolved_addr = self.provider.resolve_all_identifiers(safe_address_str).await?;
+        let safe_address = Address::from_str(&resolved_addr)?
+            .require_network(self.provider.get_network())?;
+
+        let alkane_change_addr_str = params.alkanes_change_address.as_deref()
+            .or(params.change_address.as_deref())
             .unwrap_or("p2tr:0");
         let resolved_alkane_addr = self.provider.resolve_all_identifiers(alkane_change_addr_str).await?;
-        let alkane_change_address = Address::from_str(&resolved_alkane_addr)?.require_network(self.provider.get_network())?;
+        let alkane_change_address = Address::from_str(&resolved_alkane_addr)?
+            .require_network(self.provider.get_network())?;
 
-        // Build inputs and outputs
-        let mut inputs = Vec::new();
-        let mut outputs = Vec::new();
-        let mut input_txouts = Vec::new();
-        let mut clean_outpoints = Vec::new();
-        let mut total_input_value = 0u64;
-        // Tracks how much each plan's clean output was inflated above its
-        // natural `clean_amount` (because the natural amount was below dust).
-        // The total inflation is owed to extras and pulled later.
-        let mut clean_topup_owed: u64 = 0;
-
-        for (idx, plan) in plans.iter().enumerate() {
-            // Find the TxOut for this input
-            let txout = funding_utxos.iter()
-                .find(|(op, _)| *op == plan.outpoint)
-                .map(|(_, txout)| txout.clone())
-                .ok_or_else(|| AlkanesError::Wallet(format!("UTXO not found for split: {}", plan.outpoint)))?;
-
-            total_input_value += txout.value.to_sat();
-
-            inputs.push(bitcoin::TxIn {
-                previous_output: plan.outpoint,
-                script_sig: ScriptBuf::new(),
-                sequence: bitcoin::Sequence::ENABLE_RBF_NO_LOCKTIME,
-                witness: bitcoin::Witness::new(),
-            });
-            input_txouts.push(txout);
-
-            // Safe output (inscribed sats go here)
-            outputs.push(TxOut {
-                value: bitcoin::Amount::from_sat(plan.safe_amount),
-                script_pubkey: safe_address.script_pubkey(),
-            });
-
-            // Clean output (funding sats from the inscribed UTXO go here).
-            // If the inscribed UTXO's clean remainder is below dust, top up
-            // to DUST_LIMIT — the missing sats come from extras. If the
-            // remainder is zero (utxo_value == safe_amount + 1 etc.), we
-            // still emit a dust output so the caller has a usable funding
-            // UTXO at the canonical odd-index position; same top-up logic.
-            let clean_value = if plan.clean_amount < DUST_LIMIT {
-                clean_topup_owed += DUST_LIMIT - plan.clean_amount;
-                DUST_LIMIT
-            } else {
-                plan.clean_amount
-            };
-            outputs.push(TxOut {
-                value: bitcoin::Amount::from_sat(clean_value),
-                script_pubkey: safe_address.script_pubkey(),
-            });
-
-            // Track the clean outpoint (will update txid after building tx)
-            clean_outpoints.push(OutPoint {
-                txid: bitcoin::Txid::from_byte_array([0u8; 32]), // Placeholder
-                vout: (idx * 2 + 1) as u32, // Clean outputs are at odd indices
-            });
-        }
-
-        // Alkane-aware split: if any inscribed UTXOs carry alkanes, add a dedicated
-        // clean alkane output and a protostone OP_RETURN to route alkanes there.
-        // This prevents alkanes from being lost when their UTXO is split for inscriptions.
-        let has_alkanes = !split_utxo_alkanes.is_empty();
-        let mut alkane_outpoints_with_balances: Vec<(OutPoint, Vec<(AlkaneId, u128)>)> = Vec::new();
-
-        if has_alkanes {
-            // Add a clean alkane output at the end (before OP_RETURN)
-            let alkane_output_index = outputs.len() as u32;
-            outputs.push(TxOut {
-                value: bitcoin::Amount::from_sat(DUST_LIMIT),
-                script_pubkey: alkane_change_address.script_pubkey(),
-            });
-
-            // Aggregate all alkanes from inscribed UTXOs
-            let mut aggregated_alkanes: alloc::collections::BTreeMap<AlkaneId, u128> = alloc::collections::BTreeMap::new();
-            for (_outpoint, alkanes) in split_utxo_alkanes {
-                for (alkane_id, amount) in alkanes {
-                    *aggregated_alkanes.entry(alkane_id.clone()).or_insert(0) += amount;
-                }
-            }
-
-            // Build protostone edicts to route each alkane to the clean alkane output
-            let mut protostone_edicts = Vec::new();
-            let mut alkane_output_balances = Vec::new();
-            for (alkane_id, amount) in &aggregated_alkanes {
-                // Edict: send all of this alkane to the clean alkane output (vN)
-                protostone_edicts.push(ProtoruneEdict {
-                    id: ProtoruneRuneId {
-                        block: alkane_id.block as u128,
-                        tx: alkane_id.tx as u128,
-                    },
-                    amount: *amount as u128,
-                    output: alkane_output_index as u128,
-                });
-                alkane_output_balances.push((alkane_id.clone(), *amount));
-                log::info!("  Split alkane edict: {}:{} × {} → v{}",
-                    alkane_id.block, alkane_id.tx, amount, alkane_output_index);
-            }
-
-            // Build the protostone (protocol_tag 1 for alkanes)
-            let split_protostone = Protostone {
-                protocol_tag: 1u128,
-                message: vec![],
-                pointer: Some(alkane_output_index),
-                refund: Some(alkane_output_index),
-                edicts: protostone_edicts,
-                from: None,
-                burn: None,
-            };
-
-            // Encode the protostone into a Runestone OP_RETURN script. The split tx
-            // gets the default DIESEL mint too (pointer = the split protostone's own
-            // clean alkane output), unless the caller opted out.
-            let mut split_protostones = vec![split_protostone];
-            if !params.skip_diesel_mint {
-                split_protostones.push(Self::diesel_mint_protostone(alkane_output_index));
-            }
-            let protocol_values = split_protostones.encipher()?;
-            let runestone = Runestone {
-                protocol: Some(protocol_values),
-                pointer: Some(alkane_output_index),
-                ..Default::default()
-            };
-            let runestone_script = runestone.encipher();
-
-            outputs.push(TxOut {
-                value: bitcoin::Amount::ZERO,
-                script_pubkey: runestone_script,
-            });
-
-            // Track that the clean alkane output will carry these alkanes
-            alkane_outpoints_with_balances.push((
-                OutPoint {
-                    txid: bitcoin::Txid::from_byte_array([0u8; 32]), // Placeholder, updated below
-                    vout: alkane_output_index,
-                },
-                alkane_output_balances,
-            ));
-
-            log::info!("🔗 Added alkane routing: {} alkane types → clean output v{} with OP_RETURN protostone",
-                aggregated_alkanes.len(), alkane_output_index);
-        }
-
-        // Compute total output value already committed (alkane DUST_LIMIT
-        // outputs are the only non-OP_RETURN extras beyond the per-plan
-        // safe+clean pairs).
-        let total_output_value: u64 = outputs.iter()
-            .map(|o| o.value.to_sat())
-            .sum();
-
-        // Pull additional clean inputs (a) to cover any clean-output top-ups
-        // forced by below-dust inscribed UTXOs, (b) to cover the split-tx
-        // fee, and (c) to add a residual change output if the extras over-fund.
-        //
-        // We over-pull conservatively: each extra input adds ~68 vbytes which
-        // grows the fee, so the simplest correct approach is "add inputs
-        // until total_input_value >= total_output_value + fee_with_one_more_input,
-        // then iterate fee until stable." Two passes through extras at most.
-        let mut consumed_extras: Vec<OutPoint> = Vec::new();
-        let mut extras_iter = extra_funding_utxos.iter();
-
-        // Helper: recompute estimated fee based on current input/output counts.
-        // P2TR input: ~68 vbytes; P2TR output: ~43 vbytes; tx overhead: ~10 vbytes.
-        let recompute_fee = |inputs_len: usize, outputs_len: usize| -> u64 {
-            let vsize = 10 + inputs_len * 68 + outputs_len * 43;
-            (fee_rate * vsize as f32).ceil() as u64
+        let cfg = crate::ordinals::SplitConfig {
+            safe_address: &safe_address,
+            alkane_change_address: &alkane_change_address,
+            fee_rate,
+            skip_diesel_mint: params.skip_diesel_mint,
         };
 
-        // Initial fee estimate (no residual change output yet).
-        let mut estimated_fee = recompute_fee(inputs.len(), outputs.len());
-
-        // Required: total_input_value >= total_output_value + estimated_fee.
-        // Difference is what we must pull from extras (or from inscribed-UTXO
-        // headroom that isn't already accounted for in clean outputs).
-        //
-        // Inscribed UTXOs have already contributed `total_input_value` worth.
-        // Clean outputs were sized at (plan.clean_amount or DUST_LIMIT topup).
-        // If `clean_topup_owed > 0`, that headroom must come from extras too.
-        //
-        // Pull extras one at a time until satisfied.
-        loop {
-            let needed = total_output_value
-                .saturating_add(estimated_fee)
-                .saturating_sub(total_input_value);
-            if needed == 0 {
-                break;
-            }
-
-            // Need more — try to pull next extra.
-            let Some((extra_op, extra_txout)) = extras_iter.next() else {
-                return Err(AlkanesError::Wallet(format!(
-                    "Not enough clean funds to split inscribed UTXOs: need {} more sats \
-                     (output total {} + fee {} - inscribed inputs {}). \
-                     Wallet has no additional clean UTXOs available — either fund the \
-                     wallet with more BTC or use --ordinals-strategy burn (destroys \
-                     inscriptions).",
-                    needed, total_output_value, estimated_fee, total_input_value
-                )));
-            };
-
-            inputs.push(bitcoin::TxIn {
-                previous_output: *extra_op,
-                script_sig: ScriptBuf::new(),
-                sequence: bitcoin::Sequence::ENABLE_RBF_NO_LOCKTIME,
-                witness: bitcoin::Witness::new(),
-            });
-            input_txouts.push(extra_txout.clone());
-            total_input_value += extra_txout.value.to_sat();
-            consumed_extras.push(*extra_op);
-
-            // Recompute fee with the extra input.
-            estimated_fee = recompute_fee(inputs.len(), outputs.len());
-        }
-
-        // If extras over-funded, emit a residual change output so the
-        // surplus isn't burned as fee. Only emit once we know we have
-        // sufficient surplus to clear DUST_LIMIT after the marginal output's
-        // own fee cost (one extra output = ~43 vbytes).
-        let surplus = total_input_value - total_output_value - estimated_fee;
-        if surplus >= DUST_LIMIT + (fee_rate * 43.0).ceil() as u64 {
-            let residual_fee_delta = (fee_rate * 43.0).ceil() as u64;
-            let residual_value = surplus - residual_fee_delta;
-            outputs.push(TxOut {
-                value: bitcoin::Amount::from_sat(residual_value),
-                script_pubkey: safe_address.script_pubkey(),
-            });
-            estimated_fee += residual_fee_delta;
-            // Track this residual as a clean outpoint usable by the main tx.
-            clean_outpoints.push(OutPoint {
-                txid: bitcoin::Txid::from_byte_array([0u8; 32]), // placeholder, set below
-                vout: (outputs.len() - 1) as u32,
-            });
-        }
-
-        // Build the unsigned transaction
-        let unsigned_tx = Transaction {
-            version: Version::TWO,
-            lock_time: bitcoin::absolute::LockTime::ZERO,
-            input: inputs,
-            output: outputs,
-        };
-
-        // Create PSBT
-        let mut psbt = Psbt::from_unsigned_tx(unsigned_tx)?;
-
-        // Add witness_utxo and tap_internal_key for each input
-        for (i, txout) in input_txouts.iter().enumerate() {
-            psbt.inputs[i].witness_utxo = Some(txout.clone());
-            if txout.script_pubkey.is_p2tr() {
-                let (internal_key, (fingerprint, path)) = self.provider.get_internal_key().await?;
-                psbt.inputs[i].tap_internal_key = Some(internal_key);
-                psbt.inputs[i].tap_key_origins.insert(
-                    internal_key,
-                    (vec![], (fingerprint, path))
-                );
-            }
-        }
-
-        // Calculate actual txid and update all placeholder outpoints
-        let txid = psbt.unsigned_tx.compute_txid();
-        for outpoint in &mut clean_outpoints {
-            outpoint.txid = txid;
-        }
-        for (outpoint, _) in &mut alkane_outpoints_with_balances {
-            outpoint.txid = txid;
-        }
-
-        log::info!(
-            "Built split PSBT: {} inputs ({} inscribed + {} extras) → {} outputs (alkane:{}, top-up owed: {} sats, fee: {})",
-            psbt.unsigned_tx.input.len(),
-            plans.len(),
-            consumed_extras.len(),
-            psbt.unsigned_tx.output.len(),
-            if has_alkanes { "1+OP_RETURN" } else { "0" },
-            clean_topup_owed,
-            estimated_fee,
-        );
-
-        Ok((psbt, estimated_fee, clean_outpoints, alkane_outpoints_with_balances, consumed_extras))
+        crate::ordinals::build_split_psbt(
+            self.provider,
+            plans,
+            funding_utxos,
+            extra_funding_utxos,
+            &cfg,
+            split_utxo_alkanes,
+        ).await
     }
 
     async fn build_commit_psbt(

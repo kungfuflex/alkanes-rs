@@ -3035,15 +3035,7 @@ impl<'a> Brc20ProgExecutor<'a> {
     /// Sign and finalize a PSBT
     async fn sign_and_finalize_psbt(&mut self, mut psbt: Psbt) -> Result<Transaction> {
         let signed_psbt = self.provider.sign_psbt(&mut psbt).await?;
-        let mut tx = signed_psbt.clone().extract_tx()?;
-        for (i, psbt_input) in signed_psbt.inputs.iter().enumerate() {
-            if let Some(tap_key_sig) = &psbt_input.tap_key_sig {
-                tx.input[i].witness = bitcoin::Witness::p2tr_key_spend(tap_key_sig);
-            } else if let Some(final_script_witness) = &psbt_input.final_script_witness {
-                tx.input[i].witness = final_script_witness.clone();
-            }
-        }
-        Ok(tx)
+        crate::psbt_utils::finalize_signed_psbt(&signed_psbt)
     }
 
     /// Sign and finalize the reveal PSBT with script-path spending
