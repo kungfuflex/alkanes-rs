@@ -1502,12 +1502,18 @@ impl ConcreteProvider {
             match self.get_ord_address_info(addr).await {
                 Ok(info) => {
                     let count = info.inscriptions.as_ref().map(|v| v.len()).unwrap_or(0);
-                    if count > 0 {
+                    // Runes count as evidence too. Keying the fan-out on
+                    // inscriptions alone left an address that holds ONLY
+                    // runes unexamined, so `has_runes` was never set and its
+                    // UTXOs looked clean.
+                    let rune_count =
+                        info.runes_balances.as_ref().map(|v| v.len()).unwrap_or(0);
+                    if count > 0 || rune_count > 0 {
                         has_ord_evidence = true;
                         inscribed_addresses.push(addr.clone());
                         log::info!(
-                            "ord: {} holds {} inscription(s) — per-outpoint check required",
-                            addr, count
+                            "ord: {} holds {} inscription(s) and {} rune balance(s) — per-outpoint check required",
+                            addr, count, rune_count
                         );
                     }
                 }
@@ -1523,8 +1529,13 @@ impl ConcreteProvider {
             }
         }
 
+        // Raw per-outpoint rune balances, captured from the same `get_output`
+        // call that sets the flags rather than re-fetching. `Pile.amount` is
+        // in base units, which is what an edict needs.
+        let mut rune_balances: BTreeMap<OutPoint, Vec<(crate::vendored_ord::SpacedRune, u128)>> =
+            BTreeMap::new();
         if !inscribed_addresses.is_empty() {
-            for (_, info) in utxos.iter_mut() {
+            for (outpoint, info) in utxos.iter_mut() {
                 if !inscribed_addresses.iter().any(|a| a == &info.address) {
                     continue;
                 }
@@ -1535,6 +1546,14 @@ impl ConcreteProvider {
                             output.inscriptions.as_ref().map(|v| !v.is_empty()).unwrap_or(false);
                         info.has_runes =
                             output.runes.as_ref().map(|m| !m.is_empty()).unwrap_or(false);
+                        if let Some(runes) = output.runes.as_ref() {
+                            if !runes.is_empty() {
+                                rune_balances.insert(
+                                    *outpoint,
+                                    runes.iter().map(|(k, v)| (*k, v.amount)).collect(),
+                                );
+                            }
+                        }
                         if info.has_inscriptions || info.has_runes {
                             log::info!(
                                 "ord: {} carries inscriptions={} runes={} — will not be spent as plain BTC",
@@ -1635,15 +1654,14 @@ impl ConcreteProvider {
                 Ok(()) => clean_utxos.push(info),
                 Err(reason) => {
                     use crate::alkanes::execute::UtxoSkipReason;
-                    // Inscriptions only, for now. Runes are NOT offset-based:
-                    // they move by runestone edict, so `calculate_split`'s sat
-                    // arithmetic cannot protect them, and
-                    // `check_utxos_for_inscriptions` would return no plan for a
-                    // rune-only UTXO — leaving it in the selection to be spent
-                    // as ordinary BTC, which hands its balance to the first
-                    // output. Excluding it is the safe behaviour until edict
-                    // routing exists.
-                    let protectable = matches!(reason, UtxoSkipReason::Inscribed);
+                    // Both are protectable now, by different mechanisms: an
+                    // inscription rides a sat and is saved by cutting the
+                    // UTXO at an offset; a rune balance has no sat position
+                    // and is saved by edicting it onto its own output.
+                    let protectable = matches!(
+                        reason,
+                        UtxoSkipReason::Inscribed | UtxoSkipReason::CarriesRunes
+                    );
                     if preserve && protectable {
                         log::info!(
                             "UTXO {}:{} — {:?}; holding as a split candidate",
@@ -1754,10 +1772,74 @@ impl ConcreteProvider {
                 params.mempool_indexer,
             ).await?;
 
-            if let Some(plans) = check_result {
-                if !plans.is_empty() {
+            let plans = check_result.unwrap_or_default();
+
+            // Rune-bearing members of the selection. These produce no
+            // `SplitPlan` — `check_utxos_for_inscriptions` only inspects
+            // inscriptions — so the split has to be driven by their presence
+            // too, or they would be gathered and then silently spent as
+            // ordinary BTC.
+            let mut rune_inputs: Vec<crate::ordinals::RuneInput> = Vec::new();
+            let mut unresolvable: std::collections::HashSet<OutPoint> =
+                std::collections::HashSet::new();
+            if preserve {
+                let mut rune_ids: BTreeMap<crate::vendored_ord::SpacedRune, ordinals::RuneId> =
+                    BTreeMap::new();
+                for (outpoint, txout) in &funding_utxos {
+                    let Some(balances) = rune_balances.get(outpoint) else { continue };
+                    let mut resolved: Vec<(ordinals::RuneId, u128)> = Vec::new();
+                    for (spaced, amount) in balances {
+                        let id = match rune_ids.get(spaced) {
+                            Some(id) => Some(*id),
+                            None => {
+                                // One lookup per distinct rune, cached: ord
+                                // keys balances by name, an edict needs the id.
+                                match self.get_rune(&spaced.to_string()).await {
+                                    Ok(info) => match info.id.parse::<ordinals::RuneId>() {
+                                        Ok(id) => { rune_ids.insert(*spaced, id); Some(id) }
+                                        Err(e) => {
+                                            log::warn!("ord: rune {} has unparseable id {:?}: {}", spaced, info.id, e);
+                                            None
+                                        }
+                                    },
+                                    Err(e) => {
+                                        log::warn!("ord: could not resolve rune {}: {}", spaced, e);
+                                        None
+                                    }
+                                }
+                            }
+                        };
+                        match id {
+                            Some(id) => resolved.push((id, *amount)),
+                            // A balance we cannot name cannot be edicted. The
+                            // only safe answer is to leave the UTXO out of the
+                            // transaction entirely — never to spend it and
+                            // hope.
+                            None => { unresolvable.insert(*outpoint); }
+                        }
+                    }
+                    if !resolved.is_empty() && !unresolvable.contains(outpoint) {
+                        rune_inputs.push(crate::ordinals::RuneInput {
+                            outpoint: *outpoint,
+                            txout: txout.clone(),
+                            balances: resolved,
+                        });
+                    }
+                }
+                if !unresolvable.is_empty() {
+                    log::warn!(
+                        "Dropping {} UTXO(s) whose rune balances could not be resolved to ids; they will not be spent",
+                        unresolvable.len()
+                    );
+                }
+            }
+
+            {
+                if !plans.is_empty() || !rune_inputs.is_empty() {
                     let inscribed: std::collections::HashSet<OutPoint> =
                         plans.iter().map(|p| p.outpoint).collect();
+                    let rune_spent: std::collections::HashSet<OutPoint> =
+                        rune_inputs.iter().map(|r| r.outpoint).collect();
 
                     // Extras the split may consume for its fee and for dust
                     // top-ups: selected UTXOs that are NOT themselves being
@@ -1765,7 +1847,11 @@ impl ConcreteProvider {
                     // they must be ones we already judged clean.
                     let extras: Vec<(OutPoint, TxOut)> = funding_utxos
                         .iter()
-                        .filter(|(op, _)| !inscribed.contains(op))
+                        .filter(|(op, _)| {
+                            !inscribed.contains(op)
+                                && !rune_spent.contains(op)
+                                && !unresolvable.contains(op)
+                        })
                         .cloned()
                         .collect();
 
@@ -1779,9 +1865,11 @@ impl ConcreteProvider {
                         skip_diesel_mint: true,
                     };
 
-                    // Alkane-bearing UTXOs were excluded back in step 4, so
-                    // nothing in this selection can carry alkanes and the
-                    // builder's routing branch stays inert.
+                    // No alkane routing from this path: any UTXO flagged
+                    // `has_alkanes` was dropped in step 4. Note that flag is
+                    // only ever SET under `--lock-alkanes`, so this is a
+                    // property of what we detect, not a guarantee about what
+                    // the wallet holds.
                     let split = crate::ordinals::build_split_psbt(
                         self,
                         &plans,
@@ -1789,15 +1877,13 @@ impl ConcreteProvider {
                         &extras,
                         &cfg,
                         &std::collections::BTreeMap::new(),
-                        // Rune routing is wired up separately; until then
-                        // rune-bearing UTXOs stay excluded by step 4 rather
-                        // than being spent unprotected.
-                        &[],
+                        &rune_inputs,
                     ).await?;
 
                     log::info!(
-                        "🔀 Splitting {} inscribed/rune UTXO(s): {} extra(s) consumed, split fee {} sats",
+                        "🔀 Splitting {} inscribed + {} rune-bearing UTXO(s): {} extra(s) consumed, split fee {} sats",
                         plans.len(),
+                        rune_inputs.len(),
                         split.consumed_extras.len(),
                         split.fee
                     );
@@ -1812,7 +1898,14 @@ impl ConcreteProvider {
                             txid: bitcoin::Txid::from_str(&utxo.txid)?,
                             vout: utxo.vout,
                         };
-                        if inscribed.contains(&op) || consumed.contains(&op) {
+                        // Rune inputs are spent BY the split, and the rune
+                        // output it produces is deliberately not funding —
+                        // spending it would move the runes straight back out.
+                        if inscribed.contains(&op)
+                            || consumed.contains(&op)
+                            || rune_spent.contains(&op)
+                            || unresolvable.contains(&op)
+                        {
                             continue;
                         }
                         rebuilt.push(utxo.clone());
