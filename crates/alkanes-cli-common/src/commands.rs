@@ -270,6 +270,15 @@ pub enum WalletCommands {
         /// Rebar fee tier (1 or 2, default: 1). Tier 1: ~8% hashrate, Tier 2: ~16% hashrate
         #[arg(long, default_value = "1")]
         rebar_tier: u8,
+        /// How to treat UTXOs carrying ordinal inscriptions:
+        /// `exclude` (default) leaves them out of coin selection,
+        /// `preserve` splits the inscribed sats off first,
+        /// `burn` spends them anyway and DESTROYS the inscription.
+        #[arg(long, value_enum, default_value = "exclude")]
+        ordinals_strategy: crate::alkanes::types::OrdinalsStrategy,
+        /// Trace inscription state of pending (unconfirmed) UTXOs via the mempool indexer
+        #[arg(long)]
+        mempool_indexer: bool,
         /// Auto-confirm without user prompt
         #[arg(short = 'y', long)]
         yes: bool,

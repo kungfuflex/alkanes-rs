@@ -1857,7 +1857,84 @@ impl WalletProvider for ConcreteProvider {
         };
 
         // 2. Get UTXOs for the specified addresses
-        let utxos = self.get_utxos(false, Some(address_strings.clone())).await?;
+        let mut utxos = self.get_utxos(false, Some(address_strings.clone())).await?;
+
+        // 2b. Ordinals awareness. Ord is a SECOND indexer with its own tip —
+        // metashrew being caught up says nothing about what ord knows, so the
+        // two are tracked separately (see `check_ordinals_eligibility`).
+        //
+        // Cost discipline: one `ord_address` call per address answers "does
+        // this wallet hold inscriptions at all". Only addresses that DO get
+        // the per-outpoint fan-out, so a wallet that has never touched an
+        // ordinal pays one call per address and nothing more.
+        let mut has_ord_evidence = false;
+        let mut ord_reachable = true;
+        let mut inscribed_addresses: Vec<String> = Vec::new();
+        for addr in &address_strings {
+            match self.get_ord_address_info(addr).await {
+                Ok(info) => {
+                    let count = info.inscriptions.as_ref().map(|v| v.len()).unwrap_or(0);
+                    if count > 0 {
+                        has_ord_evidence = true;
+                        inscribed_addresses.push(addr.clone());
+                        log::info!(
+                            "ord: {} holds {} inscription(s) — per-outpoint check required",
+                            addr, count
+                        );
+                    }
+                }
+                Err(e) => {
+                    // Unknown is NOT clean. Recorded so the gate can refuse
+                    // for a wallet known to hold ordinals.
+                    ord_reachable = false;
+                    log::warn!(
+                        "ord: could not read address {}: {} — its outpoints are UNKNOWN, not clean",
+                        addr, e
+                    );
+                }
+            }
+        }
+
+        if !inscribed_addresses.is_empty() {
+            for (_, info) in utxos.iter_mut() {
+                if !inscribed_addresses.iter().any(|a| a == &info.address) {
+                    continue;
+                }
+                let outpoint_str = format!("{}:{}", info.txid, info.vout);
+                match self.get_output(&outpoint_str).await {
+                    Ok(output) => {
+                        info.has_inscriptions =
+                            output.inscriptions.as_ref().map(|v| !v.is_empty()).unwrap_or(false);
+                        info.has_runes =
+                            output.runes.as_ref().map(|m| !m.is_empty()).unwrap_or(false);
+                        if info.has_inscriptions || info.has_runes {
+                            log::info!(
+                                "ord: {} carries inscriptions={} runes={} — will not be spent as plain BTC",
+                                outpoint_str, info.has_inscriptions, info.has_runes
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        ord_reachable = false;
+                        log::warn!("ord: could not read {}: {} — treating as UNKNOWN", outpoint_str, e);
+                    }
+                }
+            }
+        }
+
+        // Ord's own tip, not metashrew's. None when ord did not answer.
+        let ord_indexed_height = if ord_reachable {
+            match self.get_ord_block_count().await {
+                Ok(h) => Some(h),
+                Err(e) => {
+                    log::warn!("ord: blockcount unavailable: {} — heights unknown", e);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        let utxos = utxos;
 
         // 3. If lock_alkanes is enabled, check each UTXO for alkanes using protorunesbyoutpoint
         let mut utxos_with_alkanes_check = Vec::new();
@@ -1898,20 +1975,50 @@ impl WalletProvider for ConcreteProvider {
             utxos_with_alkanes_check = utxos;
         }
 
-        // 4. Filter out UTXOs with inscriptions/runes/alkanes
+        // 4. Filter out UTXOs carrying alkanes, inscriptions or runes.
+        //
+        // This runs BEFORE coin selection, which is the whole point: the
+        // previous ordering checked ordinals only after `select_coins` had
+        // already picked, so it could abort a send but never avoid an
+        // inscribed UTXO.
+        let mut ordinals_skipped = 0usize;
         let clean_utxos: Vec<UtxoInfo> = utxos_with_alkanes_check.into_iter()
             .filter(|(_, info)| {
-                let is_clean = !info.has_inscriptions && !info.has_runes && !info.has_alkanes;
-                if !is_clean {
-                    log::info!("Filtering out UTXO {}:{} with inscriptions/runes/alkanes", info.txid, info.vout);
+                if info.has_alkanes {
+                    log::info!("Filtering out UTXO {}:{} carrying alkanes", info.txid, info.vout);
+                    return false;
                 }
-                is_clean
+                match crate::alkanes::execute::check_ordinals_eligibility(
+                    info,
+                    ord_indexed_height,
+                    has_ord_evidence,
+                ) {
+                    Ok(()) => true,
+                    Err(reason) => {
+                        ordinals_skipped += 1;
+                        log::info!(
+                            "Filtering out UTXO {}:{} — {:?}",
+                            info.txid, info.vout, reason
+                        );
+                        false
+                    }
+                }
             })
             .map(|(_, info)| info)
             .collect();
+        if ordinals_skipped > 0 {
+            log::info!(
+                "ord: withheld {} UTXO(s) from coin selection (ord tip: {:?})",
+                ordinals_skipped, ord_indexed_height
+            );
+        }
 
         if clean_utxos.is_empty() {
-            return Err(AlkanesError::Wallet("No clean UTXOs available (all have inscriptions/runes/alkanes)".to_string()));
+            return Err(AlkanesError::Wallet(format!(
+                "No clean UTXOs available: every candidate carries alkanes, inscriptions or runes, \
+                 or sits above ord's indexed tip ({:?}). Nothing was signed.",
+                ord_indexed_height
+            )));
         }
 
         log::info!("Found {} clean UTXOs for coin selection", clean_utxos.len());

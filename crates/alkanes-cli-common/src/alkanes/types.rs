@@ -77,7 +77,7 @@ impl fmt::Display for AlkaneId {
 }
 
 /// Strategy for handling UTXOs that contain ordinal inscriptions
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, clap::ValueEnum)]
 #[serde(rename_all = "lowercase")]
 pub enum OrdinalsStrategy {
     /// Exclude inscribed UTXOs from selection (default)

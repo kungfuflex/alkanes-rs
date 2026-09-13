@@ -1652,7 +1652,7 @@ impl SystemWallet for SystemAlkanes {
                 }
                 Ok(())
             },
-           WalletCommands::Send { address, amount, fee_rate, send_all, from, lock_alkanes, change, use_rebar, rebar_tier, yes } => {
+           WalletCommands::Send { address, amount, fee_rate, send_all, from, lock_alkanes, change, use_rebar, rebar_tier, yes, ordinals_strategy, mempool_indexer } => {
                // Parse BTC amount string and convert to satoshis
                let amount_sats = crate::utils::parse_btc_amount(&amount)?;
                
@@ -1684,8 +1684,8 @@ impl SystemWallet for SystemAlkanes {
                    use_rebar,
                    rebar_tier,
                    lock_alkanes,
-                   ordinals_strategy: alkanes_cli_common::alkanes::types::OrdinalsStrategy::default(),
-                   mempool_indexer: false,
+                   ordinals_strategy,
+                   mempool_indexer,
                };
 
                match provider.send(send_params).await {

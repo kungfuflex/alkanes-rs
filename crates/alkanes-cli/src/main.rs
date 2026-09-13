@@ -1394,7 +1394,7 @@ async fn execute_wallet_command<T: System + UtxoProvider>(system: &mut T, comman
                 print_utxos(&utxos);
             }
         }
-        WalletCommands::Send { address, amount, fee_rate, send_all, from, lock_alkanes, change_address, use_rebar, rebar_tier, auto_confirm } => {
+        WalletCommands::Send { address, amount, fee_rate, send_all, from, lock_alkanes, change_address, use_rebar, rebar_tier, auto_confirm, ordinals_strategy, mempool_indexer } => {
             // Parse BTC amount string and convert to satoshis
             let amount_sats = parse_btc_amount(&amount)?;
             
@@ -1409,8 +1409,8 @@ async fn execute_wallet_command<T: System + UtxoProvider>(system: &mut T, comman
                 use_rebar,
                 rebar_tier,
                 lock_alkanes,
-                ordinals_strategy: alkanes_cli_common::alkanes::types::OrdinalsStrategy::default(),
-                mempool_indexer: false,
+                ordinals_strategy,
+                mempool_indexer,
             };
             let txid = system.provider_mut().send(params).await?;
             println!("Transaction sent: {txid}");

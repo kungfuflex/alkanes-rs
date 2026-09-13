@@ -340,6 +340,16 @@ pub enum UtxoSkipReason {
     /// hasn't reached yet. Its alkane balance sheet is unknown until
     /// metashrew catches up; spending it risks underspending alkanes.
     UnindexedHeight { block_height: u64, max_indexed: u64 },
+    /// Ord reports one or more inscriptions on this outpoint. Spending it as
+    /// plain BTC destroys them.
+    Inscribed,
+    /// Ord reports rune balances on this outpoint. Same hazard as `Inscribed`.
+    CarriesRunes,
+    /// Confirmed UTXO mined into a block ORD hasn't indexed yet. Distinct from
+    /// `UnindexedHeight`, which is metashrew's tip: the two indexers advance
+    /// independently, and an outpoint that metashrew has seen may still be
+    /// unknown to ord. "Not yet indexed" is not "carries nothing".
+    OrdBehind { block_height: u64, ord_indexed: u64 },
 }
 
 /// Returns `Ok(())` if `info` is eligible for coin selection, else `Err`
@@ -353,6 +363,50 @@ pub enum UtxoSkipReason {
 ///      (`block_height = Some(_)`); unconfirmed UTXOs (mempool) are left
 ///      to the existing `apply_mempool_adjustment` path which adds back
 ///      "we built this" txs from `known_pending_tx_hexes`.
+/// Whether spending `info` as plain BTC would destroy ordinals or runes.
+///
+/// Separate from [`check_utxo_eligibility`] on purpose: that one answers "can
+/// the alkanes indexer account for this outpoint", this one answers "does ord
+/// say something precious rides on it". They consult different indexers with
+/// independent tips, and conflating them is how a wallet reports "safe"
+/// because the wrong indexer happened to be caught up.
+///
+/// `ord_indexed_height` is ord's own tip (`ord_blockcount`), NOT metashrew's.
+/// `None` means ord was not consulted at all — see `evidence` below.
+///
+/// `has_evidence` is the (b) policy: refuse only when this wallet is known to
+/// hold inscriptions somewhere. A wallet that has never held one is not held
+/// hostage to ord's uptime, while a collector is protected even when ord is
+/// unreachable. Pure function — no provider, no network, unit-tested.
+pub fn check_ordinals_eligibility(
+    info: &UtxoInfo,
+    ord_indexed_height: Option<u64>,
+    has_evidence: bool,
+) -> core::result::Result<(), UtxoSkipReason> {
+    if info.has_inscriptions {
+        return Err(UtxoSkipReason::Inscribed);
+    }
+    if info.has_runes {
+        return Err(UtxoSkipReason::CarriesRunes);
+    }
+    // Only meaningful for a wallet that holds ordinals: below ord's tip we
+    // trust the flags above, at or above it we know nothing yet.
+    if has_evidence {
+        match (ord_indexed_height, info.block_height) {
+            (Some(ord_h), Some(h)) if h > ord_h => {
+                return Err(UtxoSkipReason::OrdBehind { block_height: h, ord_indexed: ord_h });
+            }
+            // Ord never answered, and this wallet is known to hold inscriptions:
+            // unknown is not clean.
+            (None, Some(h)) => {
+                return Err(UtxoSkipReason::OrdBehind { block_height: h, ord_indexed: 0 });
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 pub fn check_utxo_eligibility(
     info: &UtxoInfo,
     max_indexed_height: Option<u64>,
@@ -2296,6 +2350,18 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                         log::debug!(
                             "Skipping unindexed UTXO: {}:{} (block_height={}, max_indexed={})",
                             info.txid, info.vout, block_height, max_indexed
+                        );
+                        false
+                    }
+                    // The ordinals gate (`check_ordinals_eligibility`) owns
+                    // Inscribed / CarriesRunes / OrdBehind and is applied on
+                    // the plain-BTC path; this match is the ALKANES gate and
+                    // cannot produce them. Skip conservatively rather than
+                    // treat an unexpected reason as spendable.
+                    Err(other) => {
+                        log::debug!(
+                            "Skipping UTXO {}:{} — unexpected skip reason for the alkanes gate: {:?}",
+                            info.txid, info.vout, other
                         );
                         false
                     }
@@ -5893,6 +5959,75 @@ mod tests {
             Err(UtxoSkipReason::Frozen),
         );
     }
+
+    // ------------------------------------------------------------------
+    // check_ordinals_eligibility — ord is a SECOND indexer with its own tip.
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn clean_utxo_passes_whether_or_not_ord_answered() {
+        let utxo = mk_utxo(0x11, Some(800_000), false, false, 6);
+        assert_eq!(check_ordinals_eligibility(&utxo, Some(800_000), false), Ok(()));
+        assert_eq!(check_ordinals_eligibility(&utxo, None, false), Ok(()));
+    }
+
+    #[test]
+    fn an_inscribed_utxo_is_never_spendable_as_plain_btc() {
+        let mut utxo = mk_utxo(0x12, Some(800_000), false, false, 6);
+        utxo.has_inscriptions = true;
+        // True regardless of tips or evidence: the flag is the whole answer.
+        assert_eq!(
+            check_ordinals_eligibility(&utxo, Some(900_000), false),
+            Err(UtxoSkipReason::Inscribed)
+        );
+    }
+
+    #[test]
+    fn a_rune_carrier_is_refused_too() {
+        let mut utxo = mk_utxo(0x13, Some(800_000), false, false, 6);
+        utxo.has_runes = true;
+        assert_eq!(
+            check_ordinals_eligibility(&utxo, Some(900_000), true),
+            Err(UtxoSkipReason::CarriesRunes)
+        );
+    }
+
+    #[test]
+    fn above_ords_tip_is_unknown_not_clean_for_a_wallet_holding_inscriptions() {
+        let utxo = mk_utxo(0x14, Some(800_001), false, false, 6);
+        assert_eq!(
+            check_ordinals_eligibility(&utxo, Some(800_000), true),
+            Err(UtxoSkipReason::OrdBehind { block_height: 800_001, ord_indexed: 800_000 })
+        );
+        // CONTROL: the same UTXO at or below ord's tip is fine.
+        assert_eq!(check_ordinals_eligibility(&utxo, Some(800_001), true), Ok(()));
+    }
+
+    #[test]
+    fn ord_silence_blocks_a_collector_but_not_an_ordinary_wallet() {
+        let utxo = mk_utxo(0x15, Some(800_000), false, false, 6);
+        // No evidence this wallet holds ordinals: ord being down must not
+        // block a plain send.
+        assert_eq!(check_ordinals_eligibility(&utxo, None, false), Ok(()));
+        // Evidence it does: unknown is refused rather than assumed clean.
+        assert_eq!(
+            check_ordinals_eligibility(&utxo, None, true),
+            Err(UtxoSkipReason::OrdBehind { block_height: 800_000, ord_indexed: 0 })
+        );
+    }
+
+    #[test]
+    fn ord_and_metashrew_tips_are_judged_independently() {
+        // Metashrew caught up, ord behind: the alkanes gate passes and the
+        // ordinals gate refuses. Conflating them would report "safe".
+        let utxo = mk_utxo(0x16, Some(800_050), false, false, 6);
+        assert_eq!(check_utxo_eligibility(&utxo, Some(800_050)), Ok(()));
+        assert_eq!(
+            check_ordinals_eligibility(&utxo, Some(800_000), true),
+            Err(UtxoSkipReason::OrdBehind { block_height: 800_050, ord_indexed: 800_000 })
+        );
+    }
+
 
     // ────────────────────────────────────────────────────────────────────
     // select_utxos integration — verify the height filter actually flows
