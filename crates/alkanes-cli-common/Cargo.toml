@@ -155,7 +155,7 @@ bytes            = { workspace = true, optional = true }
 frtun-http-async = { workspace = true, optional = true }
 
 [features]
-default = ["std", "wasm-inspection", "native-deps", "cache-sqlite"]
+default = ["std", "wasm-inspection", "native-deps", "cache-sqlite", "frozen-sqlite"]
 std = ["tokio", "reqwest", "url", "bitcoincore-rpc", "dirs", "tempfile", "futures", "async-trait"]
 wasm-inspection = ["wasmi", "wasmprinter", "wat", "spin", "wasmparser", "web-sys", "js-sys", "wasm-bindgen-futures"]
 native-deps = []
@@ -166,6 +166,10 @@ wasip2 = []  # No std, no tokio, no reqwest, no futures, no async-trait - only c
 
 # Sqlite-backed AlkanesCache (~/.alkanes/cache.sqlite3). Requires `std`.
 cache-sqlite = ["std", "sqlx"]
+# Sqlite-backed FrozenStore (~/.alkanes/frozen.sqlite3). Requires `std`.
+# Separate from `cache-sqlite` on purpose: the frozen set is a safety
+# control, not a cache, and the two must not share a file or a lifetime.
+frozen-sqlite = ["std", "sqlx"]
 # gRPC-backed AlkanesCache shim for subfrost-mobile. Requires `std`.
 cache-grpc = ["std", "tonic", "prost-types"]
 

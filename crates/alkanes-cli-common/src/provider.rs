@@ -152,6 +152,22 @@ pub struct ConcreteProvider {
     /// `--use-walletconnect` flow.
     #[cfg(feature = "std")]
     pub(crate) remote_signer: Option<Arc<dyn crate::traits::RemoteSigner>>,
+    /// Durable set of outpoints the operator has frozen. When `None`,
+    /// freezing is unsupported and `freeze_utxo`/`unfreeze_utxo` say so
+    /// rather than panicking (they were `unimplemented!()`) — and
+    /// `get_utxos` reports every UTXO as spendable, which is only correct
+    /// because nothing could have been frozen without a store.
+    ///
+    /// `+ Send + Sync` is required here, not on the trait: this provider is
+    /// held by `SystemAlkanes`, and `System` is `Send + Sync`, so an
+    /// `Arc<dyn Trait>` field only satisfies that bound when the trait
+    /// object carries the auto traits (cf. `cache` / `remote_signer`). The
+    /// bound stays off [`crate::frozen_store::FrozenStore`] itself because
+    /// the browser implementation holds an `IdbDatabase`, and JS handles are
+    /// `!Send` — a store attached to THIS provider must be shareable; a
+    /// store used from the single-threaded browser need not be.
+    #[cfg(feature = "std")]
+    frozen_store: Option<Arc<dyn crate::frozen_store::FrozenStore + Send + Sync>>,
     }
 
 
@@ -261,6 +277,8 @@ impl ConcreteProvider {
             current_tip: Arc::new(RwLock::new(None)),
             #[cfg(feature = "std")]
             remote_signer: None,
+            #[cfg(feature = "std")]
+            frozen_store: None,
         })
     }
 
@@ -339,6 +357,8 @@ impl ConcreteProvider {
             current_tip: Arc::new(RwLock::new(None)),
             #[cfg(feature = "std")]
             remote_signer: None,
+            #[cfg(feature = "std")]
+            frozen_store: None,
         })
     }
 
@@ -359,6 +379,8 @@ impl ConcreteProvider {
             current_tip: Arc::new(RwLock::new(None)),
             #[cfg(feature = "std")]
             remote_signer: None,
+            #[cfg(feature = "std")]
+            frozen_store: None,
         }
     }
 
@@ -373,6 +395,22 @@ impl ConcreteProvider {
     #[cfg(feature = "std")]
     pub fn with_cache(mut self, cache: Arc<dyn AlkanesCache>) -> Self {
         self.cache = Some(cache);
+        self
+    }
+
+    /// Attach the frozen-UTXO store. `alkanes-cli` passes a
+    /// [`crate::frozen_store::sqlite::SqliteFrozenStore`] opened at
+    /// `~/.alkanes/frozen.sqlite3`; tests pass a
+    /// [`crate::frozen_store::MemoryFrozenStore`].
+    ///
+    /// Without one, `freeze_utxo`/`unfreeze_utxo` report that freezing is
+    /// not configured rather than silently doing nothing.
+    #[cfg(feature = "std")]
+    pub fn with_frozen_store(
+        mut self,
+        store: Arc<dyn crate::frozen_store::FrozenStore + Send + Sync>,
+    ) -> Self {
+        self.frozen_store = Some(store);
         self
     }
 
@@ -1794,6 +1832,50 @@ impl WalletProvider for ConcreteProvider {
             // This fallback path only provides the UTXO list; balances are resolved later.
         }
 
+        // Mark anything the operator has frozen.
+        //
+        // Frozen UTXOs are still RETURNED — `_include_frozen` is
+        // deliberately not used to filter. A coin that silently vanished
+        // from the listing would look like lost funds; instead it is
+        // reported with `frozen: true` and its reason, and every selector
+        // (`check_utxo_eligibility` → `UtxoSkipReason::Frozen`,
+        // `select_coins`, the largest-first selectors) skips it from here.
+        //
+        // One `list()` for the whole listing rather than a lookup per UTXO:
+        // a wallet with hundreds of outputs would otherwise issue hundreds
+        // of queries to answer a question one table scan answers.
+        #[cfg(feature = "std")]
+        if let Some(store) = self.frozen_store.as_ref() {
+            match store.list().await {
+                Ok(frozen) if !frozen.is_empty() => {
+                    let by_outpoint: std::collections::HashMap<String, Option<String>> = frozen
+                        .into_iter()
+                        .map(|r| (r.outpoint, r.reason))
+                        .collect();
+                    let mut marked = 0usize;
+                    for (outpoint, info) in all_utxos.iter_mut() {
+                        if let Some(reason) = by_outpoint.get(&outpoint.to_string()) {
+                            info.frozen = true;
+                            info.freeze_reason = reason.clone();
+                            marked += 1;
+                        }
+                    }
+                    if marked > 0 {
+                        log::info!("[WalletProvider] {marked} of {} UTXOs are frozen", all_utxos.len());
+                    }
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    // Fail closed. Reporting a UTXO as spendable because the
+                    // frozen set could not be read is exactly the mistake
+                    // this subsystem exists to prevent.
+                    return Err(AlkanesError::Storage(format!(
+                        "Could not read the frozen-UTXO store; refusing to report UTXOs as spendable: {e}"
+                    )));
+                }
+            }
+        }
+
         Ok(all_utxos)
     }
     
@@ -1831,12 +1913,50 @@ impl WalletProvider for ConcreteProvider {
         Ok(transactions)
     }
     
-    async fn freeze_utxo(&self, _utxo: String, _reason: Option<String>) -> Result<()> {
-        unimplemented!()
+    async fn freeze_utxo(&self, utxo: String, reason: Option<String>) -> Result<()> {
+        #[cfg(feature = "std")]
+        {
+            let store = self.frozen_store.as_ref().ok_or_else(|| {
+                AlkanesError::NotConfigured(
+                    "No frozen-UTXO store is configured for this provider".to_string(),
+                )
+            })?;
+            store.freeze(&utxo, reason.as_deref()).await?;
+            return Ok(());
+        }
+        #[cfg(not(feature = "std"))]
+        {
+            let _ = (utxo, reason);
+            Err(AlkanesError::NotImplemented(
+                "Freezing requires a platform store (std)".to_string(),
+            ))
+        }
     }
-    
-    async fn unfreeze_utxo(&self, _utxo: String) -> Result<()> {
-        unimplemented!()
+
+    async fn unfreeze_utxo(&self, utxo: String) -> Result<()> {
+        #[cfg(feature = "std")]
+        {
+            let store = self.frozen_store.as_ref().ok_or_else(|| {
+                AlkanesError::NotConfigured(
+                    "No frozen-UTXO store is configured for this provider".to_string(),
+                )
+            })?;
+            // The bool is deliberately not an error: unfreezing something
+            // that wasn't frozen is a no-op, not a failure. Callers that
+            // want to tell the difference read the store directly.
+            let was_frozen = store.unfreeze(&utxo).await?;
+            if !was_frozen {
+                log::info!("unfreeze_utxo: {utxo} was not frozen; nothing to do");
+            }
+            return Ok(());
+        }
+        #[cfg(not(feature = "std"))]
+        {
+            let _ = utxo;
+            Err(AlkanesError::NotImplemented(
+                "Freezing requires a platform store (std)".to_string(),
+            ))
+        }
     }
     
     async fn create_transaction(&self, params: SendParams) -> Result<String> {
@@ -4653,6 +4773,16 @@ impl DeezelProvider for ConcreteProvider {
 
     fn clone_box(&self) -> Box<dyn DeezelProvider> {
         Box::new(self.clone())
+    }
+
+    #[cfg(feature = "std")]
+    fn frozen_store(&self) -> Option<&dyn crate::frozen_store::FrozenStore> {
+        // Explicit coercion: the field carries `+ Send + Sync` (see its doc
+        // comment), and dropping auto traits from a trait object needs to be
+        // written out — `as_deref()` alone won't do it.
+        self.frozen_store
+            .as_ref()
+            .map(|s| s.as_ref() as &dyn crate::frozen_store::FrozenStore)
     }
 
     async fn initialize(&self) -> Result<()> {

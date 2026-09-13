@@ -973,6 +973,7 @@ dependencies = [
  "alkanes-asc",
  "alkanes-cli-common",
  "alkanes-support",
+ "anyhow",
  "async-trait",
  "base64 0.22.1",
  "bip39",

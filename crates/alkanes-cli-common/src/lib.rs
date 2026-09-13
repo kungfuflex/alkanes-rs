@@ -56,6 +56,9 @@ pub mod address;
 pub mod commands;
 pub mod traits;
 pub mod pending_tx_store;
+/// Durable set of outpoints the operator has frozen. Backs `UtxoInfo.frozen`,
+/// which every coin selector already honours but nothing ever set.
+pub mod frozen_store;
 pub mod network;
 pub mod rpc;
 pub mod alkanes;

@@ -71,6 +71,11 @@ pub struct MockProvider {
     /// the trait's `pending_tx_store()` accessor surfaces a real
     /// store; tests can `take()` it out for direct inspection.
     pub pending_tx_store: crate::pending_tx_store::MemoryPendingTxStore,
+    /// Frozen-UTXO store. In-memory so harness tests exercise the real
+    /// freeze behaviour with no side effects on the developer's own
+    /// `~/.alkanes/frozen.sqlite3` — a test that froze a real outpoint
+    /// would change which coins the operator's next send may spend.
+    pub frozen_store: crate::frozen_store::MemoryFrozenStore,
 }
 
 impl Default for MockProvider {
@@ -95,6 +100,7 @@ impl MockProvider {
             alkane_balances: Arc::new(Mutex::new(HashMap::new())),
             qubitcoin_mode: true,
             pending_tx_store: crate::pending_tx_store::MemoryPendingTxStore::new(),
+            frozen_store: crate::frozen_store::MemoryFrozenStore::new(),
         }
     }
     
@@ -306,11 +312,18 @@ impl WalletProvider for MockProvider {
         }])
     }
     
-    async fn freeze_utxo(&self, _utxo: String, _reason: Option<String>) -> Result<()> {
+    async fn freeze_utxo(&self, utxo: String, reason: Option<String>) -> Result<()> {
+        // Previously `Ok(())` without storing anything, so a test could
+        // "freeze" a UTXO and then watch it get selected and spent — the
+        // mock reported success for work it never did.
+        use crate::frozen_store::FrozenStore as _;
+        self.frozen_store.freeze(&utxo, reason.as_deref()).await?;
         Ok(())
     }
-    
-    async fn unfreeze_utxo(&self, _utxo: String) -> Result<()> {
+
+    async fn unfreeze_utxo(&self, utxo: String) -> Result<()> {
+        use crate::frozen_store::FrozenStore as _;
+        self.frozen_store.unfreeze(&utxo).await?;
         Ok(())
     }
     
@@ -1150,6 +1163,10 @@ impl DeezelProvider for MockProvider {
 
     fn pending_tx_store(&self) -> Option<&dyn crate::pending_tx_store::PendingTxStore> {
         Some(&self.pending_tx_store)
+    }
+
+    fn frozen_store(&self) -> Option<&dyn crate::frozen_store::FrozenStore> {
+        Some(&self.frozen_store)
     }
 
     fn get_bitcoin_rpc_url(&self) -> Option<String> {

@@ -14,7 +14,7 @@ rand = { workspace = true }
 bitcoin = { workspace = true }
 secp256k1 = { workspace = true }
 psbt-v2 = "0.1.0"
-alkanes-cli-common = { path = "../alkanes-cli-common", features = ["std", "cache-sqlite"] }
+alkanes-cli-common = { path = "../alkanes-cli-common", features = ["std", "cache-sqlite", "frozen-sqlite"] }
 alkanes-asc = { path = "../alkanes-asc" }
 colored = "2.0"
 url = { workspace = true }
@@ -42,8 +42,10 @@ tokio = { workspace = true, features = ["macros", "rt", "sync"] }
 
 [features]
 # Default-on persistent sqlite cache. Disable with `--no-default-features`.
-default = ["cache-sqlite"]
+default = ["cache-sqlite", "frozen-sqlite"]
 cache-sqlite = ["alkanes-cli-common/cache-sqlite"]
+# Default-on persistent frozen-UTXO store (~/.alkanes/frozen.sqlite3).
+frozen-sqlite = ["alkanes-cli-common/frozen-sqlite"]
 # Native reproducible-build `upload` path: POST a BuildInfo JSON to the
 # explorer `/api/v1/<key>/{attest,verify}` endpoints over the vendored
 # tlsfetch h2 client. Opt-in — enabled by the `alkanes-cli` binary, NOT
