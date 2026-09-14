@@ -35,7 +35,11 @@ import { NetworkType, AlkaneId, AlkaneBalance, UTXO, Keystore, Brc20ProgExecuteR
 import { AddressType } from '../wallet';
 import * as bitcoin from 'bitcoinjs-lib';
 
-const DEFAULT_ORDINALS_STRATEGY = 'burn';
+// Matches alkanes-cli-common's OrdinalsStrategy::default() (flipped from
+// Exclude to Preserve): protect inscribed sats and rune balances by
+// splitting them onto their own outputs, rather than either erroring or
+// destroying what the UTXO carries.
+const DEFAULT_ORDINALS_STRATEGY = 'preserve';
 
 /**
  * Transaction result after broadcast

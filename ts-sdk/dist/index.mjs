@@ -46379,7 +46379,7 @@ var init_provider = __esm({
   "src/provider/index.ts"() {
     "use strict";
     bitcoin3 = __toESM(require_src3());
-    DEFAULT_ORDINALS_STRATEGY = "burn";
+    DEFAULT_ORDINALS_STRATEGY = "preserve";
     NETWORK_PRESETS = {
       "mainnet": {
         rpcUrl: "https://mainnet.subfrost.io/v4/subfrost",
@@ -51970,7 +51970,7 @@ async function getWalletOptions() {
 
 // src/client/client.ts
 init_provider();
-var DEFAULT_ORDINALS_STRATEGY2 = "burn";
+var DEFAULT_ORDINALS_STRATEGY2 = "preserve";
 var AlkanesClient = class _AlkanesClient {
   constructor(provider, signer) {
     this.provider = provider;
