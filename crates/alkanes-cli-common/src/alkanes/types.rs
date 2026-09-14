@@ -77,16 +77,22 @@ impl fmt::Display for AlkaneId {
 }
 
 /// Strategy for handling UTXOs that contain ordinal inscriptions
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, clap::ValueEnum)]
 #[serde(rename_all = "lowercase")]
 pub enum OrdinalsStrategy {
-    /// Exclude inscribed UTXOs from selection (default)
-    /// Fails if no clean UTXOs are available to satisfy requirements
-    #[default]
+    /// Exclude inscribed UTXOs from coin selection.
+    /// Fails if no clean UTXOs are available to satisfy requirements.
     Exclude,
-    /// Preserve inscriptions by splitting UTXOs before spending
-    /// Creates a split transaction that sends inscribed sats to a safe output
-    /// Uses sendrawtransactions to atomically broadcast split + main transaction
+    /// Preserve what the UTXO carries, then spend the rest (default).
+    ///
+    /// Inscribed sats are split onto an output of their own and rune
+    /// balances are edicted onto theirs; the split and main transactions are
+    /// then broadcast together via `sendrawtransactions`.
+    ///
+    /// This is the default because refusing to spend is not protection — it
+    /// leaves the user stuck holding funds they cannot move, which is what
+    /// pushes people towards `burn`.
+    #[default]
     Preserve,
     /// Allow spending inscribed UTXOs without protection (burns the inscription)
     /// Use with caution - this will destroy any inscriptions on spent UTXOs
@@ -96,8 +102,14 @@ pub enum OrdinalsStrategy {
 /// Input requirement specification
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum InputRequirement {
-    /// Alkanes token requirement: (block, tx, amount) where 0 means ALL
-    Alkanes { block: u64, tx: u64, amount: u64 },
+    /// Alkanes token requirement: (block, tx, amount) where 0 means ALL.
+    ///
+    /// `amount` is u128 because alkane amounts are u128 ON CHAIN. Narrowing it
+    /// to u64 froze real balances: any UTXO holding more than 18.4467 units of
+    /// an 18-decimal token exceeds 2^64-1 in sub-units, so it either failed to
+    /// parse or silently became 0 and the wallet reported "have 0" for coins it
+    /// could see.
+    Alkanes { block: u64, tx: u64, amount: u128 },
     /// Bitcoin requirement: amount in satoshis
     Bitcoin { amount: u64 },
     /// Bitcoin output assignment: amount in satoshis to specific output target
@@ -119,7 +131,10 @@ pub enum OutputTarget {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProtostoneEdict {
     pub alkane_id: AlkaneId,
-    pub amount: u64,
+    /// u128 to match the chain: protorune's `Edict.amount` is u128 and the
+    /// runestone encoder varint-encodes it as such (`ordinals/src/runestone.rs`).
+    /// A u64 here truncated any edict above 2^64-1 sub-units.
+    pub amount: u128,
     pub target: OutputTarget,
 }
 
@@ -318,8 +333,8 @@ pub struct EnhancedExecuteParams {
     pub mine_enabled: bool,
     pub auto_confirm: bool,
     /// Strategy for handling UTXOs that contain ordinal inscriptions
-    /// - exclude: Fail if we must spend inscribed UTXOs (default)
-    /// - preserve: Split UTXOs to protect inscriptions, use sendrawtransactions
+    /// - exclude: Fail if we must spend inscribed UTXOs
+    /// - preserve: (default) Split UTXOs to protect inscriptions, use sendrawtransactions
     /// - burn: Allow spending inscribed UTXOs without protection
     #[serde(default)]
     pub ordinals_strategy: OrdinalsStrategy,

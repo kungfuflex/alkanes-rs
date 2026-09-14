@@ -263,6 +263,32 @@ pub fn psbt_to_json(psbt: &Psbt) -> JsonValue {
     psbt_json
 }
 
+/// Assemble final witnesses onto the transaction of an already-signed PSBT.
+///
+/// `KeystoreProvider::sign_psbt` populates `tap_key_sig`, `partial_sigs` and
+/// `final_script_witness`, but it does NOT assemble witnesses onto the
+/// transaction — so every caller has to perform this last step itself.
+///
+/// This lived verbatim as a private `sign_and_finalize_psbt` tail in both
+/// `alkanes::execute` and `brc20_prog::execute`; the wallet send path needs
+/// the same step for split transactions, which would have made a third copy.
+///
+/// Note the ordering: a taproot key-spend signature wins over
+/// `final_script_witness`, matching the original behaviour — a key-path input
+/// carries `tap_key_sig` and nothing else, while script-path inputs set
+/// `final_script_witness` explicitly.
+pub fn finalize_signed_psbt(signed: &Psbt) -> Result<Transaction> {
+    let mut tx = signed.clone().extract_tx()?;
+    for (i, psbt_input) in signed.inputs.iter().enumerate() {
+        if let Some(tap_key_sig) = &psbt_input.tap_key_sig {
+            tx.input[i].witness = bitcoin::Witness::p2tr_key_spend(tap_key_sig);
+        } else if let Some(final_script_witness) = &psbt_input.final_script_witness {
+            tx.input[i].witness = final_script_witness.clone();
+        }
+    }
+    Ok(tx)
+}
+
 /// Calculate the fee for a PSBT (if possible)
 fn calculate_psbt_fee(psbt: &Psbt) -> Option<u64> {
     let mut total_input = 0u64;

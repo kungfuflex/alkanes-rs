@@ -15,6 +15,8 @@ use alkanes_cli_common::commands::*;
 pub mod utils;
 pub mod keystore;
 pub mod pretty_print;
+#[cfg(feature = "attest-upload")]
+pub mod attest_upload;
 use alkanes_cli_common::alkanes::AlkanesInspectConfig;
 use utils::*;
 use keystore::{KeystoreManager, KeystoreCreateParams};
@@ -265,6 +267,30 @@ impl SystemAlkanes {
             provider = provider.with_cache(std::sync::Arc::new(
                 alkanes_cli_common::cache::in_memory::InMemoryCache::new(),
             ));
+        }
+
+        // Attach the frozen-UTXO store.
+        //
+        // Unlike the cache above, a failure here is FATAL and there is no
+        // in-memory fallback. An empty store reads as "nothing is frozen",
+        // so silently substituting one would re-arm every coin the operator
+        // deliberately took off the table — the wallet would then happily
+        // select an outpoint holding an inscription. A cache miss costs a
+        // round-trip; a freeze miss costs the asset.
+        #[cfg(feature = "frozen-sqlite")]
+        {
+            let path = alkanes_cli_common::frozen_store::sqlite::default_frozen_db_path();
+            let store = alkanes_cli_common::frozen_store::sqlite::SqliteFrozenStore::open(&path)
+                .await
+                .map_err(|e| {
+                    anyhow::anyhow!(
+                        "Could not open the frozen-UTXO store at {} ({e}). Refusing to continue: \
+                         running without it would treat frozen UTXOs as spendable.",
+                        path.display()
+                    )
+                })?;
+            log::debug!("Opened frozen-UTXO store at {}", path.display());
+            provider = provider.with_frozen_store(std::sync::Arc::new(store));
         }
 
         if let Some(passphrase) = &args.passphrase {
@@ -1650,7 +1676,7 @@ impl SystemWallet for SystemAlkanes {
                 }
                 Ok(())
             },
-           WalletCommands::Send { address, amount, fee_rate, send_all, from, lock_alkanes, change, use_rebar, rebar_tier, yes } => {
+           WalletCommands::Send { address, amount, fee_rate, send_all, from, lock_alkanes, change, use_rebar, rebar_tier, yes, ordinals_strategy, mempool_indexer } => {
                // Parse BTC amount string and convert to satoshis
                let amount_sats = crate::utils::parse_btc_amount(&amount)?;
                
@@ -1682,8 +1708,8 @@ impl SystemWallet for SystemAlkanes {
                    use_rebar,
                    rebar_tier,
                    lock_alkanes,
-                   ordinals_strategy: alkanes_cli_common::alkanes::types::OrdinalsStrategy::default(),
-                   mempool_indexer: false,
+                   ordinals_strategy,
+                   mempool_indexer,
                };
 
                match provider.send(send_params).await {
@@ -2279,13 +2305,35 @@ impl SystemWallet for SystemAlkanes {
                Ok(())
            },
            WalletCommands::FreezeUtxo { utxo, reason } => {
+               // This used to print success after a call that was
+               // `unimplemented!()` — the one path that told the user their
+               // coin was protected was a panic on a good day and a lie on
+               // a bad one. It now reports what actually happened.
                provider.freeze_utxo(utxo.clone(), reason).await?;
-               println!("❄️  UTXO {utxo} frozen successfully");
+               println!("❄️  UTXO {utxo} frozen");
                Ok(())
            },
            WalletCommands::UnfreezeUtxo { utxo } => {
-               provider.unfreeze_utxo(utxo.clone()).await?;
-               println!("✅ UTXO {utxo} unfrozen successfully");
+               // Distinguish "unfroze it" from "it wasn't frozen": printing
+               // success for a no-op is how a typo'd outpoint convinces
+               // someone a coin is unlocked when it is not.
+               match provider.frozen_store() {
+                   Some(store) => {
+                       if store
+                           .unfreeze(&utxo)
+                           .await
+                           .map_err(|e| alkanes_cli_common::AlkanesError::Storage(e.to_string()))?
+                       {
+                           println!("✅ UTXO {utxo} unfrozen");
+                       } else {
+                           println!("ℹ️  UTXO {utxo} was not frozen; nothing to do");
+                       }
+                   }
+                   None => {
+                       provider.unfreeze_utxo(utxo.clone()).await?;
+                       println!("✅ UTXO {utxo} unfrozen");
+                   }
+               }
                Ok(())
            },
            WalletCommands::History { count, raw, address } => {

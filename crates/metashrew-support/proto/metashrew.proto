@@ -1,0 +1,31 @@
+syntax = "proto3";
+
+package metashrew;
+
+message KeyValueFlush {
+  repeated bytes list = 1;
+}
+
+// Metadata about a view function
+message ViewFunction {
+  // Name of the view function
+  string name = 1;
+  
+  // Input type (protobuf message type)
+  string input_type = 2;
+  
+  // Output type (protobuf message type)
+  string output_type = 3;
+}
+
+// Metadata about an indexer
+message IndexerMetadata {
+  // Version of the compiler used to build the indexer
+  string compiler_version = 1;
+  
+  // Version of rustc used to build the indexer
+  string rustc_version = 2;
+  
+  // List of view functions exported by the indexer
+  repeated ViewFunction view_functions = 3;
+}

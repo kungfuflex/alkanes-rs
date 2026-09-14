@@ -1,6 +1,7 @@
 use crate::{balance_sheet::ProtoruneRuneId, byte_utils::ByteUtils};
 use anyhow::{anyhow, Result};
 use ordinals::{runestone::tag::Tag, Edict, RuneId, Runestone};
+use crate::utils::encode_varint_list;
 use std::collections::BTreeMap;
 
 pub fn next_protostone_edict_id(
@@ -23,6 +24,21 @@ pub struct ProtostoneEdict {
     pub id: ProtoruneRuneId,
     pub amount: u128,
     pub output: u128,
+}
+pub trait Protostones {
+    fn encipher(&self) -> Result<Vec<u128>>;
+}
+impl Protostones for Vec<Protostone> {
+    fn encipher(&self) -> Result<Vec<u128>> {
+        let mut values = Vec::<u128>::new();
+        for stone in self {
+            values.push(stone.protocol_tag);
+            let varints = stone.to_integers()?;
+            values.push(varints.len() as u128);
+            values.extend(&varints);
+        }
+        Ok(split_bytes(&encode_varint_list(&values)))
+    }
 }
 impl From<ProtostoneEdict> for Edict {
     fn from(v: ProtostoneEdict) -> Edict {

@@ -1,7 +1,4 @@
 use crate::runtime::AlkaneResponder;
-use anyhow::Result;
-
-use alkanes_support::response::CallResponse;
 use metashrew_support::index_pointer::KeyValuePointer;
 use std::sync::Arc;
 
@@ -13,6 +10,12 @@ const RUNTIME_STORAGE: StorageHandle = StorageHandle(());
 
 #[derive(Debug, Clone, Default)]
 pub struct StoragePointer(pub Arc<Vec<u8>>);
+
+impl StoragePointer {
+    pub fn from_keyword(keyword: &str) -> Self {
+        StoragePointer(Arc::new(keyword.as_bytes().to_vec()))
+    }
+}
 
 #[allow(dead_code)]
 impl KeyValuePointer for StoragePointer {

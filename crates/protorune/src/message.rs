@@ -13,6 +13,16 @@ pub trait MessageContext {
         parcel: &MessageContextParcel,
     ) -> Result<(Vec<RuneTransfer>, BalanceSheet<AtomicPointer>)>;
     fn protocol_tag() -> u128;
+    /// Block height at/after which the `max_virtual_vout` protostone cap is
+    /// removed. Below this height a protostone whose shadow vout is
+    /// `>= num_outputs + 100` is rejected (see
+    /// [`crate::protostone::MessageProcessor::process_message`]); at/after it
+    /// there is no bound on protostone count — VM work is already bounded by
+    /// fuel. Default `u64::MAX` (cap always enforced) so any protocol that does
+    /// not opt in keeps the legacy consensus behaviour.
+    fn max_virtual_vout_removal_height() -> u64 {
+        u64::MAX
+    }
     fn asset_protoburned_in_protocol(id: ProtoruneRuneId) -> bool {
         let table = RuneTable::for_protocol(Self::protocol_tag());
         if table.RUNE_ID_TO_ETCHING.select(&id.into()).get().len() > 0 {

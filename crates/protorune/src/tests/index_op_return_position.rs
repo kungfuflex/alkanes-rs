@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use crate::balance_sheet::{load_sheet, PersistentRecord};
+    use crate::balance_sheet::{load_sheet, load_sheet_chunked, PersistentRecord};
     use crate::message::{MessageContext, MessageContextParcel};
     use crate::test_helpers::{self as helpers, get_address, ADDRESS1};
     use crate::{tables, Protorune};
@@ -103,7 +103,7 @@ mod tests {
             txid: txid_end.clone(),
             vout: 0,
         };
-        let sheet_end = load_sheet(
+        let sheet_end = load_sheet_chunked(
             &tables::RuneTable::for_protocol(protocol_id)
                 .OUTPOINT_TO_RUNES
                 .select(&consensus_encode(&outpoint_end).unwrap()),

@@ -38,8 +38,7 @@ pub use super::types::{
 use super::envelope::AlkanesEnvelope;
 use anyhow::anyhow;
 use ordinals::Runestone;
-use protorune_support::protostone::{Protostone, ProtostoneEdict as ProtoruneEdict};
-use crate::alkanes::protostone_ext::Protostones;
+use protorune_support::protostone::{Protostones, Protostone, ProtostoneEdict as ProtoruneEdict};
 use protorune_support::balance_sheet::ProtoruneRuneId;
 
 const MAX_FEE_SATS: u64 = 100_000; // 0.001 BTC. Cap to avoid "absurdly high fee rate" errors.
@@ -131,6 +130,42 @@ impl BtcHeadroom {
 /// must never be built below this floor.
 const MIN_RELAY_FEE_RATE: f32 = 1.0;
 
+/// Fee-rate floor, in sat/vB, for the **parent** of a split-tx CPFP package
+/// (Tx A, the wrap).
+///
+/// Tx A is a *structural* CPFP parent — Tx B has to spend its carrier output,
+/// so the pair exists by construction and is not a stuck-tx rescue. CPFP fixes
+/// a transaction's mining PRIORITY, never its RELAY: every node drops anything
+/// below its own `-minrelaytxfee` (1 sat/vB by default), so a sub-1-sat/vB
+/// parent simply never reaches most miners' mempools and a high-fee child
+/// cannot rescue a transaction they never received (1p1c package relay is not
+/// universally deployed). The parent must therefore clear min-relay
+/// STANDALONE.
+///
+/// 1.25 = the 1 sat/vB Core default plus ~25% margin, so the parent also
+/// clears stricter-than-default node policies and absorbs vsize-estimate
+/// drift. Ported from `CPFP_PARENT_MIN_FEE_RATE` in subfrost-app
+/// (`hooks/useEphemeralWrapPackage.ts`), where a 0.151 sat/vB parent
+/// (mainnet 81396b59…e7960cae, 2026-06-26) sat unconfirmed indefinitely
+/// while its child was fine.
+///
+/// NOTE: static floor — it does not track a rising `mempoolminfee` under
+/// congestion. A `max(1.25, live mempoolminfee)` floor would.
+const CPFP_PARENT_MIN_FEE_RATE: f32 = 1.25;
+
+/// The rate the split-tx CPFP **parent** (Tx A) must actually be built at.
+///
+/// The user's requested rate drives the *package*; the parent additionally has
+/// to relay on its own, hence the floor. Anything at or above the floor is
+/// passed through unchanged.
+fn parent_fee_rate_for_package(target_rate: f32) -> f32 {
+    if target_rate.is_finite() {
+        target_rate.max(CPFP_PARENT_MIN_FEE_RATE)
+    } else {
+        CPFP_PARENT_MIN_FEE_RATE
+    }
+}
+
 /// Compute the fee rate the CPFP **child** (Tx B) must pay so that the whole
 /// parent+child *package* clears the user's target fee rate, then floor the
 /// result at the network min-relay rate.
@@ -148,6 +183,33 @@ const MIN_RELAY_FEE_RATE: f32 = 1.0;
 /// makes up the difference. The result is floored at `MIN_RELAY_FEE_RATE` so
 /// the child is always individually relayable even if its parent confirms
 /// first and the child is briefly evaluated on its own.
+///
+/// # The child-inversion guard
+///
+/// The package can never be targeted BELOW what the parent already pays. Since
+/// the parent is floored at [`CPFP_PARENT_MIN_FEE_RATE`] independently of the
+/// user's `target_rate`, a user rate at or under that floor makes the naive
+/// shortfall `target_rate * package_vsize - parent_fee` go negative; the child
+/// then collapses to `target_rate` — a rate BELOW its own parent's. Observed
+/// on mainnet (subfrost-app, tx cd6ec685…154d981f, 2026-06-30):
+///
+/// ```text
+///   parent 5841c419…4282b6 : fee 975,  vsize 776  -> 1.256 sat/vB
+///   child  cd6ec685…d981f  : fee 117,  vsize ~316 -> 0.370 sat/vB  <- INVERTED
+///   package                : fee 1092, vsize 1092 -> 1.000 sat/vB
+/// ```
+///
+/// A CPFP child that under-bids its parent drags the package's effective rate
+/// DOWN — the package is then worth less to a miner than the parent alone, so
+/// the whole construction is pointless. Targeting
+/// `effective_rate = max(target_rate, parent_rate)` makes the shortfall always
+/// at least `effective_rate * child_vsize`, which pins the invariant
+///
+/// ```text
+///   child_rate >= package_rate >= parent_rate
+/// ```
+///
+/// at every requested rate.
 fn child_fee_rate_for_package(
     target_rate: f32,
     parent_fee: u64,
@@ -155,14 +217,24 @@ fn child_fee_rate_for_package(
     child_vsize: u64,
 ) -> f32 {
     let child_vsize = child_vsize.max(1) as f32;
+    // The parent's REALIZED rate. It is a published, already-paid cost the
+    // package inherits — the package target can never sit below it.
+    let parent_rate = if parent_vsize == 0 {
+        target_rate
+    } else {
+        parent_fee as f32 / parent_vsize as f32
+    };
+    let effective_rate = target_rate.max(parent_rate);
     let package_vsize = parent_vsize as f32 + child_vsize;
-    let required_package_fee = target_rate * package_vsize;
+    let required_package_fee = effective_rate * package_vsize;
     // What the child must contribute on top of the parent's actual fee.
+    // Because `effective_rate >= parent_rate`, this is always at least
+    // `effective_rate * child_vsize` — never negative, never inverted.
     let required_child_fee = (required_package_fee - parent_fee as f32).max(0.0);
     let child_rate = required_child_fee / child_vsize;
-    // Never below min-relay, and never below the user's own target either —
-    // a CPFP child should at minimum pay the target rate for itself.
-    child_rate.max(target_rate).max(MIN_RELAY_FEE_RATE)
+    // Never below min-relay, and never below the effective package rate
+    // either, so estimator drift cannot let the child slip under the target.
+    child_rate.max(effective_rate).max(MIN_RELAY_FEE_RATE)
 }
 
 /// frBTC, frZEC, frETH and any other cross-chain wrap target lives at block 32
@@ -268,6 +340,16 @@ pub enum UtxoSkipReason {
     /// hasn't reached yet. Its alkane balance sheet is unknown until
     /// metashrew catches up; spending it risks underspending alkanes.
     UnindexedHeight { block_height: u64, max_indexed: u64 },
+    /// Ord reports one or more inscriptions on this outpoint. Spending it as
+    /// plain BTC destroys them.
+    Inscribed,
+    /// Ord reports rune balances on this outpoint. Same hazard as `Inscribed`.
+    CarriesRunes,
+    /// Confirmed UTXO mined into a block ORD hasn't indexed yet. Distinct from
+    /// `UnindexedHeight`, which is metashrew's tip: the two indexers advance
+    /// independently, and an outpoint that metashrew has seen may still be
+    /// unknown to ord. "Not yet indexed" is not "carries nothing".
+    OrdBehind { block_height: u64, ord_indexed: u64 },
 }
 
 /// Returns `Ok(())` if `info` is eligible for coin selection, else `Err`
@@ -281,6 +363,50 @@ pub enum UtxoSkipReason {
 ///      (`block_height = Some(_)`); unconfirmed UTXOs (mempool) are left
 ///      to the existing `apply_mempool_adjustment` path which adds back
 ///      "we built this" txs from `known_pending_tx_hexes`.
+/// Whether spending `info` as plain BTC would destroy ordinals or runes.
+///
+/// Separate from [`check_utxo_eligibility`] on purpose: that one answers "can
+/// the alkanes indexer account for this outpoint", this one answers "does ord
+/// say something precious rides on it". They consult different indexers with
+/// independent tips, and conflating them is how a wallet reports "safe"
+/// because the wrong indexer happened to be caught up.
+///
+/// `ord_indexed_height` is ord's own tip (`ord_blockcount`), NOT metashrew's.
+/// `None` means ord was not consulted at all — see `evidence` below.
+///
+/// `has_evidence` is the (b) policy: refuse only when this wallet is known to
+/// hold inscriptions somewhere. A wallet that has never held one is not held
+/// hostage to ord's uptime, while a collector is protected even when ord is
+/// unreachable. Pure function — no provider, no network, unit-tested.
+pub fn check_ordinals_eligibility(
+    info: &UtxoInfo,
+    ord_indexed_height: Option<u64>,
+    has_evidence: bool,
+) -> core::result::Result<(), UtxoSkipReason> {
+    if info.has_inscriptions {
+        return Err(UtxoSkipReason::Inscribed);
+    }
+    if info.has_runes {
+        return Err(UtxoSkipReason::CarriesRunes);
+    }
+    // Only meaningful for a wallet that holds ordinals: below ord's tip we
+    // trust the flags above, at or above it we know nothing yet.
+    if has_evidence {
+        match (ord_indexed_height, info.block_height) {
+            (Some(ord_h), Some(h)) if h > ord_h => {
+                return Err(UtxoSkipReason::OrdBehind { block_height: h, ord_indexed: ord_h });
+            }
+            // Ord never answered, and this wallet is known to hold inscriptions:
+            // unknown is not clean.
+            (None, Some(h)) => {
+                return Err(UtxoSkipReason::OrdBehind { block_height: h, ord_indexed: 0 });
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 pub fn check_utxo_eligibility(
     info: &UtxoInfo,
     max_indexed_height: Option<u64>,
@@ -443,9 +569,9 @@ pub(crate) struct UtxoSelectionResult {
     /// PSBT construction can avoid getrawtransaction fallback fetches.
     pub(crate) txouts: alloc::collections::BTreeMap<OutPoint, TxOut>,
     /// Actual alkanes balances found in the selected UTXOs (aggregate)
-    pub(crate) alkanes_found: alloc::collections::BTreeMap<AlkaneId, u64>,
+    pub(crate) alkanes_found: alloc::collections::BTreeMap<AlkaneId, u128>,
     /// Per-UTXO alkane balances (for alkane-aware ordinals splitting)
-    pub(crate) per_utxo_alkanes: alloc::collections::BTreeMap<OutPoint, Vec<(AlkaneId, u64)>>,
+    pub(crate) per_utxo_alkanes: alloc::collections::BTreeMap<OutPoint, Vec<(AlkaneId, u128)>>,
 }
 
 
@@ -559,7 +685,7 @@ fn build_prefetched_alkanes_map(
 /// — same conservative posture as `build_prefetched_alkanes_map`'s callers.
 fn prefetched_covers_alkanes_needed(
     prefetched_utxos: &[PrefetchedUtxo],
-    alkanes_needed: &alloc::collections::BTreeMap<(u64, u64), u64>,
+    alkanes_needed: &alloc::collections::BTreeMap<(u64, u64), u128>,
 ) -> bool {
     if alkanes_needed.is_empty() {
         return true;
@@ -857,8 +983,21 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         }
 
         // ---- Tx A: wrap-only ----------------------------------------------
+        // Resolve the user's package target BEFORE building Tx A: the parent
+        // has to relay standalone, so it is built at the floored parent rate
+        // (see parent_fee_rate_for_package), not at the raw package target.
+        let target_rate = self.resolve_fee_rate(params.fee_rate).await?;
+        let parent_rate = parent_fee_rate_for_package(target_rate);
+        if parent_rate > target_rate {
+            log::info!(
+                "[split-tx] parent fee rate floored at {:.3} sat/vB (requested {:.3}) — a sub-min-relay parent never reaches miners",
+                parent_rate, target_rate
+            );
+        }
+
         let mut tx_a_params = params.clone();
         tx_a_params.split_transactions = false;
+        tx_a_params.fee_rate = Some(parent_rate);
 
         // The wrap protostone's pointer typically targets p1 (forward to the
         // next protostone in the original atomic flow). In split mode we
@@ -901,7 +1040,6 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         // clears the target rate, floored at min-relay — see
         // child_fee_rate_for_package. Decode Tx A from its broadcast hex to get
         // the parent's true vsize; fall back to an estimate if hex is missing.
-        let target_rate = self.resolve_fee_rate(params.fee_rate).await?;
         let parent_vsize = tx_a_result
             .reveal_tx_hex
             .as_ref()
@@ -1008,8 +1146,20 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             ));
         }
 
+        // Same parent floor as execute_split: Tx A must clear min-relay on its
+        // own or the child can never rescue it. See parent_fee_rate_for_package.
+        let target_rate = self.resolve_fee_rate(params.fee_rate).await?;
+        let parent_rate = parent_fee_rate_for_package(target_rate);
+        if parent_rate > target_rate {
+            log::info!(
+                "[split-tx:psbt] parent fee rate floored at {:.3} sat/vB (requested {:.3}) — a sub-min-relay parent never reaches miners",
+                parent_rate, target_rate
+            );
+        }
+
         let mut tx_a_params = params.clone();
         tx_a_params.split_transactions = false;
+        tx_a_params.fee_rate = Some(parent_rate);
 
         let mut wrap_proto = params.protostones[0].clone();
         wrap_proto.pointer = Some(OutputTarget::Output(1));
@@ -1041,7 +1191,6 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         // rate so it pays for both itself and any parent shortfall.
         let parent_vsize = tx_a_state.psbt.unsigned_tx.vsize() as u64;
         let parent_fee = tx_a_state.fee;
-        let target_rate = self.resolve_fee_rate(params.fee_rate).await?;
         // Estimate Tx B's vsize: it spends Tx A's alkane carrier + BTC change
         // (~2 inputs) and produces the execute output(s) + change + runestone.
         let child_vsize_estimate = Self::estimate_transaction_vsize(
@@ -1597,7 +1746,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                         }
 
                         // Collect alkane data for inscribed UTXOs being split
-                        let split_utxo_alkanes: alloc::collections::BTreeMap<OutPoint, Vec<(AlkaneId, u64)>> = plans.iter()
+                        let split_utxo_alkanes: alloc::collections::BTreeMap<OutPoint, Vec<(AlkaneId, u128)>> = plans.iter()
                             .filter_map(|plan| {
                                 utxo_selection.per_utxo_alkanes.get(&plan.outpoint)
                                     .map(|alkanes| (plan.outpoint, alkanes.clone()))
@@ -1644,13 +1793,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                         );
 
                         // Build split transaction PSBT (alkane-aware, extras-aware)
-                        let (
-                            split_psbt_result,
-                            split_fee_result,
-                            clean_outpoints,
-                            alkane_outpoints,
-                            consumed_extra_outpoints,
-                        ) = self.build_split_psbt(
+                        let split = self.build_split_psbt(
                             &plans,
                             &funding_utxos_with_txout,
                             &extra_funding_utxos,
@@ -1664,7 +1807,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                         // outpoints are now spent in the split tx and can't
                         // appear in the main tx's input list.
                         let consumed_extras_set: std::collections::HashSet<OutPoint> =
-                            consumed_extra_outpoints.iter().copied().collect();
+                            split.consumed_extras.iter().copied().collect();
                         let mut new_outpoints = Vec::new();
 
                         // Keep non-inscribed, non-consumed UTXOs
@@ -1675,10 +1818,13 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                                 new_outpoints.push(*outpoint);
                             }
                         }
-                        // Add clean BTC UTXOs from split (for fee funding)
-                        new_outpoints.extend(clean_outpoints);
+                        // Add clean BTC UTXOs from split (for fee funding).
+                        // The builder also hands back each one's TxOut; this
+                        // path re-fetches prevouts by outpoint, so only the
+                        // outpoints are needed here.
+                        new_outpoints.extend(split.clean_utxos.iter().map(|(op, _)| *op));
                         // Add clean alkane UTXOs from split (for alkane spending)
-                        new_outpoints.extend(alkane_outpoints.iter().map(|(op, _)| *op));
+                        new_outpoints.extend(split.alkane_outpoints.iter().map(|(op, _)| *op));
 
                         // Update alkanes_found: remove alkanes from inscribed UTXOs, add from alkane outpoints
                         for plan in &plans {
@@ -1698,19 +1844,19 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                         for plan in &plans {
                             utxo_selection.per_utxo_alkanes.remove(&plan.outpoint);
                         }
-                        for (outpoint, alkanes) in &alkane_outpoints {
+                        for (outpoint, alkanes) in &split.alkane_outpoints {
                             utxo_selection.per_utxo_alkanes.insert(*outpoint, alkanes.clone());
                         }
 
                         log::info!(
                             "🔀 Split transaction built: {} clean BTC UTXOs + {} clean alkane UTXOs replace {} inscribed UTXOs ({} extras consumed)",
                             plans.len(),
-                            alkane_outpoints.len(),
+                            split.alkane_outpoints.len(),
                             inscribed_outpoints.len(),
                             consumed_extras_set.len(),
                         );
 
-                        (Some(split_psbt_result), Some(split_fee_result), new_outpoints)
+                        (Some(split.psbt), Some(split.fee), new_outpoints)
                     }
                     Err(e) => {
                         // Strategy is Exclude and inscribed UTXOs were found - fail
@@ -2204,6 +2350,18 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                         );
                         false
                     }
+                    // The ordinals gate (`check_ordinals_eligibility`) owns
+                    // Inscribed / CarriesRunes / OrdBehind and is applied on
+                    // the plain-BTC path; this match is the ALKANES gate and
+                    // cannot produce them. Skip conservatively rather than
+                    // treat an unexpected reason as spendable.
+                    Err(other) => {
+                        log::debug!(
+                            "Skipping UTXO {}:{} — unexpected skip reason for the alkanes gate: {:?}",
+                            info.txid, info.vout, other
+                        );
+                        false
+                    }
                 }
             })
             .collect();
@@ -2410,9 +2568,9 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                 bitcoin_collected += $amount;
             }};
         }
-        let mut alkanes_collected: alloc::collections::BTreeMap<(u64, u64), u64> = alloc::collections::BTreeMap::new();
-        let mut alkanes_found: alloc::collections::BTreeMap<AlkaneId, u64> = alloc::collections::BTreeMap::new();
-        let mut per_utxo_alkanes: alloc::collections::BTreeMap<OutPoint, Vec<(AlkaneId, u64)>> = alloc::collections::BTreeMap::new();
+        let mut alkanes_collected: alloc::collections::BTreeMap<(u64, u64), u128> = alloc::collections::BTreeMap::new();
+        let mut alkanes_found: alloc::collections::BTreeMap<AlkaneId, u128> = alloc::collections::BTreeMap::new();
+        let mut per_utxo_alkanes: alloc::collections::BTreeMap<OutPoint, Vec<(AlkaneId, u128)>> = alloc::collections::BTreeMap::new();
 
         // If we need alkanes, query protorunes_by_address directly to find UTXOs with balances
         // This bypasses the lua batch script which has issues with individual outpoint queries
@@ -2494,7 +2652,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                 let requirements_covered =
                     |utxo_balances: &alloc::collections::BTreeMap<String, serde_json::Value>|
                      -> bool {
-                        let mut totals: alloc::collections::BTreeMap<(u64, u64), u64> =
+                        let mut totals: alloc::collections::BTreeMap<(u64, u64), u128> =
                             alloc::collections::BTreeMap::new();
                         for utxo_data in utxo_balances.values() {
                             let Some(arr) = utxo_data.get("balances").and_then(|v| v.as_array()) else {
@@ -2507,9 +2665,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                                 let tx = b.get("tx").and_then(|v| {
                                     v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok()))
                                 });
-                                let amount = b.get("amount").and_then(|v| {
-                                    v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok()))
-                                });
+                                let amount = b.get("amount").and_then(json_u128);
                                 if let (Some(block), Some(tx), Some(amount)) = (block, tx, amount) {
                                     let e = totals.entry((block, tx)).or_insert(0);
                                     *e = e.saturating_add(amount);
@@ -2726,11 +2882,16 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                                                 let parts: Vec<&str> = alkane_str.split(':').collect();
                                                 if parts.len() == 2 {
                                                     if let (Ok(block), Ok(tx)) = (parts[0].parse::<u64>(), parts[1].parse::<u64>()) {
-                                                        let amount = amount_str.parse::<u64>().unwrap_or(0);
+                                                        // u128, and re-emitted as a STRING: a JSON
+                                                        // number cannot carry u128, and the reader
+                                                        // above already accepts the string form.
+                                                        // `unwrap_or(0)` here is what silently turned a
+                                                        // real balance into "have 0".
+                                                        let amount = amount_str.parse::<u128>().unwrap_or(0);
                                                         balances_array.push(serde_json::json!({
                                                             "block": block,
                                                             "tx": tx,
-                                                            "amount": amount
+                                                            "amount": amount.to_string()
                                                         }));
                                                     }
                                                 }
@@ -2902,10 +3063,8 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                             let tx = b.get("tx").and_then(|v| {
                                 v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok()))
                             })?;
-                            // Handle amount as either number or string
-                            let amount = b.get("amount").and_then(|v| {
-                                v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok()))
-                            })?;
+                            // Handle amount as either number or string.
+                            let amount = b.get("amount").and_then(json_u128)?;
                             Some(((block, tx), amount))
                         }).collect::<Vec<_>>()
                     }).unwrap_or_default();
@@ -3275,7 +3434,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
     }
 
     /// Calculate alkanes needed from input requirements
-    fn calculate_alkanes_needed(&self, requirements: &[InputRequirement]) -> alloc::collections::BTreeMap<AlkaneId, u64> {
+    fn calculate_alkanes_needed(&self, requirements: &[InputRequirement]) -> alloc::collections::BTreeMap<AlkaneId, u128> {
         let mut needed = alloc::collections::BTreeMap::new();
         
         for requirement in requirements {
@@ -3296,9 +3455,9 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
     /// Calculate excess alkanes (found - needed)
     fn calculate_excess(
         &self,
-        alkanes_found: &alloc::collections::BTreeMap<AlkaneId, u64>,
-        alkanes_needed: &alloc::collections::BTreeMap<AlkaneId, u64>,
-    ) -> alloc::collections::BTreeMap<AlkaneId, u64> {
+        alkanes_found: &alloc::collections::BTreeMap<AlkaneId, u128>,
+        alkanes_needed: &alloc::collections::BTreeMap<AlkaneId, u128>,
+    ) -> alloc::collections::BTreeMap<AlkaneId, u128> {
         let mut excess = alloc::collections::BTreeMap::new();
         
         for (alkane_id, found_amount) in alkanes_found {
@@ -3323,8 +3482,8 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
     /// Generate automatic protostone for alkanes change
     async fn generate_alkanes_change_protostone(
         &mut self,
-        alkanes_needed: &alloc::collections::BTreeMap<AlkaneId, u64>,
-        alkanes_found: &alloc::collections::BTreeMap<AlkaneId, u64>,
+        alkanes_needed: &alloc::collections::BTreeMap<AlkaneId, u128>,
+        alkanes_found: &alloc::collections::BTreeMap<AlkaneId, u128>,
         alkanes_change_output_index: u32,
     ) -> Result<ProtostoneSpec> {
         log::info!("Generating automatic split protostone for {} needed alkane types, {} found alkane types",
@@ -3834,15 +3993,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
 
     async fn sign_and_finalize_psbt(&mut self, mut psbt: bitcoin::psbt::Psbt) -> Result<Transaction> {
         let signed_psbt = self.provider.sign_psbt(&mut psbt).await?;
-        let mut tx = signed_psbt.clone().extract_tx()?;
-        for (i, psbt_input) in signed_psbt.inputs.iter().enumerate() {
-            if let Some(tap_key_sig) = &psbt_input.tap_key_sig {
-                tx.input[i].witness = bitcoin::Witness::p2tr_key_spend(tap_key_sig);
-            } else if let Some(final_script_witness) = &psbt_input.final_script_witness {
-                tx.input[i].witness = final_script_witness.clone();
-            }
-        }
-        Ok(tx)
+        crate::psbt_utils::finalize_signed_psbt(&signed_psbt)
     }
 
     /// Build a split PSBT to protect inscribed UTXOs.
@@ -3881,304 +4032,44 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         extra_funding_utxos: &[(OutPoint, TxOut)],
         fee_rate: f32,
         params: &EnhancedExecuteParams,
-        split_utxo_alkanes: &alloc::collections::BTreeMap<OutPoint, Vec<(AlkaneId, u64)>>,
-    ) -> Result<(Psbt, u64, Vec<OutPoint>, Vec<(OutPoint, Vec<(AlkaneId, u64)>)>, Vec<OutPoint>)> {
-        use bitcoin::transaction::Version;
-
-        // Get safe address for split outputs
-        let safe_address_str = params.change_address.as_ref()
-            .map(|s| s.as_str())
-            .unwrap_or("p2tr:0");
+        split_utxo_alkanes: &alloc::collections::BTreeMap<OutPoint, Vec<(AlkaneId, u128)>>,
+    ) -> Result<crate::ordinals::SplitResult> {
         use crate::traits::AddressResolver;
-        let resolved_addr = self.provider.resolve_all_identifiers(safe_address_str).await?;
-        let safe_address = Address::from_str(&resolved_addr)?.require_network(self.provider.get_network())?;
 
-        // Get alkane change address for alkane outputs
-        let alkane_change_addr_str = params.alkanes_change_address.as_ref()
-            .or(params.change_address.as_ref())
-            .map(|s| s.as_str())
+        // Resolve the `p2tr:0`-style identifiers here; the builder itself
+        // takes concrete addresses so the wallet-send path — which already
+        // has one — can call it without going through these params.
+        let safe_address_str = params.change_address.as_deref().unwrap_or("p2tr:0");
+        let resolved_addr = self.provider.resolve_all_identifiers(safe_address_str).await?;
+        let safe_address = Address::from_str(&resolved_addr)?
+            .require_network(self.provider.get_network())?;
+
+        let alkane_change_addr_str = params.alkanes_change_address.as_deref()
+            .or(params.change_address.as_deref())
             .unwrap_or("p2tr:0");
         let resolved_alkane_addr = self.provider.resolve_all_identifiers(alkane_change_addr_str).await?;
-        let alkane_change_address = Address::from_str(&resolved_alkane_addr)?.require_network(self.provider.get_network())?;
+        let alkane_change_address = Address::from_str(&resolved_alkane_addr)?
+            .require_network(self.provider.get_network())?;
 
-        // Build inputs and outputs
-        let mut inputs = Vec::new();
-        let mut outputs = Vec::new();
-        let mut input_txouts = Vec::new();
-        let mut clean_outpoints = Vec::new();
-        let mut total_input_value = 0u64;
-        // Tracks how much each plan's clean output was inflated above its
-        // natural `clean_amount` (because the natural amount was below dust).
-        // The total inflation is owed to extras and pulled later.
-        let mut clean_topup_owed: u64 = 0;
-
-        for (idx, plan) in plans.iter().enumerate() {
-            // Find the TxOut for this input
-            let txout = funding_utxos.iter()
-                .find(|(op, _)| *op == plan.outpoint)
-                .map(|(_, txout)| txout.clone())
-                .ok_or_else(|| AlkanesError::Wallet(format!("UTXO not found for split: {}", plan.outpoint)))?;
-
-            total_input_value += txout.value.to_sat();
-
-            inputs.push(bitcoin::TxIn {
-                previous_output: plan.outpoint,
-                script_sig: ScriptBuf::new(),
-                sequence: bitcoin::Sequence::ENABLE_RBF_NO_LOCKTIME,
-                witness: bitcoin::Witness::new(),
-            });
-            input_txouts.push(txout);
-
-            // Safe output (inscribed sats go here)
-            outputs.push(TxOut {
-                value: bitcoin::Amount::from_sat(plan.safe_amount),
-                script_pubkey: safe_address.script_pubkey(),
-            });
-
-            // Clean output (funding sats from the inscribed UTXO go here).
-            // If the inscribed UTXO's clean remainder is below dust, top up
-            // to DUST_LIMIT — the missing sats come from extras. If the
-            // remainder is zero (utxo_value == safe_amount + 1 etc.), we
-            // still emit a dust output so the caller has a usable funding
-            // UTXO at the canonical odd-index position; same top-up logic.
-            let clean_value = if plan.clean_amount < DUST_LIMIT {
-                clean_topup_owed += DUST_LIMIT - plan.clean_amount;
-                DUST_LIMIT
-            } else {
-                plan.clean_amount
-            };
-            outputs.push(TxOut {
-                value: bitcoin::Amount::from_sat(clean_value),
-                script_pubkey: safe_address.script_pubkey(),
-            });
-
-            // Track the clean outpoint (will update txid after building tx)
-            clean_outpoints.push(OutPoint {
-                txid: bitcoin::Txid::from_byte_array([0u8; 32]), // Placeholder
-                vout: (idx * 2 + 1) as u32, // Clean outputs are at odd indices
-            });
-        }
-
-        // Alkane-aware split: if any inscribed UTXOs carry alkanes, add a dedicated
-        // clean alkane output and a protostone OP_RETURN to route alkanes there.
-        // This prevents alkanes from being lost when their UTXO is split for inscriptions.
-        let has_alkanes = !split_utxo_alkanes.is_empty();
-        let mut alkane_outpoints_with_balances: Vec<(OutPoint, Vec<(AlkaneId, u64)>)> = Vec::new();
-
-        if has_alkanes {
-            // Add a clean alkane output at the end (before OP_RETURN)
-            let alkane_output_index = outputs.len() as u32;
-            outputs.push(TxOut {
-                value: bitcoin::Amount::from_sat(DUST_LIMIT),
-                script_pubkey: alkane_change_address.script_pubkey(),
-            });
-
-            // Aggregate all alkanes from inscribed UTXOs
-            let mut aggregated_alkanes: alloc::collections::BTreeMap<AlkaneId, u64> = alloc::collections::BTreeMap::new();
-            for (_outpoint, alkanes) in split_utxo_alkanes {
-                for (alkane_id, amount) in alkanes {
-                    *aggregated_alkanes.entry(alkane_id.clone()).or_insert(0) += amount;
-                }
-            }
-
-            // Build protostone edicts to route each alkane to the clean alkane output
-            let mut protostone_edicts = Vec::new();
-            let mut alkane_output_balances = Vec::new();
-            for (alkane_id, amount) in &aggregated_alkanes {
-                // Edict: send all of this alkane to the clean alkane output (vN)
-                protostone_edicts.push(ProtoruneEdict {
-                    id: ProtoruneRuneId {
-                        block: alkane_id.block as u128,
-                        tx: alkane_id.tx as u128,
-                    },
-                    amount: *amount as u128,
-                    output: alkane_output_index as u128,
-                });
-                alkane_output_balances.push((alkane_id.clone(), *amount));
-                log::info!("  Split alkane edict: {}:{} × {} → v{}",
-                    alkane_id.block, alkane_id.tx, amount, alkane_output_index);
-            }
-
-            // Build the protostone (protocol_tag 1 for alkanes)
-            let split_protostone = Protostone {
-                protocol_tag: 1u128,
-                message: vec![],
-                pointer: Some(alkane_output_index),
-                refund: Some(alkane_output_index),
-                edicts: protostone_edicts,
-                from: None,
-                burn: None,
-            };
-
-            // Encode the protostone into a Runestone OP_RETURN script. The split tx
-            // gets the default DIESEL mint too (pointer = the split protostone's own
-            // clean alkane output), unless the caller opted out.
-            let mut split_protostones = vec![split_protostone];
-            if !params.skip_diesel_mint {
-                split_protostones.push(Self::diesel_mint_protostone(alkane_output_index));
-            }
-            let protocol_values = split_protostones.encipher()?;
-            let runestone = Runestone {
-                protocol: Some(protocol_values),
-                pointer: Some(alkane_output_index),
-                ..Default::default()
-            };
-            let runestone_script = runestone.encipher();
-
-            outputs.push(TxOut {
-                value: bitcoin::Amount::ZERO,
-                script_pubkey: runestone_script,
-            });
-
-            // Track that the clean alkane output will carry these alkanes
-            alkane_outpoints_with_balances.push((
-                OutPoint {
-                    txid: bitcoin::Txid::from_byte_array([0u8; 32]), // Placeholder, updated below
-                    vout: alkane_output_index,
-                },
-                alkane_output_balances,
-            ));
-
-            log::info!("🔗 Added alkane routing: {} alkane types → clean output v{} with OP_RETURN protostone",
-                aggregated_alkanes.len(), alkane_output_index);
-        }
-
-        // Compute total output value already committed (alkane DUST_LIMIT
-        // outputs are the only non-OP_RETURN extras beyond the per-plan
-        // safe+clean pairs).
-        let total_output_value: u64 = outputs.iter()
-            .map(|o| o.value.to_sat())
-            .sum();
-
-        // Pull additional clean inputs (a) to cover any clean-output top-ups
-        // forced by below-dust inscribed UTXOs, (b) to cover the split-tx
-        // fee, and (c) to add a residual change output if the extras over-fund.
-        //
-        // We over-pull conservatively: each extra input adds ~68 vbytes which
-        // grows the fee, so the simplest correct approach is "add inputs
-        // until total_input_value >= total_output_value + fee_with_one_more_input,
-        // then iterate fee until stable." Two passes through extras at most.
-        let mut consumed_extras: Vec<OutPoint> = Vec::new();
-        let mut extras_iter = extra_funding_utxos.iter();
-
-        // Helper: recompute estimated fee based on current input/output counts.
-        // P2TR input: ~68 vbytes; P2TR output: ~43 vbytes; tx overhead: ~10 vbytes.
-        let recompute_fee = |inputs_len: usize, outputs_len: usize| -> u64 {
-            let vsize = 10 + inputs_len * 68 + outputs_len * 43;
-            (fee_rate * vsize as f32).ceil() as u64
+        let cfg = crate::ordinals::SplitConfig {
+            safe_address: &safe_address,
+            alkane_change_address: &alkane_change_address,
+            fee_rate,
+            skip_diesel_mint: params.skip_diesel_mint,
         };
 
-        // Initial fee estimate (no residual change output yet).
-        let mut estimated_fee = recompute_fee(inputs.len(), outputs.len());
-
-        // Required: total_input_value >= total_output_value + estimated_fee.
-        // Difference is what we must pull from extras (or from inscribed-UTXO
-        // headroom that isn't already accounted for in clean outputs).
-        //
-        // Inscribed UTXOs have already contributed `total_input_value` worth.
-        // Clean outputs were sized at (plan.clean_amount or DUST_LIMIT topup).
-        // If `clean_topup_owed > 0`, that headroom must come from extras too.
-        //
-        // Pull extras one at a time until satisfied.
-        loop {
-            let needed = total_output_value
-                .saturating_add(estimated_fee)
-                .saturating_sub(total_input_value);
-            if needed == 0 {
-                break;
-            }
-
-            // Need more — try to pull next extra.
-            let Some((extra_op, extra_txout)) = extras_iter.next() else {
-                return Err(AlkanesError::Wallet(format!(
-                    "Not enough clean funds to split inscribed UTXOs: need {} more sats \
-                     (output total {} + fee {} - inscribed inputs {}). \
-                     Wallet has no additional clean UTXOs available — either fund the \
-                     wallet with more BTC or use --ordinals-strategy burn (destroys \
-                     inscriptions).",
-                    needed, total_output_value, estimated_fee, total_input_value
-                )));
-            };
-
-            inputs.push(bitcoin::TxIn {
-                previous_output: *extra_op,
-                script_sig: ScriptBuf::new(),
-                sequence: bitcoin::Sequence::ENABLE_RBF_NO_LOCKTIME,
-                witness: bitcoin::Witness::new(),
-            });
-            input_txouts.push(extra_txout.clone());
-            total_input_value += extra_txout.value.to_sat();
-            consumed_extras.push(*extra_op);
-
-            // Recompute fee with the extra input.
-            estimated_fee = recompute_fee(inputs.len(), outputs.len());
-        }
-
-        // If extras over-funded, emit a residual change output so the
-        // surplus isn't burned as fee. Only emit once we know we have
-        // sufficient surplus to clear DUST_LIMIT after the marginal output's
-        // own fee cost (one extra output = ~43 vbytes).
-        let surplus = total_input_value - total_output_value - estimated_fee;
-        if surplus >= DUST_LIMIT + (fee_rate * 43.0).ceil() as u64 {
-            let residual_fee_delta = (fee_rate * 43.0).ceil() as u64;
-            let residual_value = surplus - residual_fee_delta;
-            outputs.push(TxOut {
-                value: bitcoin::Amount::from_sat(residual_value),
-                script_pubkey: safe_address.script_pubkey(),
-            });
-            estimated_fee += residual_fee_delta;
-            // Track this residual as a clean outpoint usable by the main tx.
-            clean_outpoints.push(OutPoint {
-                txid: bitcoin::Txid::from_byte_array([0u8; 32]), // placeholder, set below
-                vout: (outputs.len() - 1) as u32,
-            });
-        }
-
-        // Build the unsigned transaction
-        let unsigned_tx = Transaction {
-            version: Version::TWO,
-            lock_time: bitcoin::absolute::LockTime::ZERO,
-            input: inputs,
-            output: outputs,
-        };
-
-        // Create PSBT
-        let mut psbt = Psbt::from_unsigned_tx(unsigned_tx)?;
-
-        // Add witness_utxo and tap_internal_key for each input
-        for (i, txout) in input_txouts.iter().enumerate() {
-            psbt.inputs[i].witness_utxo = Some(txout.clone());
-            if txout.script_pubkey.is_p2tr() {
-                let (internal_key, (fingerprint, path)) = self.provider.get_internal_key().await?;
-                psbt.inputs[i].tap_internal_key = Some(internal_key);
-                psbt.inputs[i].tap_key_origins.insert(
-                    internal_key,
-                    (vec![], (fingerprint, path))
-                );
-            }
-        }
-
-        // Calculate actual txid and update all placeholder outpoints
-        let txid = psbt.unsigned_tx.compute_txid();
-        for outpoint in &mut clean_outpoints {
-            outpoint.txid = txid;
-        }
-        for (outpoint, _) in &mut alkane_outpoints_with_balances {
-            outpoint.txid = txid;
-        }
-
-        log::info!(
-            "Built split PSBT: {} inputs ({} inscribed + {} extras) → {} outputs (alkane:{}, top-up owed: {} sats, fee: {})",
-            psbt.unsigned_tx.input.len(),
-            plans.len(),
-            consumed_extras.len(),
-            psbt.unsigned_tx.output.len(),
-            if has_alkanes { "1+OP_RETURN" } else { "0" },
-            clean_topup_owed,
-            estimated_fee,
-        );
-
-        Ok((psbt, estimated_fee, clean_outpoints, alkane_outpoints_with_balances, consumed_extras))
+        crate::ordinals::build_split_psbt(
+            self.provider,
+            plans,
+            funding_utxos,
+            extra_funding_utxos,
+            &cfg,
+            split_utxo_alkanes,
+            // The alkanes execute path routes no runes, so its runestone
+            // keeps its existing shape: protostones only, pointer on the
+            // alkane output.
+            &[],
+        ).await
     }
 
     async fn build_commit_psbt(
@@ -5040,6 +4931,114 @@ mod tests {
         assert!(low >= MIN_RELAY_FEE_RATE);
     }
 
+    /// REGRESSION — mainnet tx cd6ec685…154d981f (2026-06-30).
+    ///
+    /// The parent is floored at CPFP_PARENT_MIN_FEE_RATE independently of the
+    /// user's target, so a target at/below that floor used to make the child
+    /// collapse to a rate BELOW its parent's. Reproduce the exact on-chain
+    /// numbers and assert the child now out-bids the parent.
+    #[test]
+    fn cpfp_child_never_underbids_its_parent_mainnet_cd6ec685() {
+        // parent: fee 975 sats over 776 vB = 1.256 sat/vB (the floored parent)
+        // child : ~316 vB. User asked for 1.0 sat/vB during a quiet mempool.
+        let parent_fee = 975u64;
+        let parent_vsize = 776u64;
+        let child_vsize = 316u64;
+        let target_rate = 1.0f32;
+
+        let parent_rate = parent_fee as f32 / parent_vsize as f32;
+        let child_rate =
+            child_fee_rate_for_package(target_rate, parent_fee, parent_vsize, child_vsize);
+
+        // The incident value was 0.370 sat/vB — below the parent's 1.256.
+        assert!(
+            child_rate >= parent_rate,
+            "child {child_rate} must not under-bid parent {parent_rate} (incident: 0.370 vs 1.256)"
+        );
+
+        // ...and the package must not be worth LESS to a miner than the parent
+        // alone. The incident package rate was 1.000 vs a 1.256 parent.
+        let package_rate = (parent_fee as f32 + child_rate * child_vsize as f32)
+            / (parent_vsize + child_vsize) as f32;
+        assert!(
+            package_rate >= parent_rate - 0.001,
+            "package {package_rate} must not drag the parent {parent_rate} down"
+        );
+        assert!(package_rate >= target_rate);
+    }
+
+    /// The invariant `child_rate >= package_rate >= parent_rate` must hold at
+    /// every requested rate — below, at, and far above the parent floor.
+    #[test]
+    fn cpfp_package_invariant_holds_across_the_rate_range() {
+        let parent_vsize = 776u64;
+        let child_vsize = 316u64;
+
+        for &requested in &[0.1f32, 0.5, 1.0, 1.24, 1.25, 1.26, 2.0, 5.0, 25.0, 100.0] {
+            // Build the parent the way the split path now does: at the floor.
+            let parent_build_rate = parent_fee_rate_for_package(requested);
+            let parent_fee = (parent_build_rate * parent_vsize as f32).ceil() as u64;
+            let parent_rate = parent_fee as f32 / parent_vsize as f32;
+
+            let child_rate =
+                child_fee_rate_for_package(requested, parent_fee, parent_vsize, child_vsize);
+            let package_rate = (parent_fee as f32 + child_rate * child_vsize as f32)
+                / (parent_vsize + child_vsize) as f32;
+
+            assert!(
+                child_rate >= package_rate - 0.001,
+                "requested {requested}: child {child_rate} < package {package_rate}"
+            );
+            assert!(
+                package_rate >= parent_rate - 0.001,
+                "requested {requested}: package {package_rate} < parent {parent_rate}"
+            );
+            assert!(
+                child_rate >= MIN_RELAY_FEE_RATE,
+                "requested {requested}: child {child_rate} below min-relay"
+            );
+            assert!(
+                package_rate >= requested - 0.001,
+                "requested {requested}: package {package_rate} below the user's target"
+            );
+        }
+    }
+
+    /// REGRESSION — mainnet tx 81396b59…e7960cae (2026-06-26).
+    ///
+    /// A parent built at the raw target sat unconfirmed at ~0.151 sat/vB: CPFP
+    /// fixes mining priority, never relay, so a sub-min-relay parent never
+    /// reaches the miners its child is trying to bribe. The parent must be
+    /// RAISED to the floor, never refused, and never left below it.
+    #[test]
+    fn cpfp_parent_is_floored_to_relay_standalone() {
+        // The incident rate, and everything else under the floor.
+        for &requested in &[0.0f32, 0.15, 0.151, 0.5, 1.0, 1.2499] {
+            let built = parent_fee_rate_for_package(requested);
+            assert!(
+                built >= CPFP_PARENT_MIN_FEE_RATE,
+                "requested {requested} produced a {built} sat/vB parent — below the floor"
+            );
+            assert!(built >= MIN_RELAY_FEE_RATE, "parent must clear Core min-relay");
+        }
+
+        // At or above the floor the user's rate is passed through untouched.
+        for &requested in &[1.25f32, 1.26, 3.0, 50.0] {
+            assert_eq!(parent_fee_rate_for_package(requested), requested);
+        }
+
+        // A non-finite rate must not leak NaN into a fee computation.
+        assert_eq!(parent_fee_rate_for_package(f32::NAN), CPFP_PARENT_MIN_FEE_RATE);
+
+        // And the floored parent really does clear min-relay in absolute sats.
+        let parent_vsize = 776u64;
+        let fee = (parent_fee_rate_for_package(0.15) * parent_vsize as f32).ceil() as u64;
+        assert!(
+            fee as f32 / parent_vsize as f32 >= MIN_RELAY_FEE_RATE,
+            "floored parent pays {fee} sats over {parent_vsize} vB"
+        );
+    }
+
     /// `is_wrap_protostone` must reliably distinguish frBTC/frZEC/frETH wraps
     /// (target=(32,N) opcode=77) from any other protostone, because the
     /// split-tx mode dispatch in `execute_full` is gated on this check.
@@ -5690,6 +5689,75 @@ mod tests {
         );
     }
 
+    // ------------------------------------------------------------------
+    // check_ordinals_eligibility — ord is a SECOND indexer with its own tip.
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn clean_utxo_passes_whether_or_not_ord_answered() {
+        let utxo = mk_utxo(0x11, Some(800_000), false, false, 6);
+        assert_eq!(check_ordinals_eligibility(&utxo, Some(800_000), false), Ok(()));
+        assert_eq!(check_ordinals_eligibility(&utxo, None, false), Ok(()));
+    }
+
+    #[test]
+    fn an_inscribed_utxo_is_never_spendable_as_plain_btc() {
+        let mut utxo = mk_utxo(0x12, Some(800_000), false, false, 6);
+        utxo.has_inscriptions = true;
+        // True regardless of tips or evidence: the flag is the whole answer.
+        assert_eq!(
+            check_ordinals_eligibility(&utxo, Some(900_000), false),
+            Err(UtxoSkipReason::Inscribed)
+        );
+    }
+
+    #[test]
+    fn a_rune_carrier_is_refused_too() {
+        let mut utxo = mk_utxo(0x13, Some(800_000), false, false, 6);
+        utxo.has_runes = true;
+        assert_eq!(
+            check_ordinals_eligibility(&utxo, Some(900_000), true),
+            Err(UtxoSkipReason::CarriesRunes)
+        );
+    }
+
+    #[test]
+    fn above_ords_tip_is_unknown_not_clean_for_a_wallet_holding_inscriptions() {
+        let utxo = mk_utxo(0x14, Some(800_001), false, false, 6);
+        assert_eq!(
+            check_ordinals_eligibility(&utxo, Some(800_000), true),
+            Err(UtxoSkipReason::OrdBehind { block_height: 800_001, ord_indexed: 800_000 })
+        );
+        // CONTROL: the same UTXO at or below ord's tip is fine.
+        assert_eq!(check_ordinals_eligibility(&utxo, Some(800_001), true), Ok(()));
+    }
+
+    #[test]
+    fn ord_silence_blocks_a_collector_but_not_an_ordinary_wallet() {
+        let utxo = mk_utxo(0x15, Some(800_000), false, false, 6);
+        // No evidence this wallet holds ordinals: ord being down must not
+        // block a plain send.
+        assert_eq!(check_ordinals_eligibility(&utxo, None, false), Ok(()));
+        // Evidence it does: unknown is refused rather than assumed clean.
+        assert_eq!(
+            check_ordinals_eligibility(&utxo, None, true),
+            Err(UtxoSkipReason::OrdBehind { block_height: 800_000, ord_indexed: 0 })
+        );
+    }
+
+    #[test]
+    fn ord_and_metashrew_tips_are_judged_independently() {
+        // Metashrew caught up, ord behind: the alkanes gate passes and the
+        // ordinals gate refuses. Conflating them would report "safe".
+        let utxo = mk_utxo(0x16, Some(800_050), false, false, 6);
+        assert_eq!(check_utxo_eligibility(&utxo, Some(800_050)), Ok(()));
+        assert_eq!(
+            check_ordinals_eligibility(&utxo, Some(800_000), true),
+            Err(UtxoSkipReason::OrdBehind { block_height: 800_050, ord_indexed: 800_000 })
+        );
+    }
+
+
     // ────────────────────────────────────────────────────────────────────
     // select_utxos integration — verify the height filter actually flows
     // through the public coin-selection API, not just the helper. Uses
@@ -6207,7 +6275,7 @@ mod tests {
             Some(vec![mk_alkane(2, 0, "5000")]),
         )];
         let mut needed = alloc::collections::BTreeMap::new();
-        needed.insert((2u64, 0u64), 5000u64);
+        needed.insert((2u64, 0u64), 5000u128);
         assert!(prefetched_covers_alkanes_needed(&prefetched, &needed));
     }
 
@@ -6220,7 +6288,7 @@ mod tests {
             mk_prefetched(&format!("{}:1", TXID_B), Some(vec![mk_alkane(2, 0, "700")])),
         ];
         let mut needed = alloc::collections::BTreeMap::new();
-        needed.insert((2u64, 0u64), 1000u64);
+        needed.insert((2u64, 0u64), 1000u128);
         assert!(prefetched_covers_alkanes_needed(&prefetched, &needed));
     }
 
@@ -6233,7 +6301,7 @@ mod tests {
             Some(vec![mk_alkane(2, 0, "999")]),
         )];
         let mut needed = alloc::collections::BTreeMap::new();
-        needed.insert((2u64, 0u64), 1000u64);
+        needed.insert((2u64, 0u64), 1000u128);
         assert!(!prefetched_covers_alkanes_needed(&prefetched, &needed));
     }
 
@@ -6246,7 +6314,7 @@ mod tests {
             Some(vec![mk_alkane(2, 0, "9999")]),
         )];
         let mut needed = alloc::collections::BTreeMap::new();
-        needed.insert((2u64, 1u64), 1u64);
+        needed.insert((2u64, 1u64), 1u128);
         assert!(!prefetched_covers_alkanes_needed(&prefetched, &needed));
     }
 
@@ -6259,8 +6327,8 @@ mod tests {
             mk_prefetched(&format!("{}:0", TXID_B), Some(vec![mk_alkane(2, 1, "10")])),
         ];
         let mut needed = alloc::collections::BTreeMap::new();
-        needed.insert((2u64, 0u64), 4000u64);
-        needed.insert((2u64, 1u64), 100u64);
+        needed.insert((2u64, 0u64), 4000u128);
+        needed.insert((2u64, 1u64), 100u128);
         assert!(!prefetched_covers_alkanes_needed(&prefetched, &needed));
     }
 
@@ -6271,7 +6339,7 @@ mod tests {
         // fall back to sync rather than silently treating cache as authoritative.
         let prefetched = vec![mk_prefetched(&format!("{}:0", TXID_A_COV), None)];
         let mut needed = alloc::collections::BTreeMap::new();
-        needed.insert((2u64, 0u64), 1u64);
+        needed.insert((2u64, 0u64), 1u128);
         assert!(!prefetched_covers_alkanes_needed(&prefetched, &needed));
     }
 
@@ -6281,7 +6349,7 @@ mod tests {
         // Doesn't cover any DIESEL requirement, so coverage check returns false.
         let prefetched = vec![mk_prefetched(&format!("{}:0", TXID_A_COV), Some(vec![]))];
         let mut needed = alloc::collections::BTreeMap::new();
-        needed.insert((2u64, 0u64), 1u64);
+        needed.insert((2u64, 0u64), 1u128);
         assert!(!prefetched_covers_alkanes_needed(&prefetched, &needed));
     }
 
@@ -6295,7 +6363,7 @@ mod tests {
             Some(vec![mk_alkane(2, 0, "not-a-number")]),
         )];
         let mut needed = alloc::collections::BTreeMap::new();
-        needed.insert((2u64, 0u64), 1u64);
+        needed.insert((2u64, 0u64), 1u128);
         assert!(!prefetched_covers_alkanes_needed(&prefetched, &needed));
     }
 
@@ -6315,9 +6383,9 @@ mod tests {
             ),
         ];
         let mut needed = alloc::collections::BTreeMap::new();
-        needed.insert((2u64, 0u64), 100u64);
-        needed.insert((32u64, 0u64), 200u64);
-        needed.insert((2u64, 4u64), 50u64);
+        needed.insert((2u64, 0u64), 100u128);
+        needed.insert((32u64, 0u64), 200u128);
+        needed.insert((2u64, 4u64), 50u128);
         assert!(prefetched_covers_alkanes_needed(&prefetched, &needed));
     }
 

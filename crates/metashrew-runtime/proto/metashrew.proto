@@ -1,0 +1,7 @@
+syntax = "proto3";
+
+package metashrew;
+
+message KeyValueFlush {
+  repeated bytes list = 1;
+}

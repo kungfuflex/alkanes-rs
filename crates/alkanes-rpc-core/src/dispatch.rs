@@ -1,6 +1,8 @@
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
+use std::rc::Rc;
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -9,6 +11,96 @@ use serde_json::{Value, json};
 use crate::backend::{BitcoinBackend, MetashrewBackend, EsploraBackend, OrdBackend};
 use crate::codec;
 use crate::types::*;
+
+// ---------------------------------------------------------------------------
+// Multicall recursion guard
+//
+// `handle_multicall` re-enters `dispatch` once per entry, and an entry may
+// itself be a `sandshrew_multicall`. Without a bound that is EXPONENTIAL
+// amplification on an UNAUTHENTICATED endpoint: nesting is limited only by
+// serde_json's 128-deep recursion ceiling, so one ~100KB request expands into
+// thousands of internal calls against rockshrew and electrs.
+//
+// Two independent bounds, because either alone is insufficient: a depth cap
+// alone still permits N^depth, and a total cap alone still lets a deep chain
+// burn the whole allowance on stack frames.
+// ---------------------------------------------------------------------------
+
+/// Maximum number of `sandshrew_multicall` frames that may be on the stack.
+///
+/// The SDK's multicall.lua (lua/multicall.lua) is a FLAT `ipairs` loop over
+/// `[method, params]` tuples — it never nests, so a legitimate multicall is
+/// depth 1. Depth 2 is allowed purely so a `lua_evalsaved(<multicall hash>)`
+/// envelope whose entries are themselves `sandshrew_multicall` keeps working.
+/// Exponential blow-up requires depth >= 3, which is refused.
+const MAX_MULTICALL_DEPTH: u32 = 2;
+
+/// Maximum sub-calls one top-level request may fan out through multicall,
+/// summed across every nesting level.
+///
+/// Real callers batch tens to low hundreds of entries (per-outpoint and
+/// per-alkane probes). 1024 leaves roughly an order of magnitude of headroom
+/// over the largest batch observed in production while making the worst case a
+/// FIXED, LINEAR 1024 backend calls per HTTP request rather than an unbounded
+/// exponential. Entries past the budget are not dropped silently — each gets
+/// an error entry, so the results array stays 1:1 with the request.
+const MAX_MULTICALL_SUBCALLS: u32 = 1024;
+
+/// Per-top-level-request recursion/fan-out allowance for multicall.
+///
+/// Minted fresh by every public `dispatch()` call, so concurrently dispatched
+/// requests (e.g. the entries of a JSON-RPC batch, which the edge polls
+/// together) can never share or steal each other's allowance — the failure
+/// mode a dispatcher-owned counter would have.
+#[derive(Clone)]
+struct CallBudget {
+    /// `sandshrew_multicall` frames already entered on this path.
+    depth: u32,
+    /// Sub-calls still available to the whole request tree.
+    remaining: Rc<Cell<u32>>,
+}
+
+impl CallBudget {
+    fn root() -> Self {
+        Self { depth: 0, remaining: Rc::new(Cell::new(MAX_MULTICALL_SUBCALLS)) }
+    }
+
+    /// Budget for the sub-requests of a multicall frame: one level deeper,
+    /// sharing the same remaining allowance.
+    fn child(&self) -> Self {
+        Self { depth: self.depth + 1, remaining: Rc::clone(&self.remaining) }
+    }
+
+    /// Reserve up to `n` sub-calls, returning how many were actually granted.
+    fn take(&self, n: usize) -> usize {
+        let available = self.remaining.get() as usize;
+        let granted = n.min(available);
+        self.remaining.set((available - granted) as u32);
+        granted
+    }
+}
+
+/// Percent-encode one path segment.
+///
+/// The esplora path is assembled from a caller-controlled method name and raw
+/// params, so an unencoded param such as `"../../whatever"` yields an
+/// arbitrary GET path against the in-cluster electrs. Everything outside the
+/// RFC 3986 unreserved set is escaped, which in particular escapes `/` — so a
+/// traversal payload collapses into a single inert segment. Every legitimate
+/// value here (addresses, txids, block hashes, heights) is unreserved already,
+/// so encoding is a no-op for real traffic.
+fn encode_path_segment(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                out.push(b as char)
+            }
+            _ => out.push_str(&format!("%{:02X}", b)),
+        }
+    }
+    out
+}
 
 /// Core RPC dispatcher that routes JSON-RPC requests to the appropriate backend.
 ///
@@ -40,6 +132,19 @@ where
         &'a self,
         request: &'a JsonRpcRequest,
     ) -> Pin<Box<dyn Future<Output = Result<JsonRpcResponse>> + 'a>> {
+        // Every top-level entry mints its own multicall allowance.
+        self.dispatch_with_budget(request, CallBudget::root())
+    }
+
+    /// `dispatch` carrying the multicall recursion/fan-out budget. Internal
+    /// recursion that can reach `handle_multicall` goes through here so the
+    /// budget is threaded rather than reset; the public `dispatch` signature is
+    /// unchanged for consumers.
+    fn dispatch_with_budget<'a>(
+        &'a self,
+        request: &'a JsonRpcRequest,
+        budget: CallBudget,
+    ) -> Pin<Box<dyn Future<Output = Result<JsonRpcResponse>> + 'a>> {
         Box::pin(async move {
             let method_parts: Vec<&str> = request.method.split('_').collect();
 
@@ -68,8 +173,8 @@ where
                 "esplora" => self.handle_esplora_method(&method_name, &request.params, &request.id).await,
                 "alkanes" => self.handle_alkanes_method(&method_name, &request.params, &request.id).await,
                 "metashrew" => self.metashrew.forward(request).await,
-                "sandshrew" => self.handle_sandshrew_method(&method_name, &request.params, &request.id).await,
-                "lua" => self.handle_lua_method(&method_name, &request.params, &request.id).await,
+                "sandshrew" => self.handle_sandshrew_method(&method_name, &request.params, &request.id, &budget).await,
+                "lua" => self.handle_lua_method(&method_name, &request.params, &request.id, &budget).await,
                 "btc" => self.handle_bitcoind_method(&method_name, &request.params, &request.id).await,
                 // Espo (OYL data API) — polyfill using alkanes indexer data
                 // essentials.get_address_outpoints → split by _ → ["essentials.get", "address", "outpoints"]
@@ -119,13 +224,18 @@ where
         let mut path = String::from("/");
         let mut param_index = 0;
 
+        // Params are interpolated as PATH SEGMENTS, so each one is
+        // percent-encoded (see `encode_path_segment`) — otherwise a param like
+        // "../../whatever" turns a caller-chosen esplora method into an
+        // arbitrary GET against the in-cluster electrs. The literal method
+        // parts are not encoded: they are the crate's own route template.
         for (i, part) in path_parts.iter().enumerate() {
             if part.is_empty() {
                 if param_index < params.len() {
                     if let Some(param_str) = params[param_index].as_str() {
-                        path.push_str(param_str);
+                        path.push_str(&encode_path_segment(param_str));
                     } else {
-                        path.push_str(&params[param_index].to_string());
+                        path.push_str(&encode_path_segment(&params[param_index].to_string()));
                     }
                     param_index += 1;
                 }
@@ -141,9 +251,9 @@ where
         while param_index < params.len() {
             path.push('/');
             if let Some(param_str) = params[param_index].as_str() {
-                path.push_str(param_str);
+                path.push_str(&encode_path_segment(param_str));
             } else {
-                path.push_str(&params[param_index].to_string());
+                path.push_str(&encode_path_segment(&params[param_index].to_string()));
             }
             param_index += 1;
         }
@@ -631,11 +741,12 @@ where
         method: &str,
         params: &[Value],
         request_id: &Value,
+        budget: &CallBudget,
     ) -> Result<JsonRpcResponse> {
         match method {
-            "multicall" => self.handle_multicall(params, request_id).await,
+            "multicall" => self.handle_multicall(params, request_id, budget).await,
             "balances" => self.handle_balances(params, request_id).await,
-            "evalscript" | "evalsaved" => self.handle_lua_method(method, params, request_id).await,
+            "evalscript" | "evalsaved" => self.handle_lua_method(method, params, request_id, budget).await,
             _ => Ok(JsonRpcResponse::error(
                 METHOD_NOT_FOUND,
                 format!("sandshrew method not supported in core: {}", method),
@@ -804,11 +915,19 @@ where
         method: &str,
         params: &[Value],
         request_id: &Value,
+        budget: &CallBudget,
     ) -> Result<JsonRpcResponse> {
         // params[0] = script hash (evalsaved) or script content (evalscript)
         // params[1..] = script arguments
+        //
+        // `JsonRpcRequest.params` is `#[serde(default)]` and its custom
+        // deserializer maps `null` to an empty Vec, so `"params":[]`,
+        // `"params":null` and a MISSING `params` member all arrive here as a
+        // zero-length slice. `&params[1..]` panics on that ("range start index
+        // 1 out of range for slice of length 0") — an unauthenticated remote
+        // panic. `get(1..)` yields None instead of trapping.
         let identifier = params.get(0).and_then(|v| v.as_str()).unwrap_or("");
-        let args = &params[1..];
+        let args = params.get(1..).unwrap_or(&[]);
 
         // Determine which script is being called
         let script_type = match method {
@@ -820,13 +939,22 @@ where
         match script_type.as_deref() {
             Some("balances") => self.lua_shim_balances(args, request_id).await,
             Some("spendable_utxos") => self.lua_shim_spendable_utxos(args, request_id).await,
-            Some("multicall") => self.lua_shim_multicall(args, request_id).await,
+            Some("multicall") => self.lua_shim_multicall(args, request_id, budget).await,
             Some("batch_utxo_balances") => self.lua_shim_batch_utxo_balances(args, request_id).await,
             _ => {
-                // Unknown script — return error so the SDK can fall back
+                // Unknown script — return error so the SDK can fall back.
+                //
+                // The identifier is caller-controlled and arbitrary UTF-8.
+                // `&identifier[..16]` slices by BYTE, so a multi-byte
+                // character straddling byte 16 panics ("byte index 16 is not a
+                // char boundary"). This is the ERROR path — it runs for every
+                // unrecognised script, i.e. the common case — so byte-slicing
+                // here was a remotely reachable panic on unauthenticated
+                // input. Truncate by CHARACTER instead.
+                let short: String = identifier.chars().take(16).collect();
                 Ok(JsonRpcResponse::error(
                     INTERNAL_ERROR,
-                    format!("Lua script not available (hash: {})", &identifier[..identifier.len().min(16)]),
+                    format!("Lua script not available (hash: {})", short),
                     request_id.clone(),
                 ))
             }
@@ -1117,10 +1245,14 @@ where
         &self,
         args: &[Value],
         request_id: &Value,
+        budget: &CallBudget,
     ) -> Result<JsonRpcResponse> {
-        // The multicall script expects args as a single array param
+        // The multicall script expects args as a single array param.
+        // The Lua envelope is the SAME logical multicall level as the
+        // sandshrew_multicall it shims, so the budget passes through
+        // unchanged — handle_multicall is what charges the frame.
         let calls = args.get(0).cloned().unwrap_or(Value::Array(vec![]));
-        let inner = self.handle_multicall(&[calls], request_id).await?;
+        let inner = self.handle_multicall(&[calls], request_id, budget).await?;
 
         match inner {
             JsonRpcResponse::Success { result, id, .. } => {
@@ -1138,7 +1270,22 @@ where
         &self,
         params: &[Value],
         request_id: &Value,
+        budget: &CallBudget,
     ) -> Result<JsonRpcResponse> {
+        // Recursion guard. A multicall entry may itself be a
+        // sandshrew_multicall; refuse once too many frames are stacked rather
+        // than let the fan-out compound. See MAX_MULTICALL_DEPTH.
+        if budget.depth >= MAX_MULTICALL_DEPTH {
+            return Ok(JsonRpcResponse::error(
+                INVALID_PARAMS,
+                format!(
+                    "multicall nesting too deep (limit {})",
+                    MAX_MULTICALL_DEPTH
+                ),
+                request_id.clone(),
+            ));
+        }
+
         if params.is_empty() {
             return Ok(JsonRpcResponse::error(
                 INVALID_PARAMS,
@@ -1191,14 +1338,22 @@ where
             });
         }
 
-        // Execute all requests in parallel
-        let futures: Vec<_> = requests.iter()
-            .map(|req| self.dispatch(req))
+        // Charge the shared per-request allowance BEFORE fanning out. Entries
+        // past the budget are answered with an error instead of being dropped,
+        // so the results array stays 1:1 with the request.
+        // See MAX_MULTICALL_SUBCALLS.
+        let granted = budget.take(requests.len());
+        let refused = requests.len() - granted;
+
+        // Execute all requests in parallel, one level deeper.
+        let child = budget.child();
+        let futures: Vec<_> = requests[..granted].iter()
+            .map(|req| self.dispatch_with_budget(req, child.clone()))
             .collect();
 
         let results = futures::future::join_all(futures).await;
 
-        let formatted: Vec<Value> = results.into_iter().map(|r| {
+        let mut formatted: Vec<Value> = results.into_iter().map(|r| {
             match r {
                 Ok(JsonRpcResponse::Success { result, .. }) => {
                     json!({ "result": result })
@@ -1216,6 +1371,18 @@ where
                 }
             }
         }).collect();
+
+        for _ in 0..refused {
+            formatted.push(json!({
+                "error": {
+                    "code": INVALID_PARAMS,
+                    "message": format!(
+                        "multicall sub-call budget exhausted (limit {} per request)",
+                        MAX_MULTICALL_SUBCALLS
+                    )
+                }
+            }));
+        }
 
         Ok(JsonRpcResponse::success(
             serde_json::to_value(formatted)?,

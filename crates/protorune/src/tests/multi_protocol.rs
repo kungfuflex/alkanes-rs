@@ -1,4 +1,4 @@
-use crate::balance_sheet::load_sheet;
+use crate::balance_sheet::{load_sheet, load_sheet_chunked};
 use crate::message::{MessageContext, MessageContextParcel};
 use crate::test_helpers::{self as helpers};
 use crate::{tables, Protorune};
@@ -98,22 +98,22 @@ fn multi_protomessage_protocol_test_template<T: MessageContext>(
         vout: 2,
     };
     // check runes balance
-    let sheet = load_sheet(
+    let sheet = load_sheet_chunked(
         &tables::RUNES
             .OUTPOINT_TO_RUNES
             .select(&consensus_encode(&outpoint_address0).unwrap()),
     );
-    let protorunes_sheet0 = load_sheet(
+    let protorunes_sheet0 = load_sheet_chunked(
         &tables::RuneTable::for_protocol(122)
             .OUTPOINT_TO_RUNES
             .select(&consensus_encode(&outpoint_address0).unwrap()),
     );
-    let protorunes_sheet1 = load_sheet(
+    let protorunes_sheet1 = load_sheet_chunked(
         &tables::RuneTable::for_protocol(122)
             .OUTPOINT_TO_RUNES
             .select(&consensus_encode(&outpoint_address1).unwrap()),
     );
-    let protorunes_sheet2 = load_sheet(
+    let protorunes_sheet2 = load_sheet_chunked(
         &tables::RuneTable::for_protocol(123)
             .OUTPOINT_TO_RUNES
             .select(&consensus_encode(&outpoint_address1).unwrap()),

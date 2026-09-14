@@ -151,7 +151,7 @@ function buildOptionsJson(params: {
   if (params.mineEnabled !== undefined) options.mine_enabled = params.mineEnabled;
   if (params.autoConfirm !== undefined) options.auto_confirm = params.autoConfirm;
   if (params.rawOutput !== undefined) options.raw_output = params.rawOutput;
-  options.ordinals_strategy = params.ordinalsStrategy ?? 'burn';
+  options.ordinals_strategy = params.ordinalsStrategy ?? 'preserve';
   if (params.mempoolIndexer !== undefined) options.mempool_indexer = params.mempoolIndexer;
   return options;
 }
@@ -579,9 +579,9 @@ describe('alkanesExecuteTyped — options JSON serialization', () => {
     expect(options.mempool_indexer).toBe(true);
   });
 
-  it('should default ordinals_strategy to burn when undefined', () => {
+  it('should default ordinals_strategy to preserve when undefined', () => {
     const options = buildOptionsJson({});
-    expect(options.ordinals_strategy).toBe('burn');
+    expect(options.ordinals_strategy).toBe('preserve');
   });
 
   it('should NOT include mempool_indexer when undefined', () => {

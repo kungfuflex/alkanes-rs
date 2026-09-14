@@ -470,7 +470,10 @@ impl WebProvider {
                                     block: e.id.block as u64,
                                     tx: e.id.tx as u64,
                                 },
-                                amount: e.amount as u64,
+                                // e.amount is u128 on the wire and u128 in
+                                // ProtostoneEdict; the `as u64` here wrapped any
+                                // edict above 2^64-1 sub-units.
+                                amount: e.amount,
                                 target: t::OutputTarget::Output(e.output as u32),
                             }).collect(),
                             bitcoin_transfer: None,
@@ -7984,10 +7987,54 @@ impl WalletProvider for WebProvider {
             }
         }
 
+        // Mark anything the operator has frozen.
+        //
+        // Frozen UTXOs are still RETURNED — `_include_frozen` deliberately
+        // does not filter. A coin that silently vanished from the listing
+        // would read as lost funds; instead it is reported with
+        // `frozen: true` and its reason, and the selectors skip it.
+        //
+        // Opened per call rather than held on the provider: the four
+        // constructors here are synchronous and IndexedDB's open is async,
+        // and an open is cheap next to the RPC round-trips above.
+        {
+            use alkanes_cli_common::frozen_store::FrozenStore as _;
+            match crate::frozen_store::IndexedDbFrozenStore::open().await {
+                Ok(store) => match store.list().await {
+                    Ok(frozen) if !frozen.is_empty() => {
+                        let by_outpoint: std::collections::HashMap<String, Option<String>> = frozen
+                            .into_iter()
+                            .map(|r| (r.outpoint, r.reason))
+                            .collect();
+                        for (outpoint, info) in all_utxos.iter_mut() {
+                            if let Some(reason) = by_outpoint.get(&outpoint.to_string()) {
+                                info.frozen = true;
+                                info.freeze_reason = reason.clone();
+                            }
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(e) => {
+                        // Fail closed: reporting a UTXO as spendable because
+                        // the frozen set could not be read is precisely the
+                        // mistake this subsystem exists to prevent.
+                        return Err(AlkanesError::Storage(format!(
+                            "Could not read the frozen-UTXO store; refusing to report UTXOs as spendable: {e}"
+                        )));
+                    }
+                },
+                Err(e) => {
+                    return Err(AlkanesError::Storage(format!(
+                        "Could not open the frozen-UTXO store; refusing to report UTXOs as spendable: {e}"
+                    )));
+                }
+            }
+        }
+
         Ok(all_utxos)
     }
-    
-    
+
+
     async fn get_history(&self, _count: u32, address: Option<String>) -> Result<Vec<TransactionInfo>> {
         self.logger.info(&format!("[WalletProvider] Calling get_history for address: {:?}, count: {}", address, _count));
         let addr = if let Some(a) = address {
@@ -8114,16 +8161,35 @@ impl WalletProvider for WebProvider {
         })
     }
     
-    async fn freeze_utxo(&self, _utxo: String, _reason: Option<String>) -> Result<()> {
-        // This would typically interact with the wallet's internal database of UTXOs.
-        // Not implemented for this web-based, stateless provider.
-        unimplemented!()
+    async fn freeze_utxo(&self, utxo: String, reason: Option<String>) -> Result<()> {
+        // Was `unimplemented!()` — a panic across the wasm boundary. The
+        // provider is stateless, but the freeze record doesn't have to be:
+        // it lives in IndexedDB so it survives a page reload.
+        use alkanes_cli_common::frozen_store::FrozenStore as _;
+        let store = crate::frozen_store::IndexedDbFrozenStore::open()
+            .await
+            .map_err(|e| AlkanesError::Storage(format!("opening frozen-UTXO store: {e}")))?;
+        store
+            .freeze(&utxo, reason.as_deref())
+            .await
+            .map_err(|e| AlkanesError::Storage(format!("freezing {utxo}: {e}")))
     }
-    
-    async fn unfreeze_utxo(&self, _utxo: String) -> Result<()> {
-        // This would typically interact with the wallet's internal database of UTXOs.
-        // Not implemented for this web-based, stateless provider.
-        unimplemented!()
+
+    async fn unfreeze_utxo(&self, utxo: String) -> Result<()> {
+        use alkanes_cli_common::frozen_store::FrozenStore as _;
+        let store = crate::frozen_store::IndexedDbFrozenStore::open()
+            .await
+            .map_err(|e| AlkanesError::Storage(format!("opening frozen-UTXO store: {e}")))?;
+        let was_frozen = store
+            .unfreeze(&utxo)
+            .await
+            .map_err(|e| AlkanesError::Storage(format!("unfreezing {utxo}: {e}")))?;
+        if !was_frozen {
+            crate::logging::console_log::info(&format!(
+                "unfreeze_utxo: {utxo} was not frozen; nothing to do"
+            ));
+        }
+        Ok(())
     }
     
     async fn create_transaction(&self, params: SendParams) -> Result<String> {

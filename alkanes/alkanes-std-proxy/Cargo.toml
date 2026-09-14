@@ -1,0 +1,18 @@
+[package]
+name = "alkanes-std-proxy"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+alkanes-runtime = { workspace = true }
+alkanes-support = { workspace = true }
+anyhow = { workspace = true }
+bitcoin = { workspace = true }
+metashrew-support = { workspace = true }
+protorune-support = { workspace = true }
+
+[build-dependencies]
+alkanes-wit-build = { path = "../../crates/alkanes-wit-build" }

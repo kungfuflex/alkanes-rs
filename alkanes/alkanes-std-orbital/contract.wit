@@ -1,0 +1,13 @@
+package example:orbital;
+
+interface orbital {
+    initialize: func() -> result<_, string>;
+    get-name: func() -> result<string, string>;
+    get-symbol: func() -> result<string, string>;
+    get-total-supply: func() -> result<u64, string>;
+    get-data: func() -> result<list<u8>, string>;
+}
+
+world orbital-world {
+    export orbital;
+}

@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use crate::balance_sheet::load_sheet;
+    use crate::balance_sheet::{load_sheet, load_sheet_chunked};
     use crate::message::MessageContext;
     use protorune_support::balance_sheet::{BalanceSheet, ProtoruneRuneId};
     use protorune_support::proto::protorune::{
@@ -106,7 +106,11 @@ mod tests {
         // assert_eq!(_addr_str, addr_str);
     }
 
+    // v3: address-index family removed from the canonical indexer.
+    // OUTPOINTS_FOR_ADDRESS is no longer written. Address-keyed lookups
+    // live in espo middleware (via esplora's UTXO API).
     #[wasm_bindgen_test]
+    #[ignore]
     fn outpoints_by_address() {
         clear();
         let test_block = helpers::create_block_with_sample_tx();
@@ -129,7 +133,9 @@ mod tests {
         assert_eq!(list_str, outpoint_hex);
     }
 
+    // v3: address-index family removed — see `outpoints_by_address`.
     #[wasm_bindgen_test]
+    #[ignore]
     fn runes_by_address_test() {
         clear();
         let (test_block, _) = helpers::create_block_with_rune_tx(None);
@@ -404,7 +410,7 @@ mod tests {
             block: config.rune_etch_height as u128,
             tx: config.rune_etch_vout as u128,
         };
-        let sheet = load_sheet(
+        let sheet = load_sheet_chunked(
             &tables::RUNES
                 .OUTPOINT_TO_RUNES
                 .select(&consensus_encode(&outpoint).unwrap()),

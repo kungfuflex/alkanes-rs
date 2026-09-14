@@ -72,7 +72,11 @@ import {
 
 // WASM provider type - loaded dynamically at runtime
 type WasmWebProvider = any;
-const DEFAULT_ORDINALS_STRATEGY = 'burn';
+// Matches alkanes-cli-common's OrdinalsStrategy::default() (flipped from
+// Exclude to Preserve): protect inscribed sats and rune balances by
+// splitting them onto their own outputs, rather than either erroring or
+// destroying what the UTXO carries.
+const DEFAULT_ORDINALS_STRATEGY = 'preserve';
 
 // Network configuration presets
 export const NETWORK_PRESETS: Record<string, { rpcUrl: string; dataApiUrl: string; networkType: NetworkType }> = {

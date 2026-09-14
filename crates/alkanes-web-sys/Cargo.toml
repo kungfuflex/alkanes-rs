@@ -22,10 +22,11 @@ gloo-timers = { version = "0.3.0", features = ["futures"] }
 gloo-utils = "0.1.7"
 js-sys = "0.3"
 serde_json = { workspace = true }
-web-sys = { version = "0.3", features = ["console", "FileList", "HtmlInputElement", "File", "Navigator", "Clipboard", "ClipboardEvent", "CanvasRenderingContext2d", "HtmlCanvasElement", "Window", "Document", "Storage", "Performance", "Crypto", "SubtleCrypto", "CryptoKey", "ResponseInit", "Request", "RequestInit", "RequestMode", "Response", "Headers"] }
+web-sys = { version = "0.3", features = ["console", "FileList", "HtmlInputElement", "File", "Navigator", "Clipboard", "ClipboardEvent", "CanvasRenderingContext2d", "HtmlCanvasElement", "Window", "Document", "Storage", "Performance", "Crypto", "SubtleCrypto", "CryptoKey", "ResponseInit", "Request", "RequestInit", "RequestMode", "Response", "Headers", "Event", "EventTarget", "DomException", "DomStringList", "IdbFactory", "IdbDatabase", "IdbOpenDbRequest", "IdbRequest", "IdbTransaction", "IdbTransactionMode", "IdbObjectStore", "IdbVersionChangeEvent"] }
 bitcoin = { workspace = true }
 bip39 = { workspace = true }
 async-trait = { workspace = true }
+anyhow = { workspace = true }
 serde = { workspace = true }
 hex = { workspace = true }
 alkanes-support = { workspace = true }

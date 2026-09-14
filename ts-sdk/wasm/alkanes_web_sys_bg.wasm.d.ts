@@ -366,8 +366,9 @@ export const rustsecp256k1_v0_10_0_default_illegal_callback_fn: (a: number, b: n
 export const rustsecp256k1_v0_10_0_default_error_callback_fn: (a: number, b: number) => void;
 export const wasm_bindgen__convert__closures_____invoke__h4d14591d7dc3c513: (a: number, b: number, c: any) => [number, number];
 export const wasm_bindgen__convert__closures_____invoke__h40bcd3c57fe7d855: (a: number, b: number, c: any, d: any) => void;
+export const wasm_bindgen__convert__closures_____invoke__hf5fe83b595895ef7: (a: number, b: number, c: any) => void;
 export const wasm_bindgen__convert__closures_____invoke__h12afb486768a2546: (a: number, b: number) => void;
-export const wasm_bindgen__convert__closures_____invoke__h7b2de9a4fa702d56: (a: number, b: number) => void;
+export const wasm_bindgen__convert__closures_____invoke__ha6afc57842ab3228: (a: number, b: number) => void;
 export const __wbindgen_malloc: (a: number, b: number) => number;
 export const __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
 export const __wbindgen_exn_store: (a: number) => void;
