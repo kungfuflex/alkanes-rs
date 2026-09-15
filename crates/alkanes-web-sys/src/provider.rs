@@ -1207,6 +1207,7 @@ impl WebProvider {
                 known_pending_tx_hexes,
                 prefetched_utxos,
                 excluded_utxos,
+                split_at: split_at_from_options(options_json.as_deref()),
                 skip_diesel_mint,
                 max_indexed_height,
                 utxo_source,
@@ -1371,6 +1372,7 @@ impl WebProvider {
                 known_pending_tx_hexes,
                 prefetched_utxos,
                 excluded_utxos,
+                split_at: split_at_from_options(options_json.as_deref()),
                 skip_diesel_mint,
                 max_indexed_height,
                 utxo_source,
@@ -9855,6 +9857,7 @@ impl DeezelProvider for WebProvider {
                 known_pending_tx_hexes: Vec::new(),
                 prefetched_utxos: Vec::new(),
                 excluded_utxos: Vec::new(),
+                split_at: None,
                 skip_diesel_mint: false,
                 max_indexed_height: None,
                 utxo_source: Default::default(),
@@ -9901,6 +9904,7 @@ impl DeezelProvider for WebProvider {
                 known_pending_tx_hexes: Vec::new(),
                 prefetched_utxos: Vec::new(),
                 excluded_utxos: Vec::new(),
+                split_at: None,
                 skip_diesel_mint: false,
                 max_indexed_height: None,
                 utxo_source: Default::default(),
@@ -10337,4 +10341,14 @@ impl alkanes_cli_common::traits::EspoProvider for WebProvider {
         let target = self.rpc_config.get_espo_rpc_target();
         self.call(&target.url, "pizzafun.get_alkane_ids_from_series_ids", serde_json::json!({"series_ids": series_ids}), 1).await
     }
+}
+
+/// `split_at` / `splitAt` from an execute options JSON (2026-09-14). Absent,
+/// null, negative or non-integer → `None` (legacy wrap-only split rule).
+fn split_at_from_options(options_json: Option<&str>) -> Option<usize> {
+    let opts: serde_json::Value = serde_json::from_str(options_json?).ok()?;
+    opts.get("split_at")
+        .or_else(|| opts.get("splitAt"))
+        .and_then(|v| v.as_u64())
+        .map(|v| v as usize)
 }

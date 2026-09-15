@@ -353,6 +353,12 @@ pub struct EnhancedExecuteParams {
     /// to the floor (e.g., late-in-block landings on busy mainnet).
     #[serde(default)]
     pub split_transactions: bool,
+    /// Explicit split boundary for `split_transactions` (2026-09-14): Tx A gets
+    /// protostones[..k], Tx B gets protostones[k..] (targets rebased; cross-tx
+    /// references refused). `None` keeps the legacy rule — split only a wrap at
+    /// protostones[0]. See `execute::split_boundary` / `plan_split_protostones`.
+    #[serde(default)]
+    pub split_at: Option<usize>,
     /// Synthetic mempool transactions to feed into UTXO selection alongside
     /// whatever the indexer's mempool view returns. Used by `execute_split`
     /// to hand the freshly-broadcast Tx A's hex to Tx B's `select_utxos`,
@@ -483,6 +489,17 @@ pub struct PrefetchedUtxo {
     /// is missing from the index).
     #[serde(default)]
     pub alkanes: Option<Vec<PrefetchedAlkane>>,
+    /// This outpoint MUST be spent by the transaction being built (2026-09-14).
+    ///
+    /// Prefetched entries are otherwise annotations only: they never make an
+    /// outpoint a candidate, and the selector walks confirmed candidates before
+    /// pending ones — so a package child asked for frBTC would happily unwrap a
+    /// confirmed frBTC UTXO and leave the unconfirmed parent's carrier behind.
+    /// `required: true` moves the outpoint to the front of the candidate list and
+    /// fails the build if it is not a candidate (e.g. its parent was not passed in
+    /// `known_pending_tx_hexes`) or was not selected. Fail-closed by design.
+    #[serde(default)]
+    pub required: bool,
 }
 
 /// One alkane-balance entry on a `PrefetchedUtxo`. Wire shape mirrors the

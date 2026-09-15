@@ -243,6 +243,206 @@ fn child_fee_rate_for_package(
 const WRAP_NAMESPACE_BLOCK: u128 = 32;
 const WRAP_OPCODE: u128 = 77;
 
+/// Output index of the carrier in a split parent (Tx A): the second
+/// `to_address`. The first is conventionally the wrap signer; for an explicit
+/// `split_at` the caller lays out `to_addresses` so v1 is its own address.
+pub const SPLIT_CARRIER_VOUT: u32 = 1;
+
+/// Where a split request divides its protostones, or `None` for a single tx.
+///
+/// Legacy (no `split_at`): only a wrap (`32:N` opcode 77) at protostones[0]
+/// splits, at 1 — exactly the gate `is_wrap_protostone` used to be.
+///
+/// Explicit `split_at = k` (2026-09-14): any request may split, with
+/// protostones[..k] in Tx A and protostones[k..] in Tx B. This is what the
+/// cross-venue route needs (shifter + OYL swap in Tx A, CryptoSwap in Tx B),
+/// which the wrap-only gate could never admit. An out-of-range `k` is an
+/// error, never a silent fall-back to one transaction — the caller split
+/// because one transaction does not fit.
+pub fn split_boundary(params: &EnhancedExecuteParams) -> Result<Option<usize>> {
+    if !params.split_transactions || params.envelope_data.is_some() || params.protostones.is_empty() {
+        return Ok(None);
+    }
+    match params.split_at {
+        Some(k) => {
+            if k == 0 || k >= params.protostones.len() {
+                return Err(AlkanesError::Other(format!(
+                    "split_at={} is out of range for {} protostones (need 1..{})",
+                    k,
+                    params.protostones.len(),
+                    params.protostones.len()
+                )));
+            }
+            Ok(Some(k))
+        }
+        None => Ok((params.protostones.len() >= 2 && is_wrap_protostone(&params.protostones[0])).then_some(1)),
+    }
+}
+
+fn retarget_protostone(
+    target: &OutputTarget,
+    rebase: impl Fn(u32) -> core::result::Result<u32, String>,
+) -> core::result::Result<OutputTarget, String> {
+    Ok(match target {
+        OutputTarget::Protostone(n) => OutputTarget::Protostone(rebase(*n)?),
+        other => other.clone(),
+    })
+}
+
+fn map_protostone_targets(
+    stone: &ProtostoneSpec,
+    rebase: &impl Fn(u32) -> core::result::Result<u32, String>,
+) -> core::result::Result<ProtostoneSpec, String> {
+    let mut out = stone.clone();
+    if let Some(t) = &stone.pointer {
+        out.pointer = Some(retarget_protostone(t, rebase)?);
+    }
+    if let Some(t) = &stone.refund {
+        out.refund = Some(retarget_protostone(t, rebase)?);
+    }
+    for (i, edict) in stone.edicts.iter().enumerate() {
+        out.edicts[i].target = retarget_protostone(&edict.target, rebase)?;
+    }
+    if let Some(bt) = &stone.bitcoin_transfer {
+        let mut next = bt.clone();
+        next.target = retarget_protostone(&bt.target, rebase)?;
+        out.bitcoin_transfer = Some(next);
+    }
+    Ok(out)
+}
+
+/// Divide protostones at `k` into (Tx A, Tx B).
+///
+/// Tx A keeps protostones[..k]; the LAST one's pointer and refund are redirected
+/// to the physical carrier output `SPLIT_CARRIER_VOUT`, because its result can no
+/// longer flow into a protostone that now lives in another transaction. Every
+/// other target is checked, not assumed:
+///   - a Tx A target `pN` with N >= k would point into Tx B → refused;
+///   - a Tx B target `pN` with N < k would point back into Tx A → refused;
+///   - Tx B targets `pN` (N >= k) are rebased to `p(N-k)`, since protostone
+///     indices are per transaction.
+/// Refusing is the only safe answer to a cross-transaction reference: the
+/// runtime would route those alkanes to a shadow vout that does not exist.
+pub fn plan_split_protostones(
+    protostones: &[ProtostoneSpec],
+    k: usize,
+) -> Result<(Vec<ProtostoneSpec>, Vec<ProtostoneSpec>)> {
+    if k == 0 || k >= protostones.len() {
+        return Err(AlkanesError::Other(format!(
+            "plan_split_protostones: split index {} out of range for {} protostones",
+            k,
+            protostones.len()
+        )));
+    }
+    let k32 = k as u32;
+    let mut tx_a = Vec::with_capacity(k);
+    for (i, stone) in protostones[..k].iter().enumerate() {
+        // The boundary protostone's pointer/refund are REPLACED below, so whatever
+        // they pointed at (typically the next protostone, now in Tx B) is moot.
+        let mut stone = stone.clone();
+        if i + 1 == k {
+            stone.pointer = None;
+            stone.refund = None;
+        }
+        let mapped = map_protostone_targets(&stone, &|n| {
+            if n >= k32 {
+                Err(format!("Tx A protostone {} targets p{}, which moves to Tx B", i, n))
+            } else {
+                Ok(n)
+            }
+        })
+        .map_err(AlkanesError::Other)?;
+        tx_a.push(mapped);
+    }
+    if let Some(last) = tx_a.last_mut() {
+        last.pointer = Some(OutputTarget::Output(SPLIT_CARRIER_VOUT));
+        last.refund = Some(OutputTarget::Output(SPLIT_CARRIER_VOUT));
+    }
+    let mut tx_b = Vec::with_capacity(protostones.len() - k);
+    for (i, stone) in protostones[k..].iter().enumerate() {
+        let mapped = map_protostone_targets(stone, &|n| {
+            if n < k32 {
+                Err(format!("Tx B protostone {} targets p{}, which stays in Tx A", i + k, n))
+            } else {
+                Ok(n - k32)
+            }
+        })
+        .map_err(AlkanesError::Other)?;
+        tx_b.push(mapped);
+    }
+    Ok((tx_a, tx_b))
+}
+
+/// Bind Tx B to Tx A's carrier: add the carrier as a REQUIRED prefetched UTXO
+/// (value + script from Tx A's bytes, alkanes deliberately unasserted — the
+/// indexer cannot know them yet and the protostone moves the whole UTXO anyway),
+/// and drop Tx B requirements the carrier itself satisfies:
+///   - legacy wrap split: the wrapped token (`32:N` of protostones[0]);
+///   - explicit split_at: every alkane requirement (Tx A spent the user's
+///     alkanes; Tx B's come in on the carrier).
+/// BTC requirements are always dropped (Tx A's change and the carrier fund Tx B).
+pub fn require_split_carrier(
+    tx_b_params: &mut EnhancedExecuteParams,
+    tx_a_hex: &str,
+    original: &EnhancedExecuteParams,
+) -> Result<()> {
+    let bytes = hex::decode(tx_a_hex).map_err(|e| AlkanesError::Other(format!("Tx A hex: {}", e)))?;
+    let tx_a: bitcoin::Transaction = bitcoin::consensus::encode::deserialize(&bytes)
+        .map_err(|e| AlkanesError::Other(format!("Tx A decode: {}", e)))?;
+    let carrier = tx_a.output.get(SPLIT_CARRIER_VOUT as usize).ok_or_else(|| {
+        AlkanesError::Other(format!("Tx A has no carrier output at v{}", SPLIT_CARRIER_VOUT))
+    })?;
+    let outpoint = format!("{}:{}", tx_a.compute_txid(), SPLIT_CARRIER_VOUT);
+    tx_b_params.prefetched_utxos.retain(|p| p.outpoint != outpoint);
+    tx_b_params.prefetched_utxos.push(PrefetchedUtxo {
+        outpoint,
+        value: carrier.value.to_sat(),
+        script_pubkey_hex: hex::encode(carrier.script_pubkey.as_bytes()),
+        alkanes: None,
+        required: true,
+    });
+    let wrapped: Option<(u64, u64)> = if original.split_at.is_none() {
+        original.protostones.first().and_then(|p| p.cellpack.as_ref()).map(|c| (c.target.block as u64, c.target.tx as u64))
+    } else {
+        None
+    };
+    tx_b_params.input_requirements.retain(|req| match req {
+        InputRequirement::Bitcoin { .. } | InputRequirement::BitcoinOutput { .. } => false,
+        InputRequirement::Alkanes { block, tx, .. } => {
+            if original.split_at.is_some() {
+                false
+            } else {
+                Some((*block, *tx)) != wrapped
+            }
+        }
+    });
+    Ok(())
+}
+
+/// Refuse to thread Tx B onto an unsigned Tx A whose txid provably changes when
+/// signed: any input that is not native segwit v0 (P2WPKH/P2WSH) or taproot.
+pub fn assert_split_parent_txid_is_sign_stable(psbt: &bitcoin::psbt::Psbt) -> Result<()> {
+    for (i, input) in psbt.inputs.iter().enumerate() {
+        let script = input
+            .witness_utxo
+            .as_ref()
+            .map(|u| u.script_pubkey.clone())
+            .ok_or_else(|| {
+                AlkanesError::Other(format!(
+                    "split Tx A input {} has no witness_utxo; its txid cannot be proven sign-stable",
+                    i
+                ))
+            })?;
+        if !(script.is_p2wpkh() || script.is_p2wsh() || script.is_p2tr()) {
+            return Err(AlkanesError::Other(format!(
+                "split Tx A input {} spends {} — not native segwit/taproot, so signing changes Tx A's txid and Tx B would reference a transaction that never exists. Build Tx B from the signed Tx A instead.",
+                i, script
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// Returns true when a protostone calls a cross-chain wrap contract (frBTC,
 /// frZEC, frETH, etc.) — i.e., target alkane has block=32 and the cellpack's
 /// first input (the opcode) is 77. Used by `execute_split` to decide whether
@@ -313,6 +513,12 @@ pub fn decode_tx_hex_to_mempool_json(tx_hex: &str) -> anyhow::Result<serde_json:
             .map(|a| a.to_string());
             serde_json::json!({
                 "scriptpubkey_address": address_str,
+                // The script is the network-independent identity of the output.
+                // `address_str` above is derived with Network::Bitcoin FIRST, which
+                // succeeds for every standard script, so on regtest/testnet/signet it
+                // is a `bc1…` string that never equals the wallet's `bcrt1…`/`tb1…`
+                // address — apply_mempool_adjustment matches on this instead.
+                "scriptpubkey": hex::encode(o.script_pubkey.as_bytes()),
                 "value": o.value.to_sat(),
             })
         })
@@ -461,6 +667,19 @@ pub fn apply_mempool_adjustment(
 ) -> MempoolAdjustmentReport {
     let address_set: alloc::collections::BTreeSet<&str> =
         addresses.iter().map(|s| s.as_str()).collect();
+    // Script → address for every address we can parse (any network). Lets a vout
+    // that carries `scriptpubkey` hex match regardless of which network its
+    // `scriptpubkey_address` string was rendered for (2026-09-14: pending outputs
+    // decoded from known_pending_tx_hexes were never injected on regtest/testnet/
+    // signet because that string was always mainnet).
+    let script_to_address: alloc::collections::BTreeMap<String, String> = addresses
+        .iter()
+        .filter_map(|a| {
+            bitcoin::Address::from_str(a)
+                .ok()
+                .map(|parsed| (hex::encode(parsed.assume_checked().script_pubkey().as_bytes()), a.clone()))
+        })
+        .collect();
 
     let mut spent_outpoints: alloc::collections::BTreeSet<(String, u32)> =
         alloc::collections::BTreeSet::new();
@@ -499,10 +718,17 @@ pub fn apply_mempool_adjustment(
             // Add outputs paying one of our addresses as candidate UTXOs.
             if let Some(vouts) = tx.get("vout").and_then(|v| v.as_array()) {
                 for (idx, vout) in vouts.iter().enumerate() {
-                    let vout_addr = vout
-                        .get("scriptpubkey_address")
+                    let by_script = vout
+                        .get("scriptpubkey")
                         .and_then(|v| v.as_str())
-                        .unwrap_or_default();
+                        .and_then(|script| script_to_address.get(&script.to_lowercase()));
+                    let vout_addr: &str = match by_script {
+                        Some(addr) => addr.as_str(),
+                        None => vout
+                            .get("scriptpubkey_address")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or_default(),
+                    };
                     if !address_set.contains(vout_addr) {
                         continue;
                     }
@@ -866,13 +1092,8 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         // BTC->token still built as one atomic wrap+swap tx. Return Tx B as
         // the main PSBT and attach Tx A as split_psbt so JS can sign both and
         // broadcast them as one CPFP package.
-        if params.split_transactions
-            && !params.protostones.is_empty()
-            && is_wrap_protostone(&params.protostones[0])
-            && params.protostones.len() >= 2
-            && params.envelope_data.is_none()
-        {
-            log::info!("🔀 Using split_transactions PSBT mode: wrap → CPFP execute chain");
+        if split_boundary(&params)?.is_some() {
+            log::info!("🔀 Using split_transactions PSBT mode: parent → child chain");
             return self.build_split_transaction_psbts(params).await;
         }
 
@@ -906,13 +1127,8 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         // its own per-tx fuel budget. Avoids OOG when the combined wrap +
         // execute fuel cost exceeds MINIMUM_FUEL_CHANGE1 (3.5M) and the
         // landing block has block_fuel exhausted.
-        if params.split_transactions
-            && !params.protostones.is_empty()
-            && is_wrap_protostone(&params.protostones[0])
-            && params.protostones.len() >= 2
-            && params.envelope_data.is_none()
-        {
-            log::info!("🔀 Using split_transactions mode: wrap → CPFP execute chain");
+        if split_boundary(&params)?.is_some() {
+            log::info!("🔀 Using split_transactions mode: parent → child chain");
             return self.execute_split(params).await;
         }
 
@@ -970,17 +1186,13 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         &mut self,
         params: EnhancedExecuteParams,
     ) -> Result<EnhancedExecuteResult> {
-        if params.protostones.len() < 2 {
-            return Err(AlkanesError::Other(
-                "execute_split requires at least 2 protostones (wrap + execute)".to_string(),
-            ));
-        }
-        if !is_wrap_protostone(&params.protostones[0]) {
-            return Err(AlkanesError::Other(
-                "execute_split: protostones[0] must be a wrap (target=(32,N) opcode=77)"
+        let split_at = split_boundary(&params)?.ok_or_else(|| {
+            AlkanesError::Other(
+                "execute_split: request is not splittable (needs split_transactions and either a wrap at protostones[0] or an explicit split_at)"
                     .to_string(),
-            ));
-        }
+            )
+        })?;
+        let (tx_a_stones, tx_b_stones) = plan_split_protostones(&params.protostones, split_at)?;
 
         // ---- Tx A: wrap-only ----------------------------------------------
         // Resolve the user's package target BEFORE building Tx A: the parent
@@ -1003,12 +1215,11 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         // next protostone in the original atomic flow). In split mode we
         // redirect to v1 (user's alkane carrier output) so the minted
         // alkane lands on a real Bitcoin output that Tx B can spend.
-        let mut wrap_proto = params.protostones[0].clone();
-        wrap_proto.pointer = Some(OutputTarget::Output(1));
-        wrap_proto.refund = Some(OutputTarget::Output(1));
-        tx_a_params.protostones = vec![wrap_proto];
+        // plan_split_protostones already redirected the last Tx A protostone's
+        // pointer/refund to the carrier output v1.
+        tx_a_params.protostones = tx_a_stones;
 
-        // Strip alkane input requirements — Tx A is wrap-only and consumes
+        // LEGACY WRAP ONLY: strip alkane input requirements — Tx A is wrap-only and consumes
         // only BTC. The original `params.input_requirements` carried
         // alkane requirements meant for the execute protostone (Tx B),
         // and forwarding them here causes Tx A's selector to grab the
@@ -1017,11 +1228,15 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         // unintentionally consumed the user's 5e4a4112:0 DIESEL alkane
         // carrier as a generic dust input, leaving Tx B with
         // "Insufficient alkanes: need 30000000 of 2:0, have 0").
-        tx_a_params.input_requirements.retain(|req| {
-            !matches!(req, InputRequirement::Alkanes { .. })
-        });
+        // With an explicit split_at, Tx A is the half that SPENDS the user's
+        // alkanes (e.g. the shifter + first swap), so its requirements stay.
+        if params.split_at.is_none() {
+            tx_a_params.input_requirements.retain(|req| {
+                !matches!(req, InputRequirement::Alkanes { .. })
+            });
+        }
 
-        log::info!("[split-tx] Step 1/2: building wrap-only Tx A");
+        log::info!("[split-tx] Step 1/2: building Tx A (protostones 0..{})", split_at);
         let tx_a_result = Box::pin(self.execute_full(tx_a_params)).await?;
         let wrap_txid = tx_a_result.reveal_txid.clone();
         let wrap_fee = tx_a_result.reveal_fee;
@@ -1072,12 +1287,17 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         let mut tx_b_params = params.clone();
         tx_b_params.split_transactions = false;
         tx_b_params.fee_rate = Some(child_rate);
-        tx_b_params.protostones = params.protostones[1..].to_vec();
-        if let Some(tx_a_hex) = tx_a_result.reveal_tx_hex.clone() {
-            tx_b_params.known_pending_tx_hexes.push(tx_a_hex);
-        } else {
-            log::warn!("[split-tx] Tx A result missing reveal_tx_hex — falling back to indexer-only mempool view (may race indexer propagation)");
-        }
+        tx_b_params.protostones = tx_b_stones;
+        let tx_a_hex = tx_a_result.reveal_tx_hex.clone().ok_or_else(|| {
+            AlkanesError::Other(
+                "[split-tx] Tx A result carries no signed hex — cannot bind Tx B to Tx A's carrier".to_string(),
+            )
+        })?;
+        // Tx B MUST spend Tx A's carrier: without this the selector walks the
+        // wallet's confirmed UTXOs first and can satisfy Tx B from them, leaving
+        // the carrier (and whatever Tx A put on it) behind.
+        require_split_carrier(&mut tx_b_params, &tx_a_hex, &params)?;
+        tx_b_params.known_pending_tx_hexes.push(tx_a_hex);
 
         // Drop BTC input requirements — Tx A's BTC change at v2 covers Tx B
         // fees via natural UTXO selection.
@@ -1134,17 +1354,10 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         &mut self,
         params: EnhancedExecuteParams,
     ) -> Result<ExecutionState> {
-        if params.protostones.len() < 2 {
-            return Err(AlkanesError::Other(
-                "build_split_transaction_psbts requires at least 2 protostones (wrap + execute)".to_string(),
-            ));
-        }
-        if !is_wrap_protostone(&params.protostones[0]) {
-            return Err(AlkanesError::Other(
-                "build_split_transaction_psbts: protostones[0] must be a wrap (target=(32,N) opcode=77)"
-                    .to_string(),
-            ));
-        }
+        let split_at = split_boundary(&params)?.ok_or_else(|| {
+            AlkanesError::Other("build_split_transaction_psbts: request is not splittable".to_string())
+        })?;
+        let (tx_a_stones, tx_b_stones) = plan_split_protostones(&params.protostones, split_at)?;
 
         // Same parent floor as execute_split: Tx A must clear min-relay on its
         // own or the child can never rescue it. See parent_fee_rate_for_package.
@@ -1161,13 +1374,12 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         tx_a_params.split_transactions = false;
         tx_a_params.fee_rate = Some(parent_rate);
 
-        let mut wrap_proto = params.protostones[0].clone();
-        wrap_proto.pointer = Some(OutputTarget::Output(1));
-        wrap_proto.refund = Some(OutputTarget::Output(1));
-        tx_a_params.protostones = vec![wrap_proto];
-        tx_a_params.input_requirements.retain(|req| {
-            !matches!(req, InputRequirement::Alkanes { .. })
-        });
+        tx_a_params.protostones = tx_a_stones;
+        if params.split_at.is_none() {
+            tx_a_params.input_requirements.retain(|req| {
+                !matches!(req, InputRequirement::Alkanes { .. })
+            });
+        }
 
         log::info!("[split-tx:psbt] Step 1/2: building unsigned wrap-only Tx A");
         let tx_a_state = match self.build_single_transaction(&tx_a_params).await? {
@@ -1178,6 +1390,15 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             ))),
         };
 
+        // Tx B is built against Tx A's UNSIGNED txid here. That is only a valid
+        // reference if signing cannot change it: refuse any input whose witness
+        // script is not native segwit/taproot (P2SH-wrapped inputs move their
+        // redeemScript into scriptSig, which is in the txid). Wallets that rewrite
+        // non-witness fields while signing (seen on UniSat and OKX, subfrost-app
+        // 2026-06-16) can still shift it — callers that can should build Tx B
+        // from the SIGNED Tx A instead (subfrost-app's user-address carrier
+        // package does exactly that with two execute calls).
+        assert_split_parent_txid_is_sign_stable(&tx_a_state.psbt)?;
         let tx_a_hex = bitcoin::consensus::encode::serialize_hex(&tx_a_state.psbt.unsigned_tx);
         let wrap_txid = tx_a_state.psbt.unsigned_tx.compute_txid().to_string();
 
@@ -1213,7 +1434,8 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         let mut tx_b_params = params.clone();
         tx_b_params.split_transactions = false;
         tx_b_params.fee_rate = Some(child_rate);
-        tx_b_params.protostones = params.protostones[1..].to_vec();
+        tx_b_params.protostones = tx_b_stones;
+        require_split_carrier(&mut tx_b_params, &tx_a_hex, &params)?;
         tx_b_params.known_pending_tx_hexes.push(tx_a_hex);
         tx_b_params.input_requirements.retain(|req| {
             !matches!(
@@ -2481,6 +2703,54 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             }
         }
 
+        // Caller exclusions bind the FINAL candidate set, including the pending
+        // outputs the adjustment above just injected (2026-09-14). The filter at
+        // the eligibility pass runs before that injection, so on its own it could
+        // never exclude an unconfirmed output — and an unconfirmed output is
+        // exactly what a caller most needs to lock: a package carrier holding
+        // alkanes the indexer cannot see yet (it probes empty, so the BTC-only
+        // branch below would take it as fee money and a protostone-less spend
+        // would destroy its balance). subfrost-app's user-address carrier package
+        // relies on this; before it, the app had to route around the gap with
+        // prefetched alkane assertions.
+        if !excluded_set.is_empty() {
+            let before = spendable_utxos.len();
+            spendable_utxos.retain(|(outpoint, _)| !excluded_set.contains(outpoint));
+            let dropped = before - spendable_utxos.len();
+            if dropped > 0 {
+                log::info!("Excluded {} caller-locked pending output(s) injected from mempool txs", dropped);
+            }
+        }
+
+        // Caller-REQUIRED outpoints (PrefetchedUtxo.required) go first, and must
+        // exist. See the field's doc comment for why an annotation is not enough.
+        let required_outpoints: Vec<OutPoint> = prefetched_utxos
+            .iter()
+            .filter(|p| p.required)
+            .map(|p| {
+                OutPoint::from_str(&p.outpoint).map_err(|_| {
+                    AlkanesError::Other(format!("required prefetched outpoint is malformed: {}", p.outpoint))
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        for op in &required_outpoints {
+            if excluded_set.contains(op) {
+                return Err(AlkanesError::Other(format!(
+                    "UTXO {} is both required and excluded by the caller", op
+                )));
+            }
+            if !spendable_utxos.iter().any(|(candidate, _)| candidate == op) {
+                return Err(AlkanesError::Other(format!(
+                    "required UTXO {} is not spendable from the selected addresses (an unconfirmed parent must be passed in known_pending_tx_hexes)",
+                    op
+                )));
+            }
+        }
+        if !required_outpoints.is_empty() {
+            // Stable: every other candidate keeps its relative order.
+            spendable_utxos.sort_by_key(|(candidate, _)| if required_outpoints.contains(candidate) { 0u8 } else { 1u8 });
+        }
+
         let mut selected_outpoints = Vec::new();
         let mut bitcoin_needed = 0u64;
         let mut alkanes_needed = alloc::collections::BTreeMap::new();
@@ -3331,6 +3601,15 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                 log::info!("Filtered {} stale UTXOs, {} remaining", selected_outpoints.len() - verified.len(), verified.len());
             }
             selected_outpoints = verified;
+        }
+
+        for op in &required_outpoints {
+            if !selected_outpoints.contains(op) {
+                return Err(AlkanesError::Other(format!(
+                    "required UTXO {} was not selected — refusing to build a transaction that leaves it behind",
+                    op
+                )));
+            }
         }
 
         let selected_txouts = selected_outpoints
@@ -5039,6 +5318,176 @@ mod tests {
         );
     }
 
+    // ── split planning (2026-09-14, user-address carrier) ───────────────
+    fn stone(target: Option<(u128, u128, u128)>, pointer: Option<OutputTarget>, refund: Option<OutputTarget>, edicts: Vec<ProtostoneEdict>) -> ProtostoneSpec {
+        ProtostoneSpec {
+            cellpack: target.map(|(block, tx, op)| alkanes_support::cellpack::Cellpack {
+                target: alkanes_support::id::AlkaneId { block, tx },
+                inputs: vec![op],
+            }),
+            edicts,
+            bitcoin_transfer: None,
+            pointer,
+            refund,
+        }
+    }
+
+    fn edict_to(target: OutputTarget) -> ProtostoneEdict {
+        ProtostoneEdict { alkane_id: AlkaneId { block: 2, tx: 0 }, amount: 100, target }
+    }
+
+    fn split_params(protostones: Vec<ProtostoneSpec>, split_transactions: bool, split_at: Option<usize>) -> EnhancedExecuteParams {
+        EnhancedExecuteParams {
+            fee_rate: None,
+            to_addresses: vec![],
+            from_addresses: None,
+            change_address: None,
+            alkanes_change_address: None,
+            input_requirements: vec![],
+            protostones,
+            envelope_data: None,
+            raw_output: false,
+            trace_enabled: false,
+            mine_enabled: false,
+            auto_confirm: true,
+            ordinals_strategy: OrdinalsStrategy::default(),
+            mempool_indexer: false,
+            split_transactions,
+            split_at,
+            known_pending_tx_hexes: vec![],
+            prefetched_utxos: vec![],
+            excluded_utxos: vec![],
+            skip_diesel_mint: false,
+            max_indexed_height: None,
+            utxo_source: UtxoDataSource::default(),
+        }
+    }
+
+    #[test]
+    fn split_boundary_keeps_the_legacy_wrap_rule_and_admits_explicit_split_at() {
+        let wrap = stone(Some((32, 0, 77)), Some(OutputTarget::Protostone(1)), None, vec![]);
+        let swap = stone(Some((4, 65522, 13)), Some(OutputTarget::Output(0)), Some(OutputTarget::Output(0)), vec![]);
+        let shifter = stone(None, Some(OutputTarget::Output(0)), None, vec![edict_to(OutputTarget::Protostone(1))]);
+        let cryptoswap = stone(Some((4, 1776, 5)), Some(OutputTarget::Output(0)), Some(OutputTarget::Output(0)), vec![]);
+
+        // legacy: wrap first → split at 1; anything else → single tx (unchanged behaviour)
+        assert_eq!(split_boundary(&split_params(vec![wrap.clone(), swap.clone()], true, None)).unwrap(), Some(1));
+        assert_eq!(split_boundary(&split_params(vec![shifter.clone(), swap.clone(), cryptoswap.clone()], true, None)).unwrap(), None);
+        // not requested → never
+        assert_eq!(split_boundary(&split_params(vec![wrap.clone(), swap.clone()], false, None)).unwrap(), None);
+        // explicit: the cross-venue shape the wrap gate could never admit
+        assert_eq!(split_boundary(&split_params(vec![shifter, swap.clone(), cryptoswap], true, Some(2))).unwrap(), Some(2));
+        // RED: an out-of-range boundary is an error, not a silent single tx
+        assert!(split_boundary(&split_params(vec![wrap.clone(), swap.clone()], true, Some(0))).is_err());
+        assert!(split_boundary(&split_params(vec![wrap, swap], true, Some(2))).is_err());
+    }
+
+    #[test]
+    fn plan_split_redirects_the_boundary_to_the_carrier_and_rebases_tx_b() {
+        // shifter(p0) → edict to p1 ; swap(p1) → pointer p2 ; cryptoswap(p2) → v0
+        let shifter = stone(None, Some(OutputTarget::Output(0)), None, vec![edict_to(OutputTarget::Protostone(1))]);
+        let swap = stone(Some((4, 65522, 13)), Some(OutputTarget::Protostone(2)), Some(OutputTarget::Output(0)), vec![]);
+        let cryptoswap = stone(Some((4, 1776, 5)), Some(OutputTarget::Output(0)), Some(OutputTarget::Output(0)), vec![]);
+        let tail = stone(Some((2, 0, 77)), Some(OutputTarget::Output(0)), Some(OutputTarget::Protostone(3)), vec![]);
+
+        let (a, b) = plan_split_protostones(&[shifter, swap, cryptoswap, tail], 2).unwrap();
+        assert_eq!(a.len(), 2);
+        assert!(matches!(a[0].edicts[0].target, OutputTarget::Protostone(1)), "intra-Tx-A reference kept");
+        assert!(matches!(a[1].pointer, Some(OutputTarget::Output(SPLIT_CARRIER_VOUT))), "boundary result → carrier");
+        assert!(matches!(a[1].refund, Some(OutputTarget::Output(SPLIT_CARRIER_VOUT))), "boundary refund → carrier");
+        assert_eq!(b.len(), 2);
+        assert!(matches!(b[1].refund, Some(OutputTarget::Protostone(1))), "p3 rebased to p1 in Tx B");
+    }
+
+    #[test]
+    fn plan_split_refuses_cross_transaction_references() {
+        // RED 1: a Tx A protostone that edicts into a protostone moving to Tx B.
+        let early = stone(None, Some(OutputTarget::Output(0)), None, vec![edict_to(OutputTarget::Protostone(2))]);
+        let mid = stone(Some((4, 65522, 13)), Some(OutputTarget::Output(0)), None, vec![]);
+        let late = stone(Some((4, 1776, 5)), Some(OutputTarget::Output(0)), None, vec![]);
+        let err = plan_split_protostones(&[early, mid.clone(), late.clone()], 2).unwrap_err();
+        assert!(err.to_string().contains("moves to Tx B"), "{}", err);
+
+        // RED 2: a Tx B protostone refunding into Tx A.
+        let back = stone(Some((4, 1776, 5)), Some(OutputTarget::Output(0)), Some(OutputTarget::Protostone(0)), vec![]);
+        let err = plan_split_protostones(&[mid.clone(), late, back], 1).unwrap_err();
+        assert!(err.to_string().contains("stays in Tx A"), "{}", err);
+
+        // RED 3: out of range.
+        assert!(plan_split_protostones(&[mid.clone()], 1).is_err());
+        assert!(plan_split_protostones(&[mid.clone(), mid], 0).is_err());
+    }
+
+    #[test]
+    fn split_parent_txid_must_be_sign_stable() {
+        use bitcoin::key::Secp256k1;
+        let secp = Secp256k1::new();
+        let (_, pk) = secp.generate_keypair(&mut rand::thread_rng());
+        let compressed = bitcoin::CompressedPublicKey(pk);
+        let p2wpkh = bitcoin::ScriptBuf::new_p2wpkh(&compressed.wpubkey_hash());
+        let nested = bitcoin::ScriptBuf::new_p2sh(&p2wpkh.script_hash());
+        let tx = bitcoin::Transaction {
+            version: bitcoin::transaction::Version::TWO,
+            lock_time: bitcoin::absolute::LockTime::ZERO,
+            input: vec![bitcoin::TxIn::default()],
+            output: vec![],
+        };
+        let mut psbt = bitcoin::psbt::Psbt::from_unsigned_tx(tx).unwrap();
+        psbt.inputs[0].witness_utxo = Some(bitcoin::TxOut { value: bitcoin::Amount::from_sat(10_000), script_pubkey: p2wpkh });
+        assert!(assert_split_parent_txid_is_sign_stable(&psbt).is_ok());
+        // RED: a P2SH-wrapped input moves its redeemScript into scriptSig when signed → txid changes.
+        psbt.inputs[0].witness_utxo = Some(bitcoin::TxOut { value: bitcoin::Amount::from_sat(10_000), script_pubkey: nested });
+        assert!(assert_split_parent_txid_is_sign_stable(&psbt).is_err());
+        // RED: no witness_utxo at all → cannot be proven.
+        psbt.inputs[0].witness_utxo = None;
+        assert!(assert_split_parent_txid_is_sign_stable(&psbt).is_err());
+    }
+
+    #[test]
+    fn require_split_carrier_binds_tx_b_to_tx_a_output_one() {
+        let tx_a = bitcoin::Transaction {
+            version: bitcoin::transaction::Version::TWO,
+            lock_time: bitcoin::absolute::LockTime::ZERO,
+            input: vec![bitcoin::TxIn::default()],
+            output: vec![
+                bitcoin::TxOut { value: bitcoin::Amount::from_sat(10_000), script_pubkey: bitcoin::ScriptBuf::new() },
+                bitcoin::TxOut { value: bitcoin::Amount::from_sat(546), script_pubkey: bitcoin::ScriptBuf::from_hex("5120aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap() },
+            ],
+        };
+        let hex = bitcoin::consensus::encode::serialize_hex(&tx_a);
+        let wrap = stone(Some((32, 0, 77)), None, None, vec![]);
+        let swap = stone(Some((4, 65522, 13)), None, None, vec![]);
+
+        // legacy wrap: the wrapped token's requirement is satisfied by the carrier; others stay.
+        let mut original = split_params(vec![wrap.clone(), swap.clone()], true, None);
+        original.input_requirements = vec![
+            InputRequirement::Bitcoin { amount: 5000 },
+            InputRequirement::Alkanes { block: 32, tx: 0, amount: 900 },
+            InputRequirement::Alkanes { block: 2, tx: 0, amount: 7 },
+        ];
+        let mut tx_b = original.clone();
+        require_split_carrier(&mut tx_b, &hex, &original).unwrap();
+        let carrier = tx_b.prefetched_utxos.iter().find(|p| p.required).expect("required carrier");
+        assert_eq!(carrier.outpoint, format!("{}:1", tx_a.compute_txid()));
+        assert_eq!(carrier.value, 546);
+        assert!(carrier.alkanes.is_none(), "unindexed carrier must not be asserted clean");
+        assert_eq!(tx_b.input_requirements.len(), 1);
+        assert!(matches!(tx_b.input_requirements[0], InputRequirement::Alkanes { block: 2, tx: 0, .. }));
+
+        // explicit split_at: every alkane requirement belongs to Tx A.
+        let mut explicit = split_params(vec![swap.clone(), swap], true, Some(1));
+        explicit.input_requirements = vec![InputRequirement::Alkanes { block: 2, tx: 0, amount: 7 }];
+        let mut tx_b = explicit.clone();
+        require_split_carrier(&mut tx_b, &hex, &explicit).unwrap();
+        assert!(tx_b.input_requirements.is_empty());
+
+        // RED: a Tx A without a v1 cannot carry anything.
+        let mut short = tx_a.clone();
+        short.output.truncate(1);
+        let mut tx_b = original.clone();
+        assert!(require_split_carrier(&mut tx_b, &bitcoin::consensus::encode::serialize_hex(&short), &original).is_err());
+    }
+
     /// `is_wrap_protostone` must reliably distinguish frBTC/frZEC/frETH wraps
     /// (target=(32,N) opcode=77) from any other protostone, because the
     /// split-tx mode dispatch in `execute_full` is gated on this check.
@@ -6165,6 +6614,160 @@ mod tests {
         assert!(!result.outpoints.iter().any(|op| op.txid == txid && op.vout == 6));
     }
 
+    /// `PrefetchedUtxo.required` makes a package child spend ITS carrier. The
+    /// control shows the hazard: with a confirmed frBTC UTXO in the wallet, the
+    /// selector satisfies the frBTC ask from it and leaves the unconfirmed
+    /// carrier behind. Required → the carrier is spent. Required but not a
+    /// candidate (parent not supplied) → the build fails instead of guessing.
+    #[tokio::test]
+    async fn select_utxos_required_prefetched_outpoint_is_spent() {
+        use crate::mock_provider::MockProvider;
+        use bitcoin::address::Address;
+        use bitcoin::key::Secp256k1;
+
+        let mut mock = MockProvider::new(bitcoin::Network::Regtest);
+        let secp = Secp256k1::new();
+        let (sk, pk) = secp.generate_keypair(&mut rand::thread_rng());
+        let (xonly, _) = pk.x_only_public_key();
+        let addr = Address::p2tr(&secp, xonly, None, bitcoin::Network::Regtest);
+        mock.set_keypair(sk, bitcoin::PublicKey::new(pk));
+        mock.qubitcoin_mode = false;
+        let script = addr.script_pubkey();
+
+        // Confirmed wallet state: a frBTC dust carrier (enough for the ask) + clean BTC.
+        let confirmed = bitcoin::Txid::from_str("a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1").unwrap();
+        {
+            let mut utxos = mock.utxos.lock().unwrap();
+            utxos.push((bitcoin::OutPoint::new(confirmed, 0), bitcoin::TxOut { value: bitcoin::Amount::from_sat(546), script_pubkey: script.clone() }));
+            utxos.push((bitcoin::OutPoint::new(confirmed, 1), bitcoin::TxOut { value: bitcoin::Amount::from_sat(50_000), script_pubkey: script.clone() }));
+            mock.alkane_balances.lock().unwrap().insert(format!("{}:0", confirmed), vec![(32, 0, 10_000)]);
+        }
+
+        // Pending parent: v0 = carrier (frBTC the indexer cannot see), v1 = funding.
+        let parent = bitcoin::Transaction {
+            version: bitcoin::transaction::Version::TWO,
+            lock_time: bitcoin::absolute::LockTime::ZERO,
+            input: vec![bitcoin::TxIn {
+                previous_output: bitcoin::OutPoint::new(bitcoin::Txid::from_str("b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2").unwrap(), 0),
+                script_sig: bitcoin::ScriptBuf::new(),
+                sequence: bitcoin::Sequence::ENABLE_RBF_NO_LOCKTIME,
+                witness: bitcoin::Witness::new(),
+            }],
+            output: vec![
+                bitcoin::TxOut { value: bitcoin::Amount::from_sat(546), script_pubkey: script.clone() },
+                bitcoin::TxOut { value: bitcoin::Amount::from_sat(8_000), script_pubkey: script.clone() },
+            ],
+        };
+        let parent_hex = bitcoin::consensus::encode::serialize_hex(&parent);
+        let carrier = format!("{}:0", parent.compute_txid());
+        let carrier_entry = |required: bool| PrefetchedUtxo {
+            outpoint: carrier.clone(),
+            value: 546,
+            script_pubkey_hex: hex::encode(script.as_bytes()),
+            alkanes: Some(vec![PrefetchedAlkane { block: 32, tx: 0, amount: "9000".to_string() }]),
+            required,
+        };
+        let requirements = vec![InputRequirement::Alkanes { block: 32, tx: 0, amount: 5_000 }];
+        let mut executor = EnhancedAlkanesExecutor::new(&mut mock);
+
+        // RED control: annotation only → the confirmed frBTC is used, the carrier is left behind.
+        let annotated = executor
+            .select_utxos(&requirements, &Some(vec![addr.to_string()]), &[parent_hex.clone()], None, &[carrier_entry(false)], &[], UtxoDataSource::Metashrew)
+            .await
+            .expect("control selection");
+        assert!(
+            !annotated.outpoints.iter().any(|op| op.to_string() == carrier),
+            "control must reproduce the hazard (carrier left behind), got {:?}",
+            annotated.outpoints
+        );
+
+        // Required → the carrier is spent.
+        let forced = executor
+            .select_utxos(&requirements, &Some(vec![addr.to_string()]), &[parent_hex.clone()], None, &[carrier_entry(true)], &[], UtxoDataSource::Metashrew)
+            .await
+            .expect("required carrier is a candidate and must be selected");
+        assert!(forced.outpoints.iter().any(|op| op.to_string() == carrier), "required carrier not selected: {:?}", forced.outpoints);
+
+        // Required but the parent was not supplied → not a candidate → hard error.
+        let missing = executor
+            .select_utxos(&requirements, &Some(vec![addr.to_string()]), &[], None, &[carrier_entry(true)], &[], UtxoDataSource::Metashrew)
+            .await;
+        assert!(missing.is_err(), "a required outpoint that is not spendable must fail the build");
+
+        // Required AND excluded → contradiction → hard error.
+        let contradictory = executor
+            .select_utxos(&requirements, &Some(vec![addr.to_string()]), &[parent_hex], None, &[carrier_entry(true)], &[carrier.clone()], UtxoDataSource::Metashrew)
+            .await;
+        assert!(contradictory.is_err());
+    }
+
+    /// A caller exclusion must also bind the PENDING outputs injected from
+    /// `known_pending_tx_hexes`. The RED control proves the injection path is
+    /// reached (without the exclusion the carrier IS selected); the second call
+    /// fails on the pre-fix code, where `excluded_set` was applied before the
+    /// mempool adjustment and the carrier slipped back in.
+    #[tokio::test]
+    async fn select_utxos_exclusion_binds_mempool_injected_outputs() {
+        use crate::mock_provider::MockProvider;
+        use bitcoin::address::Address;
+        use bitcoin::key::Secp256k1;
+
+        let mut mock = MockProvider::new(bitcoin::Network::Regtest);
+        let secp = Secp256k1::new();
+        let (sk, pk) = secp.generate_keypair(&mut rand::thread_rng());
+        let (xonly, _) = pk.x_only_public_key();
+        let addr = Address::p2tr(&secp, xonly, None, bitcoin::Network::Regtest);
+        mock.set_keypair(sk, bitcoin::PublicKey::new(pk));
+        mock.qubitcoin_mode = false; // mempool adjustment is skipped in qubitcoin mode
+
+        // A pending package parent: v0 = 546-sat carrier, v1 = clean funding.
+        let parent = bitcoin::Transaction {
+            version: bitcoin::transaction::Version::TWO,
+            lock_time: bitcoin::absolute::LockTime::ZERO,
+            input: vec![bitcoin::TxIn {
+                previous_output: bitcoin::OutPoint::new(
+                    bitcoin::Txid::from_str("cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd").unwrap(),
+                    0,
+                ),
+                script_sig: bitcoin::ScriptBuf::new(),
+                sequence: bitcoin::Sequence::ENABLE_RBF_NO_LOCKTIME,
+                witness: bitcoin::Witness::new(),
+            }],
+            output: vec![
+                bitcoin::TxOut { value: bitcoin::Amount::from_sat(546), script_pubkey: addr.script_pubkey() },
+                bitcoin::TxOut { value: bitcoin::Amount::from_sat(60_000), script_pubkey: addr.script_pubkey() },
+            ],
+        };
+        let parent_hex = bitcoin::consensus::encode::serialize_hex(&parent);
+        let carrier = format!("{}:0", parent.compute_txid());
+
+        let mut executor = EnhancedAlkanesExecutor::new(&mut mock);
+        let requirements = vec![InputRequirement::Bitcoin { amount: 5_000 }];
+
+        // RED control: nothing excluded → the injected carrier is taken as fee money.
+        let unlocked = executor
+            .select_utxos(&requirements, &Some(vec![addr.to_string()]), &[parent_hex.clone()], None, &[], &[], UtxoDataSource::Metashrew)
+            .await
+            .expect("pending outputs fund the selection");
+        assert!(
+            unlocked.outpoints.iter().any(|op| op.to_string() == carrier),
+            "control: the pending carrier must be reachable through the mempool injection, got {:?}",
+            unlocked.outpoints
+        );
+
+        // Locked: the carrier must never be selected, the funding output still is.
+        let locked = executor
+            .select_utxos(&requirements, &Some(vec![addr.to_string()]), &[parent_hex], None, &[], &[carrier.clone()], UtxoDataSource::Metashrew)
+            .await
+            .expect("the funding output alone covers the ask");
+        assert!(
+            !locked.outpoints.iter().any(|op| op.to_string() == carrier),
+            "a caller-excluded pending carrier was selected: {:?}",
+            locked.outpoints
+        );
+        assert!(locked.outpoints.iter().any(|op| op.to_string() == format!("{}:1", parent.compute_txid())));
+    }
+
     // ────────────────────────────────────────────────────────────────────
     // JSON parsing — `alkanesExecuteWithStrings` and `alkanesExecuteFull`
     // both accept `max_indexed_height` (and the camelCase alias
@@ -6250,6 +6853,7 @@ mod tests {
             value: 546,
             script_pubkey_hex: "0014deadbeef00000000000000000000000000000000".to_string(),
             alkanes,
+            required: false,
         }
     }
 

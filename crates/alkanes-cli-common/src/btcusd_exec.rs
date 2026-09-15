@@ -1457,6 +1457,7 @@ pub fn verify_trade(
             known_pending_tx_hexes: Vec::new(),
             prefetched_utxos: Vec::new(),
             excluded_utxos: Vec::new(),
+            split_at: None,
             // Unset: the builder's own safety bound on spending UTXOs from
             // blocks past the indexed tip. Forcing a value here would override a
             // guard we do not own.
