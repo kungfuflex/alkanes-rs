@@ -19,6 +19,29 @@ jobs:
     strategy:
       matrix:
         test-config:
+          # 🔴 KNOWN RED ON develop, NOT FIXED HERE (2026-09-16). The command is unchanged; this PR
+          # only fixes the tool pins. Every develop run of this leg fails before a test compiles.
+          # Checked locally on the pinned rustc 1.86.0 (rust-toolchain.toml); each workaround
+          # exposed the next failure:
+          #   1. the whole workspace: wasmtime 43 (alkanes-integ-tests, vendor/qubitcoin-indexer,
+          #      vendor/qubitcoin-indexer-fork) needs rustc 1.91; with those excluded, rcgen 0.14.8
+          #      (vendor/tlsfetch-h2-client, reached via alkanes-cli-sys) needs 1.88;
+          #   2. `-p alkanes -p alkanes-web-sys -p protorune -p tlsfetch-transport`: tokio gets
+          #      features wasm32 rejects (unified from tlsfetch-transport's dev-dependencies);
+          #   3. `-p alkanes -p alkanes-web-sys -p protorune`: rustls fails on wasm32. It arrives
+          #      through protorune's dev-dependency on the NATIVE tool crate wasm-bindgen-cli
+          #      (-> ureq -> rustls -> ring), which has no business in a wasm32 test build.
+          # Last green run of this same command: branch tmp_gate, 2026-09-01. That tree has NO
+          # rust-toolchain.toml channel pin (so CI used current stable), no alkanes-integ-tests or
+          # tlsfetch-h2-client, and no wasm-bindgen-cli dev-dependency in protorune. Options, for the owner (see the PR description):
+          #   A. bump rust-toolchain.toml. Changes the compiler for EVERY crate, including the
+          #      consensus wasm (alkanes / protorune -> alkanes.wasm) and its reproducible BuildInfo.
+          #   B. override the toolchain for this CI leg only. The consensus build is untouched, but
+          #      tests would run under a different compiler than the shipped wasm.
+          #   C. scope the leg: exclude or feature-gate the native crates, and move protorune's
+          #      wasm-bindgen-cli dev-dependency out. The compiler is unchanged; crate manifests
+          #      change instead. Likely needed even with A or B: failures 2-3 are not MSRV. Unverified: this tree has no
+          #      CI run with A or B.
           - name: "WASM Tests"
             command: "cargo test --target wasm32-unknown-unknown --features test-utils"
           - name: "Protorunes WASM Tests"
@@ -55,30 +78,29 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
-      # `--locked` is load-bearing, do not drop it.
+      # wasm-bindgen-cli must be the SAME version as the wasm-bindgen runtime the
+      # workspace resolves, or the test runner post-processes a module built for a
+      # different schema. The pin used to be hard-coded at 0.2.100 while Cargo.lock
+      # moved to 0.2.125 — so the CLI and runtime silently disagreed (2026-09-16,
+      # 2026-09-16). The version is now READ FROM Cargo.lock, so a lockfile
+      # bump carries the CLI with it.
       #
-      # Without it `cargo install` re-resolves wasm-bindgen-cli's dependency
-      # tree from scratch against the registry as it exists TODAY, ignoring the
-      # Cargo.lock the crate publishes. Any transitive dep that raises its MSRV
-      # after release then breaks the build retroactively — this workflow was
-      # green on 2026-07-18 and failed on EVERY run from 2026-07-19 onward:
+      # It is built with `+stable`, not the workspace toolchain: the CLI is a host
+      # tool, and wasm-bindgen-cli 0.2.125's own lockfile needs rustc >= 1.88
+      # (time 0.3.48), while rust-toolchain.toml pins 1.86 for the workspace.
+      # Verified locally: `cargo +stable install wasm-bindgen-cli --version 0.2.125
+      # --locked` succeeds; the same command on 1.86 fails on time@0.3.48.
       #
-      #   error: failed to compile `wasm-bindgen-cli v0.2.100`
-      #   Caused by:
-      #     rustc 1.86.0 is not supported by the following packages:
-      #       time@0.3.55 requires rustc 1.88.0
-      #       time-core@0.1.9 requires rustc 1.88.0
-      #
-      # rustc 1.86.0 comes from rust-toolchain.toml, which overrides the
-      # @stable action for every cargo invocation in this repo. wasm-bindgen-cli
-      # 0.2.100's own lockfile pins time 0.3.37 / time-core 0.1.2 (MSRV 1.67.1),
-      # so `--locked` both fixes this and makes the install reproducible.
-      #
-      # The 0.2.100 version pin is separately load-bearing: the wasm-bindgen
-      # runtime in this workspace must match the CLI that post-processes the
-      # module, so bumping the toolchain instead of locking the install is NOT
-      # an equivalent fix.
+      # `--locked` is load-bearing, do not drop it: without it `cargo install`
+      # re-resolves the CLI's dependency tree against today's registry, and a
+      # transitive MSRV bump breaks the install retroactively (this workflow went
+      # red that way on 2026-07-19).
       - name: Install test runner
-        run: cargo install wasm-bindgen-cli --version 0.2.100 --locked
+        run: |
+          WASM_BINDGEN_VERSION=$(awk '/^name = "wasm-bindgen"$/{getline; gsub(/version = |"/,""); print; exit}' Cargo.lock)
+          test -n "$WASM_BINDGEN_VERSION" || { echo "wasm-bindgen not found in Cargo.lock"; exit 1; }
+          echo "wasm-bindgen runtime in Cargo.lock: $WASM_BINDGEN_VERSION"
+          rustup toolchain install stable --profile minimal
+          cargo +stable install wasm-bindgen-cli --version "$WASM_BINDGEN_VERSION" --locked
       - name: ${{ matrix.test-config.name }}
         run: ${{ matrix.test-config.command }}
