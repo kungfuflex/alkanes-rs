@@ -72,7 +72,17 @@ fn test_auto_change_protostone_all_to_call() -> Result<()> {
 
     // Transaction will have 2 outputs: [txout, op_return]
     // tx.output.len() = 2
-    // Shadow vouts: p0 = 2, p1 = 3
+    // Shadow vouts are `tx.output.len() + 1 + i` — see
+    // protorune/src/lib.rs:1177 (`let shadow_vout = (i as u32) +
+    // (tx.output.len() as u32) + 1;`) and the matching enumeration at
+    // lib.rs:1165. So with 2 outputs: p0 = 3, p1 = 4. The original numbers
+    // here were off by one (p0 = 2, p1 = 3), which made every "route to p1"
+    // edict actually address p0 ITSELF, so nothing ever reached the cellpack.
+    // That is why this asserted 0-of-100 and `with_excess` asserted
+    // 700-of-1000 (the 700 went straight to a physical output and arrived;
+    // only the amount routed through the protomessage went missing).
+    // The +1 convention dates to 851241e3 (2024-11-14), ~17 months before
+    // these tests were written, so the tests were never right.
     let address: Address<NetworkChecked> = get_address(&ADDRESS1().as_str());
     let txout = TxOut {
         value: Amount::from_sat(100_000_000),
@@ -91,12 +101,12 @@ fn test_auto_change_protostone_all_to_call() -> Result<()> {
             protocol_tag: 1,
             burn: None,
             from: None,
-            pointer: Some(3), // point to p1 (shadow vout = 2 + 1 = 3)
+            pointer: Some(4), // point to p1 (shadow vout = 2 + 1 + 1 = 4)
             refund: Some(0),  // refund to physical output 0
             edicts: vec![ProtostoneEdict {
                 id: alkane_id.clone(),
                 amount: 100,
-                output: 3, // route to p1 (shadow vout = 3)
+                output: 4, // route to p1 (shadow vout = 4)
             }],
         },
         // p1: user call protostone
@@ -184,7 +194,7 @@ fn test_auto_change_protostone_with_excess() -> Result<()> {
     };
 
     // 2 outputs: [txout(change), op_return]
-    // Shadow: p0 = 2, p1 = 3
+    // Shadow: p0 = 3, p1 = 4 (tx.output.len() + 1 + i; protorune lib.rs:1177)
     let address: Address<NetworkChecked> = get_address(&ADDRESS1().as_str());
     let txout = TxOut {
         value: Amount::from_sat(100_000_000),
@@ -203,13 +213,13 @@ fn test_auto_change_protostone_with_excess() -> Result<()> {
             protocol_tag: 1,
             burn: None,
             from: None,
-            pointer: Some(3), // p1
+            pointer: Some(4), // p1
             refund: Some(0),
             edicts: vec![
                 ProtostoneEdict {
                     id: alkane_id.clone(),
                     amount: 300,
-                    output: 3, // to p1
+                    output: 4, // to p1
                 },
                 ProtostoneEdict {
                     id: alkane_id.clone(),
@@ -316,7 +326,7 @@ fn test_auto_change_protostone_three_deep() -> Result<()> {
     };
 
     // 2 outputs: [txout, op_return]
-    // Shadow: p0=2, p1=3, p2=4
+    // Shadow: p0=3, p1=4, p2=5 (tx.output.len() + 1 + i; protorune lib.rs:1177)
     let protostones = vec![
         // p0: auto-change — route all to p1
         Protostone {
@@ -324,12 +334,12 @@ fn test_auto_change_protostone_three_deep() -> Result<()> {
             protocol_tag: 1,
             burn: None,
             from: None,
-            pointer: Some(3), // p1
+            pointer: Some(4), // p1
             refund: Some(0),
             edicts: vec![ProtostoneEdict {
                 id: alkane_id.clone(),
                 amount: 500,
-                output: 3, // to p1
+                output: 4, // to p1
             }],
         },
         // p1: intermediate — no cellpack, routes to p2
@@ -338,12 +348,12 @@ fn test_auto_change_protostone_three_deep() -> Result<()> {
             protocol_tag: 1,
             burn: None,
             from: None,
-            pointer: Some(4), // p2
+            pointer: Some(5), // p2
             refund: Some(0),
             edicts: vec![ProtostoneEdict {
                 id: alkane_id.clone(),
                 amount: 500,
-                output: 4, // to p2
+                output: 5, // to p2
             }],
         },
         // p2: user call
