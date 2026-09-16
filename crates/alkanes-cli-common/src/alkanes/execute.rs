@@ -648,6 +648,297 @@ pub struct MempoolAdjustmentReport {
     pub added: usize,
 }
 
+/// Decodes caller-known pending tx hexes into `apply_mempool_adjustment`
+/// payloads, one `[tx]` array per DISTINCT txid, in first-seen order. Hexes
+/// that fail to decode are logged and skipped. Pure function, unit-tested.
+///
+/// JOURNAL 2026-09-16, D0c. `select_utxos_with_headroom` merges
+/// `known_pending_tx_hexes` with `provider.pending_tx_store().list()`.
+/// `execute_split` pushes Tx A's hex into the first, and every `execute_full`
+/// broadcast adds the same hex to the store, so one tx routinely arrives twice.
+/// Deduping by the DECODED txid (not the raw string) also merges `0x`-prefixed
+/// or differently cased copies of one tx. The add path in
+/// `apply_mempool_adjustment` also dedups, because a pending tx can still
+/// overlap esplora's `txs/mempool` answer. See the journal there for the bug,
+/// its severity (a build failure, never a burn) and why it predates #308.
+pub fn decode_pending_tx_payloads(tx_hexes: &[String]) -> Vec<serde_json::Value> {
+    let mut seen_txids: alloc::collections::BTreeSet<String> = alloc::collections::BTreeSet::new();
+    let mut payloads = Vec::new();
+    for hex_str in tx_hexes {
+        match decode_tx_hex_to_mempool_json(hex_str) {
+            Ok(synthetic_tx) => {
+                let txid = synthetic_tx
+                    .get("txid")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string();
+                if !seen_txids.insert(txid) {
+                    continue;
+                }
+                payloads.push(serde_json::json!([synthetic_tx]));
+            }
+            Err(e) => {
+                log::warn!("Failed to decode pending tx hex: {}", e);
+            }
+        }
+    }
+    payloads
+}
+
+#[cfg(test)]
+mod d0c_pending_output_dedup_tests {
+    //! D0c (2026-09-16): a pending tx that reaches selection through more than
+    //! one source contributes each of its outputs to the candidate set ONCE.
+    //!
+    //! Before the fix, `apply_mempool_adjustment` pushed a duplicated tx's
+    //! outputs twice, so coin selection could list one outpoint twice
+    //! (bad-txns-inputs-duplicate). That is a build/broadcast failure, never a
+    //! burn. In `execute_split` it strands Tx B behind a broadcast Tx A.
+    //!
+    //! The mock provider runs on `Network::Bitcoin` on purpose. On this base
+    //! (5974673), `decode_tx_hex_to_mempool_json` renders every output as a
+    //! mainnet address, so a pending output only matches a mainnet wallet. #308
+    //! adds script matching, which makes the same path reachable on
+    //! regtest/testnet/signet. These tests hold on both bases.
+    //!
+    //! Keys, addresses and txids are random per run. The module sits next to
+    //! the two functions it pins, not at the end of the file, so the D0c hunks
+    //! fold into #308 (d21ce53d) without conflicting with test modules that
+    //! exist on only one side.
+    use super::*;
+    use crate::mock_provider::MockProvider;
+    use crate::pending_tx_store::PendingTxStore as _;
+    use bitcoin::key::Secp256k1;
+    use bitcoin::{Amount, Network};
+
+    fn random_txid() -> bitcoin::Txid {
+        let mut id = [0u8; 32];
+        rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut id);
+        bitcoin::Txid::from_byte_array(id)
+    }
+
+    fn random_address() -> Address {
+        let secp = Secp256k1::new();
+        let (_sk, pk) = secp.generate_keypair(&mut rand::thread_rng());
+        Address::p2tr(&secp, pk.x_only_public_key().0, None, Network::Bitcoin)
+    }
+
+    /// Standard-bitcoin mode (the mempool adjustment is skipped on qubitcoin),
+    /// with a fresh taproot key.
+    fn wallet(mock: &mut MockProvider) -> Address {
+        let secp = Secp256k1::new();
+        let (sk, pk) = secp.generate_keypair(&mut rand::thread_rng());
+        mock.set_keypair(sk, bitcoin::PublicKey::new(pk));
+        mock.qubitcoin_mode = false;
+        Address::p2tr(&secp, pk.x_only_public_key().0, None, Network::Bitcoin)
+    }
+
+    fn push_confirmed(mock: &MockProvider, addr: &Address, sats: u64) -> OutPoint {
+        let op = OutPoint::new(random_txid(), 0);
+        mock.utxos.lock().unwrap().push((
+            op,
+            TxOut { value: Amount::from_sat(sats), script_pubkey: addr.script_pubkey() },
+        ));
+        op
+    }
+
+    /// A signed-shape pending tx (one foreign input) paying `outputs`, as raw hex.
+    fn pending_tx(outputs: &[(&Address, u64)]) -> (bitcoin::Txid, String) {
+        let tx = Transaction {
+            version: bitcoin::transaction::Version::TWO,
+            lock_time: bitcoin::absolute::LockTime::ZERO,
+            input: vec![bitcoin::TxIn {
+                previous_output: OutPoint::new(random_txid(), 0),
+                script_sig: ScriptBuf::new(),
+                sequence: bitcoin::Sequence::MAX,
+                witness: bitcoin::Witness::new(),
+            }],
+            output: outputs
+                .iter()
+                .map(|(a, sats)| TxOut { value: Amount::from_sat(*sats), script_pubkey: a.script_pubkey() })
+                .collect(),
+        };
+        (tx.compute_txid(), bitcoin::consensus::encode::serialize_hex(&tx))
+    }
+
+    async fn select(
+        mock: &mut MockProvider,
+        btc_needed: u64,
+        addr: &Address,
+        known_pending: &[String],
+    ) -> Result<UtxoSelectionResult> {
+        let mut executor = EnhancedAlkanesExecutor::new(mock);
+        executor
+            .select_utxos(
+                &[InputRequirement::Bitcoin { amount: btc_needed }],
+                &Some(vec![addr.to_string()]),
+                known_pending,
+                None,
+                &[],
+                &[],
+                UtxoDataSource::Metashrew,
+            )
+            .await
+    }
+
+    fn assert_no_duplicate_outpoints(ops: &[OutPoint]) {
+        let unique: alloc::collections::BTreeSet<&OutPoint> = ops.iter().collect();
+        assert_eq!(unique.len(), ops.len(), "D0c: an outpoint was selected twice: {:?}", ops);
+    }
+
+    /// Must refuse, counting each pending output once. With the bug the
+    /// duplicated outputs cover the gap and selection succeeds with a repeat.
+    fn assert_refuses_with_unique_total(res: Result<UtxoSelectionResult>, unique_total: u64) {
+        match res {
+            Err(AlkanesError::InsufficientBitcoin { collected, .. }) => assert_eq!(
+                collected, unique_total,
+                "each pending output must be counted exactly once"
+            ),
+            Err(e) => panic!("expected InsufficientBitcoin, got {e}"),
+            Ok(sel) => {
+                assert_no_duplicate_outpoints(&sel.outpoints);
+                panic!("D0c: selection succeeded with {:?}; the unique candidates cannot fund it", sel.outpoints)
+            }
+        }
+    }
+
+    /// Which two sources deliver the SAME pending tx to selection.
+    #[derive(Clone, Copy, Debug)]
+    enum Overlap {
+        /// The hex is in `known_pending_tx_hexes` and in the pending store.
+        KnownAndStore,
+        /// The hex is in `known_pending_tx_hexes`, and esplora's `txs/mempool`
+        /// also returns the tx.
+        KnownAndEsplora,
+    }
+
+    /// Shared scenario: 1 000 confirmed, plus a pending tx paying the wallet
+    /// 20 000 (vout 0) and 15 000 (vout 2), and a foreigner 5 000 (vout 1).
+    /// The unique candidate total is 36 000, so a 30 000 ask is fundable and a
+    /// 50 000 ask is not. With the bug the duplicated outputs make 56 000 look
+    /// available and vout 0 is selected twice.
+    async fn run_scenario(overlap: Overlap) {
+        let label = format!("{overlap:?}");
+        for (btc_needed, expect_ok) in [(30_000u64, true), (50_000u64, false)] {
+            let mut mock = MockProvider::new(Network::Bitcoin);
+            let addr = wallet(&mut mock);
+            push_confirmed(&mock, &addr, 1_000);
+            let foreign = random_address();
+            let (txid, hex) = pending_tx(&[(&addr, 20_000), (&foreign, 5_000), (&addr, 15_000)]);
+            match overlap {
+                Overlap::KnownAndStore => mock.pending_tx_store.add(&hex).await.unwrap(),
+                Overlap::KnownAndEsplora => {
+                    mock.mempool_txs.lock().unwrap().push(decode_tx_hex_to_mempool_json(&hex).unwrap())
+                }
+            }
+            let known = vec![hex];
+            let res = select(&mut mock, btc_needed, &addr, &known).await;
+            if expect_ok {
+                // Needs more than one pending output: never lists one twice.
+                let sel = res.unwrap_or_else(|e| panic!("{label}: 30 000 is fundable from unique candidates: {e}"));
+                assert_no_duplicate_outpoints(&sel.outpoints);
+                assert!(sel.outpoints.contains(&OutPoint::new(txid, 0)), "{label}: vout 0 funds the ask");
+                assert!(sel.outpoints.contains(&OutPoint::new(txid, 2)), "{label}: vout 2 funds the ask");
+                assert!(!sel.outpoints.contains(&OutPoint::new(txid, 1)), "{label}: the foreign output is not ours");
+            } else {
+                assert_refuses_with_unique_total(res, 36_000);
+            }
+        }
+    }
+
+    // ── pure: apply_mempool_adjustment ───────────────────────────────────
+
+    #[test]
+    fn same_tx_in_two_payloads_is_added_once() {
+        let user = random_address().to_string();
+        let txid = random_txid().to_string();
+        let payload = serde_json::json!([{
+            "txid": txid,
+            "vin": [{ "txid": random_txid().to_string(), "vout": 0 }],
+            "vout": [
+                { "scriptpubkey_address": user, "value": 20_000 },
+                { "scriptpubkey_address": random_address().to_string(), "value": 5_000 },
+                { "scriptpubkey_address": user, "value": 15_000 },
+            ],
+        }]);
+        let mut spendable: Vec<(OutPoint, UtxoInfo)> = Vec::new();
+        let report = apply_mempool_adjustment(&mut spendable, &[payload.clone(), payload], &[user.clone()]);
+        assert_eq!(report.added, 2, "added counts unique outpoints only");
+        assert_eq!(spendable.len(), 2, "each user-paying output is a candidate exactly once");
+        let ops: Vec<OutPoint> = spendable.iter().map(|(o, _)| *o).collect();
+        assert_no_duplicate_outpoints(&ops);
+    }
+
+    /// Control: no over-dedup. A genuinely different second tx still adds.
+    #[test]
+    fn distinct_txs_in_two_payloads_both_add() {
+        let user = random_address().to_string();
+        let tx = |sats: &[u64]| {
+            serde_json::json!([{
+                "txid": random_txid().to_string(),
+                "vin": [{ "txid": random_txid().to_string(), "vout": 0 }],
+                "vout": sats.iter().map(|s| serde_json::json!({ "scriptpubkey_address": user, "value": s })).collect::<Vec<_>>(),
+            }])
+        };
+        let mut spendable: Vec<(OutPoint, UtxoInfo)> = Vec::new();
+        let report = apply_mempool_adjustment(&mut spendable, &[tx(&[1_000, 2_000]), tx(&[3_000])], &[user.clone()]);
+        assert_eq!(report.added, 3);
+        assert_eq!(spendable.iter().map(|(_, u)| u.amount).sum::<u64>(), 6_000);
+    }
+
+    // ── pure: decode_pending_tx_payloads ─────────────────────────────────
+
+    #[test]
+    fn decode_pending_tx_payloads_keeps_one_payload_per_txid_in_first_seen_order() {
+        let user = random_address();
+        let (txid_a, hex_a) = pending_tx(&[(&user, 1_000)]);
+        let (txid_b, hex_b) = pending_tx(&[(&user, 2_000)]);
+        let hexes = vec![
+            hex_b.clone(),
+            hex_a.clone(),
+            format!("0x{hex_b}"),
+            hex_a.to_uppercase(),
+            "not hex".to_string(),
+            hex_b,
+        ];
+        let payloads = decode_pending_tx_payloads(&hexes);
+        let txids: Vec<String> = payloads.iter().map(|p| p[0]["txid"].as_str().unwrap().to_string()).collect();
+        assert_eq!(txids, vec![txid_b.to_string(), txid_a.to_string()]);
+    }
+
+    // ── end to end through select_utxos ──────────────────────────────────
+
+    /// execute_split's shape: Tx A's hex is in `known_pending_tx_hexes` AND in
+    /// the session pending store (every broadcast adds it).
+    #[tokio::test]
+    async fn pending_tx_in_known_hexes_and_pending_store_is_a_candidate_once() {
+        run_scenario(Overlap::KnownAndStore).await;
+    }
+
+    /// The pending hex overlaps esplora's `txs/mempool` answer for the same tx.
+    /// Only the add-path dedup in `apply_mempool_adjustment` covers this.
+    #[tokio::test]
+    async fn pending_hex_overlapping_esplora_mempool_is_a_candidate_once() {
+        run_scenario(Overlap::KnownAndEsplora).await;
+    }
+
+    /// Control: two DIFFERENT pending txs, one per source, both fund selection.
+    #[tokio::test]
+    async fn distinct_pending_txs_from_both_sources_all_fund_selection() {
+        let mut mock = MockProvider::new(Network::Bitcoin);
+        let addr = wallet(&mut mock);
+        let (txid_a, hex_a) = pending_tx(&[(&addr, 20_000)]);
+        let (txid_b, hex_b) = pending_tx(&[(&addr, 15_000)]);
+        mock.pending_tx_store.add(&hex_b).await.unwrap();
+        let sel = select(&mut mock, 30_000, &addr, &[hex_a])
+            .await
+            .expect("two distinct pending txs together fund 30 000");
+        assert_no_duplicate_outpoints(&sel.outpoints);
+        assert!(sel.outpoints.contains(&OutPoint::new(txid_a, 0)));
+        assert!(sel.outpoints.contains(&OutPoint::new(txid_b, 0)));
+    }
+}
+
 /// Pure UTXO-set adjustment function — mutates `spendable_utxos` in
 /// place to reflect the impact of the user's own pending mempool
 /// transactions. Extracted from `select_utxos` so it can be unit-tested
@@ -770,14 +1061,39 @@ pub fn apply_mempool_adjustment(
     });
     let stripped = before - spendable_utxos.len();
 
-    let existing: alloc::collections::BTreeSet<String> = spendable_utxos
+    // JOURNAL 2026-09-16, D0c: an outpoint is added AT MOST ONCE, whichever
+    // payload it came from.
+    //
+    // The bug: `existing` was built once from `spendable_utxos` and never
+    // updated inside this loop. When the same tx appeared in two payloads
+    // (a `known_pending_tx_hexes` entry plus the `pending_tx_store` copy, or
+    // a pending hex plus esplora's `txs/mempool` answer for that tx), its
+    // outputs were in `new_outputs` twice and BOTH copies were pushed. Coin
+    // selection could then take one outpoint twice, and the node rejects that
+    // tx (bad-txns-inputs-duplicate).
+    //
+    // Severity: a clean build/broadcast failure, never a burn. In the split
+    // flow (`execute_split` broadcasts Tx A, then builds Tx B) it strands
+    // mid-package: Tx A sits in the mempool, Tx B is refused, and the value is
+    // recoverable once Tx A confirms.
+    //
+    // This predates kungfuflex/alkanes-rs#308 (it is in 5974673). #308's
+    // script matching of decoded pending outputs is what makes it reachable
+    // for regtest/testnet/signet wallets. Before that, decoded outputs were
+    // rendered as mainnet addresses and never matched a bcrt1/tb1 wallet.
+    //
+    // Fix: insert each key as its output is pushed, so `added` counts unique
+    // outpoints only. The merge in `select_utxos_with_headroom` also dedups
+    // pending hexes by txid (`decode_pending_tx_payloads`). That layer does not
+    // cover the esplora overlap, so this one is the guarantee.
+    let mut existing: alloc::collections::BTreeSet<String> = spendable_utxos
         .iter()
         .map(|(op, _)| format!("{}:{}", op.txid, op.vout))
         .collect();
     let mut added = 0usize;
     for (op, info) in new_outputs {
         let key = format!("{}:{}", op.txid, op.vout);
-        if !existing.contains(&key) {
+        if existing.insert(key) {
             spendable_utxos.push((op, info));
             added += 1;
         }
@@ -2669,9 +2985,18 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             //      without each caller having to thread Tx-A's hex
             //      through.
             //
-            // Duplicates are tolerated — `apply_mempool_adjustment` keys
-            // its spent-outpoint set by (txid, vout), so the same tx
-            // appearing twice is a no-op.
+            // The same tx routinely appears in BOTH sources, and it can also be
+            // in esplora's `txs/mempool` answer above. Only the STRIP path
+            // tolerates that by construction: `spent_outpoints` is a set keyed
+            // by (txid, vout). The ADD path did not. Before D0c
+            // (2026-09-16) a duplicated tx had its outputs pushed twice, so
+            // selection could spend one outpoint twice
+            // (bad-txns-inputs-duplicate; in execute_split that strands Tx B
+            // behind a broadcast Tx A). Now there are two layers:
+            // `decode_pending_tx_payloads` keeps one payload per decoded txid
+            // (first-seen order), and `apply_mempool_adjustment` adds each
+            // (txid, vout) at most once across ALL payloads, which covers the
+            // esplora overlap.
             let mut all_pending: Vec<String> = known_pending_tx_hexes.to_vec();
             if let Some(store) = self.provider.pending_tx_store() {
                 match store.list().await {
@@ -2679,16 +3004,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                     Err(e) => log::warn!("pending_tx_store.list() failed: {}", e),
                 }
             }
-            for hex_str in &all_pending {
-                match decode_tx_hex_to_mempool_json(hex_str) {
-                    Ok(synthetic_tx) => {
-                        mempool_payloads.push(serde_json::json!([synthetic_tx]));
-                    }
-                    Err(e) => {
-                        log::warn!("Failed to decode pending tx hex: {}", e);
-                    }
-                }
-            }
+            mempool_payloads.extend(decode_pending_tx_payloads(&all_pending));
 
             let report = apply_mempool_adjustment(
                 &mut spendable_utxos,
