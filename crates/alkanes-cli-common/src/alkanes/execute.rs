@@ -3688,6 +3688,10 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             // Now process UTXOs using the pre-fetched balance data
             for (outpoint, utxo) in spendable_utxos {
                 let key = format!("{}:{}", outpoint.txid, outpoint.vout);
+                // #308 review lane A 3/4: a caller-REQUIRED outpoint is taken because it is
+                // required — whatever alkanes it is known to hold, and even when the need is
+                // already covered. Required outpoints sort first, so this runs before any break.
+                let is_required = required_outpoints.contains(&outpoint);
 
                 if let Some(utxo_data) = utxo_balances.get(&key) {
                     // Parse balance data from batch result
@@ -3726,7 +3730,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                     // Select this UTXO if it has alkanes we need.
                     // Do NOT select alkane-carrying UTXOs just for Bitcoin — this
                     // would accidentally spend someone's tokens as fee inputs.
-                    if has_needed_alkane {
+                    if has_needed_alkane || (is_required && !balances.is_empty()) {
                         bitcoin_collected += utxo.amount;
                         selected_outpoints.push(outpoint);
                         utxo_selected = true;
@@ -3734,7 +3738,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                     } else if !balances.is_empty() {
                         // This UTXO carries alkanes we don't need — skip it for BTC
                         log::debug!("Skipping UTXO {}:{} — has alkane balances not in requirements", outpoint.txid, outpoint.vout);
-                    } else if wants_more_btc!() {
+                    } else if wants_more_btc!() || is_required {
                         // No alkane balances — safe to use for BTC
                         take_btc_input!(utxo.amount);
                         selected_outpoints.push(outpoint);
@@ -3763,7 +3767,8 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                         alkanes_collected.get(key).unwrap_or(&0) >= needed
                     });
                     
-                    if !wants_more_btc!() && all_alkanes_satisfied {
+                    let requireds_pending = required_outpoints.iter().any(|r| !selected_outpoints.contains(r));
+                    if !wants_more_btc!() && all_alkanes_satisfied && !requireds_pending {
                         break;
                     }
                 } else {
@@ -3781,7 +3786,9 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                     // unknown alkane status into the tx as fee inputs — the exact
                     // token-burn the surrounding code exists to prevent.
                     // (Caught in review by casuwu.)
-                    if needs_more_btc!() {
+                    // A required outpoint is the one exception: the caller named it, so its
+                    // unknown status is the caller's explicit choice, not a blind spot.
+                    if needs_more_btc!() || is_required {
                         take_btc_input!(utxo.amount);
                         selected_outpoints.push(outpoint);
                         log::debug!("Selected UTXO {}:{} for Bitcoin only (no balance data)", outpoint.txid, outpoint.vout);
@@ -3834,6 +3841,15 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             let mut rpc_count: usize = 0;
             let mut carriers_skipped: usize = 0;
             for (outpoint, utxo) in spendable_utxos {
+                // #308 review lane A 3/4: a caller-REQUIRED outpoint is taken before any other
+                // check — it must be spent even when it is a known alkane carrier (the
+                // no-alkanes-needed skip below would otherwise leave it behind) and even when
+                // BTC is already covered. Required outpoints sort first.
+                if required_outpoints.contains(&outpoint) {
+                    take_btc_input!(utxo.amount);
+                    selected_outpoints.push(outpoint);
+                    continue;
+                }
                 if !wants_more_btc!() {
                     break;
                 }
@@ -7082,6 +7098,94 @@ mod tests {
             .await
             .expect("malformed exclusion entry must not fail the selection");
         assert!(!result.outpoints.iter().any(|op| op.txid == txid && op.vout == 6));
+    }
+
+    /// Shared fixture for the #308-review required-outpoint cases: a wallet with a confirmed
+    /// frBTC dust UTXO + clean BTC, and a PENDING parent whose v0 is a frBTC carrier and v1 its
+    /// clean funding output.
+    fn required_fixture() -> (crate::mock_provider::MockProvider, bitcoin::Address, String, String, String) {
+        use crate::mock_provider::MockProvider;
+        use bitcoin::address::Address;
+        use bitcoin::key::Secp256k1;
+        let mut mock = MockProvider::new(bitcoin::Network::Regtest);
+        let secp = Secp256k1::new();
+        let (sk, pk) = secp.generate_keypair(&mut rand::thread_rng());
+        let (xonly, _) = pk.x_only_public_key();
+        let addr = Address::p2tr(&secp, xonly, None, bitcoin::Network::Regtest);
+        mock.set_keypair(sk, bitcoin::PublicKey::new(pk));
+        mock.qubitcoin_mode = false;
+        let script = addr.script_pubkey();
+        let confirmed = bitcoin::Txid::from_str("a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1").unwrap();
+        {
+            let mut utxos = mock.utxos.lock().unwrap();
+            utxos.push((bitcoin::OutPoint::new(confirmed, 0), bitcoin::TxOut { value: bitcoin::Amount::from_sat(546), script_pubkey: script.clone() }));
+            utxos.push((bitcoin::OutPoint::new(confirmed, 1), bitcoin::TxOut { value: bitcoin::Amount::from_sat(50_000), script_pubkey: script.clone() }));
+            mock.alkane_balances.lock().unwrap().insert(format!("{}:0", confirmed), vec![(32, 0, 10_000)]);
+        }
+        let parent = bitcoin::Transaction {
+            version: bitcoin::transaction::Version::TWO,
+            lock_time: bitcoin::absolute::LockTime::ZERO,
+            input: vec![bitcoin::TxIn {
+                previous_output: bitcoin::OutPoint::new(bitcoin::Txid::from_str("b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2").unwrap(), 0),
+                script_sig: bitcoin::ScriptBuf::new(),
+                sequence: bitcoin::Sequence::ENABLE_RBF_NO_LOCKTIME,
+                witness: bitcoin::Witness::new(),
+            }],
+            output: vec![
+                bitcoin::TxOut { value: bitcoin::Amount::from_sat(546), script_pubkey: script.clone() },
+                bitcoin::TxOut { value: bitcoin::Amount::from_sat(8_000), script_pubkey: script.clone() },
+            ],
+        };
+        let parent_hex = bitcoin::consensus::encode::serialize_hex(&parent);
+        let carrier = format!("{}:0", parent.compute_txid());
+        let funding = format!("{}:1", parent.compute_txid());
+        (mock, addr, parent_hex, carrier, funding)
+    }
+
+    /// #308 review lane A 3: `required` only RE-ORDERED candidates. When the first required
+    /// outpoint already covered the need, the loop broke and the second one was never
+    /// visited, ending in "required UTXO was not selected". Every required outpoint is taken.
+    #[tokio::test]
+    async fn select_utxos_takes_every_required_outpoint_even_when_the_first_covers_the_need() {
+        let (mut mock, addr, parent_hex, carrier, funding) = required_fixture();
+        let script_hex = hex::encode(addr.script_pubkey().as_bytes());
+        let prefetched = vec![
+            PrefetchedUtxo { outpoint: carrier.clone(), value: 546, script_pubkey_hex: script_hex.clone(), alkanes: Some(vec![PrefetchedAlkane { block: 32, tx: 0, amount: "9000".to_string() }]), required: true },
+            PrefetchedUtxo { outpoint: funding.clone(), value: 8_000, script_pubkey_hex: script_hex, alkanes: Some(vec![]), required: true },
+        ];
+        let requirements = vec![InputRequirement::Alkanes { block: 32, tx: 0, amount: 5_000 }];
+        let mut executor = EnhancedAlkanesExecutor::new(&mut mock);
+        let selected = executor
+            .select_utxos(&requirements, &Some(vec![addr.to_string()]), &[parent_hex], None, &prefetched, &[], UtxoDataSource::Metashrew)
+            .await
+            .expect("both required outpoints must be selected");
+        let chosen: Vec<String> = selected.outpoints.iter().map(|o| o.to_string()).collect();
+        assert!(chosen.contains(&carrier), "carrier missing: {:?}", chosen);
+        assert!(chosen.contains(&funding), "second required outpoint missing: {:?}", chosen);
+    }
+
+    /// #308 review lane A 4: when the build has NO alkane requirement left (Tx B of an explicit
+    /// split drops them all), a required carrier that is known to hold alkanes was skipped as
+    /// "an alkane carrier we don't need" and the build failed. A required outpoint is taken
+    /// because it is required, whatever it holds.
+    #[tokio::test]
+    async fn select_utxos_takes_a_required_carrier_with_known_alkanes_when_no_alkanes_are_required() {
+        let (mut mock, addr, parent_hex, carrier, _funding) = required_fixture();
+        let script_hex = hex::encode(addr.script_pubkey().as_bytes());
+        let prefetched = vec![PrefetchedUtxo {
+            outpoint: carrier.clone(),
+            value: 546,
+            script_pubkey_hex: script_hex,
+            alkanes: Some(vec![PrefetchedAlkane { block: 32, tx: 0, amount: "9000".to_string() }]),
+            required: true,
+        }];
+        let requirements = vec![InputRequirement::Bitcoin { amount: 1_000 }];
+        let mut executor = EnhancedAlkanesExecutor::new(&mut mock);
+        let selected = executor
+            .select_utxos(&requirements, &Some(vec![addr.to_string()]), &[parent_hex], None, &prefetched, &[], UtxoDataSource::Metashrew)
+            .await
+            .expect("a required carrier must be selected even with no alkane requirement");
+        assert!(selected.outpoints.iter().any(|o| o.to_string() == carrier), "required carrier skipped: {:?}", selected.outpoints);
     }
 
     /// `PrefetchedUtxo.required` makes a package child spend ITS carrier. The
