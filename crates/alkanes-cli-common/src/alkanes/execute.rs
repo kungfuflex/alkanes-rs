@@ -1648,6 +1648,21 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         let wrap_fee = tx_a_result.reveal_fee;
         log::info!("[split-tx] Tx A broadcast: {} (fee {} sats)", wrap_txid, wrap_fee);
 
+        // POST-BROADCAST FAILURES (#308 review lane B F5, 2026-09-16). From here on Tx A is on
+        // the network, so an error below returns Err with Tx B never sent. Every check that
+        // can run on the request alone was hoisted into split_boundary (split_at range, envelope,
+        // to_addresses[SPLIT_CARRIER_VOUT] present, legacy-wrap required outpoints), and
+        // execute_full runs it before Tx A is built. What cannot be hoisted:
+        //  - Tx A's result carries no signed hex (a provider defect);
+        //  - require_split_carrier rejects Tx A's actual outputs (no v1);
+        //  - Tx B's own build fails: selection, fee, signing or broadcast.
+        // None of these loses funds: the carrier is to_addresses[1], a WALLET address, not an
+        // ephemeral key, so whatever Tx A put on it stays spendable by the user. GAP, left as
+        // is: the returned Err does NOT carry wrap_txid (only the log line above does).
+        // Wrapping these errors would change the AlkanesError variants callers see, so that is
+        // a separate, reviewed change. Until then a native caller finds Tx A from the wallet's
+        // mempool, as subfrost-app's carrier Resume does.
+
         // ---- Tx B: execute (spends Tx A's v1 + v2) ------------------------
         // Hand Tx A's signed hex into Tx B's `select_utxos` via
         // `known_pending_tx_hexes`. This bypasses the indexer-propagation
