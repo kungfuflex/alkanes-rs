@@ -259,11 +259,37 @@ pub const SPLIT_CARRIER_VOUT: u32 = 1;
 /// which the wrap-only gate could never admit. An out-of-range `k` is an
 /// error, never a silent fall-back to one transaction — the caller split
 /// because one transaction does not fit.
+///
+/// 2026-09-16 (#308 review lane A 2 / 8, lane B F4 / F6): this is also where a split's SHAPE
+/// is refused. It runs at the execute gates, before anything is built or broadcast, so an
+/// error here costs the user nothing — the same error found after Tx A is on the network
+/// strands Tx B.
+///  - an explicit `split_at` without `split_transactions`, or with an envelope, is an error
+///    (never a silent single tx);
+///  - a split needs `to_addresses[SPLIT_CARRIER_VOUT]` to exist, or Tx B is pinned to
+///    whatever the builder emits at v1 (BTC change or the OP_RETURN);
+///  - a LEGACY wrap split refuses caller-required prefetched outpoints: Tx A is built from
+///    the same params, where a required pending carrier probes clean and can be swept into
+///    the wrap call.
 pub fn split_boundary(params: &EnhancedExecuteParams) -> Result<Option<usize>> {
+    if let Some(k) = params.split_at {
+        if !params.split_transactions {
+            return Err(AlkanesError::Other(format!(
+                "split_at={} was given without split_transactions; refusing to build one transaction instead of the requested split",
+                k
+            )));
+        }
+        if params.envelope_data.is_some() {
+            return Err(AlkanesError::Other(format!(
+                "split_at={} cannot be combined with an envelope (a deploy is always one transaction)",
+                k
+            )));
+        }
+    }
     if !params.split_transactions || params.envelope_data.is_some() || params.protostones.is_empty() {
         return Ok(None);
     }
-    match params.split_at {
+    let boundary = match params.split_at {
         Some(k) => {
             if k == 0 || k >= params.protostones.len() {
                 return Err(AlkanesError::Other(format!(
@@ -273,10 +299,28 @@ pub fn split_boundary(params: &EnhancedExecuteParams) -> Result<Option<usize>> {
                     params.protostones.len()
                 )));
             }
-            Ok(Some(k))
+            Some(k)
         }
-        None => Ok((params.protostones.len() >= 2 && is_wrap_protostone(&params.protostones[0])).then_some(1)),
+        None => (params.protostones.len() >= 2 && is_wrap_protostone(&params.protostones[0])).then_some(1),
+    };
+    if boundary.is_some() {
+        if params.to_addresses.len() <= SPLIT_CARRIER_VOUT as usize {
+            return Err(AlkanesError::Other(format!(
+                "a split needs at least {} to_addresses (the carrier is output v{}); got {}",
+                SPLIT_CARRIER_VOUT + 1,
+                SPLIT_CARRIER_VOUT,
+                params.to_addresses.len()
+            )));
+        }
+        if params.split_at.is_none() && params.prefetched_utxos.iter().any(|p| p.required) {
+            return Err(AlkanesError::Other(
+                "a legacy wrap split cannot carry caller-required prefetched outpoints: Tx A would be built with them, \
+                 where a required pending carrier probes clean and can be swept into the wrap call. Use an explicit split_at."
+                    .to_string(),
+            ));
+        }
     }
+    Ok(boundary)
 }
 
 fn retarget_protostone(
@@ -394,6 +438,13 @@ pub fn require_split_carrier(
     })?;
     let outpoint = format!("{}:{}", tx_a.compute_txid(), SPLIT_CARRIER_VOUT);
     tx_b_params.prefetched_utxos.retain(|p| p.outpoint != outpoint);
+    // Tx B is params.clone(): a caller-required outpoint was meant for Tx A, which has
+    // spent it. Left required, Tx B fails "required UTXO is not spendable" AFTER Tx A is
+    // broadcast (#308 review lane A 2). Only Tx A's carrier is required in Tx B; the other
+    // entries stay as annotations.
+    for p in tx_b_params.prefetched_utxos.iter_mut() {
+        p.required = false;
+    }
     tx_b_params.prefetched_utxos.push(PrefetchedUtxo {
         outpoint,
         value: carrier.value.to_sat(),
@@ -5655,7 +5706,9 @@ mod tests {
     fn split_params(protostones: Vec<ProtostoneSpec>, split_transactions: bool, split_at: Option<usize>) -> EnhancedExecuteParams {
         EnhancedExecuteParams {
             fee_rate: None,
-            to_addresses: vec![],
+            // A split needs v0 (signer / Tx A's own output) and v1 (the carrier). The
+            // strings are never parsed by split_boundary; they only have to be there.
+            to_addresses: vec!["v0-address".to_string(), "v1-carrier-address".to_string()],
             from_addresses: None,
             change_address: None,
             alkanes_change_address: None,
@@ -5757,6 +5810,107 @@ mod tests {
         // RED: no witness_utxo at all → cannot be proven.
         psbt.inputs[0].witness_utxo = None;
         assert!(assert_split_parent_txid_is_sign_stable(&psbt).is_err());
+    }
+
+    // ── #308 review: a split request's SHAPE is refused before anything is built ──
+    // split_boundary runs at the execute gates, ahead of any build or broadcast, so an
+    // error here is the only point at which a bad split costs the user nothing.
+
+    #[test]
+    fn split_at_without_split_transactions_is_an_error_not_a_silent_single_tx() {
+        // lane A 8 / lane B F6: the caller asked for a split; one transaction is not what it asked for.
+        let swap = stone(Some((4, 65522, 13)), None, None, vec![]);
+        let err = split_boundary(&split_params(vec![swap.clone(), swap], false, Some(1))).unwrap_err();
+        assert!(err.to_string().contains("split_transactions"), "{}", err);
+    }
+
+    #[test]
+    fn split_at_with_an_envelope_is_an_error() {
+        let swap = stone(Some((4, 65522, 13)), None, None, vec![]);
+        let mut p = split_params(vec![swap.clone(), swap], true, Some(1));
+        p.envelope_data = Some(vec![1, 2, 3]);
+        let err = split_boundary(&p).unwrap_err();
+        assert!(err.to_string().contains("envelope"), "{}", err);
+    }
+
+    #[test]
+    fn a_split_with_fewer_than_two_to_addresses_is_refused_before_tx_a_exists() {
+        // lane B F4: SPLIT_CARRIER_VOUT is 1. With one to_address, v1 is whatever the builder
+        // emits next (BTC change or the OP_RETURN) and Tx B would be pinned to it — discovered
+        // only AFTER Tx A is broadcast.
+        let wrap = stone(Some((32, 0, 77)), Some(OutputTarget::Protostone(1)), None, vec![]);
+        let swap = stone(Some((4, 65522, 13)), None, None, vec![]);
+        for split_at in [None, Some(1)] {
+            let mut p = split_params(vec![wrap.clone(), swap.clone()], true, split_at);
+            p.to_addresses.truncate(1);
+            let err = split_boundary(&p).unwrap_err();
+            assert!(err.to_string().contains("to_addresses"), "split_at={:?}: {}", split_at, err);
+        }
+    }
+
+    #[test]
+    fn a_legacy_wrap_split_refuses_caller_required_outpoints() {
+        // lane A 2: in a legacy wrap split Tx A is built from params.clone(), so a caller's
+        // required PENDING carrier would probe clean and could be swept into the wrap call.
+        let wrap = stone(Some((32, 0, 77)), Some(OutputTarget::Protostone(1)), None, vec![]);
+        let swap = stone(Some((4, 65522, 13)), None, None, vec![]);
+        let mut p = split_params(vec![wrap, swap], true, None);
+        p.prefetched_utxos.push(PrefetchedUtxo {
+            outpoint: format!("{}:0", "ab".repeat(32)),
+            value: 546,
+            script_pubkey_hex: "5120".to_string(),
+            alkanes: None,
+            required: true,
+        });
+        let err = split_boundary(&p).unwrap_err();
+        assert!(err.to_string().contains("required"), "{}", err);
+    }
+
+    #[test]
+    fn enhanced_execute_params_reads_split_at_under_the_camel_case_alias() {
+        // lane B F7: alkanesExecute and alkanesResumeExecution deserialize EnhancedExecuteParams
+        // directly, so without the alias a camelCase `splitAt` silently became a single tx.
+        // Round-trips the REAL struct (not a local mirror of the attribute).
+        let swap = stone(Some((4, 65522, 13)), None, None, vec![]);
+        let mut value = serde_json::to_value(split_params(vec![swap.clone(), swap], true, Some(1))).unwrap();
+        let obj = value.as_object_mut().unwrap();
+        let at = obj.remove("split_at").unwrap();
+        obj.insert("splitAt".to_string(), at);
+        let parsed: EnhancedExecuteParams = serde_json::from_value(value).unwrap();
+        assert_eq!(parsed.split_at, Some(1));
+    }
+
+    #[test]
+    fn require_split_carrier_clears_caller_required_on_every_other_entry() {
+        // lane A 2: Tx B is params.clone(). A caller-required outpoint that Tx A already spent
+        // stayed required in Tx B, which then failed "required UTXO is not spendable" — after
+        // Tx A was broadcast. Only Tx A's carrier is required in Tx B; the rest stay as annotations.
+        let tx_a = bitcoin::Transaction {
+            version: bitcoin::transaction::Version::TWO,
+            lock_time: bitcoin::absolute::LockTime::ZERO,
+            input: vec![bitcoin::TxIn::default()],
+            output: vec![
+                bitcoin::TxOut { value: bitcoin::Amount::from_sat(10_000), script_pubkey: bitcoin::ScriptBuf::new() },
+                bitcoin::TxOut { value: bitcoin::Amount::from_sat(546), script_pubkey: bitcoin::ScriptBuf::from_hex("5120aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap() },
+            ],
+        };
+        let hex = bitcoin::consensus::encode::serialize_hex(&tx_a);
+        let swap = stone(Some((4, 65522, 13)), None, None, vec![]);
+        let mut original = split_params(vec![swap.clone(), swap], true, Some(1));
+        let callers = format!("{}:2", "cd".repeat(32));
+        original.prefetched_utxos.push(PrefetchedUtxo {
+            outpoint: callers.clone(),
+            value: 30_000,
+            script_pubkey_hex: "0014".to_string(),
+            alkanes: Some(vec![]),
+            required: true,
+        });
+        let mut tx_b = original.clone();
+        require_split_carrier(&mut tx_b, &hex, &original).unwrap();
+        let required: Vec<&str> = tx_b.prefetched_utxos.iter().filter(|p| p.required).map(|p| p.outpoint.as_str()).collect();
+        let carrier = format!("{}:1", tx_a.compute_txid());
+        assert_eq!(required, vec![carrier.as_str()]);
+        assert!(tx_b.prefetched_utxos.iter().any(|p| p.outpoint == callers), "the caller's entry stays as an annotation");
     }
 
     #[test]

@@ -357,7 +357,11 @@ pub struct EnhancedExecuteParams {
     /// protostones[..k], Tx B gets protostones[k..] (targets rebased; cross-tx
     /// references refused). `None` keeps the legacy rule — split only a wrap at
     /// protostones[0]. See `execute::split_boundary` / `plan_split_protostones`.
-    #[serde(default)]
+    ///
+    /// `alias = "splitAt"` (2026-09-16, #308 review lane B F7): alkanesExecute and
+    /// alkanesResumeExecution deserialize this struct directly, so a camelCase caller's
+    /// split used to be silently dropped to a single transaction.
+    #[serde(default, alias = "splitAt")]
     pub split_at: Option<usize>,
     /// Synthetic mempool transactions to feed into UTXO selection alongside
     /// whatever the indexer's mempool view returns. Used by `execute_split`
@@ -844,6 +848,37 @@ pub struct PendingUnwrap {
     pub fulfilled: bool,
 }
 
+/// Parse the `split_at` execute option STRICTLY (2026-09-16, #308 review lane B F6).
+///
+/// The web binding used `.as_u64()` and ignored anything else, so `"2"`, `1.5`, `-1` or
+/// `true` turned a requested split into ONE transaction without a word — the opposite of
+/// what a caller that split "because one transaction does not fit" asked for. It also read
+/// `split_at` first and only fell back to `splitAt` when `split_at` was ABSENT, so
+/// `{ split_at: null, splitAt: 2 }` lost the split.
+///
+/// Rules: each spelling that is present and non-null must be a non-negative integer; if both
+/// are, they must agree. No usable value → `None` (the legacy wrap rule applies).
+pub fn parse_split_at_option(opts: &JsonValue) -> core::result::Result<Option<usize>, String> {
+    let mut found: Option<(usize, &str)> = None;
+    for key in ["split_at", "splitAt"] {
+        let Some(value) = opts.get(key) else { continue };
+        if value.is_null() {
+            continue;
+        }
+        let k = value
+            .as_u64()
+            .ok_or_else(|| alloc::format!("option `{}` must be a non-negative integer, got {}", key, value))?
+            as usize;
+        if let Some((prev, prev_key)) = found {
+            if prev != k {
+                return Err(alloc::format!("options `{}`={} and `{}`={} disagree", prev_key, prev, key, k));
+            }
+        }
+        found = Some((k, key));
+    }
+    Ok(found.map(|(k, _)| k))
+}
+
 /// Parse an optional array-valued execute option STRICTLY (2026-09-16, #308 review
 /// lane B F1, corroborated independently by lane D).
 ///
@@ -879,6 +914,44 @@ pub fn parse_array_option<T: serde::de::DeserializeOwned>(
                 .map_err(|e| alloc::format!("option `{}` entry {} is invalid: {}", key, i, e))
         })
         .collect()
+}
+
+#[cfg(test)]
+mod split_at_option_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn absent_or_null_is_none() {
+        assert_eq!(parse_split_at_option(&json!({})).unwrap(), None);
+        assert_eq!(parse_split_at_option(&json!({ "split_at": null })).unwrap(), None);
+    }
+
+    #[test]
+    fn a_non_negative_integer_under_either_spelling() {
+        assert_eq!(parse_split_at_option(&json!({ "split_at": 2 })).unwrap(), Some(2));
+        assert_eq!(parse_split_at_option(&json!({ "splitAt": 3 })).unwrap(), Some(3));
+    }
+
+    // lane B F6: every one of these used to be SILENTLY ignored, turning a requested split
+    // into one transaction.
+    #[test]
+    fn a_string_float_or_negative_split_at_is_an_error() {
+        for bad in [json!("2"), json!(1.5), json!(-1), json!(true)] {
+            assert!(parse_split_at_option(&json!({ "split_at": bad.clone() })).is_err(), "{:?}", bad);
+        }
+    }
+
+    #[test]
+    fn camel_case_is_read_even_when_snake_case_is_present_but_null() {
+        assert_eq!(parse_split_at_option(&json!({ "split_at": null, "splitAt": 2 })).unwrap(), Some(2));
+    }
+
+    #[test]
+    fn two_different_spellings_that_disagree_are_an_error() {
+        assert!(parse_split_at_option(&json!({ "split_at": 1, "splitAt": 2 })).is_err());
+    }
+
 }
 
 #[cfg(test)]

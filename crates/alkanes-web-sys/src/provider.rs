@@ -1209,7 +1209,7 @@ impl WebProvider {
                 known_pending_tx_hexes,
                 prefetched_utxos,
                 excluded_utxos,
-                split_at: split_at_from_options(options_json.as_deref()),
+                split_at: split_at_from_options(options_json.as_deref()).map_err(|e| JsValue::from_str(&e))?,
                 skip_diesel_mint,
                 max_indexed_height,
                 utxo_source,
@@ -1376,7 +1376,7 @@ impl WebProvider {
                 known_pending_tx_hexes,
                 prefetched_utxos,
                 excluded_utxos,
-                split_at: split_at_from_options(options_json.as_deref()),
+                split_at: split_at_from_options(options_json.as_deref()).map_err(|e| JsValue::from_str(&e))?,
                 skip_diesel_mint,
                 max_indexed_height,
                 utxo_source,
@@ -10347,12 +10347,13 @@ impl alkanes_cli_common::traits::EspoProvider for WebProvider {
     }
 }
 
-/// `split_at` / `splitAt` from an execute options JSON (2026-09-14). Absent,
-/// null, negative or non-integer → `None` (legacy wrap-only split rule).
-fn split_at_from_options(options_json: Option<&str>) -> Option<usize> {
-    let opts: serde_json::Value = serde_json::from_str(options_json?).ok()?;
-    opts.get("split_at")
-        .or_else(|| opts.get("splitAt"))
-        .and_then(|v| v.as_u64())
-        .map(|v| v as usize)
+/// `split_at` / `splitAt` from an execute options JSON. Absent or null → `None` (legacy
+/// wrap-only split rule). A value that is present but not a non-negative integer, or two
+/// spellings that disagree, is an ERROR (2026-09-16, #308 review lane B F6) — it used to be
+/// silently ignored, turning a requested split into one transaction. The rule lives in
+/// alkanes_cli_common::alkanes::types::parse_split_at_option, where it is unit-tested.
+fn split_at_from_options(options_json: Option<&str>) -> core::result::Result<Option<usize>, String> {
+    let Some(json) = options_json else { return Ok(None) };
+    let opts: serde_json::Value = serde_json::from_str(json).map_err(|e| format!("Invalid options JSON: {}", e))?;
+    alkanes_cli_common::alkanes::types::parse_split_at_option(&opts)
 }
