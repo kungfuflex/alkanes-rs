@@ -20,7 +20,7 @@ use metashrew_core::{
 use metashrew_support::index_pointer::KeyValuePointer;
 use metashrew_support::utils::consensus_encode;
 use ordinals::{Etching, Rune, Runestone};
-use protorune::balance_sheet::load_sheet;
+use protorune::balance_sheet::{load_sheet, load_sheet_chunked};
 use protorune::message::MessageContext;
 use protorune::protostone::Protostones;
 use protorune::tables::RuneTable;
@@ -625,6 +625,34 @@ pub fn assert_token_id_has_no_deployment(token_id: AlkaneId) -> Result<()> {
     return Ok(());
 }
 
+// READER RULE — read this before changing either accessor below.
+//
+// `OUTPOINT_TO_RUNES.select(outpoint)` has been written with the v3 CHUNKED
+// api since 3eac9804 "merge(v3): protorune chunked-storage foundation into
+// develop" (2026-06-06): protorune/src/lib.rs:413 calls `save_chunked`,
+// unconditionally, with no height or feature gate. `save_chunked` writes ONE
+// protobuf chunk via `set_chunk` and writes NOTHING under `/runes` or
+// `/balances`.
+//
+// The legacy reader `load_sheet` (protorune/src/balance_sheet.rs:198) walks
+// `/runes` + `/balances` by length. Against a chunk-written pointer that
+// length is 0, so it returns an EMPTY sheet — silently, for every outpoint,
+// never an error. That is why 34 wasm tests asserted `left: 0` against every
+// expected balance, and why every "this balance is ZERO" assertion in this
+// crate passed for free between 2026-06-06 and 2026-09-16. The migration
+// updated protorune's own readers (protorune/src/test_helpers.rs:279,296) and
+// touched ZERO files under crates/alkanes/src/tests/ — it landed 13 days after
+// the WASM CI leg stopped compiling (d134bd6c, 2026-05-24, virtual workspace),
+// so nothing was standing to catch it.
+//
+// => OUTPOINT_TO_RUNES is read with `load_sheet_chunked`.
+// => RUNTIME_BALANCE is still written by the legacy multi-key `save`
+//    (see the note at protorune/src/balance_sheet.rs:241-244) and MUST keep
+//    using `load_sheet`. Measured proof both ways in one test: in
+//    tests/factory.rs the RUNTIME_BALANCE assertion (factory.rs:78-81) passed
+//    while the OUTPOINT_TO_RUNES assertion four lines later (factory.rs:83)
+//    read 0. Swapping get_sheet_for_runtime to the chunked reader would break
+//    the assertion that currently passes.
 pub fn get_sheet_for_outpoint(
     test_block: &Block,
     tx_num: usize,
@@ -637,7 +665,7 @@ pub fn get_sheet_for_outpoint(
     let ptr = RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
         .OUTPOINT_TO_RUNES
         .select(&consensus_encode(&outpoint)?);
-    let sheet = load_sheet(&ptr);
+    let sheet = load_sheet_chunked(&ptr);
     println!(
         "balances at outpoint tx {} vout {}: {:?}",
         tx_num, vout, sheet
@@ -645,6 +673,8 @@ pub fn get_sheet_for_outpoint(
     Ok(sheet)
 }
 
+// RUNTIME_BALANCE only. Legacy `load_sheet` is CORRECT here — do not
+// "fix" this to load_sheet_chunked; see the READER RULE above.
 pub fn get_sheet_for_runtime() -> BalanceSheet<IndexPointer> {
     let ptr = RuneTable::for_protocol(AlkaneMessageContext::protocol_tag()).RUNTIME_BALANCE;
     let sheet = load_sheet(&ptr);
