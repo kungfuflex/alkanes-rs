@@ -34,6 +34,42 @@ use crate::vendored_ord::InscriptionId;
 /// Minimum dust limit for outputs (546 sats for P2TR)
 pub const DUST_LIMIT: u64 = 546;
 
+/// Resolve a batch of independent async lookups, concurrently where the build
+/// allows it, preserving input order.
+///
+/// The ordinals path is latency-bound, not CPU-bound: every UTXO costs its own
+/// `ord` round-trip and none of them depend on each other, so awaiting them one
+/// at a time turns an N-UTXO wallet into N sequential RTTs. That cost is the
+/// whole reason callers reach for `Burn` — subfrost-app pinned an app-wide
+/// `'burn'` policy explicitly to dodge "32+ sequential roundtrips (~6-9s)",
+/// which silently disables inscription protection for every user. Fanning the
+/// lookups out collapses that to roughly one RTT, so `Preserve` becomes
+/// affordable enough to actually leave on.
+///
+/// `futures` rides in on the `std` feature, which `web-compat` also pulls, so
+/// native and browser builds both fan out. `wasip2` deliberately ships without
+/// futures/tokio, so it keeps the sequential walk rather than growing a
+/// dependency — same results, same order, just slower.
+#[cfg(feature = "futures")]
+async fn join_all_ordered<F>(futs: Vec<F>) -> Vec<F::Output>
+where
+    F: core::future::Future,
+{
+    futures::future::join_all(futs).await
+}
+
+#[cfg(not(feature = "futures"))]
+async fn join_all_ordered<F>(futs: Vec<F>) -> Vec<F::Output>
+where
+    F: core::future::Future,
+{
+    let mut out = Vec::with_capacity(futs.len());
+    for f in futs {
+        out.push(f.await);
+    }
+    out
+}
+
 /// Information about an inscription on a UTXO
 #[derive(Debug, Clone)]
 pub struct InscriptionInfo {
@@ -198,12 +234,21 @@ impl<'a, P: OrdProvider + EsploraProvider> OrdinalsHandler<'a, P> {
                     _ => return Ok(vec![]), // No inscriptions
                 };
 
-                let mut inscriptions = Vec::new();
+                // Query every inscription's satpoint at once — the offsets are
+                // independent lookups, so they need not be serialised.
+                let id_strs: Vec<String> =
+                    inscription_ids.iter().map(|id| id.to_string()).collect();
+                let fetched = join_all_ordered(
+                    id_strs
+                        .iter()
+                        .map(|id| self.provider.get_inscription(id))
+                        .collect::<Vec<_>>(),
+                )
+                .await;
 
-                // For each inscription, query its satpoint to get the offset
-                for inscription_id in inscription_ids {
-                    let inscription_id_str = inscription_id.to_string();
-                    match self.provider.get_inscription(&inscription_id_str).await {
+                let mut inscriptions = Vec::new();
+                for (inscription_id_str, result) in id_strs.iter().zip(fetched) {
+                    match result {
                         Ok(inscription) => {
                             // SatPoint contains outpoint and offset
                             // The offset tells us which sat within the UTXO is inscribed
@@ -463,9 +508,19 @@ impl<'a, P: OrdProvider + EsploraProvider> OrdinalsHandler<'a, P> {
                 let mut split_plans: Vec<SplitPlan> = Vec::new();
                 let mut inscribed_utxos: Vec<String> = Vec::new();
 
-                // Check each UTXO for inscriptions
-                for (outpoint, txout) in funding_utxos {
-                    let inscriptions = self.get_utxo_inscriptions(outpoint, mempool_indexer).await?;
+                // Check every UTXO for inscriptions in one fan-out. These probes
+                // are independent, so serialising them would cost one RTT per
+                // UTXO — see `join_all_ordered`.
+                let probes = join_all_ordered(
+                    funding_utxos
+                        .iter()
+                        .map(|(outpoint, _)| self.get_utxo_inscriptions(outpoint, mempool_indexer))
+                        .collect::<Vec<_>>(),
+                )
+                .await;
+
+                for ((outpoint, txout), probe) in funding_utxos.iter().zip(probes) {
+                    let inscriptions = probe?;
 
                     if !inscriptions.is_empty() {
                         let utxo_value = txout.value.to_sat();
@@ -538,12 +593,19 @@ pub async fn check_utxos_for_inscriptions_with_provider(
             let mut split_plans: Vec<SplitPlan> = Vec::new();
             let mut inscribed_utxos: Vec<String> = Vec::new();
 
-            for (outpoint, txout) in funding_utxos {
-                let inscriptions = get_utxo_inscriptions_with_provider(
-                    provider,
-                    outpoint,
-                    mempool_indexer,
-                ).await?;
+            // One fan-out instead of one RTT per UTXO — see `join_all_ordered`.
+            let probes = join_all_ordered(
+                funding_utxos
+                    .iter()
+                    .map(|(outpoint, _)| {
+                        get_utxo_inscriptions_with_provider(provider, outpoint, mempool_indexer)
+                    })
+                    .collect::<Vec<_>>(),
+            )
+            .await;
+
+            for ((outpoint, txout), probe) in funding_utxos.iter().zip(probes) {
+                let inscriptions = probe?;
 
                 if !inscriptions.is_empty() {
                     let utxo_value = txout.value.to_sat();
@@ -601,11 +663,19 @@ pub async fn get_utxo_inscriptions_with_provider(
                 _ => return Ok(vec![]),
             };
 
-            let mut inscriptions = Vec::new();
+            // Independent satpoint lookups — resolve them together.
+            let id_strs: Vec<String> = inscription_ids.iter().map(|id| id.to_string()).collect();
+            let fetched = join_all_ordered(
+                id_strs
+                    .iter()
+                    .map(|id| provider.get_inscription(id))
+                    .collect::<Vec<_>>(),
+            )
+            .await;
 
-            for inscription_id in inscription_ids {
-                let inscription_id_str = inscription_id.to_string();
-                match provider.get_inscription(&inscription_id_str).await {
+            let mut inscriptions = Vec::new();
+            for (inscription_id_str, result) in id_strs.iter().zip(fetched) {
+                match result {
                     Ok(inscription) => {
                         inscriptions.push(InscriptionInfo {
                             inscription_id: inscription.id,
