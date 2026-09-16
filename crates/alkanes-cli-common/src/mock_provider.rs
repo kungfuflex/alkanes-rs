@@ -76,6 +76,12 @@ pub struct MockProvider {
     /// `~/.alkanes/frozen.sqlite3` — a test that froze a real outpoint
     /// would change which coins the operator's next send may spend.
     pub frozen_store: crate::frozen_store::MemoryFrozenStore,
+    /// Esplora-shaped mempool txs (`{txid, vin[], vout[{scriptpubkey_address,
+    /// value}]}`) served by `get_address_txs_mempool`, filtered per address.
+    /// D0b (2026-09-15, C2): lets selection tests drive the real mempool re-add
+    /// path of `apply_mempool_adjustment`. Empty by default, so the mempool
+    /// stays empty as it always did.
+    pub mempool_txs: Arc<Mutex<Vec<JsonValue>>>,
 }
 
 impl Default for MockProvider {
@@ -101,6 +107,7 @@ impl MockProvider {
             qubitcoin_mode: true,
             pending_tx_store: crate::pending_tx_store::MemoryPendingTxStore::new(),
             frozen_store: crate::frozen_store::MemoryFrozenStore::new(),
+            mempool_txs: Arc::new(Mutex::new(vec![])),
         }
     }
     
@@ -812,8 +819,21 @@ impl EsploraProvider for MockProvider {
         Ok(serde_json::json!([]))
     }
     
-    async fn get_address_txs_mempool(&self, _address: &str) -> Result<JsonValue> {
-        Ok(serde_json::json!([]))
+    async fn get_address_txs_mempool(&self, address: &str) -> Result<JsonValue> {
+        // Like esplora, return only the txs that pay this address.
+        let txs = self.mempool_txs.lock().unwrap();
+        let matching: Vec<JsonValue> = txs
+            .iter()
+            .filter(|tx| {
+                tx.get("vout").and_then(|v| v.as_array()).map_or(false, |vouts| {
+                    vouts.iter().any(|o| {
+                        o.get("scriptpubkey_address").and_then(|a| a.as_str()) == Some(address)
+                    })
+                })
+            })
+            .cloned()
+            .collect();
+        Ok(JsonValue::Array(matching))
     }
     
     

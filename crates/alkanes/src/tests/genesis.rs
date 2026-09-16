@@ -15,7 +15,7 @@ use metashrew_core::{get_cache, index_pointer::IndexPointer, println, stdio::std
 use metashrew_support::index_pointer::KeyValuePointer;
 use protorune::test_helpers::{create_block_with_coinbase_tx, create_protostone_encoded_tx};
 use protorune::view::protorune_outpoint_to_outpoint_response;
-use protorune::{balance_sheet::load_sheet, message::MessageContext, tables::RuneTable};
+use protorune::{balance_sheet::load_sheet_chunked, message::MessageContext, tables::RuneTable};
 use protorune_support::balance_sheet::{BalanceSheet, BalanceSheetOperations, ProtoruneRuneId};
 use protorune_support::protostone::Protostone;
 use protorune_support::utils::consensus_encode;
@@ -168,7 +168,7 @@ fn test_genesis() -> Result<()> {
     let ptr = RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
         .OUTPOINT_TO_RUNES
         .select(&consensus_encode(&outpoint)?);
-    let sheet = load_sheet(&ptr);
+    let sheet = load_sheet_chunked(&ptr);
 
     println!("Balances at end: {:?}", sheet);
 
@@ -247,7 +247,7 @@ fn test_genesis_indexer_premine() -> Result<()> {
     let ptr = RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
         .OUTPOINT_TO_RUNES
         .select(&consensus_encode(&outpoint)?);
-    let sheet = load_sheet(&ptr);
+    let sheet = load_sheet_chunked(&ptr);
 
     println!("Balances at end: {:?}", sheet);
     let genesis_id = ProtoruneRuneId { block: 2, tx: 0 };
@@ -279,7 +279,7 @@ fn test_genesis_indexer_premine() -> Result<()> {
     let new_ptr = RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
         .OUTPOINT_TO_RUNES
         .select(&consensus_encode(&new_outpoint)?);
-    let new_sheet = load_sheet(&new_ptr);
+    let new_sheet = load_sheet_chunked(&new_ptr);
 
     let genesis_id = ProtoruneRuneId { block: 2, tx: 0 };
     assert_eq!(new_sheet.get(&genesis_id), 50_000_000u128);

@@ -19,7 +19,7 @@ use metashrew_core::{
     stdio::{stdout, Write},
 };
 use metashrew_support::{index_pointer::KeyValuePointer, utils::consensus_encode};
-use protorune::{balance_sheet::load_sheet, message::MessageContext, tables::RuneTable};
+use protorune::{balance_sheet::load_sheet_chunked, message::MessageContext, tables::RuneTable};
 use protorune_support::balance_sheet::BalanceSheetOperations;
 use wasm_bindgen_test::wasm_bindgen_test;
 
@@ -60,7 +60,7 @@ fn test_owned_token() -> Result<()> {
         txid: tx.compute_txid(),
         vout: 1,
     };
-    let _sheet = load_sheet(
+    let _sheet = load_sheet_chunked(
         &RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
             .OUTPOINT_TO_RUNES
             .select(&consensus_encode(&outpoint)?),
@@ -113,7 +113,7 @@ fn test_auth_and_owned_token_noop() -> Result<()> {
         txid: tx.compute_txid(),
         vout: 0,
     };
-    let _sheet = load_sheet(
+    let _sheet = load_sheet_chunked(
         &RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
             .OUTPOINT_TO_RUNES
             .select(&consensus_encode(&outpoint)?),
@@ -125,7 +125,7 @@ fn test_auth_and_owned_token_noop() -> Result<()> {
         txid: tx_first.compute_txid(),
         vout: 0,
     };
-    let sheet_first = load_sheet(
+    let sheet_first = load_sheet_chunked(
         &RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
             .OUTPOINT_TO_RUNES
             .select(&consensus_encode(&outpoint_first)?),
@@ -188,7 +188,7 @@ fn test_auth_and_owned_token() -> Result<()> {
         txid: tx.compute_txid(),
         vout: 0,
     };
-    let sheet = load_sheet(
+    let sheet = load_sheet_chunked(
         &RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
             .OUTPOINT_TO_RUNES
             .select(&consensus_encode(&outpoint)?),
@@ -201,7 +201,7 @@ fn test_auth_and_owned_token() -> Result<()> {
         txid: tx_first.compute_txid(),
         vout: 0,
     };
-    let sheet_first = load_sheet(
+    let sheet_first = load_sheet_chunked(
         &RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
             .OUTPOINT_TO_RUNES
             .select(&consensus_encode(&outpoint_first)?),
@@ -418,7 +418,7 @@ fn test_auth_and_owned_token_multiple() -> Result<()> {
         txid: tx.compute_txid(),
         vout: 0,
     };
-    let sheet = load_sheet(
+    let sheet = load_sheet_chunked(
         &RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
             .OUTPOINT_TO_RUNES
             .select(&consensus_encode(&outpoint)?),
@@ -431,7 +431,7 @@ fn test_auth_and_owned_token_multiple() -> Result<()> {
         txid: tx_first.compute_txid(),
         vout: 0,
     };
-    let sheet_first = load_sheet(
+    let sheet_first = load_sheet_chunked(
         &RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
             .OUTPOINT_TO_RUNES
             .select(&consensus_encode(&outpoint_first)?),
