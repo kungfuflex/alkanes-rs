@@ -544,6 +544,86 @@ pub fn is_wrap_protostone(spec: &ProtostoneSpec) -> bool {
     cellpack.inputs.first().copied() == Some(WRAP_OPCODE)
 }
 
+/// The pointer the pre-D0 builder wrote on BOTH the Runestone and the appended
+/// DIESEL mint protostone. D0 moves only the Runestone pointer; the DIESEL
+/// mint protostone keeps this value so every protostone stays byte-identical.
+const LEGACY_DIESEL_MINT_POINTER: u32 = 0;
+
+/// Choose the Runestone `pointer`: the output that receives every rune balance
+/// the (empty) runestone edicts leave unallocated.
+///
+/// ## D0 journal (2026-09-15, ordinals hi-fi pipeline, subfrost-app spec §0.9)
+///
+/// FINDING: the builder hard-coded `pointer = 0`. Output 0 is whatever the
+/// caller put first in `to_addresses`, which is often NOT the user:
+///   - frBTC wrap: `[signer, user]` (subfrost-app `hooks/useWrapMutation.ts:180`)
+///   - plain BTC send: `[recipient, alkanesChange]` (`hooks/useBtcSendMutation.ts:413`)
+/// Mainnet ord has no rune index, so neither the app nor this SDK can screen a
+/// fee input for runes. Any rune riding one followed the pointer to the
+/// signer / the recipient: silent loss of the user's runes.
+///
+/// WHY MOVING IT DOES NOT CHANGE ALKANE ROUTING (protorune @ 5974673):
+///   - `crates/protorune/src/lib.rs:339-342`: Runestone `pointer` becomes
+///     `unallocated_to`. It is consumed by rune-table leftovers
+///     (`handle_leftover_runes`, :401) and etching premine (:343-352).
+///   - `lib.rs:1156-1167`: input PROTORUNES (alkanes) default-allocate to the
+///     FIRST protostone with the matching protocol tag, i.e. its shadow vout
+///     `tx.output.len() + 1 + position`. The Runestone pointer is not involved.
+///   - `lib.rs:1181-1184, 1230-1234`: each protostone's leftovers go to its OWN
+///     `pointer`, or `default_output(tx)` when absent, never to the Runestone
+///     pointer. `convert_protostone_specs_with_output_count` always emits
+///     `Some(..)` pointers and refunds, so `default_output` is never reached.
+///   - `unallocated_to` reaches `index_protostones` only for `process_burns`,
+///     which is `#[cfg(test)]` (`lib.rs:1141-1153`).
+///   - frBTC (`subfrost-alkanes/alkanes/fr-btc/src/lib.rs:126-145, 236-262`)
+///     reads the PROTOSTONE pointer, not the Runestone pointer.
+///   - A pointer `< tx.output.len()` is valid in ord's `Runestone::decipher`, so
+///     the runestone never becomes a cenotaph. Every candidate below is a real,
+///     non-OP_RETURN output.
+///
+/// SELECTION (first match wins):
+///   1. an output paying `alkanes_change_script` that is not the droppable
+///      BTC-change placeholder
+///   2. an output paying `btc_change_script` that is not that placeholder
+///   3. the placeholder, if it pays either script. The caller must then stop
+///      `build_psbt_and_fee` from dropping it (see `pin_pointed_change`):
+///      a dropped placeholder would leave this index on the trailing OP_RETURN
+///      and burn the runes.
+///   4. `None`: no user-owned output exists, and the caller must refuse to build.
+/// Output 0 is chosen only when output 0 itself pays one of the user's scripts.
+pub(crate) fn select_runestone_pointer(
+    outputs: &[TxOut],
+    alkanes_change_script: &ScriptBuf,
+    btc_change_script: &ScriptBuf,
+    droppable_change_index: Option<usize>,
+) -> Option<u32> {
+    let pays = |script: &ScriptBuf, allow_droppable: bool| {
+        outputs.iter().enumerate().position(|(i, o)| {
+            !o.script_pubkey.is_op_return()
+                && o.script_pubkey == *script
+                && (allow_droppable || Some(i) != droppable_change_index)
+        })
+    };
+    pays(alkanes_change_script, false)
+        .or_else(|| pays(btc_change_script, false))
+        .or_else(|| pays(alkanes_change_script, true))
+        .or_else(|| pays(btc_change_script, true))
+        .map(|i| i as u32)
+}
+
+/// D0 (2026-09-15): a BTC-change placeholder that the Runestone pointer names
+/// must not be dropped by `build_psbt_and_fee`. Removing it would leave the
+/// pointer on the trailing OP_RETURN, which burns the runes.
+pub(crate) fn pin_pointed_change(droppable_change_index: Option<usize>, runestone_pointer: u32) -> Option<usize> {
+    droppable_change_index.filter(|i| *i != runestone_pointer as usize)
+}
+
+/// Refusal when [`select_runestone_pointer`] finds no user-owned output. This
+/// string exists only on the D0 build, so `strings` on the WASM can tell a D0
+/// artifact from a pre-D0 one.
+pub(crate) const NO_USER_OUTPUT_FOR_RUNES: &str =
+    "D0: no output pays the alkanes change or BTC change address, so unallocated runes have no safe destination; refusing to build";
+
 /// Decode a raw transaction hex into the JSON shape that
 /// `apply_mempool_adjustment` consumes (a single mempool-tx object with
 /// `txid`, `vin[]`, `vout[]`).
@@ -2517,8 +2597,11 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         // Handle excess alkanes: DO NOT insert auto-change protostone at the beginning.
         // Inserting at position 0 causes the protorune runtime to route input alkanes
         // to the auto-change protostone instead of the user's contract call protostone.
-        // Instead, excess alkanes flow to the Runestone default pointer (output 0),
-        // matching @alkanes/ts-sdk behavior.
+        // Instead, excess alkanes stay with the caller's first tag-1 protostone
+        // (protorune lib.rs:1156-1167 auto-allocation) and follow THAT
+        // protostone's pointer/refund. D0 (2026-09-15) correction: an earlier
+        // comment here said they flow to the Runestone pointer. The indexer
+        // never reads the Runestone pointer for alkanes; it governs runes only.
         let final_protostones = if !alkanes_excess.is_empty() && false /* DISABLED */ {
             log::info!("🔄 Handling excess alkanes with automatic protostone generation");
             
@@ -2607,8 +2690,17 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
 
         // Use final_funding_outpoints which may have inscribed UTXOs replaced with clean ones from split
         // When alkane inputs are specified, route them to the first protomessage (not output 0)
-        let has_alkane_inputs = params.input_requirements.iter().any(|r| matches!(r, InputRequirement::Alkanes { .. }));
-        let runestone_script = self.construct_runestone_script_with_alkane_routing(&final_protostones, outputs.len(), has_alkane_inputs, params.skip_diesel_mint)?;
+        // D0 (2026-09-15): unallocated RUNES go to the user's own output, not v0.
+        let (alkanes_change_script, btc_change_script) = self.resolve_user_change_scripts(params).await?;
+        let runestone_pointer = select_runestone_pointer(&outputs, &alkanes_change_script, &btc_change_script, droppable_change_index)
+            .ok_or_else(|| AlkanesError::Validation(NO_USER_OUTPUT_FOR_RUNES.to_string()))?;
+        // If the only user-owned output is the BTC-change placeholder, it must
+        // survive: dropping it would leave the pointer on the OP_RETURN (burn).
+        // The cost is that a sub-dust change fails `validate_transaction` loudly
+        // instead of silently becoming fee. App flows never reach this, because
+        // every to_addresses list there contains alkanes_change_address.
+        let droppable_change_index = pin_pointed_change(droppable_change_index, runestone_pointer);
+        let runestone_script = self.construct_runestone_script(&final_protostones, outputs.len(), runestone_pointer, params.skip_diesel_mint)?;
         let prefetched_for_build = build_effective_txouts_map(params, &utxo_selection.txouts)?;
         let (psbt, fee, estimated_vsize) = self.build_psbt_and_fee(final_funding_outpoints.clone(), outputs, Some(runestone_script), params.fee_rate, None, None, prefetched_for_build.as_ref(), droppable_change_index).await?;
 
@@ -4070,6 +4162,27 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         })
     }
 
+    /// D0 (2026-09-15): the user's (alkanes-change, BTC-change) scriptPubKeys,
+    /// resolved with the SAME defaults the rest of the builder already uses:
+    /// alkanes change = `alkanes_change_address`, else `change_address`, else
+    /// `p2tr:0` (the build_split_psbt convention). BTC change =
+    /// `change_address`, else `p2tr:0` (the create_outputs placeholder).
+    /// Resolution errors propagate. Nothing falls back silently.
+    async fn resolve_user_change_scripts(&self, params: &EnhancedExecuteParams) -> Result<(ScriptBuf, ScriptBuf)> {
+        use crate::traits::AddressResolver;
+        let network = self.provider.get_network();
+        let btc_str = params.change_address.as_deref().unwrap_or("p2tr:0");
+        let alkanes_str = params.alkanes_change_address.as_deref().unwrap_or(btc_str);
+        let mut scripts = Vec::with_capacity(2);
+        for s in [alkanes_str, btc_str] {
+            let resolved = self.provider.resolve_all_identifiers(s).await?;
+            scripts.push(Address::from_str(&resolved)?.require_network(network)?.script_pubkey());
+        }
+        let btc = scripts.pop().expect("two scripts pushed");
+        let alkanes = scripts.pop().expect("two scripts pushed");
+        Ok((alkanes, btc))
+    }
+
     async fn create_outputs(
         &mut self,
         to_addresses: &[String],
@@ -4448,36 +4561,36 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         p.protocol_tag == 1 && p.message.len() >= 3 && p.message[0..3] == [2u8, 0u8, 77u8]
     }
 
-    fn construct_runestone_script(&self, protostones: &[ProtostoneSpec], num_outputs: usize, skip_diesel_mint: bool) -> Result<ScriptBuf> {
-        self.construct_runestone_script_with_alkane_routing(protostones, num_outputs, false, skip_diesel_mint)
-    }
-
-    fn construct_runestone_script_with_alkane_routing(&self, protostones: &[ProtostoneSpec], num_outputs: usize, has_alkane_inputs: bool, skip_diesel_mint: bool) -> Result<ScriptBuf> {
-        log::info!("Constructing runestone with {} protostones and {} outputs (before OP_RETURN), alkane_inputs={}", protostones.len(), num_outputs, has_alkane_inputs);
+    /// `runestone_pointer` comes from [`select_runestone_pointer`]. It must be a
+    /// physical, non-OP_RETURN output index `< num_outputs`.
+    fn construct_runestone_script(&self, protostones: &[ProtostoneSpec], num_outputs: usize, runestone_pointer: u32, skip_diesel_mint: bool) -> Result<ScriptBuf> {
+        log::info!("Constructing runestone with {} protostones and {} outputs (before OP_RETURN), runestone pointer v{}", protostones.len(), num_outputs, runestone_pointer);
         log::info!("  After OP_RETURN is added, tx.output.len() = {} + 1 = {}", num_outputs, num_outputs + 1);
         log::info!("  Formula: pN -> vout = {} + 1 + N = {} + N", num_outputs, num_outputs + 1);
 
-        let mut converted_protostones = self.convert_protostone_specs_with_output_count(protostones, num_outputs as u32)?;
+        if runestone_pointer as usize >= num_outputs {
+            return Err(AlkanesError::Validation(format!(
+                "runestone pointer v{runestone_pointer} is not a physical output (only {num_outputs} before OP_RETURN)"
+            )));
+        }
 
-        // Runestone pointer: always 0 (first --to output).
-        //
-        // Extended pointers (shadow vouts for protomessage routing) cause issues
-        // with contracts that call Runestone::decipher internally (e.g. frBTC).
-        // The protorune indexer routes alkane tokens to protostones based on the
-        // protostone's own pointer field, not the Runestone pointer.
-        let pointer = 0u32;
+        let mut converted_protostones = self.convert_protostone_specs_with_output_count(protostones, num_outputs as u32)?;
 
         // DIESEL mint (default-on, 2026-07-13): appended LAST so protorune
         // auto-allocation (input alkanes → first tag-1 protostone) and every
-        // caller-specified pN/shadow-vout index stay untouched. Pointer follows
-        // the runestone pointer above → minted DIESEL lands on the first --to
-        // output (the alkanes change address for typical app mutations).
+        // caller-specified pN/shadow-vout index stay untouched. Minted DIESEL
+        // lands on output 0 (the first --to output).
+        //
+        // D0 (2026-09-15): this protostone used to borrow the Runestone pointer.
+        // It now pins LEGACY_DIESEL_MINT_POINTER (0) so its bytes and its alkane
+        // routing are exactly what they were before D0. Only the Runestone
+        // pointer below moved.
         //
         // ONE MINT PER TX: a tx can only claim the DIESEL emission once, so when
         // the caller's protostones already carry a [2,0,77] mint cellpack (e.g.
         // an explicit `alkanes execute '[2,0,77]:v0:v0'` mint) nothing is added.
         if !skip_diesel_mint && !converted_protostones.iter().any(Self::is_diesel_mint_protostone) {
-            converted_protostones.push(Self::diesel_mint_protostone(pointer));
+            converted_protostones.push(Self::diesel_mint_protostone(LEGACY_DIESEL_MINT_POINTER));
         }
 
         // Debug logging
@@ -4489,9 +4602,13 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         let protocol_values = converted_protostones.encipher()?;
         log::info!("Encoded protocol values: {} u128 values", protocol_values.len());
 
+        // D0 (2026-09-15): Runestone pointer = the user's own output, chosen by
+        // `select_runestone_pointer`. It was `0`, which handed unallocated RUNES
+        // to the wrap signer or the BTC-send recipient. It governs runes only;
+        // alkanes follow the protostones (see that function's journal).
         let runestone = Runestone {
             protocol: Some(protocol_values),
-            pointer: Some(pointer),
+            pointer: Some(runestone_pointer),
             ..Default::default()
         };
 
@@ -4899,7 +5016,13 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         // Validate protostones against the ACTUAL number of outputs created
         self.validate_protostones(&params.protostones, outputs.len())?;
 
-        let runestone_script = self.construct_runestone_script(&params.protostones, outputs.len(), params.skip_diesel_mint)?;
+        // D0 (2026-09-15): unallocated runes → the user's own output, not v0.
+        // This reveal never drops its change placeholder (`build_psbt_and_fee`
+        // below passes `None`), so no index can shift under the pointer.
+        let (alkanes_change_script, btc_change_script) = self.resolve_user_change_scripts(params).await?;
+        let runestone_pointer = select_runestone_pointer(&outputs, &alkanes_change_script, &btc_change_script, None)
+            .ok_or_else(|| AlkanesError::Validation(NO_USER_OUTPUT_FOR_RUNES.to_string()))?;
+        let runestone_script = self.construct_runestone_script(&params.protostones, outputs.len(), runestone_pointer, params.skip_diesel_mint)?;
 
         // Create the commit output TxOut (it may not be indexed yet if still in mempool)
         let commit_address = self.create_commit_address_for_envelope(envelope, commit_internal_key).await?;
@@ -5466,7 +5589,25 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             // Validate protostones against the actual number of outputs created
             self.validate_protostones(&params.protostones, outputs.len())?;
 
-            let runestone_script = self.construct_runestone_script(&params.protostones, outputs.len(), params.skip_diesel_mint)?;
+            // D0 (2026-09-15): unallocated runes → the user's own output, not v0.
+            // BTC change here is `addr` (change_address, else the wallet
+            // address), which is exactly what the change output above pays. When
+            // that change was sub-dust and never added, and no recipient is the
+            // user, the build is refused rather than handing runes to v0.
+            let btc_change_script = addr.script_pubkey();
+            let alkanes_change_script = match params.alkanes_change_address.as_deref() {
+                Some(s) => {
+                    use crate::traits::AddressResolver;
+                    let resolved = self.provider.resolve_all_identifiers(s).await?;
+                    bitcoin::Address::from_str(&resolved)?
+                        .require_network(self.provider.get_network())?
+                        .script_pubkey()
+                }
+                None => btc_change_script.clone(),
+            };
+            let runestone_pointer = select_runestone_pointer(&outputs, &alkanes_change_script, &btc_change_script, None)
+                .ok_or_else(|| AlkanesError::Validation(NO_USER_OUTPUT_FOR_RUNES.to_string()))?;
+            let runestone_script = self.construct_runestone_script(&params.protostones, outputs.len(), runestone_pointer, params.skip_diesel_mint)?;
             outputs.push(bitcoin::TxOut {
                 value: bitcoin::Amount::ZERO,
                 script_pubkey: runestone_script,
@@ -8408,7 +8549,8 @@ mod dust_change_tests {
 #[cfg(test)]
 mod diesel_mint_tests {
     //! The default-on DIESEL mint protostone (2026-07-13): every runestone this
-    //! executor builds gets `[2,0,77] → pointer 0` appended LAST, unless the
+    //! executor builds gets `[2,0,77] → pointer 0` appended LAST (D0 2026-09-15: pinned
+    //! at 0 independently of the Runestone pointer), unless the
     //! caller opts out (`skip_diesel_mint`) or already mints in the same tx
     //! (one mint per tx — an explicit `[2,0,77]` cellpack suppresses the append).
     use super::*;
@@ -8438,11 +8580,11 @@ mod diesel_mint_tests {
         let mut provider = MockProvider::new(Network::Regtest);
         let executor = EnhancedAlkanesExecutor::new(&mut provider);
         let specs = parse_protostones("[3,797,101]:v0:v0").unwrap();
-        let stones = decode(executor.construct_runestone_script(&specs, 2, false).unwrap());
+        let stones = decode(executor.construct_runestone_script(&specs, 2, 0, false).unwrap());
         assert_eq!(stones.len(), 2, "caller stone + appended mint");
         // Caller's stone first (auto-allocation target unchanged).
         assert!(!is_mint_message(&stones[0].message));
-        // Appended mint: [2,0,77] cellpack, pointer/refund = runestone pointer (0).
+        // Appended mint: [2,0,77] cellpack, pointer/refund = LEGACY_DIESEL_MINT_POINTER (0).
         let mint = &stones[1];
         assert_eq!(mint.protocol_tag, 1);
         assert!(is_mint_message(&mint.message));
@@ -8456,7 +8598,7 @@ mod diesel_mint_tests {
         let mut provider = MockProvider::new(Network::Regtest);
         let executor = EnhancedAlkanesExecutor::new(&mut provider);
         let specs = parse_protostones("[3,797,101]:v0:v0").unwrap();
-        let stones = decode(executor.construct_runestone_script(&specs, 2, true).unwrap());
+        let stones = decode(executor.construct_runestone_script(&specs, 2, 0, true).unwrap());
         assert_eq!(stones.len(), 1, "skip_diesel_mint → caller stones only");
         assert!(!is_mint_message(&stones[0].message));
     }
@@ -8468,7 +8610,7 @@ mod diesel_mint_tests {
         // An explicit DIESEL mint (e.g. devnet boot's `[2,0,77]:v0:v0`) must not
         // be doubled — a tx can only claim the emission once.
         let specs = parse_protostones("[2,0,77]:v0:v0").unwrap();
-        let stones = decode(executor.construct_runestone_script(&specs, 2, false).unwrap());
+        let stones = decode(executor.construct_runestone_script(&specs, 2, 0, false).unwrap());
         assert_eq!(stones.len(), 1, "explicit mint present → nothing appended");
         assert!(is_mint_message(&stones[0].message));
     }
@@ -8479,12 +8621,321 @@ mod diesel_mint_tests {
         let executor = EnhancedAlkanesExecutor::new(&mut provider);
         // Two-protostone shifter (subfrost swap shape): edict stone + cellpack stone.
         let specs = parse_protostones("[2:1:100:p1]:v0,[4,65498,13,2,2,1,32,0,100,95,1000]:v1:v0").unwrap();
-        let stones = decode(executor.construct_runestone_script(&specs, 2, false).unwrap());
+        let stones = decode(executor.construct_runestone_script(&specs, 2, 0, false).unwrap());
         assert_eq!(stones.len(), 3, "p0 shifter + p1 cellpack + appended mint");
         assert!(is_mint_message(&stones[2].message));
         // Caller stones keep their positions — protorune auto-allocation still
         // binds input alkanes to p0, and p1's shadow-vout reference is untouched.
         assert!(stones[0].message.is_empty());
         assert!(!stones[1].message.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod d0_rune_pointer_e2e_tests {
+    //! D0 (2026-09-15, ordinals hi-fi pipeline): end-to-end through
+    //! `build_single_transaction`, the path every subfrost-app mutation takes
+    //! (`alkanesExecuteWithStrings` → `execute` → `build_single_transaction`).
+    //!
+    //! These tests use only APIs that already existed at 5974673. The same
+    //! module therefore compiles against the unfixed commit, and that is how
+    //! the red proof was run (see changes-D0.md).
+    //!
+    //! Keys and addresses are generated per run. Protostone goldens are the
+    //! `protocol` u128 values the UNFIXED 5974673 builder emitted for the same
+    //! specs and output count. They contain no keys, because protostone
+    //! encodings depend only on the specs and the number of outputs.
+    use super::*;
+    use crate::alkanes::parsing::{parse_input_requirements, parse_protostones};
+    use crate::mock_provider::MockProvider;
+    use bitcoin::key::Secp256k1;
+    use bitcoin::{Amount, Network};
+
+    struct Wallet {
+        user_taproot: Address,
+        user_segwit: Address,
+        foreign_a: Address,
+    }
+
+    fn random_taproot(secp: &Secp256k1<bitcoin::secp256k1::All>) -> Address {
+        let (_sk, pk) = secp.generate_keypair(&mut rand::thread_rng());
+        Address::p2tr(secp, pk.x_only_public_key().0, None, Network::Regtest)
+    }
+
+    fn setup(mock: &mut MockProvider) -> Wallet {
+        let secp = Secp256k1::new();
+        let (sk, pk) = secp.generate_keypair(&mut rand::thread_rng());
+        mock.set_keypair(sk, bitcoin::PublicKey::new(pk));
+        let user_taproot = Address::p2tr(&secp, pk.x_only_public_key().0, None, Network::Regtest);
+        let (_sk2, pk2) = secp.generate_keypair(&mut rand::thread_rng());
+        let user_segwit = Address::p2wpkh(&bitcoin::CompressedPublicKey(pk2), Network::Regtest);
+        let foreign_a = random_taproot(&secp);
+        let mut id = [0u8; 32];
+        rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut id);
+        mock.utxos.lock().unwrap().push((
+            OutPoint::new(bitcoin::Txid::from_byte_array(id), 0),
+            TxOut { value: Amount::from_sat(400_000), script_pubkey: user_taproot.script_pubkey() },
+        ));
+        Wallet { user_taproot, user_segwit, foreign_a }
+    }
+
+    fn params(
+        w: &Wallet,
+        to: Vec<String>,
+        reqs: &str,
+        stones: &str,
+        skip_diesel_mint: bool,
+    ) -> EnhancedExecuteParams {
+        EnhancedExecuteParams {
+            fee_rate: Some(2.0),
+            to_addresses: to,
+            from_addresses: Some(vec![w.user_taproot.to_string()]),
+            change_address: Some(w.user_segwit.to_string()),
+            alkanes_change_address: Some(w.user_taproot.to_string()),
+            input_requirements: parse_input_requirements(reqs).unwrap(),
+            protostones: parse_protostones(stones).unwrap(),
+            envelope_data: None,
+            raw_output: false,
+            trace_enabled: false,
+            mine_enabled: false,
+            auto_confirm: false,
+            ordinals_strategy: OrdinalsStrategy::Burn,
+            mempool_indexer: false,
+            split_transactions: false,
+            split_at: None,
+            known_pending_tx_hexes: vec![],
+            prefetched_utxos: vec![],
+            excluded_utxos: vec![],
+            skip_diesel_mint,
+            max_indexed_height: None,
+            utxo_source: UtxoDataSource::Metashrew,
+        }
+    }
+
+    struct Built {
+        tx: Transaction,
+        pointer: Option<u32>,
+        protocol: Vec<u128>,
+    }
+
+    async fn build(mock: &mut MockProvider, p: EnhancedExecuteParams) -> Built {
+        let mut executor = EnhancedAlkanesExecutor::new(mock);
+        let state = executor.build_single_transaction(&p).await.expect("build succeeds");
+        let ExecutionState::ReadyToSign(ready) = state else { panic!("expected ReadyToSign") };
+        let tx = ready.psbt.unsigned_tx.clone();
+        let Some(ordinals::Artifact::Runestone(rs)) = ordinals::Runestone::decipher(&tx) else {
+            panic!("tx must carry a valid (non-cenotaph) runestone");
+        };
+        Built { pointer: rs.pointer, protocol: rs.protocol.clone().unwrap_or_default(), tx }
+    }
+
+    fn owner(w: &Wallet, tx: &Transaction, vout: u32) -> &'static str {
+        let spk = &tx.output[vout as usize].script_pubkey;
+        if *spk == w.user_taproot.script_pubkey() {
+            "user-alkanes-change"
+        } else if *spk == w.user_segwit.script_pubkey() {
+            "user-btc-change"
+        } else if spk.is_op_return() {
+            "op_return"
+        } else {
+            "FOREIGN"
+        }
+    }
+
+    fn print_golden(name: &str, b: &Built) {
+        eprintln!("D0-GOLDEN {name} pointer={:?} protocol={:?}", b.pointer, b.protocol);
+    }
+
+    // `protocol` values emitted by the UNFIXED builder at 5974673 for the exact
+    // specs/output counts below (captured 2026-09-15 from this module run
+    // against the pristine 5974673 execute.rs; log in changes-D0.md).
+    const GOLDEN_5974673_WRAP: &[u128] = &[1846174955662647757353077314356737, 761413988581469];
+    const GOLDEN_5974673_BTC_SEND: &[u128] = &[1498966328321];
+    const GOLDEN_5974673_ALKANE_SEND: &[u128] = &[472255239147725273106689];
+    const GOLDEN_5974673_SWAP_SHIFTER: &[u128] = &[
+        1846174960118207572784230648449281,
+        833378897682168308980192422808059997,
+        14045608981504765505047048188759030,
+    ];
+
+    /// Protostones byte-identical to 5974673: the whole runestone with ONLY its
+    /// pointer rewritten back to the legacy 0 must encode to exactly the bytes
+    /// the unfixed builder produced.
+    fn assert_protostones_unchanged(name: &str, b: &Built, golden: &[u128]) {
+        assert_eq!(b.protocol, golden, "{name}: protostone encoding changed vs 5974673");
+        let legacy = ordinals::Runestone {
+            protocol: Some(golden.to_vec()),
+            pointer: Some(0),
+            ..Default::default()
+        }
+        .encipher();
+        let op_return = b.tx.output.iter().find(|o| o.script_pubkey.is_op_return()).unwrap();
+        let Some(ordinals::Artifact::Runestone(mut rs)) = ordinals::Runestone::decipher(&b.tx) else { unreachable!() };
+        rs.pointer = Some(0);
+        assert_eq!(rs.encipher(), legacy, "{name}: runestone differs from 5974673 in more than the pointer");
+        assert_ne!(op_return.script_pubkey, legacy, "{name}: sanity, the pointer really moved");
+    }
+
+    /// (a) frBTC wrap, `useWrapMutation.ts:180` shape: output 0 = signer.
+    #[tokio::test]
+    async fn wrap_runestone_pointer_is_the_users_alkanes_change_not_the_signer() {
+        let mut mock = MockProvider::new(Network::Regtest);
+        let w = setup(&mut mock);
+        let signer = w.foreign_a.to_string();
+        let p = params(&w, vec![signer, w.user_taproot.to_string()], "B:100000:v0", "[32,0,77]:v1:v1", false);
+        let b = build(&mut mock, p).await;
+        print_golden("wrap", &b);
+        assert_eq!(owner(&w, &b.tx, 0), "FOREIGN", "sanity: output 0 is the frBTC signer");
+        assert_eq!(b.pointer, Some(1), "unallocated runes must go to v1 (user alkanes change), got {:?}", b.pointer);
+        assert_eq!(owner(&w, &b.tx, b.pointer.unwrap()), "user-alkanes-change");
+        assert_protostones_unchanged("wrap", &b, GOLDEN_5974673_WRAP);
+    }
+
+    /// (b) plain BTC send, `useBtcSendMutation.ts:413` shape: output 0 = recipient.
+    #[tokio::test]
+    async fn btc_send_runestone_pointer_is_the_users_alkanes_change_not_the_recipient() {
+        let mut mock = MockProvider::new(Network::Regtest);
+        let w = setup(&mut mock);
+        let recipient = w.foreign_a.to_string();
+        let p = params(&w, vec![recipient, w.user_taproot.to_string()], "B:50000:v0,B:546:v1", "v1:v1", true);
+        let b = build(&mut mock, p).await;
+        print_golden("btc_send", &b);
+        assert_eq!(owner(&w, &b.tx, 0), "FOREIGN", "sanity: output 0 is the BTC recipient");
+        assert_eq!(b.pointer, Some(1), "unallocated runes must go to v1 (user alkanes change), got {:?}", b.pointer);
+        assert_eq!(owner(&w, &b.tx, b.pointer.unwrap()), "user-alkanes-change");
+        assert_protostones_unchanged("btc_send", &b, GOLDEN_5974673_BTC_SEND);
+    }
+
+    /// (c) alkane send: recipient first, the edict pays v0, leftovers to v1.
+    #[tokio::test]
+    async fn alkane_send_runestone_pointer_is_the_users_alkanes_change_not_the_recipient() {
+        let mut mock = MockProvider::new(Network::Regtest);
+        let w = setup(&mut mock);
+        let recipient = w.foreign_a.to_string();
+        let p = params(&w, vec![recipient, w.user_taproot.to_string()], "B:546:v0,B:546:v1", "[2:1:100:v0]:v1:v1", true);
+        let b = build(&mut mock, p).await;
+        print_golden("alkane_send", &b);
+        assert_eq!(owner(&w, &b.tx, 0), "FOREIGN", "sanity: output 0 is the alkane recipient");
+        assert_eq!(b.pointer, Some(1), "unallocated runes must go to v1 (user alkanes change), got {:?}", b.pointer);
+        assert_eq!(owner(&w, &b.tx, b.pointer.unwrap()), "user-alkanes-change");
+        assert_protostones_unchanged("alkane_send", &b, GOLDEN_5974673_ALKANE_SEND);
+    }
+
+    /// No `to` output is the user's: the BTC-change placeholder is the only user
+    /// output, so it becomes the pointer and is pinned (never dropped).
+    #[tokio::test]
+    async fn only_btc_change_is_users_pointer_names_the_change_output() {
+        let mut mock = MockProvider::new(Network::Regtest);
+        let w = setup(&mut mock);
+        let p = params(&w, vec![w.foreign_a.to_string()], "B:50000:v0", "v0:v0", true);
+        let b = build(&mut mock, p).await;
+        assert_eq!(owner(&w, &b.tx, 0), "FOREIGN");
+        assert_eq!(b.pointer, Some(1));
+        assert_eq!(owner(&w, &b.tx, 1), "user-btc-change");
+    }
+
+    /// When output 0 IS the user's alkanes change, it stays 0 (swap-shifter
+    /// shape: v0 = user alkanes change, v1 = frBTC signer).
+    #[tokio::test]
+    async fn swap_shifter_keeps_pointer_zero_when_v0_is_the_users_alkanes_change() {
+        let mut mock = MockProvider::new(Network::Regtest);
+        let w = setup(&mut mock);
+        let signer = w.foreign_a.to_string();
+        let p = params(
+            &w,
+            vec![w.user_taproot.to_string(), signer],
+            "B:10000:v1",
+            "[2:1:100:p1]:v0,[4,65498,13,2,2,1,32,0,100,95,1000]:v0:v0",
+            false,
+        );
+        let b = build(&mut mock, p).await;
+        print_golden("swap_shifter", &b);
+        assert_eq!(b.protocol, GOLDEN_5974673_SWAP_SHIFTER, "swap_shifter: protostone encoding changed vs 5974673");
+        assert_eq!(b.pointer, Some(0));
+        assert_eq!(owner(&w, &b.tx, 0), "user-alkanes-change");
+    }
+}
+
+#[cfg(test)]
+mod d0_select_runestone_pointer_tests {
+    //! D0 (2026-09-15): the pure pointer selector. Scripts are derived from
+    //! per-run random keys.
+    use super::*;
+    use bitcoin::key::Secp256k1;
+    use bitcoin::{Amount, Network};
+
+    fn spk() -> ScriptBuf {
+        let secp = Secp256k1::new();
+        let (_sk, pk) = secp.generate_keypair(&mut rand::thread_rng());
+        Address::p2tr(&secp, pk.x_only_public_key().0, None, Network::Regtest).script_pubkey()
+    }
+    fn out(s: &ScriptBuf) -> TxOut {
+        TxOut { value: Amount::from_sat(546), script_pubkey: s.clone() }
+    }
+
+    #[test]
+    fn prefers_alkanes_change_over_everything_including_v0_foreign() {
+        let (foreign, alk, btc) = (spk(), spk(), spk());
+        let outs = [out(&foreign), out(&alk), out(&btc)];
+        assert_eq!(select_runestone_pointer(&outs, &alk, &btc, Some(2)), Some(1));
+    }
+
+    #[test]
+    fn keeps_zero_when_v0_is_the_alkanes_change() {
+        let (foreign, alk, btc) = (spk(), spk(), spk());
+        let outs = [out(&alk), out(&foreign), out(&btc)];
+        assert_eq!(select_runestone_pointer(&outs, &alk, &btc, Some(2)), Some(0));
+    }
+
+    #[test]
+    fn non_droppable_btc_change_beats_the_droppable_placeholder() {
+        let (foreign, alk, btc) = (spk(), spk(), spk());
+        // alkanes change appears only as the droppable placeholder (alk == btc
+        // addresses collapsed): a stable user output is preferred.
+        let outs = [out(&foreign), out(&btc), out(&alk)];
+        assert_eq!(select_runestone_pointer(&outs, &alk, &btc, Some(2)), Some(1));
+    }
+
+    #[test]
+    fn falls_back_to_the_btc_change_placeholder_when_it_is_the_only_user_output() {
+        let (foreign, alk, btc) = (spk(), spk(), spk());
+        let outs = [out(&foreign), out(&btc)];
+        assert_eq!(select_runestone_pointer(&outs, &alk, &btc, Some(1)), Some(1));
+    }
+
+    #[test]
+    fn none_when_no_output_is_the_users() {
+        let (f1, f2, alk, btc) = (spk(), spk(), spk(), spk());
+        let outs = [out(&f1), out(&f2)];
+        assert_eq!(select_runestone_pointer(&outs, &alk, &btc, None), None);
+    }
+
+    #[test]
+    fn never_selects_an_op_return_even_if_scripts_collide() {
+        let op_return = ScriptBuf::new_op_return([1u8, 2, 3]);
+        let foreign = spk();
+        let outs = [out(&foreign), TxOut { value: Amount::ZERO, script_pubkey: op_return.clone() }];
+        assert_eq!(select_runestone_pointer(&outs, &op_return, &op_return, None), None);
+    }
+
+    /// The executor refuses a pointer that is not a physical output rather than
+    /// emitting a runestone ord would treat as a cenotaph.
+    #[test]
+    fn construct_rejects_out_of_range_pointer() {
+        let mut provider = crate::mock_provider::MockProvider::new(Network::Regtest);
+        let executor = EnhancedAlkanesExecutor::new(&mut provider);
+        let specs = crate::alkanes::parsing::parse_protostones("[3,797,101]:v0:v0").unwrap();
+        assert!(executor.construct_runestone_script(&specs, 2, 2, false).is_err());
+        assert!(executor.construct_runestone_script(&specs, 2, 1, false).is_ok());
+    }
+
+    /// When the pointer names the placeholder, `build_single_transaction`
+    /// passes `droppable_change_index = None`. The placeholder, and with it the
+    /// pointer's target, then cannot be removed from under the runestone.
+    #[test]
+    fn drop_is_disabled_only_when_the_pointer_names_the_placeholder() {
+        assert_eq!(pin_pointed_change(Some(2), 1), Some(2));
+        assert_eq!(pin_pointed_change(Some(1), 1), None);
+        assert_eq!(pin_pointed_change(None, 0), None);
     }
 }
