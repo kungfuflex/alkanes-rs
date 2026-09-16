@@ -8939,3 +8939,280 @@ mod d0_select_runestone_pointer_tests {
         assert_eq!(pin_pointed_change(None, 0), None);
     }
 }
+
+#[cfg(test)]
+mod d0b_excluded_utxos_invariant_tests {
+    //! PORTED 2026-09-16 from erickdelgado-48's 40288cc1a (D0b) as a VERIFICATION of this branch's
+    //! #308 item 1 (exclusions re-applied to the final candidate set). The seven behavioural tests are
+    //! taken verbatim; `drop_caller_excluded_removes_only_the_excluded_outpoints` is not, because it
+    //! unit-tests D0b's own helper, which this branch does not have.
+    //! D0b (2026-09-15), review A1c finding C2: `excluded_utxos` holds for
+    //! EVERY candidate source, including mempool outputs that
+    //! `apply_mempool_adjustment` appends after the early confirmed-set filter.
+    //!
+    //! The scenario comes from the app. An incoming inscription or rune transfer
+    //! pays the wallet and is still unconfirmed. The app's spend guard puts it
+    //! in `excluded_utxos`. Confirmed clean BTC is short, so the selector goes
+    //! looking for more. It must fail rather than spend the excluded output.
+    //!
+    //! Keys, addresses and txids are random per run.
+    use super::*;
+    use crate::alkanes::parsing::{parse_input_requirements, parse_protostones};
+    use crate::alkanes::types::{PrefetchedAlkane, PrefetchedUtxo};
+    use crate::mock_provider::MockProvider;
+    use bitcoin::key::Secp256k1;
+    use bitcoin::{Amount, Network};
+
+    fn random_txid() -> bitcoin::Txid {
+        let mut id = [0u8; 32];
+        rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut id);
+        bitcoin::Txid::from_byte_array(id)
+    }
+
+    /// Standard-bitcoin mode (the mempool adjustment is skipped on qubitcoin),
+    /// with a fresh taproot key.
+    fn wallet(mock: &mut MockProvider) -> Address {
+        let secp = Secp256k1::new();
+        let (sk, pk) = secp.generate_keypair(&mut rand::thread_rng());
+        mock.set_keypair(sk, bitcoin::PublicKey::new(pk));
+        mock.qubitcoin_mode = false;
+        Address::p2tr(&secp, pk.x_only_public_key().0, None, Network::Regtest)
+    }
+
+    fn foreign_address() -> Address {
+        let secp = Secp256k1::new();
+        let (_sk, pk) = secp.generate_keypair(&mut rand::thread_rng());
+        Address::p2tr(&secp, pk.x_only_public_key().0, None, Network::Regtest)
+    }
+
+    fn push_confirmed(mock: &MockProvider, addr: &Address, sats: u64) -> OutPoint {
+        let op = OutPoint::new(random_txid(), 0);
+        mock.utxos.lock().unwrap().push((
+            op,
+            TxOut { value: Amount::from_sat(sats), script_pubkey: addr.script_pubkey() },
+        ));
+        op
+    }
+
+    /// An unconfirmed INCOMING payment: a foreign input, and vout 0 pays
+    /// `addr`. This is exactly the shape the esplora `txs/mempool` view hands
+    /// to `apply_mempool_adjustment`.
+    fn push_mempool_payment(mock: &MockProvider, addr: &Address, sats: u64) -> OutPoint {
+        let txid = random_txid();
+        mock.mempool_txs.lock().unwrap().push(serde_json::json!({
+            "txid": txid.to_string(),
+            "vin": [{ "txid": random_txid().to_string(), "vout": 0 }],
+            "vout": [{ "scriptpubkey_address": addr.to_string(), "value": sats }],
+        }));
+        OutPoint::new(txid, 0)
+    }
+
+    fn prefetched(op: &OutPoint, addr: &Address, sats: u64, alkanes: Vec<(u128, u128, u128)>) -> PrefetchedUtxo {
+        PrefetchedUtxo {
+            outpoint: op.to_string(),
+            value: sats,
+            script_pubkey_hex: hex::encode(addr.script_pubkey().as_bytes()),
+            alkanes: Some(
+                alkanes
+                    .into_iter()
+                    .map(|(block, tx, amount)| PrefetchedAlkane { block, tx, amount: amount.to_string() })
+                    .collect(),
+            ),
+            required: false, // field added on this branch after D0b was written
+        }
+    }
+
+    async fn select(
+        mock: &mut MockProvider,
+        reqs: Vec<InputRequirement>,
+        addr: &Address,
+        prefetched: &[PrefetchedUtxo],
+        excluded: &[OutPoint],
+    ) -> Result<UtxoSelectionResult> {
+        let excluded: Vec<String> = excluded.iter().map(|o| o.to_string()).collect();
+        let mut executor = EnhancedAlkanesExecutor::new(mock);
+        executor
+            .select_utxos(&reqs, &Some(vec![addr.to_string()]), &[], None, prefetched, &excluded, UtxoDataSource::Metashrew)
+            .await
+    }
+
+    fn assert_short_by_btc(res: &Result<UtxoSelectionResult>, expected_collected: u64) {
+        match res {
+            Err(AlkanesError::InsufficientBitcoin { collected, .. }) => assert_eq!(
+                *collected, expected_collected,
+                "only the confirmed BTC may be counted; the excluded mempool output must not be"
+            ),
+            Err(e) => panic!("expected InsufficientBitcoin, got {e}"),
+            Ok(sel) => panic!("C2: selection succeeded with {:?}; it must refuse instead", sel.outpoints),
+        }
+    }
+
+    // ── RED for C2 ───────────────────────────────────────────────────────
+
+    /// BTC-only loop: 3 000 confirmed and 5 000 needed. The excluded 50 000-sat
+    /// mempool output would cover the gap, so it is exactly the input C2 spent.
+    #[tokio::test]
+    async fn excluded_mempool_output_is_never_selected_even_when_confirmed_btc_is_short() {
+        let mut mock = MockProvider::new(Network::Regtest);
+        let addr = wallet(&mut mock);
+        push_confirmed(&mock, &addr, 3_000);
+        let incoming = push_mempool_payment(&mock, &addr, 50_000);
+
+        let res = select(&mut mock, vec![InputRequirement::Bitcoin { amount: 5_000 }], &addr, &[], &[incoming]).await;
+        assert_short_by_btc(&res, 3_000);
+    }
+
+    /// Alkane branch: its "no balance data" arm takes any candidate while BTC
+    /// is short. The excluded mempool output must not reach that arm.
+    #[tokio::test]
+    async fn excluded_mempool_output_is_never_selected_on_the_alkane_branch() {
+        let mut mock = MockProvider::new(Network::Regtest);
+        let addr = wallet(&mut mock);
+        let carrier = push_confirmed(&mock, &addr, 546);
+        mock.alkane_balances.lock().unwrap().insert(carrier.to_string(), vec![(32, 0, 1_000)]);
+        push_confirmed(&mock, &addr, 2_000);
+        let incoming = push_mempool_payment(&mock, &addr, 50_000);
+
+        let reqs = vec![
+            InputRequirement::Alkanes { block: 32, tx: 0, amount: 500 },
+            InputRequirement::Bitcoin { amount: 10_000 },
+        ];
+        let res = select(&mut mock, reqs, &addr, &[], &[incoming]).await;
+        assert_short_by_btc(&res, 2_546);
+    }
+
+    /// Prefetched assertions never override an exclusion. Here the caller's
+    /// snapshot asserts that the excluded mempool output is clean
+    /// (`Some(vec![])`), and the BTC-only loop runs.
+    #[tokio::test]
+    async fn excluded_prefetched_clean_mempool_output_is_never_selected() {
+        let mut mock = MockProvider::new(Network::Regtest);
+        let addr = wallet(&mut mock);
+        push_confirmed(&mock, &addr, 3_000);
+        let incoming = push_mempool_payment(&mock, &addr, 50_000);
+        let pre = [prefetched(&incoming, &addr, 50_000, vec![])];
+        let res = select(&mut mock, vec![InputRequirement::Bitcoin { amount: 5_000 }], &addr, &pre, &[incoming]).await;
+        assert_short_by_btc(&res, 3_000);
+
+    }
+
+    /// The caller's snapshot asserts that the excluded mempool output carries
+    /// the NEEDED alkane. Primary discovery would believe it, so the alkane
+    /// loop must still refuse to take it.
+    #[tokio::test]
+    async fn excluded_prefetched_alkane_carrier_in_mempool_is_never_selected() {
+        let mut mock = MockProvider::new(Network::Regtest);
+        let addr = wallet(&mut mock);
+        push_confirmed(&mock, &addr, 20_000);
+        let incoming = push_mempool_payment(&mock, &addr, 546);
+        let pre = [prefetched(&incoming, &addr, 546, vec![(32, 0, 1_000)])];
+        let reqs = vec![InputRequirement::Alkanes { block: 32, tx: 0, amount: 500 }];
+        match select(&mut mock, reqs, &addr, &pre, &[incoming]).await {
+            Err(AlkanesError::Wallet(msg)) => assert!(msg.contains("Insufficient alkanes"), "got: {msg}"),
+            other => panic!("C2: an excluded mempool carrier must never satisfy an alkane ask, got {:?}", other.map(|s| s.outpoints)),
+        }
+
+    }
+
+    /// An excluded CONFIRMED carrier with the same assertion. The pre-existing
+    /// early filter already covers this. It is pinned here so the invariant
+    /// test names every source.
+    #[tokio::test]
+    async fn excluded_prefetched_confirmed_carrier_is_never_selected() {
+        let mut mock = MockProvider::new(Network::Regtest);
+        let addr = wallet(&mut mock);
+        let locked = push_confirmed(&mock, &addr, 546);
+        let pre = [prefetched(&locked, &addr, 546, vec![(32, 0, 1_000)])];
+        let reqs = vec![InputRequirement::Alkanes { block: 32, tx: 0, amount: 500 }];
+        assert!(select(&mut mock, reqs, &addr, &pre, &[locked]).await.is_err());
+    }
+
+    /// End to end through `build_single_transaction`. An app-shaped BTC send
+    /// with `excluded_utxos` set on the params must refuse to build rather than
+    /// put the excluded mempool output in the PSBT. The control run without the
+    /// exclusion shows the same wallet builds by spending that output.
+    #[tokio::test]
+    async fn build_single_transaction_never_spends_an_excluded_mempool_output() {
+        async fn run(exclude: bool) -> (OutPoint, Result<ExecutionState>) {
+            let mut mock = MockProvider::new(Network::Regtest);
+            let addr = wallet(&mut mock);
+            push_confirmed(&mock, &addr, 10_000);
+            let incoming = push_mempool_payment(&mock, &addr, 200_000);
+            let p = EnhancedExecuteParams {
+                fee_rate: Some(2.0),
+                to_addresses: vec![foreign_address().to_string(), addr.to_string()],
+                from_addresses: Some(vec![addr.to_string()]),
+                change_address: Some(addr.to_string()),
+                alkanes_change_address: Some(addr.to_string()),
+                input_requirements: parse_input_requirements("B:50000:v0,B:546:v1").unwrap(),
+                protostones: parse_protostones("v1:v1").unwrap(),
+                envelope_data: None,
+                raw_output: false,
+                trace_enabled: false,
+                mine_enabled: false,
+                auto_confirm: false,
+                ordinals_strategy: OrdinalsStrategy::Burn,
+                mempool_indexer: false,
+                split_transactions: false,
+                split_at: None, // field added on this branch after D0b was written
+                known_pending_tx_hexes: vec![],
+                prefetched_utxos: vec![prefetched(&incoming, &addr, 200_000, vec![])],
+                excluded_utxos: if exclude { vec![incoming.to_string()] } else { vec![] },
+                skip_diesel_mint: true,
+                max_indexed_height: None,
+                utxo_source: UtxoDataSource::Metashrew,
+            };
+            let mut executor = EnhancedAlkanesExecutor::new(&mut mock);
+            let res = executor.build_single_transaction(&p).await;
+            (incoming, res)
+        }
+
+        let (incoming, res) = run(true).await;
+        match res {
+            Err(AlkanesError::InsufficientBitcoin { .. }) => {}
+            Err(e) => panic!("expected InsufficientBitcoin, got {e}"),
+            Ok(ExecutionState::ReadyToSign(r)) => {
+                let spent = r.psbt.unsigned_tx.input.iter().any(|i| i.previous_output == incoming);
+                panic!("C2: built a tx (spends excluded mempool output: {spent})");
+            }
+            Ok(_) => panic!("C2: build succeeded; it must refuse"),
+        }
+
+        let (incoming, res) = run(false).await;
+        let Ok(ExecutionState::ReadyToSign(r)) = res else { panic!("control: the build must succeed without the exclusion") };
+        assert!(
+            r.psbt.unsigned_tx.input.iter().any(|i| i.previous_output == incoming),
+            "control: without the exclusion the pending output funds the send"
+        );
+    }
+
+    // ── no regression: the pending-output fallback still works ──────────
+
+    #[tokio::test]
+    async fn non_excluded_mempool_outputs_still_fund_selection() {
+        // BTC-only loop, with an UNRELATED exclusion present.
+        let mut mock = MockProvider::new(Network::Regtest);
+        let addr = wallet(&mut mock);
+        push_confirmed(&mock, &addr, 3_000);
+        let incoming = push_mempool_payment(&mock, &addr, 50_000);
+        let unrelated = OutPoint::new(random_txid(), 7);
+        let sel = select(&mut mock, vec![InputRequirement::Bitcoin { amount: 5_000 }], &addr, &[], &[unrelated])
+            .await
+            .expect("a non-excluded pending output must still fund the ask");
+        assert!(sel.outpoints.contains(&incoming));
+
+        // Alkane branch.
+        let mut mock = MockProvider::new(Network::Regtest);
+        let addr = wallet(&mut mock);
+        let carrier = push_confirmed(&mock, &addr, 546);
+        mock.alkane_balances.lock().unwrap().insert(carrier.to_string(), vec![(32, 0, 1_000)]);
+        push_confirmed(&mock, &addr, 2_000);
+        let incoming = push_mempool_payment(&mock, &addr, 50_000);
+        let reqs = vec![
+            InputRequirement::Alkanes { block: 32, tx: 0, amount: 500 },
+            InputRequirement::Bitcoin { amount: 10_000 },
+        ];
+        let sel = select(&mut mock, reqs, &addr, &[], &[]).await.expect("pending output funds the alkane-branch ask");
+        assert!(sel.outpoints.contains(&incoming) && sel.outpoints.contains(&carrier));
+    }
+}
