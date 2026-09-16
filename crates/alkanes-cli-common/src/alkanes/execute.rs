@@ -3878,6 +3878,10 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                         .get_protorunes_by_outpoint(&txid_str, outpoint.vout, None, 1)
                         .await
                     {
+                        // An UNCONFIRMED candidate (injected from a pending tx) always probes
+                        // empty: the indexer has not seen its tx. That is not authoritative
+                        // (#308 review lane A 7), so it may fund a genuine need but never the
+                        // dust headroom. A caller assertion (the branch above) still counts.
                         Ok(response) => (
                             response
                                 .balance_sheet
@@ -3885,7 +3889,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                                 .balances
                                 .values()
                                 .any(|amt| *amt > 0),
-                            true,
+                            utxo.confirmations > 0,
                         ),
                         // Unverifiable — keep the pre-existing behavior (select),
                         // but mark it so the dust headroom won't reach for it.
@@ -7987,6 +7991,120 @@ mod dust_change_tests {
              bitcoin_needed are permitted — the rest would be headroom reaching \
              for UTXOs that may be carrying someone's tokens",
         );
+    }
+
+    /// #308 review lane A 7: an output INJECTED from a pending tx probes "clean" only because
+    /// the indexer has not seen its tx yet — that is absence of information, not an all-clear.
+    /// Such an output may be spent when BTC is genuinely NEEDED, never pulled in for the dust
+    /// headroom. (Script matching made the injection reach regtest/testnet/signet too.)
+    #[tokio::test]
+    async fn headroom_never_reaches_for_unconfirmed_injected_outputs() {
+        let mut mock = MockProvider::new(bitcoin::Network::Regtest);
+        let secp = Secp256k1::new();
+        let (sk, pk) = secp.generate_keypair(&mut rand::thread_rng());
+        let (xonly, _) = pk.x_only_public_key();
+        let addr = Address::p2tr(&secp, xonly, None, bitcoin::Network::Regtest);
+        mock.set_keypair(sk, bitcoin::PublicKey::new(pk));
+        mock.qubitcoin_mode = false;
+        let script = addr.script_pubkey();
+
+        // Confirmed: exactly enough for the requirement.
+        {
+            let mut utxos = mock.utxos.lock().unwrap();
+            utxos.push((OutPoint::new(txid_n(0x91), 0), TxOut { value: Amount::from_sat(5_000), script_pubkey: script.clone() }));
+        }
+        // Pending: a tx paying the wallet four 2 000-sat outputs.
+        let pending = bitcoin::Transaction {
+            version: bitcoin::transaction::Version::TWO,
+            lock_time: bitcoin::absolute::LockTime::ZERO,
+            input: vec![bitcoin::TxIn {
+                previous_output: OutPoint::new(txid_n(0x92), 0),
+                script_sig: bitcoin::ScriptBuf::new(),
+                sequence: bitcoin::Sequence::ENABLE_RBF_NO_LOCKTIME,
+                witness: bitcoin::Witness::new(),
+            }],
+            output: (0..4).map(|_| TxOut { value: Amount::from_sat(2_000), script_pubkey: script.clone() }).collect(),
+        };
+        let pending_txid = pending.compute_txid();
+        let pending_hex = bitcoin::consensus::encode::serialize_hex(&pending);
+
+        let mut executor = EnhancedAlkanesExecutor::new(&mut mock);
+        let result = executor
+            .select_utxos_with_headroom(
+                &[InputRequirement::Bitcoin { amount: 3_000 }],
+                &Some(vec![addr.to_string()]),
+                &[pending_hex], None, &[], &[],
+                UtxoDataSource::Metashrew,
+                BtcHeadroom::new(DUST_LIMIT, 50.0),
+            )
+            .await
+            .expect("the confirmed UTXO alone meets the requirement");
+
+        let from_pending = result.outpoints.iter().filter(|op| op.txid == pending_txid).count();
+        assert_eq!(
+            from_pending, 0,
+            "took {from_pending} unconfirmed injected outputs purely as headroom; their clean status is unknown until their tx is indexed",
+        );
+    }
+
+    /// Same scenario through the ALKANE-branch loop (an alkane requirement present). This one
+    /// is a REGRESSION GUARD, not a red test: it passed before the lane A 7 fix. In this loop
+    /// an empty sheet never creates a `utxo_balances` entry (both the prefetched and RPC probe
+    /// paths insert only non-empty sheets), so an unconfirmed injected output lands in the
+    /// "no balance data" branch, which already refuses the headroom. A change that made empty
+    /// sheets create entries would reopen the path; this test is what would catch it.
+    #[tokio::test]
+    async fn headroom_never_reaches_for_unconfirmed_injected_outputs_with_an_alkane_requirement() {
+        let mut mock = MockProvider::new(bitcoin::Network::Regtest);
+        let secp = Secp256k1::new();
+        let (sk, pk) = secp.generate_keypair(&mut rand::thread_rng());
+        let (xonly, _) = pk.x_only_public_key();
+        let addr = Address::p2tr(&secp, xonly, None, bitcoin::Network::Regtest);
+        mock.set_keypair(sk, bitcoin::PublicKey::new(pk));
+        mock.qubitcoin_mode = false;
+        let script = addr.script_pubkey();
+
+        let carrier = OutPoint::new(txid_n(0xa7), 0);
+        {
+            let mut utxos = mock.utxos.lock().unwrap();
+            utxos.push((carrier, TxOut { value: Amount::from_sat(546), script_pubkey: script.clone() }));
+            utxos.push((OutPoint::new(txid_n(0xa8), 0), TxOut { value: Amount::from_sat(5_000), script_pubkey: script.clone() }));
+        }
+        mock.alkane_balances.lock().unwrap().insert(format!("{}:0", txid_n(0xa7)), vec![(32, 0, 1_000)]);
+        mock.alkane_balances.lock().unwrap().insert(format!("{}:0", txid_n(0xa8)), vec![]);
+        let pending = bitcoin::Transaction {
+            version: bitcoin::transaction::Version::TWO,
+            lock_time: bitcoin::absolute::LockTime::ZERO,
+            input: vec![bitcoin::TxIn {
+                previous_output: OutPoint::new(txid_n(0xa9), 0),
+                script_sig: bitcoin::ScriptBuf::new(),
+                sequence: bitcoin::Sequence::ENABLE_RBF_NO_LOCKTIME,
+                witness: bitcoin::Witness::new(),
+            }],
+            output: (0..4).map(|_| TxOut { value: Amount::from_sat(2_000), script_pubkey: script.clone() }).collect(),
+        };
+        let pending_txid = pending.compute_txid();
+        // The indexer answers "no balances" for the pending outputs too — exactly what an
+        // unindexed tx looks like. Only their confirmation status tells them apart.
+        for v in 0..4u32 {
+            mock.alkane_balances.lock().unwrap().insert(format!("{}:{}", pending_txid, v), vec![]);
+        }
+        let pending_hex = bitcoin::consensus::encode::serialize_hex(&pending);
+
+        let mut executor = EnhancedAlkanesExecutor::new(&mut mock);
+        let result = executor
+            .select_utxos_with_headroom(
+                &[InputRequirement::Alkanes { block: 32, tx: 0, amount: 1_000 }, InputRequirement::Bitcoin { amount: 3_000 }],
+                &Some(vec![addr.to_string()]),
+                &[pending_hex], None, &[], &[],
+                UtxoDataSource::Metashrew,
+                BtcHeadroom::new(DUST_LIMIT, 50.0),
+            )
+            .await
+            .expect("carrier + the confirmed UTXO meet the requirement");
+
+        let from_pending = result.outpoints.iter().filter(|op| op.txid == pending_txid).count();
+        assert_eq!(from_pending, 0, "took {from_pending} unconfirmed injected outputs as headroom in the alkane branch");
     }
 
     // ── build: sub-dust change goes to the fee, not to an output ────────
