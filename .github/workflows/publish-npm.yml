@@ -109,7 +109,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-wasm-
 
-      # Pinned to WASM_PACK_VERSION (2026-09-16, #308 review lane D). The installer
+      # Pinned to WASM_PACK_VERSION (2026-09-16). The installer
       # script this replaced always fetched the LATEST wasm-pack, so the env var above
       # was declared and never used and the publish toolchain was unpinned, contrary to
       # the reproducibility this file asks for (#286). The release asset URL for the

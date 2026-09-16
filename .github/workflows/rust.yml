@@ -19,18 +19,29 @@ jobs:
     strategy:
       matrix:
         test-config:
-          # 🔴 KNOWN RED ON develop, NOT FIXED HERE (2026-09-16, #308 review lane D). Every
-          # run of this leg on develop fails before a test compiles. Checked locally on the
-          # pinned rustc 1.86.0, and each fix exposed the next failure:
+          # 🔴 KNOWN RED ON develop, NOT FIXED HERE (2026-09-16). The command is unchanged; this PR
+          # only fixes the tool pins. Every develop run of this leg fails before a test compiles.
+          # Checked locally on the pinned rustc 1.86.0 (rust-toolchain.toml); each workaround
+          # exposed the next failure:
           #   1. the whole workspace: wasmtime 43 (alkanes-integ-tests, vendor/qubitcoin-indexer,
-          #      vendor/qubitcoin-indexer-fork) requires rustc 1.91; excluding those three,
-          #      rcgen 0.14.8 (vendor/tlsfetch-h2-client, via alkanes-cli-sys) requires 1.88;
-          #   2. `-p alkanes -p alkanes-web-sys -p protorune -p tlsfetch-transport`: tokio is
-          #      unified with features wasm32 rejects;
-          #   3. `-p alkanes -p alkanes-web-sys -p protorune`: rustls fails on wasm32 (ring
-          #      SystemRandom / UnixTime::now unavailable).
-          # The real fix is a toolchain bump or feature-gating the native deps. Both touch what
-          # the consensus wasm is built with, so that is an owner decision, not a CI tweak.
+          #      vendor/qubitcoin-indexer-fork) needs rustc 1.91; with those excluded, rcgen 0.14.8
+          #      (vendor/tlsfetch-h2-client, reached via alkanes-cli-sys) needs 1.88;
+          #   2. `-p alkanes -p alkanes-web-sys -p protorune -p tlsfetch-transport`: tokio gets
+          #      features wasm32 rejects (unified from tlsfetch-transport's dev-dependencies);
+          #   3. `-p alkanes -p alkanes-web-sys -p protorune`: rustls fails on wasm32. It arrives
+          #      through protorune's dev-dependency on the NATIVE tool crate wasm-bindgen-cli
+          #      (-> ureq -> rustls -> ring), which has no business in a wasm32 test build.
+          # Last green run of this same command: branch tmp_gate, 2026-09-01. That tree has NO
+          # rust-toolchain.toml channel pin (so CI used current stable), no alkanes-integ-tests or
+          # tlsfetch-h2-client, and no wasm-bindgen-cli dev-dependency in protorune. Options, for the owner (see the PR description):
+          #   A. bump rust-toolchain.toml. Changes the compiler for EVERY crate, including the
+          #      consensus wasm (alkanes / protorune -> alkanes.wasm) and its reproducible BuildInfo.
+          #   B. override the toolchain for this CI leg only. The consensus build is untouched, but
+          #      tests would run under a different compiler than the shipped wasm.
+          #   C. scope the leg: exclude or feature-gate the native crates, and move protorune's
+          #      wasm-bindgen-cli dev-dependency out. The compiler is unchanged; crate manifests
+          #      change instead. Likely needed even with A or B: failures 2-3 are not MSRV. Unverified: this tree has no
+          #      CI run with A or B.
           - name: "WASM Tests"
             command: "cargo test --target wasm32-unknown-unknown --features test-utils"
           - name: "Protorunes WASM Tests"
@@ -71,7 +82,7 @@ jobs:
       # workspace resolves, or the test runner post-processes a module built for a
       # different schema. The pin used to be hard-coded at 0.2.100 while Cargo.lock
       # moved to 0.2.125 — so the CLI and runtime silently disagreed (2026-09-16,
-      # #308 review lane D). The version is now READ FROM Cargo.lock, so a lockfile
+      # 2026-09-16). The version is now READ FROM Cargo.lock, so a lockfile
       # bump carries the CLI with it.
       #
       # It is built with `+stable`, not the workspace toolchain: the CLI is a host
