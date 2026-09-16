@@ -1612,6 +1612,9 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
 
         let mut tx_a_params = params.clone();
         tx_a_params.split_transactions = false;
+        // Each half is ONE transaction. Leaving split_at set makes split_boundary refuse the
+        // half ("split_at without split_transactions") before Tx A is built (lane D e2e, 2026-09-16).
+        tx_a_params.split_at = None;
         tx_a_params.fee_rate = Some(parent_rate);
 
         // The wrap protostone's pointer typically targets p1 (forward to the
@@ -1689,6 +1692,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
 
         let mut tx_b_params = params.clone();
         tx_b_params.split_transactions = false;
+        tx_b_params.split_at = None;
         tx_b_params.fee_rate = Some(child_rate);
         tx_b_params.protostones = tx_b_stones;
         let tx_a_hex = tx_a_result.reveal_tx_hex.clone().ok_or_else(|| {
@@ -1771,6 +1775,9 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
 
         let mut tx_a_params = params.clone();
         tx_a_params.split_transactions = false;
+        // Each half is ONE transaction. Leaving split_at set makes split_boundary refuse the
+        // half ("split_at without split_transactions") before Tx A is built (lane D e2e, 2026-09-16).
+        tx_a_params.split_at = None;
         tx_a_params.fee_rate = Some(parent_rate);
 
         tx_a_params.protostones = tx_a_stones;
@@ -1832,6 +1839,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
 
         let mut tx_b_params = params.clone();
         tx_b_params.split_transactions = false;
+        tx_b_params.split_at = None;
         tx_b_params.fee_rate = Some(child_rate);
         tx_b_params.protostones = tx_b_stones;
         require_split_carrier(&mut tx_b_params, &tx_a_hex, &params)?;
@@ -6023,6 +6031,69 @@ mod tests {
         short.output.truncate(1);
         let mut tx_b = original.clone();
         assert!(require_split_carrier(&mut tx_b, &bitcoin::consensus::encode::serialize_hex(&short), &original).is_err());
+    }
+
+    /// lane D (2026-09-16): the pieces above are unit-tested one by one; this drives the
+    /// whole `execute_full` → `execute_split` path on the mock provider, through real
+    /// coin selection, signing and broadcast, and checks the property the split exists
+    /// for: Tx B spends Tx A's carrier (v1) and pays the user.
+    ///
+    /// The wallet holds a SECOND clean confirmed UTXO on purpose. Without it Tx B has
+    /// nothing to spend but Tx A's outputs, so the carrier binding would pass vacuously.
+    /// With it, dropping `require_split_carrier` lets the selector fund Tx B from the
+    /// confirmed UTXO and leave the carrier behind — which is what this test must catch.
+    #[tokio::test]
+    async fn execute_split_end_to_end_tx_b_spends_tx_a_carrier() {
+        use bitcoin::key::Secp256k1;
+
+        let mut mock = MockProvider::new(Network::Regtest);
+        let secp = Secp256k1::new();
+        let (sk, pk) = secp.generate_keypair(&mut rand::thread_rng());
+        let (xonly, _) = pk.x_only_public_key();
+        let addr = bitcoin::Address::p2tr(&secp, xonly, None, Network::Regtest);
+        mock.set_keypair(sk, bitcoin::PublicKey::new(pk));
+        {
+            let mut utxos = mock.utxos.lock().unwrap();
+            for (n, sats) in [(0xe1u8, 100_000u64), (0xe2u8, 50_000u64)] {
+                utxos.push((
+                    bitcoin::OutPoint::new(bitcoin::Txid::from_str(&format!("{:02x}", n).repeat(32)).unwrap(), 0),
+                    bitcoin::TxOut { value: Amount::from_sat(sats), script_pubkey: addr.script_pubkey() },
+                ));
+            }
+        }
+
+        let first = stone(Some((4, 65522, 13)), Some(OutputTarget::Output(0)), Some(OutputTarget::Output(0)), vec![]);
+        let second = stone(Some((4, 65522, 13)), Some(OutputTarget::Output(0)), Some(OutputTarget::Output(0)), vec![]);
+        let mut params = split_params(vec![first, second], true, Some(1));
+        let a = addr.to_string();
+        params.to_addresses = vec![a.clone(), a.clone()];
+        params.from_addresses = Some(vec![a.clone()]);
+        params.change_address = Some(a.clone());
+        params.alkanes_change_address = Some(a.clone());
+        params.fee_rate = Some(2.0);
+        params.ordinals_strategy = OrdinalsStrategy::Burn;
+
+        let result = {
+            let mut executor = EnhancedAlkanesExecutor::new(&mut mock);
+            executor.execute_full(params).await.expect("split execute must succeed on the mock")
+        };
+
+        let tx_a_txid = result.wrap_txid.clone().expect("a split reports Tx A's txid");
+        let broadcast = mock.broadcasted_txs.lock().unwrap().clone();
+        assert_eq!(broadcast.len(), 2, "exactly Tx A and Tx B are broadcast");
+        let decode = |txid: &str| -> bitcoin::Transaction {
+            bitcoin::consensus::encode::deserialize(&hex::decode(&broadcast[txid]).unwrap()).unwrap()
+        };
+        let tx_a = decode(&tx_a_txid);
+        let tx_b = decode(&result.reveal_txid);
+
+        assert_eq!(tx_a.output[1].script_pubkey, addr.script_pubkey(), "Tx A's carrier pays the user's own address");
+        let carrier = bitcoin::OutPoint::new(tx_a.compute_txid(), 1);
+        assert!(
+            tx_b.input.iter().any(|i| i.previous_output == carrier),
+            "Tx B must spend Tx A's carrier {carrier}; it spent {:?}",
+            tx_b.input.iter().map(|i| i.previous_output.to_string()).collect::<Vec<_>>(),
+        );
     }
 
     /// `is_wrap_protostone` must reliably distinguish frBTC/frZEC/frETH wraps
