@@ -2553,10 +2553,6 @@ var init_provider = __esm({
         if (params.mempoolIndexer !== void 0) options.mempool_indexer = params.mempoolIndexer;
         if (params.utxoSource !== void 0) options.utxo_source = params.utxoSource;
         if (params.splitTransactions !== void 0) options.split_transactions = params.splitTransactions;
-        if (params.splitAt !== void 0) options.split_at = params.splitAt;
-        if (params.excludedUtxos !== void 0) options.excluded_utxos = params.excludedUtxos;
-        if (params.prefetchedUtxos !== void 0) options.prefetched_utxos = params.prefetchedUtxos;
-        if (params.knownPendingTxHexes !== void 0) options.known_pending_tx_hexes = params.knownPendingTxHexes;
         const optionsJson = Object.keys(options).length > 0 ? JSON.stringify(options) : null;
         const result = await provider.alkanesExecuteFull(
           JSON.stringify(toAddresses),

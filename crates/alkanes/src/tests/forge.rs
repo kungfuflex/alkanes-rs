@@ -13,7 +13,7 @@ use ordinals::Runestone;
 use protorune::protostone::Protostones;
 use protorune::test_helpers::get_address;
 use protorune::{
-    balance_sheet::load_sheet_chunked, message::MessageContext, tables::RuneTable, test_helpers as helpers,
+    balance_sheet::load_sheet, message::MessageContext, tables::RuneTable, test_helpers as helpers,
 };
 use protorune_support::balance_sheet::ProtoruneRuneId;
 use protorune_support::protostone::ProtostoneEdict;
@@ -111,7 +111,7 @@ fn test_cant_forge_edicts() -> Result<()> {
         txid: test_block.txdata[test_block.txdata.len() - 1].compute_txid(),
         vout: 0,
     };
-    let sheet = load_sheet_chunked(
+    let sheet = load_sheet(
         &RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
             .OUTPOINT_TO_RUNES
             .select(&consensus_encode(&edict_outpoint)?),

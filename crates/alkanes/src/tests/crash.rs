@@ -4,7 +4,7 @@ use alkanes_support::{cellpack::Cellpack, constants::AUTH_TOKEN_FACTORY_ID};
 use anyhow::{anyhow, Result};
 use bitcoin::OutPoint;
 use metashrew_support::{index_pointer::KeyValuePointer, utils::consensus_encode};
-use protorune::{balance_sheet::load_sheet_chunked, message::MessageContext, tables::RuneTable};
+use protorune::{balance_sheet::load_sheet, message::MessageContext, tables::RuneTable};
 use protorune_support::balance_sheet::BalanceSheetOperations;
 
 use crate::index_block;
@@ -80,7 +80,7 @@ fn test_owned_token_mint_crash() -> Result<()> {
     println!("STEP 3: Got outpoint: {:?}", outpoint);
 
     println!("STEP 4: Loading initial balance sheet...");
-    let sheet = load_sheet_chunked(
+    let sheet = load_sheet(
         &RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
             .OUTPOINT_TO_RUNES
             .select(&consensus_encode(&outpoint)?),
@@ -116,7 +116,7 @@ fn test_owned_token_mint_crash() -> Result<()> {
         txid: mint_tx.compute_txid(),
         vout: 0,
     };
-    let mint_sheet = load_sheet_chunked(
+    let mint_sheet = load_sheet(
         &RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
             .OUTPOINT_TO_RUNES
             .select(&consensus_encode(&mint_outpoint)?),

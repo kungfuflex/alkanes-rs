@@ -26,7 +26,7 @@ use metashrew_core::{
 use metashrew_support::index_pointer::KeyValuePointer;
 use protorune::test_helpers::{create_block_with_coinbase_tx, create_coinbase_transaction};
 use protorune::view::protorune_outpoint_to_outpoint_response;
-use protorune::{balance_sheet::load_sheet_chunked, message::MessageContext, tables::RuneTable};
+use protorune::{balance_sheet::load_sheet, message::MessageContext, tables::RuneTable};
 use protorune_support::balance_sheet::{BalanceSheet, BalanceSheetOperations, ProtoruneRuneId};
 use protorune_support::protostone::Protostone;
 use protorune_support::utils::consensus_encode;
@@ -110,12 +110,12 @@ fn upgrade() -> Result<OutPoint> {
     let new_ptr = RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
         .OUTPOINT_TO_RUNES
         .select(&consensus_encode(&new_outpoint)?);
-    let new_sheet = load_sheet_chunked(&new_ptr);
+    let new_sheet = load_sheet(&new_ptr);
 
     let auth_token = ProtoruneRuneId { block: 2, tx: 1 };
     assert_eq!(new_sheet.get(&auth_token), 5);
 
-    let first_mint = load_sheet_chunked(
+    let first_mint = load_sheet(
         &RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
             .OUTPOINT_TO_RUNES
             .select(&consensus_encode(&OutPoint {
@@ -466,7 +466,7 @@ fn test_new_genesis_collect_fees() -> Result<()> {
     let new_ptr = RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
         .OUTPOINT_TO_RUNES
         .select(&consensus_encode(&new_outpoint)?);
-    let new_sheet = load_sheet_chunked(&new_ptr);
+    let new_sheet = load_sheet(&new_ptr);
 
     let genesis_id = ProtoruneRuneId { block: 2, tx: 0 };
     assert_eq!(

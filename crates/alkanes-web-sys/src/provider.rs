@@ -1124,20 +1124,19 @@ impl WebProvider {
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
 
-                // STRICT (review lane B F1): a malformed entry must not silently drop the
-                // parent hex a package child depends on.
-                let known_pending: Vec<String> =
-                    alkanes_cli_common::alkanes::types::parse_array_option(&opts, &["known_pending_tx_hexes", "knownPendingTxHexes"])
-                        .map_err(|e| JsValue::from_str(&e))?;
+                let known_pending: Vec<String> = opts.get("known_pending_tx_hexes")
+                    .or_else(|| opts.get("knownPendingTxHexes"))
+                    .and_then(|v| serde_json::from_value(v.clone()).ok())
+                    .unwrap_or_default();
 
                 // Caller-supplied per-outpoint TxOut cache. Mirrors what
                 // `provider.get_utxo()` would otherwise fetch via per-UTXO
                 // `getrawtransaction`. See PrefetchedUtxo doc for trust model.
-                // STRICT (review lane B F1): one malformed entry used to drop the whole
-                // array — including a `required` carrier — without a word.
                 let prefetched: Vec<alkanes_cli_common::alkanes::types::PrefetchedUtxo> =
-                    alkanes_cli_common::alkanes::types::parse_array_option(&opts, &["prefetched_utxos", "prefetchedUtxos"])
-                        .map_err(|e| JsValue::from_str(&e))?;
+                    opts.get("prefetched_utxos")
+                        .or_else(|| opts.get("prefetchedUtxos"))
+                        .and_then(|v| serde_json::from_value(v.clone()).ok())
+                        .unwrap_or_default();
 
                 // Indexer-aware UTXO filter. Confirmed UTXOs at heights above
                 // `max_indexed_height` are skipped because metashrew can't yet
@@ -1146,11 +1145,10 @@ impl WebProvider {
                 // Caller-locked outpoints ("txid:vout") the selector must never
                 // spend — e.g. UTXOs committed to open lending offers. See
                 // EnhancedExecuteParams::excluded_utxos.
-                // STRICT (review lane B F1): a malformed entry must never silently drop
-                // every caller exclusion (lending-offer locks among them).
-                let excluded: Vec<String> =
-                    alkanes_cli_common::alkanes::types::parse_array_option(&opts, &["excluded_utxos", "excludedUtxos"])
-                        .map_err(|e| JsValue::from_str(&e))?;
+                let excluded: Vec<String> = opts.get("excluded_utxos")
+                    .or_else(|| opts.get("excludedUtxos"))
+                    .and_then(|v| serde_json::from_value(v.clone()).ok())
+                    .unwrap_or_default();
 
                 // Opt-out of the default DIESEL mint protostone — see
                 // EnhancedExecuteParams::skip_diesel_mint.
@@ -1209,7 +1207,6 @@ impl WebProvider {
                 known_pending_tx_hexes,
                 prefetched_utxos,
                 excluded_utxos,
-                split_at: split_at_from_options(options_json.as_deref()).map_err(|e| JsValue::from_str(&e))?,
                 skip_diesel_mint,
                 max_indexed_height,
                 utxo_source,
@@ -1295,29 +1292,27 @@ impl WebProvider {
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
 
-                // STRICT (review lane B F1): a malformed entry must not silently drop the
-                // parent hex a package child depends on.
-                let known_pending: Vec<String> =
-                    alkanes_cli_common::alkanes::types::parse_array_option(&opts, &["known_pending_tx_hexes", "knownPendingTxHexes"])
-                        .map_err(|e| JsValue::from_str(&e))?;
+                let known_pending: Vec<String> = opts.get("known_pending_tx_hexes")
+                    .or_else(|| opts.get("knownPendingTxHexes"))
+                    .and_then(|v| serde_json::from_value(v.clone()).ok())
+                    .unwrap_or_default();
 
                 // Caller-supplied per-outpoint TxOut cache. See PrefetchedUtxo
                 // doc for trust model. Mirrors alkanesExecuteWithStrings.
-                // STRICT (review lane B F1): one malformed entry used to drop the whole
-                // array — including a `required` carrier — without a word.
                 let prefetched: Vec<alkanes_cli_common::alkanes::types::PrefetchedUtxo> =
-                    alkanes_cli_common::alkanes::types::parse_array_option(&opts, &["prefetched_utxos", "prefetchedUtxos"])
-                        .map_err(|e| JsValue::from_str(&e))?;
+                    opts.get("prefetched_utxos")
+                        .or_else(|| opts.get("prefetchedUtxos"))
+                        .and_then(|v| serde_json::from_value(v.clone()).ok())
+                        .unwrap_or_default();
 
                 // Indexer-aware UTXO height filter. See EnhancedExecuteParams::max_indexed_height.
                 // Caller-locked outpoints ("txid:vout") the selector must never
                 // spend — e.g. UTXOs committed to open lending offers. See
                 // EnhancedExecuteParams::excluded_utxos.
-                // STRICT (review lane B F1): a malformed entry must never silently drop
-                // every caller exclusion (lending-offer locks among them).
-                let excluded: Vec<String> =
-                    alkanes_cli_common::alkanes::types::parse_array_option(&opts, &["excluded_utxos", "excludedUtxos"])
-                        .map_err(|e| JsValue::from_str(&e))?;
+                let excluded: Vec<String> = opts.get("excluded_utxos")
+                    .or_else(|| opts.get("excludedUtxos"))
+                    .and_then(|v| serde_json::from_value(v.clone()).ok())
+                    .unwrap_or_default();
 
                 // Opt-out of the default DIESEL mint protostone — see
                 // EnhancedExecuteParams::skip_diesel_mint.
@@ -1376,7 +1371,6 @@ impl WebProvider {
                 known_pending_tx_hexes,
                 prefetched_utxos,
                 excluded_utxos,
-                split_at: split_at_from_options(options_json.as_deref()).map_err(|e| JsValue::from_str(&e))?,
                 skip_diesel_mint,
                 max_indexed_height,
                 utxo_source,
@@ -9861,7 +9855,6 @@ impl DeezelProvider for WebProvider {
                 known_pending_tx_hexes: Vec::new(),
                 prefetched_utxos: Vec::new(),
                 excluded_utxos: Vec::new(),
-                split_at: None,
                 skip_diesel_mint: false,
                 max_indexed_height: None,
                 utxo_source: Default::default(),
@@ -9908,7 +9901,6 @@ impl DeezelProvider for WebProvider {
                 known_pending_tx_hexes: Vec::new(),
                 prefetched_utxos: Vec::new(),
                 excluded_utxos: Vec::new(),
-                split_at: None,
                 skip_diesel_mint: false,
                 max_indexed_height: None,
                 utxo_source: Default::default(),
@@ -10345,15 +10337,4 @@ impl alkanes_cli_common::traits::EspoProvider for WebProvider {
         let target = self.rpc_config.get_espo_rpc_target();
         self.call(&target.url, "pizzafun.get_alkane_ids_from_series_ids", serde_json::json!({"series_ids": series_ids}), 1).await
     }
-}
-
-/// `split_at` / `splitAt` from an execute options JSON. Absent or null → `None` (legacy
-/// wrap-only split rule). A value that is present but not a non-negative integer, or two
-/// spellings that disagree, is an ERROR (2026-09-16, #308 review lane B F6) — it used to be
-/// silently ignored, turning a requested split into one transaction. The rule lives in
-/// alkanes_cli_common::alkanes::types::parse_split_at_option, where it is unit-tested.
-fn split_at_from_options(options_json: Option<&str>) -> core::result::Result<Option<usize>, String> {
-    let Some(json) = options_json else { return Ok(None) };
-    let opts: serde_json::Value = serde_json::from_str(json).map_err(|e| format!("Invalid options JSON: {}", e))?;
-    alkanes_cli_common::alkanes::types::parse_split_at_option(&opts)
 }

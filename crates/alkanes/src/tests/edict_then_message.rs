@@ -19,7 +19,7 @@ use ordinals::Runestone;
 use protorune::protostone::Protostones;
 use protorune::test_helpers::{create_block_with_coinbase_tx, get_btc_network, ADDRESS1};
 use protorune::{
-    balance_sheet::load_sheet_chunked, message::MessageContext, tables::RuneTable, test_helpers as helpers,
+    balance_sheet::load_sheet, message::MessageContext, tables::RuneTable, test_helpers as helpers,
 };
 use protorune_support::balance_sheet::ProtoruneRuneId;
 use protorune_support::protostone::{Protostone, ProtostoneEdict};
@@ -124,12 +124,12 @@ fn test_edict_to_protomessage() -> Result<()> {
         txid: test_block.txdata[test_block.txdata.len() - 1].compute_txid(),
         vout: 1,
     };
-    let edict_sheet = load_sheet_chunked(
+    let edict_sheet = load_sheet(
         &RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
             .OUTPOINT_TO_RUNES
             .select(&consensus_encode(&edict_outpoint)?),
     );
-    let sheet = load_sheet_chunked(
+    let sheet = load_sheet(
         &RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
             .OUTPOINT_TO_RUNES
             .select(&consensus_encode(&result_outpoint)?),

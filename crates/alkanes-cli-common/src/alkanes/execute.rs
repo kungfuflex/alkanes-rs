@@ -243,293 +243,6 @@ fn child_fee_rate_for_package(
 const WRAP_NAMESPACE_BLOCK: u128 = 32;
 const WRAP_OPCODE: u128 = 77;
 
-/// Output index of the carrier in a split parent (Tx A): the second
-/// `to_address`. The first is conventionally the wrap signer; for an explicit
-/// `split_at` the caller lays out `to_addresses` so v1 is its own address.
-pub const SPLIT_CARRIER_VOUT: u32 = 1;
-
-/// Where a split request divides its protostones, or `None` for a single tx.
-///
-/// Legacy (no `split_at`): only a wrap (`32:N` opcode 77) at protostones[0]
-/// splits, at 1 — exactly the gate `is_wrap_protostone` used to be.
-///
-/// Explicit `split_at = k` (2026-09-14): any request may split, with
-/// protostones[..k] in Tx A and protostones[k..] in Tx B. This is what the
-/// cross-venue route needs (shifter + OYL swap in Tx A, CryptoSwap in Tx B),
-/// which the wrap-only gate could never admit. An out-of-range `k` is an
-/// error, never a silent fall-back to one transaction — the caller split
-/// because one transaction does not fit.
-///
-/// 2026-09-16 (#308 review lane A 2 / 8, lane B F4 / F6): this is also where a split's SHAPE
-/// is refused. It runs at the execute gates, before anything is built or broadcast, so an
-/// error here costs the user nothing — the same error found after Tx A is on the network
-/// strands Tx B.
-///  - an explicit `split_at` without `split_transactions`, or with an envelope, is an error
-///    (never a silent single tx);
-///  - a split needs `to_addresses[SPLIT_CARRIER_VOUT]` to exist, or Tx B is pinned to
-///    whatever the builder emits at v1 (BTC change or the OP_RETURN);
-///  - a LEGACY wrap split refuses caller-required prefetched outpoints: Tx A is built from
-///    the same params, where a required pending carrier probes clean and can be swept into
-///    the wrap call.
-pub fn split_boundary(params: &EnhancedExecuteParams) -> Result<Option<usize>> {
-    if let Some(k) = params.split_at {
-        if !params.split_transactions {
-            return Err(AlkanesError::Other(format!(
-                "split_at={} was given without split_transactions; refusing to build one transaction instead of the requested split",
-                k
-            )));
-        }
-        if params.envelope_data.is_some() {
-            return Err(AlkanesError::Other(format!(
-                "split_at={} cannot be combined with an envelope (a deploy is always one transaction)",
-                k
-            )));
-        }
-    }
-    if !params.split_transactions || params.envelope_data.is_some() || params.protostones.is_empty() {
-        return Ok(None);
-    }
-    let boundary = match params.split_at {
-        Some(k) => {
-            if k == 0 || k >= params.protostones.len() {
-                return Err(AlkanesError::Other(format!(
-                    "split_at={} is out of range for {} protostones (need 1..{})",
-                    k,
-                    params.protostones.len(),
-                    params.protostones.len()
-                )));
-            }
-            Some(k)
-        }
-        None => (params.protostones.len() >= 2 && is_wrap_protostone(&params.protostones[0])).then_some(1),
-    };
-    if boundary.is_some() {
-        if params.to_addresses.len() <= SPLIT_CARRIER_VOUT as usize {
-            return Err(AlkanesError::Other(format!(
-                "a split needs at least {} to_addresses (the carrier is output v{}); got {}",
-                SPLIT_CARRIER_VOUT + 1,
-                SPLIT_CARRIER_VOUT,
-                params.to_addresses.len()
-            )));
-        }
-        if params.split_at.is_none() && params.prefetched_utxos.iter().any(|p| p.required) {
-            return Err(AlkanesError::Other(
-                "a legacy wrap split cannot carry caller-required prefetched outpoints: Tx A would be built with them, \
-                 where a required pending carrier probes clean and can be swept into the wrap call. Use an explicit split_at."
-                    .to_string(),
-            ));
-        }
-    }
-    Ok(boundary)
-}
-
-fn retarget_protostone(
-    target: &OutputTarget,
-    rebase: impl Fn(u32) -> core::result::Result<u32, String>,
-) -> core::result::Result<OutputTarget, String> {
-    Ok(match target {
-        OutputTarget::Protostone(n) => OutputTarget::Protostone(rebase(*n)?),
-        other => other.clone(),
-    })
-}
-
-fn map_protostone_targets(
-    stone: &ProtostoneSpec,
-    rebase: &impl Fn(u32) -> core::result::Result<u32, String>,
-) -> core::result::Result<ProtostoneSpec, String> {
-    let mut out = stone.clone();
-    if let Some(t) = &stone.pointer {
-        out.pointer = Some(retarget_protostone(t, rebase)?);
-    }
-    if let Some(t) = &stone.refund {
-        out.refund = Some(retarget_protostone(t, rebase)?);
-    }
-    for (i, edict) in stone.edicts.iter().enumerate() {
-        out.edicts[i].target = retarget_protostone(&edict.target, rebase)?;
-    }
-    if let Some(bt) = &stone.bitcoin_transfer {
-        let mut next = bt.clone();
-        next.target = retarget_protostone(&bt.target, rebase)?;
-        out.bitcoin_transfer = Some(next);
-    }
-    Ok(out)
-}
-
-/// Divide protostones at `k` into (Tx A, Tx B).
-///
-/// Tx A keeps protostones[..k]; the LAST one's pointer and refund are redirected
-/// to the physical carrier output `SPLIT_CARRIER_VOUT`, because its result can no
-/// longer flow into a protostone that now lives in another transaction. Every
-/// other target is checked, not assumed:
-///   - a Tx A target `pN` with N >= k would point into Tx B → refused;
-///   - a Tx B target `pN` with N < k would point back into Tx A → refused;
-///   - Tx B targets `pN` (N >= k) are rebased to `p(N-k)`, since protostone
-///     indices are per transaction.
-/// Refusing is the only safe answer to a cross-transaction reference: the
-/// runtime would route those alkanes to a shadow vout that does not exist.
-pub fn plan_split_protostones(
-    protostones: &[ProtostoneSpec],
-    k: usize,
-) -> Result<(Vec<ProtostoneSpec>, Vec<ProtostoneSpec>)> {
-    if k == 0 || k >= protostones.len() {
-        return Err(AlkanesError::Other(format!(
-            "plan_split_protostones: split index {} out of range for {} protostones",
-            k,
-            protostones.len()
-        )));
-    }
-    let k32 = k as u32;
-    let mut tx_a = Vec::with_capacity(k);
-    for (i, stone) in protostones[..k].iter().enumerate() {
-        // The boundary protostone's pointer/refund are REPLACED below, so whatever
-        // they pointed at (typically the next protostone, now in Tx B) is moot.
-        let mut stone = stone.clone();
-        if i + 1 == k {
-            stone.pointer = None;
-            stone.refund = None;
-        }
-        let mapped = map_protostone_targets(&stone, &|n| {
-            if n >= k32 {
-                Err(format!("Tx A protostone {} targets p{}, which moves to Tx B", i, n))
-            } else {
-                Ok(n)
-            }
-        })
-        .map_err(AlkanesError::Other)?;
-        tx_a.push(mapped);
-    }
-    if let Some(last) = tx_a.last_mut() {
-        last.pointer = Some(OutputTarget::Output(SPLIT_CARRIER_VOUT));
-        last.refund = Some(OutputTarget::Output(SPLIT_CARRIER_VOUT));
-    }
-    let mut tx_b = Vec::with_capacity(protostones.len() - k);
-    for (i, stone) in protostones[k..].iter().enumerate() {
-        let mapped = map_protostone_targets(stone, &|n| {
-            if n < k32 {
-                Err(format!("Tx B protostone {} targets p{}, which stays in Tx A", i + k, n))
-            } else {
-                Ok(n - k32)
-            }
-        })
-        .map_err(AlkanesError::Other)?;
-        tx_b.push(mapped);
-    }
-    Ok((tx_a, tx_b))
-}
-
-/// Bind Tx B to Tx A's carrier: add the carrier as a REQUIRED prefetched UTXO
-/// (value + script from Tx A's bytes, alkanes deliberately unasserted — the
-/// indexer cannot know them yet and the protostone moves the whole UTXO anyway),
-/// and drop Tx B requirements the carrier itself satisfies:
-///   - legacy wrap split: the wrapped token (`32:N` of protostones[0]);
-///   - explicit split_at: every alkane requirement (Tx A spent the user's
-///     alkanes; Tx B's come in on the carrier).
-/// BTC requirements are always dropped (Tx A's change and the carrier fund Tx B).
-pub fn require_split_carrier(
-    tx_b_params: &mut EnhancedExecuteParams,
-    tx_a_hex: &str,
-    original: &EnhancedExecuteParams,
-) -> Result<()> {
-    let bytes = hex::decode(tx_a_hex).map_err(|e| AlkanesError::Other(format!("Tx A hex: {}", e)))?;
-    let tx_a: bitcoin::Transaction = bitcoin::consensus::encode::deserialize(&bytes)
-        .map_err(|e| AlkanesError::Other(format!("Tx A decode: {}", e)))?;
-    let carrier = tx_a.output.get(SPLIT_CARRIER_VOUT as usize).ok_or_else(|| {
-        AlkanesError::Other(format!("Tx A has no carrier output at v{}", SPLIT_CARRIER_VOUT))
-    })?;
-    let outpoint = format!("{}:{}", tx_a.compute_txid(), SPLIT_CARRIER_VOUT);
-    tx_b_params.prefetched_utxos.retain(|p| p.outpoint != outpoint);
-    // Tx B is params.clone(): a caller-required outpoint was meant for Tx A, which has
-    // spent it. Left required, Tx B fails "required UTXO is not spendable" AFTER Tx A is
-    // broadcast (#308 review lane A 2). Only Tx A's carrier is required in Tx B; the other
-    // entries stay as annotations.
-    for p in tx_b_params.prefetched_utxos.iter_mut() {
-        p.required = false;
-    }
-    tx_b_params.prefetched_utxos.push(PrefetchedUtxo {
-        outpoint,
-        value: carrier.value.to_sat(),
-        script_pubkey_hex: hex::encode(carrier.script_pubkey.as_bytes()),
-        alkanes: None,
-        required: true,
-    });
-    // #308 review lane A 5 (2026-09-16) — known limit, documented rather than "fixed".
-    // In a legacy wrap split the whole requirement for the wrapped token (`32:N`) is dropped
-    // from Tx B, on the assumption that Tx A's carrier supplies it. A caller that meant
-    // "the minted amount PLUS frBTC already in the wallet" therefore comes up short and the
-    // Tx B call reverts (fees lost, no burn). Subtracting only the minted amount would be
-    // correct, but the SDK cannot see that amount: the wrap mints against the BTC sent to the
-    // signer minus a premium set by the contract, which is not known here. Substituting a
-    // number would be a fabrication. No app caller uses the legacy wrap split. If one ever
-    // needs it, the fix is for the CALLER — which knows the minted amount — to pass it, and
-    // for this function to subtract that value instead of dropping the requirement.
-    let wrapped: Option<(u64, u64)> = if original.split_at.is_none() {
-        original.protostones.first().and_then(|p| p.cellpack.as_ref()).map(|c| (c.target.block as u64, c.target.tx as u64))
-    } else {
-        None
-    };
-    tx_b_params.input_requirements.retain(|req| match req {
-        InputRequirement::Bitcoin { .. } | InputRequirement::BitcoinOutput { .. } => false,
-        InputRequirement::Alkanes { block, tx, .. } => {
-            if original.split_at.is_some() {
-                false
-            } else {
-                Some((*block, *tx)) != wrapped
-            }
-        }
-    });
-    Ok(())
-}
-
-/// Tx B's `to_addresses` (#308 review lane A 9, 2026-09-16).
-///
-/// LEGACY wrap split: to_addresses[0] is the wrap SIGNER, which only Tx A pays, so Tx B
-/// drops it (unchanged behaviour).
-///
-/// EXPLICIT `split_at`: keep them ALL. plan_split_protostones rebases protostone references
-/// (`pN`) but leaves `Output(n)` targets untouched, so in Tx B `Output(n)` still means
-/// to_addresses[n] — exactly what it meant in the single-transaction request. Dropping
-/// to_addresses[0] here re-pointed every such target one output later, a legacy
-/// "signer is v0" assumption applied to layouts that have no signer.
-pub fn tx_b_to_addresses(params: &EnhancedExecuteParams) -> Vec<String> {
-    let mut out = params.to_addresses.clone();
-    if params.split_at.is_none() && out.len() >= 2 {
-        out.remove(0);
-    }
-    out
-}
-
-/// Refuse to thread Tx B onto an unsigned Tx A whose txid provably changes when
-/// signed: any input that is not native segwit v0 (P2WPKH/P2WSH) or taproot.
-///
-/// #308 review lane A 6 (2026-09-16) — a DELIBERATE fail-closed regression, documented
-/// rather than changed. Legacy split PSBTs used to be built for these inputs and silently
-/// broken: Tx B referenced a Tx A txid that signing then changed. Refusing is the
-/// improvement. Note for a future caller: Xverse's DEFAULT payment address is nested
-/// P2SH-P2WPKH, exactly the shape refused here, so split PSBTs for browser wallets will hit
-/// this. The way around it is not to relax this check but to build Tx B from the SIGNED
-/// Tx A, as subfrost-app's carrier runner does.
-pub fn assert_split_parent_txid_is_sign_stable(psbt: &bitcoin::psbt::Psbt) -> Result<()> {
-    for (i, input) in psbt.inputs.iter().enumerate() {
-        let script = input
-            .witness_utxo
-            .as_ref()
-            .map(|u| u.script_pubkey.clone())
-            .ok_or_else(|| {
-                AlkanesError::Other(format!(
-                    "split Tx A input {} has no witness_utxo; its txid cannot be proven sign-stable",
-                    i
-                ))
-            })?;
-        if !(script.is_p2wpkh() || script.is_p2wsh() || script.is_p2tr()) {
-            return Err(AlkanesError::Other(format!(
-                "split Tx A input {} spends {} — not native segwit/taproot, so signing changes Tx A's txid and Tx B would reference a transaction that never exists. Build Tx B from the signed Tx A instead.",
-                i, script
-            )));
-        }
-    }
-    Ok(())
-}
-
 /// Returns true when a protostone calls a cross-chain wrap contract (frBTC,
 /// frZEC, frETH, etc.) — i.e., target alkane has block=32 and the cellpack's
 /// first input (the opcode) is 77. Used by `execute_split` to decide whether
@@ -543,86 +256,6 @@ pub fn is_wrap_protostone(spec: &ProtostoneSpec) -> bool {
     }
     cellpack.inputs.first().copied() == Some(WRAP_OPCODE)
 }
-
-/// The pointer the pre-D0 builder wrote on BOTH the Runestone and the appended
-/// DIESEL mint protostone. D0 moves only the Runestone pointer; the DIESEL
-/// mint protostone keeps this value so every protostone stays byte-identical.
-const LEGACY_DIESEL_MINT_POINTER: u32 = 0;
-
-/// Choose the Runestone `pointer`: the output that receives every rune balance
-/// the (empty) runestone edicts leave unallocated.
-///
-/// ## D0 journal (2026-09-15, ordinals hi-fi pipeline, subfrost-app spec §0.9)
-///
-/// FINDING: the builder hard-coded `pointer = 0`. Output 0 is whatever the
-/// caller put first in `to_addresses`, which is often NOT the user:
-///   - frBTC wrap: `[signer, user]` (subfrost-app `hooks/useWrapMutation.ts:180`)
-///   - plain BTC send: `[recipient, alkanesChange]` (`hooks/useBtcSendMutation.ts:413`)
-/// Mainnet ord has no rune index, so neither the app nor this SDK can screen a
-/// fee input for runes. Any rune riding one followed the pointer to the
-/// signer / the recipient: silent loss of the user's runes.
-///
-/// WHY MOVING IT DOES NOT CHANGE ALKANE ROUTING (protorune @ 5974673):
-///   - `crates/protorune/src/lib.rs:339-342`: Runestone `pointer` becomes
-///     `unallocated_to`. It is consumed by rune-table leftovers
-///     (`handle_leftover_runes`, :401) and etching premine (:343-352).
-///   - `lib.rs:1156-1167`: input PROTORUNES (alkanes) default-allocate to the
-///     FIRST protostone with the matching protocol tag, i.e. its shadow vout
-///     `tx.output.len() + 1 + position`. The Runestone pointer is not involved.
-///   - `lib.rs:1181-1184, 1230-1234`: each protostone's leftovers go to its OWN
-///     `pointer`, or `default_output(tx)` when absent, never to the Runestone
-///     pointer. `convert_protostone_specs_with_output_count` always emits
-///     `Some(..)` pointers and refunds, so `default_output` is never reached.
-///   - `unallocated_to` reaches `index_protostones` only for `process_burns`,
-///     which is `#[cfg(test)]` (`lib.rs:1141-1153`).
-///   - frBTC (`subfrost-alkanes/alkanes/fr-btc/src/lib.rs:126-145, 236-262`)
-///     reads the PROTOSTONE pointer, not the Runestone pointer.
-///   - A pointer `< tx.output.len()` is valid in ord's `Runestone::decipher`, so
-///     the runestone never becomes a cenotaph. Every candidate below is a real,
-///     non-OP_RETURN output.
-///
-/// SELECTION (first match wins):
-///   1. an output paying `alkanes_change_script` that is not the droppable
-///      BTC-change placeholder
-///   2. an output paying `btc_change_script` that is not that placeholder
-///   3. the placeholder, if it pays either script. The caller must then stop
-///      `build_psbt_and_fee` from dropping it (see `pin_pointed_change`):
-///      a dropped placeholder would leave this index on the trailing OP_RETURN
-///      and burn the runes.
-///   4. `None`: no user-owned output exists, and the caller must refuse to build.
-/// Output 0 is chosen only when output 0 itself pays one of the user's scripts.
-pub(crate) fn select_runestone_pointer(
-    outputs: &[TxOut],
-    alkanes_change_script: &ScriptBuf,
-    btc_change_script: &ScriptBuf,
-    droppable_change_index: Option<usize>,
-) -> Option<u32> {
-    let pays = |script: &ScriptBuf, allow_droppable: bool| {
-        outputs.iter().enumerate().position(|(i, o)| {
-            !o.script_pubkey.is_op_return()
-                && o.script_pubkey == *script
-                && (allow_droppable || Some(i) != droppable_change_index)
-        })
-    };
-    pays(alkanes_change_script, false)
-        .or_else(|| pays(btc_change_script, false))
-        .or_else(|| pays(alkanes_change_script, true))
-        .or_else(|| pays(btc_change_script, true))
-        .map(|i| i as u32)
-}
-
-/// D0 (2026-09-15): a BTC-change placeholder that the Runestone pointer names
-/// must not be dropped by `build_psbt_and_fee`. Removing it would leave the
-/// pointer on the trailing OP_RETURN, which burns the runes.
-pub(crate) fn pin_pointed_change(droppable_change_index: Option<usize>, runestone_pointer: u32) -> Option<usize> {
-    droppable_change_index.filter(|i| *i != runestone_pointer as usize)
-}
-
-/// Refusal when [`select_runestone_pointer`] finds no user-owned output. This
-/// string exists only on the D0 build, so `strings` on the WASM can tell a D0
-/// artifact from a pre-D0 one.
-pub(crate) const NO_USER_OUTPUT_FOR_RUNES: &str =
-    "D0: no output pays the alkanes change or BTC change address, so unallocated runes have no safe destination; refusing to build";
 
 /// Decode a raw transaction hex into the JSON shape that
 /// `apply_mempool_adjustment` consumes (a single mempool-tx object with
@@ -680,12 +313,6 @@ pub fn decode_tx_hex_to_mempool_json(tx_hex: &str) -> anyhow::Result<serde_json:
             .map(|a| a.to_string());
             serde_json::json!({
                 "scriptpubkey_address": address_str,
-                // The script is the network-independent identity of the output.
-                // `address_str` above is derived with Network::Bitcoin FIRST, which
-                // succeeds for every standard script, so on regtest/testnet/signet it
-                // is a `bc1…` string that never equals the wallet's `bcrt1…`/`tb1…`
-                // address — apply_mempool_adjustment matches on this instead.
-                "scriptpubkey": hex::encode(o.script_pubkey.as_bytes()),
                 "value": o.value.to_sat(),
             })
         })
@@ -815,297 +442,6 @@ pub struct MempoolAdjustmentReport {
     pub added: usize,
 }
 
-/// Decodes caller-known pending tx hexes into `apply_mempool_adjustment`
-/// payloads, one `[tx]` array per DISTINCT txid, in first-seen order. Hexes
-/// that fail to decode are logged and skipped. Pure function, unit-tested.
-///
-/// JOURNAL 2026-09-16, D0c. `select_utxos_with_headroom` merges
-/// `known_pending_tx_hexes` with `provider.pending_tx_store().list()`.
-/// `execute_split` pushes Tx A's hex into the first, and every `execute_full`
-/// broadcast adds the same hex to the store, so one tx routinely arrives twice.
-/// Deduping by the DECODED txid (not the raw string) also merges `0x`-prefixed
-/// or differently cased copies of one tx. The add path in
-/// `apply_mempool_adjustment` also dedups, because a pending tx can still
-/// overlap esplora's `txs/mempool` answer. See the journal there for the bug,
-/// its severity (a build failure, never a burn) and why it predates #308.
-pub fn decode_pending_tx_payloads(tx_hexes: &[String]) -> Vec<serde_json::Value> {
-    let mut seen_txids: alloc::collections::BTreeSet<String> = alloc::collections::BTreeSet::new();
-    let mut payloads = Vec::new();
-    for hex_str in tx_hexes {
-        match decode_tx_hex_to_mempool_json(hex_str) {
-            Ok(synthetic_tx) => {
-                let txid = synthetic_tx
-                    .get("txid")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or_default()
-                    .to_string();
-                if !seen_txids.insert(txid) {
-                    continue;
-                }
-                payloads.push(serde_json::json!([synthetic_tx]));
-            }
-            Err(e) => {
-                log::warn!("Failed to decode pending tx hex: {}", e);
-            }
-        }
-    }
-    payloads
-}
-
-#[cfg(test)]
-mod d0c_pending_output_dedup_tests {
-    //! D0c (2026-09-16): a pending tx that reaches selection through more than
-    //! one source contributes each of its outputs to the candidate set ONCE.
-    //!
-    //! Before the fix, `apply_mempool_adjustment` pushed a duplicated tx's
-    //! outputs twice, so coin selection could list one outpoint twice
-    //! (bad-txns-inputs-duplicate). That is a build/broadcast failure, never a
-    //! burn. In `execute_split` it strands Tx B behind a broadcast Tx A.
-    //!
-    //! The mock provider runs on `Network::Bitcoin` on purpose. On this base
-    //! (5974673), `decode_tx_hex_to_mempool_json` renders every output as a
-    //! mainnet address, so a pending output only matches a mainnet wallet. #308
-    //! adds script matching, which makes the same path reachable on
-    //! regtest/testnet/signet. These tests hold on both bases.
-    //!
-    //! Keys, addresses and txids are random per run. The module sits next to
-    //! the two functions it pins, not at the end of the file, so the D0c hunks
-    //! fold into #308 (d21ce53d) without conflicting with test modules that
-    //! exist on only one side.
-    use super::*;
-    use crate::mock_provider::MockProvider;
-    use crate::pending_tx_store::PendingTxStore as _;
-    use bitcoin::key::Secp256k1;
-    use bitcoin::{Amount, Network};
-
-    fn random_txid() -> bitcoin::Txid {
-        let mut id = [0u8; 32];
-        rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut id);
-        bitcoin::Txid::from_byte_array(id)
-    }
-
-    fn random_address() -> Address {
-        let secp = Secp256k1::new();
-        let (_sk, pk) = secp.generate_keypair(&mut rand::thread_rng());
-        Address::p2tr(&secp, pk.x_only_public_key().0, None, Network::Bitcoin)
-    }
-
-    /// Standard-bitcoin mode (the mempool adjustment is skipped on qubitcoin),
-    /// with a fresh taproot key.
-    fn wallet(mock: &mut MockProvider) -> Address {
-        let secp = Secp256k1::new();
-        let (sk, pk) = secp.generate_keypair(&mut rand::thread_rng());
-        mock.set_keypair(sk, bitcoin::PublicKey::new(pk));
-        mock.qubitcoin_mode = false;
-        Address::p2tr(&secp, pk.x_only_public_key().0, None, Network::Bitcoin)
-    }
-
-    fn push_confirmed(mock: &MockProvider, addr: &Address, sats: u64) -> OutPoint {
-        let op = OutPoint::new(random_txid(), 0);
-        mock.utxos.lock().unwrap().push((
-            op,
-            TxOut { value: Amount::from_sat(sats), script_pubkey: addr.script_pubkey() },
-        ));
-        op
-    }
-
-    /// A signed-shape pending tx (one foreign input) paying `outputs`, as raw hex.
-    fn pending_tx(outputs: &[(&Address, u64)]) -> (bitcoin::Txid, String) {
-        let tx = Transaction {
-            version: bitcoin::transaction::Version::TWO,
-            lock_time: bitcoin::absolute::LockTime::ZERO,
-            input: vec![bitcoin::TxIn {
-                previous_output: OutPoint::new(random_txid(), 0),
-                script_sig: ScriptBuf::new(),
-                sequence: bitcoin::Sequence::MAX,
-                witness: bitcoin::Witness::new(),
-            }],
-            output: outputs
-                .iter()
-                .map(|(a, sats)| TxOut { value: Amount::from_sat(*sats), script_pubkey: a.script_pubkey() })
-                .collect(),
-        };
-        (tx.compute_txid(), bitcoin::consensus::encode::serialize_hex(&tx))
-    }
-
-    async fn select(
-        mock: &mut MockProvider,
-        btc_needed: u64,
-        addr: &Address,
-        known_pending: &[String],
-    ) -> Result<UtxoSelectionResult> {
-        let mut executor = EnhancedAlkanesExecutor::new(mock);
-        executor
-            .select_utxos(
-                &[InputRequirement::Bitcoin { amount: btc_needed }],
-                &Some(vec![addr.to_string()]),
-                known_pending,
-                None,
-                &[],
-                &[],
-                UtxoDataSource::Metashrew,
-            )
-            .await
-    }
-
-    fn assert_no_duplicate_outpoints(ops: &[OutPoint]) {
-        let unique: alloc::collections::BTreeSet<&OutPoint> = ops.iter().collect();
-        assert_eq!(unique.len(), ops.len(), "D0c: an outpoint was selected twice: {:?}", ops);
-    }
-
-    /// Must refuse, counting each pending output once. With the bug the
-    /// duplicated outputs cover the gap and selection succeeds with a repeat.
-    fn assert_refuses_with_unique_total(res: Result<UtxoSelectionResult>, unique_total: u64) {
-        match res {
-            Err(AlkanesError::InsufficientBitcoin { collected, .. }) => assert_eq!(
-                collected, unique_total,
-                "each pending output must be counted exactly once"
-            ),
-            Err(e) => panic!("expected InsufficientBitcoin, got {e}"),
-            Ok(sel) => {
-                assert_no_duplicate_outpoints(&sel.outpoints);
-                panic!("D0c: selection succeeded with {:?}; the unique candidates cannot fund it", sel.outpoints)
-            }
-        }
-    }
-
-    /// Which two sources deliver the SAME pending tx to selection.
-    #[derive(Clone, Copy, Debug)]
-    enum Overlap {
-        /// The hex is in `known_pending_tx_hexes` and in the pending store.
-        KnownAndStore,
-        /// The hex is in `known_pending_tx_hexes`, and esplora's `txs/mempool`
-        /// also returns the tx.
-        KnownAndEsplora,
-    }
-
-    /// Shared scenario: 1 000 confirmed, plus a pending tx paying the wallet
-    /// 20 000 (vout 0) and 15 000 (vout 2), and a foreigner 5 000 (vout 1).
-    /// The unique candidate total is 36 000, so a 30 000 ask is fundable and a
-    /// 50 000 ask is not. With the bug the duplicated outputs make 56 000 look
-    /// available and vout 0 is selected twice.
-    async fn run_scenario(overlap: Overlap) {
-        let label = format!("{overlap:?}");
-        for (btc_needed, expect_ok) in [(30_000u64, true), (50_000u64, false)] {
-            let mut mock = MockProvider::new(Network::Bitcoin);
-            let addr = wallet(&mut mock);
-            push_confirmed(&mock, &addr, 1_000);
-            let foreign = random_address();
-            let (txid, hex) = pending_tx(&[(&addr, 20_000), (&foreign, 5_000), (&addr, 15_000)]);
-            match overlap {
-                Overlap::KnownAndStore => mock.pending_tx_store.add(&hex).await.unwrap(),
-                Overlap::KnownAndEsplora => {
-                    mock.mempool_txs.lock().unwrap().push(decode_tx_hex_to_mempool_json(&hex).unwrap())
-                }
-            }
-            let known = vec![hex];
-            let res = select(&mut mock, btc_needed, &addr, &known).await;
-            if expect_ok {
-                // Needs more than one pending output: never lists one twice.
-                let sel = res.unwrap_or_else(|e| panic!("{label}: 30 000 is fundable from unique candidates: {e}"));
-                assert_no_duplicate_outpoints(&sel.outpoints);
-                assert!(sel.outpoints.contains(&OutPoint::new(txid, 0)), "{label}: vout 0 funds the ask");
-                assert!(sel.outpoints.contains(&OutPoint::new(txid, 2)), "{label}: vout 2 funds the ask");
-                assert!(!sel.outpoints.contains(&OutPoint::new(txid, 1)), "{label}: the foreign output is not ours");
-            } else {
-                assert_refuses_with_unique_total(res, 36_000);
-            }
-        }
-    }
-
-    // ── pure: apply_mempool_adjustment ───────────────────────────────────
-
-    #[test]
-    fn same_tx_in_two_payloads_is_added_once() {
-        let user = random_address().to_string();
-        let txid = random_txid().to_string();
-        let payload = serde_json::json!([{
-            "txid": txid,
-            "vin": [{ "txid": random_txid().to_string(), "vout": 0 }],
-            "vout": [
-                { "scriptpubkey_address": user, "value": 20_000 },
-                { "scriptpubkey_address": random_address().to_string(), "value": 5_000 },
-                { "scriptpubkey_address": user, "value": 15_000 },
-            ],
-        }]);
-        let mut spendable: Vec<(OutPoint, UtxoInfo)> = Vec::new();
-        let report = apply_mempool_adjustment(&mut spendable, &[payload.clone(), payload], &[user.clone()]);
-        assert_eq!(report.added, 2, "added counts unique outpoints only");
-        assert_eq!(spendable.len(), 2, "each user-paying output is a candidate exactly once");
-        let ops: Vec<OutPoint> = spendable.iter().map(|(o, _)| *o).collect();
-        assert_no_duplicate_outpoints(&ops);
-    }
-
-    /// Control: no over-dedup. A genuinely different second tx still adds.
-    #[test]
-    fn distinct_txs_in_two_payloads_both_add() {
-        let user = random_address().to_string();
-        let tx = |sats: &[u64]| {
-            serde_json::json!([{
-                "txid": random_txid().to_string(),
-                "vin": [{ "txid": random_txid().to_string(), "vout": 0 }],
-                "vout": sats.iter().map(|s| serde_json::json!({ "scriptpubkey_address": user, "value": s })).collect::<Vec<_>>(),
-            }])
-        };
-        let mut spendable: Vec<(OutPoint, UtxoInfo)> = Vec::new();
-        let report = apply_mempool_adjustment(&mut spendable, &[tx(&[1_000, 2_000]), tx(&[3_000])], &[user.clone()]);
-        assert_eq!(report.added, 3);
-        assert_eq!(spendable.iter().map(|(_, u)| u.amount).sum::<u64>(), 6_000);
-    }
-
-    // ── pure: decode_pending_tx_payloads ─────────────────────────────────
-
-    #[test]
-    fn decode_pending_tx_payloads_keeps_one_payload_per_txid_in_first_seen_order() {
-        let user = random_address();
-        let (txid_a, hex_a) = pending_tx(&[(&user, 1_000)]);
-        let (txid_b, hex_b) = pending_tx(&[(&user, 2_000)]);
-        let hexes = vec![
-            hex_b.clone(),
-            hex_a.clone(),
-            format!("0x{hex_b}"),
-            hex_a.to_uppercase(),
-            "not hex".to_string(),
-            hex_b,
-        ];
-        let payloads = decode_pending_tx_payloads(&hexes);
-        let txids: Vec<String> = payloads.iter().map(|p| p[0]["txid"].as_str().unwrap().to_string()).collect();
-        assert_eq!(txids, vec![txid_b.to_string(), txid_a.to_string()]);
-    }
-
-    // ── end to end through select_utxos ──────────────────────────────────
-
-    /// execute_split's shape: Tx A's hex is in `known_pending_tx_hexes` AND in
-    /// the session pending store (every broadcast adds it).
-    #[tokio::test]
-    async fn pending_tx_in_known_hexes_and_pending_store_is_a_candidate_once() {
-        run_scenario(Overlap::KnownAndStore).await;
-    }
-
-    /// The pending hex overlaps esplora's `txs/mempool` answer for the same tx.
-    /// Only the add-path dedup in `apply_mempool_adjustment` covers this.
-    #[tokio::test]
-    async fn pending_hex_overlapping_esplora_mempool_is_a_candidate_once() {
-        run_scenario(Overlap::KnownAndEsplora).await;
-    }
-
-    /// Control: two DIFFERENT pending txs, one per source, both fund selection.
-    #[tokio::test]
-    async fn distinct_pending_txs_from_both_sources_all_fund_selection() {
-        let mut mock = MockProvider::new(Network::Bitcoin);
-        let addr = wallet(&mut mock);
-        let (txid_a, hex_a) = pending_tx(&[(&addr, 20_000)]);
-        let (txid_b, hex_b) = pending_tx(&[(&addr, 15_000)]);
-        mock.pending_tx_store.add(&hex_b).await.unwrap();
-        let sel = select(&mut mock, 30_000, &addr, &[hex_a])
-            .await
-            .expect("two distinct pending txs together fund 30 000");
-        assert_no_duplicate_outpoints(&sel.outpoints);
-        assert!(sel.outpoints.contains(&OutPoint::new(txid_a, 0)));
-        assert!(sel.outpoints.contains(&OutPoint::new(txid_b, 0)));
-    }
-}
-
 /// Pure UTXO-set adjustment function — mutates `spendable_utxos` in
 /// place to reflect the impact of the user's own pending mempool
 /// transactions. Extracted from `select_utxos` so it can be unit-tested
@@ -1125,19 +461,6 @@ pub fn apply_mempool_adjustment(
 ) -> MempoolAdjustmentReport {
     let address_set: alloc::collections::BTreeSet<&str> =
         addresses.iter().map(|s| s.as_str()).collect();
-    // Script → address for every address we can parse (any network). Lets a vout
-    // that carries `scriptpubkey` hex match regardless of which network its
-    // `scriptpubkey_address` string was rendered for (2026-09-14: pending outputs
-    // decoded from known_pending_tx_hexes were never injected on regtest/testnet/
-    // signet because that string was always mainnet).
-    let script_to_address: alloc::collections::BTreeMap<String, String> = addresses
-        .iter()
-        .filter_map(|a| {
-            bitcoin::Address::from_str(a)
-                .ok()
-                .map(|parsed| (hex::encode(parsed.assume_checked().script_pubkey().as_bytes()), a.clone()))
-        })
-        .collect();
 
     let mut spent_outpoints: alloc::collections::BTreeSet<(String, u32)> =
         alloc::collections::BTreeSet::new();
@@ -1176,17 +499,10 @@ pub fn apply_mempool_adjustment(
             // Add outputs paying one of our addresses as candidate UTXOs.
             if let Some(vouts) = tx.get("vout").and_then(|v| v.as_array()) {
                 for (idx, vout) in vouts.iter().enumerate() {
-                    let by_script = vout
-                        .get("scriptpubkey")
+                    let vout_addr = vout
+                        .get("scriptpubkey_address")
                         .and_then(|v| v.as_str())
-                        .and_then(|script| script_to_address.get(&script.to_lowercase()));
-                    let vout_addr: &str = match by_script {
-                        Some(addr) => addr.as_str(),
-                        None => vout
-                            .get("scriptpubkey_address")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or_default(),
-                    };
+                        .unwrap_or_default();
                     if !address_set.contains(vout_addr) {
                         continue;
                     }
@@ -1228,39 +544,14 @@ pub fn apply_mempool_adjustment(
     });
     let stripped = before - spendable_utxos.len();
 
-    // JOURNAL 2026-09-16, D0c: an outpoint is added AT MOST ONCE, whichever
-    // payload it came from.
-    //
-    // The bug: `existing` was built once from `spendable_utxos` and never
-    // updated inside this loop. When the same tx appeared in two payloads
-    // (a `known_pending_tx_hexes` entry plus the `pending_tx_store` copy, or
-    // a pending hex plus esplora's `txs/mempool` answer for that tx), its
-    // outputs were in `new_outputs` twice and BOTH copies were pushed. Coin
-    // selection could then take one outpoint twice, and the node rejects that
-    // tx (bad-txns-inputs-duplicate).
-    //
-    // Severity: a clean build/broadcast failure, never a burn. In the split
-    // flow (`execute_split` broadcasts Tx A, then builds Tx B) it strands
-    // mid-package: Tx A sits in the mempool, Tx B is refused, and the value is
-    // recoverable once Tx A confirms.
-    //
-    // This predates kungfuflex/alkanes-rs#308 (it is in 5974673). #308's
-    // script matching of decoded pending outputs is what makes it reachable
-    // for regtest/testnet/signet wallets. Before that, decoded outputs were
-    // rendered as mainnet addresses and never matched a bcrt1/tb1 wallet.
-    //
-    // Fix: insert each key as its output is pushed, so `added` counts unique
-    // outpoints only. The merge in `select_utxos_with_headroom` also dedups
-    // pending hexes by txid (`decode_pending_tx_payloads`). That layer does not
-    // cover the esplora overlap, so this one is the guarantee.
-    let mut existing: alloc::collections::BTreeSet<String> = spendable_utxos
+    let existing: alloc::collections::BTreeSet<String> = spendable_utxos
         .iter()
         .map(|(op, _)| format!("{}:{}", op.txid, op.vout))
         .collect();
     let mut added = 0usize;
     for (op, info) in new_outputs {
         let key = format!("{}:{}", op.txid, op.vout);
-        if existing.insert(key) {
+        if !existing.contains(&key) {
             spendable_utxos.push((op, info));
             added += 1;
         }
@@ -1575,8 +866,13 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         // BTC->token still built as one atomic wrap+swap tx. Return Tx B as
         // the main PSBT and attach Tx A as split_psbt so JS can sign both and
         // broadcast them as one CPFP package.
-        if split_boundary(&params)?.is_some() {
-            log::info!("🔀 Using split_transactions PSBT mode: parent → child chain");
+        if params.split_transactions
+            && !params.protostones.is_empty()
+            && is_wrap_protostone(&params.protostones[0])
+            && params.protostones.len() >= 2
+            && params.envelope_data.is_none()
+        {
+            log::info!("🔀 Using split_transactions PSBT mode: wrap → CPFP execute chain");
             return self.build_split_transaction_psbts(params).await;
         }
 
@@ -1610,8 +906,13 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         // its own per-tx fuel budget. Avoids OOG when the combined wrap +
         // execute fuel cost exceeds MINIMUM_FUEL_CHANGE1 (3.5M) and the
         // landing block has block_fuel exhausted.
-        if split_boundary(&params)?.is_some() {
-            log::info!("🔀 Using split_transactions mode: parent → child chain");
+        if params.split_transactions
+            && !params.protostones.is_empty()
+            && is_wrap_protostone(&params.protostones[0])
+            && params.protostones.len() >= 2
+            && params.envelope_data.is_none()
+        {
+            log::info!("🔀 Using split_transactions mode: wrap → CPFP execute chain");
             return self.execute_split(params).await;
         }
 
@@ -1669,13 +970,17 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         &mut self,
         params: EnhancedExecuteParams,
     ) -> Result<EnhancedExecuteResult> {
-        let split_at = split_boundary(&params)?.ok_or_else(|| {
-            AlkanesError::Other(
-                "execute_split: request is not splittable (needs split_transactions and either a wrap at protostones[0] or an explicit split_at)"
+        if params.protostones.len() < 2 {
+            return Err(AlkanesError::Other(
+                "execute_split requires at least 2 protostones (wrap + execute)".to_string(),
+            ));
+        }
+        if !is_wrap_protostone(&params.protostones[0]) {
+            return Err(AlkanesError::Other(
+                "execute_split: protostones[0] must be a wrap (target=(32,N) opcode=77)"
                     .to_string(),
-            )
-        })?;
-        let (tx_a_stones, tx_b_stones) = plan_split_protostones(&params.protostones, split_at)?;
+            ));
+        }
 
         // ---- Tx A: wrap-only ----------------------------------------------
         // Resolve the user's package target BEFORE building Tx A: the parent
@@ -1692,20 +997,18 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
 
         let mut tx_a_params = params.clone();
         tx_a_params.split_transactions = false;
-        // Each half is ONE transaction. Leaving split_at set makes split_boundary refuse the
-        // half ("split_at without split_transactions") before Tx A is built (lane D e2e, 2026-09-16).
-        tx_a_params.split_at = None;
         tx_a_params.fee_rate = Some(parent_rate);
 
         // The wrap protostone's pointer typically targets p1 (forward to the
         // next protostone in the original atomic flow). In split mode we
         // redirect to v1 (user's alkane carrier output) so the minted
         // alkane lands on a real Bitcoin output that Tx B can spend.
-        // plan_split_protostones already redirected the last Tx A protostone's
-        // pointer/refund to the carrier output v1.
-        tx_a_params.protostones = tx_a_stones;
+        let mut wrap_proto = params.protostones[0].clone();
+        wrap_proto.pointer = Some(OutputTarget::Output(1));
+        wrap_proto.refund = Some(OutputTarget::Output(1));
+        tx_a_params.protostones = vec![wrap_proto];
 
-        // LEGACY WRAP ONLY: strip alkane input requirements — Tx A is wrap-only and consumes
+        // Strip alkane input requirements — Tx A is wrap-only and consumes
         // only BTC. The original `params.input_requirements` carried
         // alkane requirements meant for the execute protostone (Tx B),
         // and forwarding them here causes Tx A's selector to grab the
@@ -1714,34 +1017,15 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         // unintentionally consumed the user's 5e4a4112:0 DIESEL alkane
         // carrier as a generic dust input, leaving Tx B with
         // "Insufficient alkanes: need 30000000 of 2:0, have 0").
-        // With an explicit split_at, Tx A is the half that SPENDS the user's
-        // alkanes (e.g. the shifter + first swap), so its requirements stay.
-        if params.split_at.is_none() {
-            tx_a_params.input_requirements.retain(|req| {
-                !matches!(req, InputRequirement::Alkanes { .. })
-            });
-        }
+        tx_a_params.input_requirements.retain(|req| {
+            !matches!(req, InputRequirement::Alkanes { .. })
+        });
 
-        log::info!("[split-tx] Step 1/2: building Tx A (protostones 0..{})", split_at);
+        log::info!("[split-tx] Step 1/2: building wrap-only Tx A");
         let tx_a_result = Box::pin(self.execute_full(tx_a_params)).await?;
         let wrap_txid = tx_a_result.reveal_txid.clone();
         let wrap_fee = tx_a_result.reveal_fee;
         log::info!("[split-tx] Tx A broadcast: {} (fee {} sats)", wrap_txid, wrap_fee);
-
-        // POST-BROADCAST FAILURES (#308 review lane B F5, 2026-09-16). From here on Tx A is on
-        // the network, so an error below returns Err with Tx B never sent. Every check that
-        // can run on the request alone was hoisted into split_boundary (split_at range, envelope,
-        // to_addresses[SPLIT_CARRIER_VOUT] present, legacy-wrap required outpoints), and
-        // execute_full runs it before Tx A is built. What cannot be hoisted:
-        //  - Tx A's result carries no signed hex (a provider defect);
-        //  - require_split_carrier rejects Tx A's actual outputs (no v1);
-        //  - Tx B's own build fails: selection, fee, signing or broadcast.
-        // None of these loses funds: the carrier is to_addresses[1], a WALLET address, not an
-        // ephemeral key, so whatever Tx A put on it stays spendable by the user. GAP, left as
-        // is: the returned Err does NOT carry wrap_txid (only the log line above does).
-        // Wrapping these errors would change the AlkanesError variants callers see, so that is
-        // a separate, reviewed change. Until then a native caller finds Tx A from the wallet's
-        // mempool, as subfrost-app's carrier Resume does.
 
         // ---- Tx B: execute (spends Tx A's v1 + v2) ------------------------
         // Hand Tx A's signed hex into Tx B's `select_utxos` via
@@ -1787,19 +1071,13 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
 
         let mut tx_b_params = params.clone();
         tx_b_params.split_transactions = false;
-        tx_b_params.split_at = None;
         tx_b_params.fee_rate = Some(child_rate);
-        tx_b_params.protostones = tx_b_stones;
-        let tx_a_hex = tx_a_result.reveal_tx_hex.clone().ok_or_else(|| {
-            AlkanesError::Other(
-                "[split-tx] Tx A result carries no signed hex — cannot bind Tx B to Tx A's carrier".to_string(),
-            )
-        })?;
-        // Tx B MUST spend Tx A's carrier: without this the selector walks the
-        // wallet's confirmed UTXOs first and can satisfy Tx B from them, leaving
-        // the carrier (and whatever Tx A put on it) behind.
-        require_split_carrier(&mut tx_b_params, &tx_a_hex, &params)?;
-        tx_b_params.known_pending_tx_hexes.push(tx_a_hex);
+        tx_b_params.protostones = params.protostones[1..].to_vec();
+        if let Some(tx_a_hex) = tx_a_result.reveal_tx_hex.clone() {
+            tx_b_params.known_pending_tx_hexes.push(tx_a_hex);
+        } else {
+            log::warn!("[split-tx] Tx A result missing reveal_tx_hex — falling back to indexer-only mempool view (may race indexer propagation)");
+        }
 
         // Drop BTC input requirements — Tx A's BTC change at v2 covers Tx B
         // fees via natural UTXO selection.
@@ -1810,7 +1088,11 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             )
         });
 
-        tx_b_params.to_addresses = tx_b_to_addresses(&params);
+        // Tx B doesn't need the wrap's signer recipient. Drop the first
+        // to_address (typically the signer) if there are at least 2.
+        if tx_b_params.to_addresses.len() >= 2 {
+            tx_b_params.to_addresses.remove(0);
+        }
 
         log::info!("[split-tx] Step 2/2: building execute Tx B (spends {})", wrap_txid);
         let tx_b_result = Box::pin(self.execute_full(tx_b_params)).await?;
@@ -1852,10 +1134,17 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         &mut self,
         params: EnhancedExecuteParams,
     ) -> Result<ExecutionState> {
-        let split_at = split_boundary(&params)?.ok_or_else(|| {
-            AlkanesError::Other("build_split_transaction_psbts: request is not splittable".to_string())
-        })?;
-        let (tx_a_stones, tx_b_stones) = plan_split_protostones(&params.protostones, split_at)?;
+        if params.protostones.len() < 2 {
+            return Err(AlkanesError::Other(
+                "build_split_transaction_psbts requires at least 2 protostones (wrap + execute)".to_string(),
+            ));
+        }
+        if !is_wrap_protostone(&params.protostones[0]) {
+            return Err(AlkanesError::Other(
+                "build_split_transaction_psbts: protostones[0] must be a wrap (target=(32,N) opcode=77)"
+                    .to_string(),
+            ));
+        }
 
         // Same parent floor as execute_split: Tx A must clear min-relay on its
         // own or the child can never rescue it. See parent_fee_rate_for_package.
@@ -1870,17 +1159,15 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
 
         let mut tx_a_params = params.clone();
         tx_a_params.split_transactions = false;
-        // Each half is ONE transaction. Leaving split_at set makes split_boundary refuse the
-        // half ("split_at without split_transactions") before Tx A is built (lane D e2e, 2026-09-16).
-        tx_a_params.split_at = None;
         tx_a_params.fee_rate = Some(parent_rate);
 
-        tx_a_params.protostones = tx_a_stones;
-        if params.split_at.is_none() {
-            tx_a_params.input_requirements.retain(|req| {
-                !matches!(req, InputRequirement::Alkanes { .. })
-            });
-        }
+        let mut wrap_proto = params.protostones[0].clone();
+        wrap_proto.pointer = Some(OutputTarget::Output(1));
+        wrap_proto.refund = Some(OutputTarget::Output(1));
+        tx_a_params.protostones = vec![wrap_proto];
+        tx_a_params.input_requirements.retain(|req| {
+            !matches!(req, InputRequirement::Alkanes { .. })
+        });
 
         log::info!("[split-tx:psbt] Step 1/2: building unsigned wrap-only Tx A");
         let tx_a_state = match self.build_single_transaction(&tx_a_params).await? {
@@ -1891,15 +1178,6 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             ))),
         };
 
-        // Tx B is built against Tx A's UNSIGNED txid here. That is only a valid
-        // reference if signing cannot change it: refuse any input whose witness
-        // script is not native segwit/taproot (P2SH-wrapped inputs move their
-        // redeemScript into scriptSig, which is in the txid). Wallets that rewrite
-        // non-witness fields while signing (seen on UniSat and OKX, subfrost-app
-        // 2026-06-16) can still shift it — callers that can should build Tx B
-        // from the SIGNED Tx A instead (subfrost-app's user-address carrier
-        // package does exactly that with two execute calls).
-        assert_split_parent_txid_is_sign_stable(&tx_a_state.psbt)?;
         let tx_a_hex = bitcoin::consensus::encode::serialize_hex(&tx_a_state.psbt.unsigned_tx);
         let wrap_txid = tx_a_state.psbt.unsigned_tx.compute_txid().to_string();
 
@@ -1934,10 +1212,8 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
 
         let mut tx_b_params = params.clone();
         tx_b_params.split_transactions = false;
-        tx_b_params.split_at = None;
         tx_b_params.fee_rate = Some(child_rate);
-        tx_b_params.protostones = tx_b_stones;
-        require_split_carrier(&mut tx_b_params, &tx_a_hex, &params)?;
+        tx_b_params.protostones = params.protostones[1..].to_vec();
         tx_b_params.known_pending_tx_hexes.push(tx_a_hex);
         tx_b_params.input_requirements.retain(|req| {
             !matches!(
@@ -1945,7 +1221,9 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                 InputRequirement::Bitcoin { .. } | InputRequirement::BitcoinOutput { .. }
             )
         });
-        tx_b_params.to_addresses = tx_b_to_addresses(&params);
+        if tx_b_params.to_addresses.len() >= 2 {
+            tx_b_params.to_addresses.remove(0);
+        }
 
         log::info!("[split-tx:psbt] Step 2/2: building unsigned execute Tx B (spends {})", wrap_txid);
         let mut tx_b_state = match self.build_single_transaction(&tx_b_params).await? {
@@ -2597,11 +1875,8 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         // Handle excess alkanes: DO NOT insert auto-change protostone at the beginning.
         // Inserting at position 0 causes the protorune runtime to route input alkanes
         // to the auto-change protostone instead of the user's contract call protostone.
-        // Instead, excess alkanes stay with the caller's first tag-1 protostone
-        // (protorune lib.rs:1156-1167 auto-allocation) and follow THAT
-        // protostone's pointer/refund. D0 (2026-09-15) correction: an earlier
-        // comment here said they flow to the Runestone pointer. The indexer
-        // never reads the Runestone pointer for alkanes; it governs runes only.
+        // Instead, excess alkanes flow to the Runestone default pointer (output 0),
+        // matching @alkanes/ts-sdk behavior.
         let final_protostones = if !alkanes_excess.is_empty() && false /* DISABLED */ {
             log::info!("🔄 Handling excess alkanes with automatic protostone generation");
             
@@ -2690,17 +1965,8 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
 
         // Use final_funding_outpoints which may have inscribed UTXOs replaced with clean ones from split
         // When alkane inputs are specified, route them to the first protomessage (not output 0)
-        // D0 (2026-09-15): unallocated RUNES go to the user's own output, not v0.
-        let (alkanes_change_script, btc_change_script) = self.resolve_user_change_scripts(params).await?;
-        let runestone_pointer = select_runestone_pointer(&outputs, &alkanes_change_script, &btc_change_script, droppable_change_index)
-            .ok_or_else(|| AlkanesError::Validation(NO_USER_OUTPUT_FOR_RUNES.to_string()))?;
-        // If the only user-owned output is the BTC-change placeholder, it must
-        // survive: dropping it would leave the pointer on the OP_RETURN (burn).
-        // The cost is that a sub-dust change fails `validate_transaction` loudly
-        // instead of silently becoming fee. App flows never reach this, because
-        // every to_addresses list there contains alkanes_change_address.
-        let droppable_change_index = pin_pointed_change(droppable_change_index, runestone_pointer);
-        let runestone_script = self.construct_runestone_script(&final_protostones, outputs.len(), runestone_pointer, params.skip_diesel_mint)?;
+        let has_alkane_inputs = params.input_requirements.iter().any(|r| matches!(r, InputRequirement::Alkanes { .. }));
+        let runestone_script = self.construct_runestone_script_with_alkane_routing(&final_protostones, outputs.len(), has_alkane_inputs, params.skip_diesel_mint)?;
         let prefetched_for_build = build_effective_txouts_map(params, &utxo_selection.txouts)?;
         let (psbt, fee, estimated_vsize) = self.build_psbt_and_fee(final_funding_outpoints.clone(), outputs, Some(runestone_script), params.fee_rate, None, None, prefetched_for_build.as_ref(), droppable_change_index).await?;
 
@@ -3181,18 +2447,9 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             //      without each caller having to thread Tx-A's hex
             //      through.
             //
-            // The same tx routinely appears in BOTH sources, and it can also be
-            // in esplora's `txs/mempool` answer above. Only the STRIP path
-            // tolerates that by construction: `spent_outpoints` is a set keyed
-            // by (txid, vout). The ADD path did not. Before D0c
-            // (2026-09-16) a duplicated tx had its outputs pushed twice, so
-            // selection could spend one outpoint twice
-            // (bad-txns-inputs-duplicate; in execute_split that strands Tx B
-            // behind a broadcast Tx A). Now there are two layers:
-            // `decode_pending_tx_payloads` keeps one payload per decoded txid
-            // (first-seen order), and `apply_mempool_adjustment` adds each
-            // (txid, vout) at most once across ALL payloads, which covers the
-            // esplora overlap.
+            // Duplicates are tolerated — `apply_mempool_adjustment` keys
+            // its spent-outpoint set by (txid, vout), so the same tx
+            // appearing twice is a no-op.
             let mut all_pending: Vec<String> = known_pending_tx_hexes.to_vec();
             if let Some(store) = self.provider.pending_tx_store() {
                 match store.list().await {
@@ -3200,7 +2457,16 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                     Err(e) => log::warn!("pending_tx_store.list() failed: {}", e),
                 }
             }
-            mempool_payloads.extend(decode_pending_tx_payloads(&all_pending));
+            for hex_str in &all_pending {
+                match decode_tx_hex_to_mempool_json(hex_str) {
+                    Ok(synthetic_tx) => {
+                        mempool_payloads.push(serde_json::json!([synthetic_tx]));
+                    }
+                    Err(e) => {
+                        log::warn!("Failed to decode pending tx hex: {}", e);
+                    }
+                }
+            }
 
             let report = apply_mempool_adjustment(
                 &mut spendable_utxos,
@@ -3213,54 +2479,6 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                     report.stripped, report.added, spendable_utxos.len()
                 );
             }
-        }
-
-        // Caller exclusions bind the FINAL candidate set, including the pending
-        // outputs the adjustment above just injected (2026-09-14). The filter at
-        // the eligibility pass runs before that injection, so on its own it could
-        // never exclude an unconfirmed output — and an unconfirmed output is
-        // exactly what a caller most needs to lock: a package carrier holding
-        // alkanes the indexer cannot see yet (it probes empty, so the BTC-only
-        // branch below would take it as fee money and a protostone-less spend
-        // would destroy its balance). subfrost-app's user-address carrier package
-        // relies on this; before it, the app had to route around the gap with
-        // prefetched alkane assertions.
-        if !excluded_set.is_empty() {
-            let before = spendable_utxos.len();
-            spendable_utxos.retain(|(outpoint, _)| !excluded_set.contains(outpoint));
-            let dropped = before - spendable_utxos.len();
-            if dropped > 0 {
-                log::info!("Excluded {} caller-locked pending output(s) injected from mempool txs", dropped);
-            }
-        }
-
-        // Caller-REQUIRED outpoints (PrefetchedUtxo.required) go first, and must
-        // exist. See the field's doc comment for why an annotation is not enough.
-        let required_outpoints: Vec<OutPoint> = prefetched_utxos
-            .iter()
-            .filter(|p| p.required)
-            .map(|p| {
-                OutPoint::from_str(&p.outpoint).map_err(|_| {
-                    AlkanesError::Other(format!("required prefetched outpoint is malformed: {}", p.outpoint))
-                })
-            })
-            .collect::<Result<Vec<_>>>()?;
-        for op in &required_outpoints {
-            if excluded_set.contains(op) {
-                return Err(AlkanesError::Other(format!(
-                    "UTXO {} is both required and excluded by the caller", op
-                )));
-            }
-            if !spendable_utxos.iter().any(|(candidate, _)| candidate == op) {
-                return Err(AlkanesError::Other(format!(
-                    "required UTXO {} is not spendable from the selected addresses (an unconfirmed parent must be passed in known_pending_tx_hexes)",
-                    op
-                )));
-            }
-        }
-        if !required_outpoints.is_empty() {
-            // Stable: every other candidate keeps its relative order.
-            spendable_utxos.sort_by_key(|(candidate, _)| if required_outpoints.contains(candidate) { 0u8 } else { 1u8 });
         }
 
         let mut selected_outpoints = Vec::new();
@@ -3833,10 +3051,6 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             // Now process UTXOs using the pre-fetched balance data
             for (outpoint, utxo) in spendable_utxos {
                 let key = format!("{}:{}", outpoint.txid, outpoint.vout);
-                // #308 review lane A 3/4: a caller-REQUIRED outpoint is taken because it is
-                // required — whatever alkanes it is known to hold, and even when the need is
-                // already covered. Required outpoints sort first, so this runs before any break.
-                let is_required = required_outpoints.contains(&outpoint);
 
                 if let Some(utxo_data) = utxo_balances.get(&key) {
                     // Parse balance data from batch result
@@ -3875,7 +3089,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                     // Select this UTXO if it has alkanes we need.
                     // Do NOT select alkane-carrying UTXOs just for Bitcoin — this
                     // would accidentally spend someone's tokens as fee inputs.
-                    if has_needed_alkane || (is_required && !balances.is_empty()) {
+                    if has_needed_alkane {
                         bitcoin_collected += utxo.amount;
                         selected_outpoints.push(outpoint);
                         utxo_selected = true;
@@ -3883,7 +3097,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                     } else if !balances.is_empty() {
                         // This UTXO carries alkanes we don't need — skip it for BTC
                         log::debug!("Skipping UTXO {}:{} — has alkane balances not in requirements", outpoint.txid, outpoint.vout);
-                    } else if wants_more_btc!() || is_required {
+                    } else if wants_more_btc!() {
                         // No alkane balances — safe to use for BTC
                         take_btc_input!(utxo.amount);
                         selected_outpoints.push(outpoint);
@@ -3912,8 +3126,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                         alkanes_collected.get(key).unwrap_or(&0) >= needed
                     });
                     
-                    let requireds_pending = required_outpoints.iter().any(|r| !selected_outpoints.contains(r));
-                    if !wants_more_btc!() && all_alkanes_satisfied && !requireds_pending {
+                    if !wants_more_btc!() && all_alkanes_satisfied {
                         break;
                     }
                 } else {
@@ -3931,9 +3144,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                     // unknown alkane status into the tx as fee inputs — the exact
                     // token-burn the surrounding code exists to prevent.
                     // (Caught in review by casuwu.)
-                    // A required outpoint is the one exception: the caller named it, so its
-                    // unknown status is the caller's explicit choice, not a blind spot.
-                    if needs_more_btc!() || is_required {
+                    if needs_more_btc!() {
                         take_btc_input!(utxo.amount);
                         selected_outpoints.push(outpoint);
                         log::debug!("Selected UTXO {}:{} for Bitcoin only (no balance data)", outpoint.txid, outpoint.vout);
@@ -3986,15 +3197,6 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             let mut rpc_count: usize = 0;
             let mut carriers_skipped: usize = 0;
             for (outpoint, utxo) in spendable_utxos {
-                // #308 review lane A 3/4: a caller-REQUIRED outpoint is taken before any other
-                // check — it must be spent even when it is a known alkane carrier (the
-                // no-alkanes-needed skip below would otherwise leave it behind) and even when
-                // BTC is already covered. Required outpoints sort first.
-                if required_outpoints.contains(&outpoint) {
-                    take_btc_input!(utxo.amount);
-                    selected_outpoints.push(outpoint);
-                    continue;
-                }
                 if !wants_more_btc!() {
                     break;
                 }
@@ -4023,10 +3225,6 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                         .get_protorunes_by_outpoint(&txid_str, outpoint.vout, None, 1)
                         .await
                     {
-                        // An UNCONFIRMED candidate (injected from a pending tx) always probes
-                        // empty: the indexer has not seen its tx. That is not authoritative
-                        // (#308 review lane A 7), so it may fund a genuine need but never the
-                        // dust headroom. A caller assertion (the branch above) still counts.
                         Ok(response) => (
                             response
                                 .balance_sheet
@@ -4034,7 +3232,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                                 .balances
                                 .values()
                                 .any(|amt| *amt > 0),
-                            utxo.confirmations > 0,
+                            true,
                         ),
                         // Unverifiable — keep the pre-existing behavior (select),
                         // but mark it so the dust headroom won't reach for it.
@@ -4135,15 +3333,6 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             selected_outpoints = verified;
         }
 
-        for op in &required_outpoints {
-            if !selected_outpoints.contains(op) {
-                return Err(AlkanesError::Other(format!(
-                    "required UTXO {} was not selected — refusing to build a transaction that leaves it behind",
-                    op
-                )));
-            }
-        }
-
         let selected_txouts = selected_outpoints
             .iter()
             .filter_map(|outpoint| {
@@ -4160,27 +3349,6 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             alkanes_found,
             per_utxo_alkanes,
         })
-    }
-
-    /// D0 (2026-09-15): the user's (alkanes-change, BTC-change) scriptPubKeys,
-    /// resolved with the SAME defaults the rest of the builder already uses:
-    /// alkanes change = `alkanes_change_address`, else `change_address`, else
-    /// `p2tr:0` (the build_split_psbt convention). BTC change =
-    /// `change_address`, else `p2tr:0` (the create_outputs placeholder).
-    /// Resolution errors propagate. Nothing falls back silently.
-    async fn resolve_user_change_scripts(&self, params: &EnhancedExecuteParams) -> Result<(ScriptBuf, ScriptBuf)> {
-        use crate::traits::AddressResolver;
-        let network = self.provider.get_network();
-        let btc_str = params.change_address.as_deref().unwrap_or("p2tr:0");
-        let alkanes_str = params.alkanes_change_address.as_deref().unwrap_or(btc_str);
-        let mut scripts = Vec::with_capacity(2);
-        for s in [alkanes_str, btc_str] {
-            let resolved = self.provider.resolve_all_identifiers(s).await?;
-            scripts.push(Address::from_str(&resolved)?.require_network(network)?.script_pubkey());
-        }
-        let btc = scripts.pop().expect("two scripts pushed");
-        let alkanes = scripts.pop().expect("two scripts pushed");
-        Ok((alkanes, btc))
     }
 
     async fn create_outputs(
@@ -4561,36 +3729,36 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         p.protocol_tag == 1 && p.message.len() >= 3 && p.message[0..3] == [2u8, 0u8, 77u8]
     }
 
-    /// `runestone_pointer` comes from [`select_runestone_pointer`]. It must be a
-    /// physical, non-OP_RETURN output index `< num_outputs`.
-    fn construct_runestone_script(&self, protostones: &[ProtostoneSpec], num_outputs: usize, runestone_pointer: u32, skip_diesel_mint: bool) -> Result<ScriptBuf> {
-        log::info!("Constructing runestone with {} protostones and {} outputs (before OP_RETURN), runestone pointer v{}", protostones.len(), num_outputs, runestone_pointer);
+    fn construct_runestone_script(&self, protostones: &[ProtostoneSpec], num_outputs: usize, skip_diesel_mint: bool) -> Result<ScriptBuf> {
+        self.construct_runestone_script_with_alkane_routing(protostones, num_outputs, false, skip_diesel_mint)
+    }
+
+    fn construct_runestone_script_with_alkane_routing(&self, protostones: &[ProtostoneSpec], num_outputs: usize, has_alkane_inputs: bool, skip_diesel_mint: bool) -> Result<ScriptBuf> {
+        log::info!("Constructing runestone with {} protostones and {} outputs (before OP_RETURN), alkane_inputs={}", protostones.len(), num_outputs, has_alkane_inputs);
         log::info!("  After OP_RETURN is added, tx.output.len() = {} + 1 = {}", num_outputs, num_outputs + 1);
         log::info!("  Formula: pN -> vout = {} + 1 + N = {} + N", num_outputs, num_outputs + 1);
 
-        if runestone_pointer as usize >= num_outputs {
-            return Err(AlkanesError::Validation(format!(
-                "runestone pointer v{runestone_pointer} is not a physical output (only {num_outputs} before OP_RETURN)"
-            )));
-        }
-
         let mut converted_protostones = self.convert_protostone_specs_with_output_count(protostones, num_outputs as u32)?;
+
+        // Runestone pointer: always 0 (first --to output).
+        //
+        // Extended pointers (shadow vouts for protomessage routing) cause issues
+        // with contracts that call Runestone::decipher internally (e.g. frBTC).
+        // The protorune indexer routes alkane tokens to protostones based on the
+        // protostone's own pointer field, not the Runestone pointer.
+        let pointer = 0u32;
 
         // DIESEL mint (default-on, 2026-07-13): appended LAST so protorune
         // auto-allocation (input alkanes → first tag-1 protostone) and every
-        // caller-specified pN/shadow-vout index stay untouched. Minted DIESEL
-        // lands on output 0 (the first --to output).
-        //
-        // D0 (2026-09-15): this protostone used to borrow the Runestone pointer.
-        // It now pins LEGACY_DIESEL_MINT_POINTER (0) so its bytes and its alkane
-        // routing are exactly what they were before D0. Only the Runestone
-        // pointer below moved.
+        // caller-specified pN/shadow-vout index stay untouched. Pointer follows
+        // the runestone pointer above → minted DIESEL lands on the first --to
+        // output (the alkanes change address for typical app mutations).
         //
         // ONE MINT PER TX: a tx can only claim the DIESEL emission once, so when
         // the caller's protostones already carry a [2,0,77] mint cellpack (e.g.
         // an explicit `alkanes execute '[2,0,77]:v0:v0'` mint) nothing is added.
         if !skip_diesel_mint && !converted_protostones.iter().any(Self::is_diesel_mint_protostone) {
-            converted_protostones.push(Self::diesel_mint_protostone(LEGACY_DIESEL_MINT_POINTER));
+            converted_protostones.push(Self::diesel_mint_protostone(pointer));
         }
 
         // Debug logging
@@ -4602,13 +3770,9 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         let protocol_values = converted_protostones.encipher()?;
         log::info!("Encoded protocol values: {} u128 values", protocol_values.len());
 
-        // D0 (2026-09-15): Runestone pointer = the user's own output, chosen by
-        // `select_runestone_pointer`. It was `0`, which handed unallocated RUNES
-        // to the wrap signer or the BTC-send recipient. It governs runes only;
-        // alkanes follow the protostones (see that function's journal).
         let runestone = Runestone {
             protocol: Some(protocol_values),
-            pointer: Some(runestone_pointer),
+            pointer: Some(pointer),
             ..Default::default()
         };
 
@@ -5016,13 +4180,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         // Validate protostones against the ACTUAL number of outputs created
         self.validate_protostones(&params.protostones, outputs.len())?;
 
-        // D0 (2026-09-15): unallocated runes → the user's own output, not v0.
-        // This reveal never drops its change placeholder (`build_psbt_and_fee`
-        // below passes `None`), so no index can shift under the pointer.
-        let (alkanes_change_script, btc_change_script) = self.resolve_user_change_scripts(params).await?;
-        let runestone_pointer = select_runestone_pointer(&outputs, &alkanes_change_script, &btc_change_script, None)
-            .ok_or_else(|| AlkanesError::Validation(NO_USER_OUTPUT_FOR_RUNES.to_string()))?;
-        let runestone_script = self.construct_runestone_script(&params.protostones, outputs.len(), runestone_pointer, params.skip_diesel_mint)?;
+        let runestone_script = self.construct_runestone_script(&params.protostones, outputs.len(), params.skip_diesel_mint)?;
 
         // Create the commit output TxOut (it may not be indexed yet if still in mempool)
         let commit_address = self.create_commit_address_for_envelope(envelope, commit_internal_key).await?;
@@ -5589,25 +4747,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             // Validate protostones against the actual number of outputs created
             self.validate_protostones(&params.protostones, outputs.len())?;
 
-            // D0 (2026-09-15): unallocated runes → the user's own output, not v0.
-            // BTC change here is `addr` (change_address, else the wallet
-            // address), which is exactly what the change output above pays. When
-            // that change was sub-dust and never added, and no recipient is the
-            // user, the build is refused rather than handing runes to v0.
-            let btc_change_script = addr.script_pubkey();
-            let alkanes_change_script = match params.alkanes_change_address.as_deref() {
-                Some(s) => {
-                    use crate::traits::AddressResolver;
-                    let resolved = self.provider.resolve_all_identifiers(s).await?;
-                    bitcoin::Address::from_str(&resolved)?
-                        .require_network(self.provider.get_network())?
-                        .script_pubkey()
-                }
-                None => btc_change_script.clone(),
-            };
-            let runestone_pointer = select_runestone_pointer(&outputs, &alkanes_change_script, &btc_change_script, None)
-                .ok_or_else(|| AlkanesError::Validation(NO_USER_OUTPUT_FOR_RUNES.to_string()))?;
-            let runestone_script = self.construct_runestone_script(&params.protostones, outputs.len(), runestone_pointer, params.skip_diesel_mint)?;
+            let runestone_script = self.construct_runestone_script(&params.protostones, outputs.len(), params.skip_diesel_mint)?;
             outputs.push(bitcoin::TxOut {
                 value: bitcoin::Amount::ZERO,
                 script_pubkey: runestone_script,
@@ -5896,359 +5036,6 @@ mod tests {
         assert!(
             fee as f32 / parent_vsize as f32 >= MIN_RELAY_FEE_RATE,
             "floored parent pays {fee} sats over {parent_vsize} vB"
-        );
-    }
-
-    // ── split planning (2026-09-14, user-address carrier) ───────────────
-    fn stone(target: Option<(u128, u128, u128)>, pointer: Option<OutputTarget>, refund: Option<OutputTarget>, edicts: Vec<ProtostoneEdict>) -> ProtostoneSpec {
-        ProtostoneSpec {
-            cellpack: target.map(|(block, tx, op)| alkanes_support::cellpack::Cellpack {
-                target: alkanes_support::id::AlkaneId { block, tx },
-                inputs: vec![op],
-            }),
-            edicts,
-            bitcoin_transfer: None,
-            pointer,
-            refund,
-        }
-    }
-
-    fn edict_to(target: OutputTarget) -> ProtostoneEdict {
-        ProtostoneEdict { alkane_id: AlkaneId { block: 2, tx: 0 }, amount: 100, target }
-    }
-
-    fn split_params(protostones: Vec<ProtostoneSpec>, split_transactions: bool, split_at: Option<usize>) -> EnhancedExecuteParams {
-        EnhancedExecuteParams {
-            fee_rate: None,
-            // A split needs v0 (signer / Tx A's own output) and v1 (the carrier). The
-            // strings are never parsed by split_boundary; they only have to be there.
-            to_addresses: vec!["v0-address".to_string(), "v1-carrier-address".to_string()],
-            from_addresses: None,
-            change_address: None,
-            alkanes_change_address: None,
-            input_requirements: vec![],
-            protostones,
-            envelope_data: None,
-            raw_output: false,
-            trace_enabled: false,
-            mine_enabled: false,
-            auto_confirm: true,
-            ordinals_strategy: OrdinalsStrategy::default(),
-            mempool_indexer: false,
-            split_transactions,
-            split_at,
-            known_pending_tx_hexes: vec![],
-            prefetched_utxos: vec![],
-            excluded_utxos: vec![],
-            skip_diesel_mint: false,
-            max_indexed_height: None,
-            utxo_source: UtxoDataSource::default(),
-        }
-    }
-
-    #[test]
-    fn split_boundary_keeps_the_legacy_wrap_rule_and_admits_explicit_split_at() {
-        let wrap = stone(Some((32, 0, 77)), Some(OutputTarget::Protostone(1)), None, vec![]);
-        let swap = stone(Some((4, 65522, 13)), Some(OutputTarget::Output(0)), Some(OutputTarget::Output(0)), vec![]);
-        let shifter = stone(None, Some(OutputTarget::Output(0)), None, vec![edict_to(OutputTarget::Protostone(1))]);
-        let cryptoswap = stone(Some((4, 1776, 5)), Some(OutputTarget::Output(0)), Some(OutputTarget::Output(0)), vec![]);
-
-        // legacy: wrap first → split at 1; anything else → single tx (unchanged behaviour)
-        assert_eq!(split_boundary(&split_params(vec![wrap.clone(), swap.clone()], true, None)).unwrap(), Some(1));
-        assert_eq!(split_boundary(&split_params(vec![shifter.clone(), swap.clone(), cryptoswap.clone()], true, None)).unwrap(), None);
-        // not requested → never
-        assert_eq!(split_boundary(&split_params(vec![wrap.clone(), swap.clone()], false, None)).unwrap(), None);
-        // explicit: the cross-venue shape the wrap gate could never admit
-        assert_eq!(split_boundary(&split_params(vec![shifter, swap.clone(), cryptoswap], true, Some(2))).unwrap(), Some(2));
-        // RED: an out-of-range boundary is an error, not a silent single tx
-        assert!(split_boundary(&split_params(vec![wrap.clone(), swap.clone()], true, Some(0))).is_err());
-        assert!(split_boundary(&split_params(vec![wrap, swap], true, Some(2))).is_err());
-    }
-
-    #[test]
-    fn plan_split_redirects_the_boundary_to_the_carrier_and_rebases_tx_b() {
-        // shifter(p0) → edict to p1 ; swap(p1) → pointer p2 ; cryptoswap(p2) → v0
-        let shifter = stone(None, Some(OutputTarget::Output(0)), None, vec![edict_to(OutputTarget::Protostone(1))]);
-        let swap = stone(Some((4, 65522, 13)), Some(OutputTarget::Protostone(2)), Some(OutputTarget::Output(0)), vec![]);
-        let cryptoswap = stone(Some((4, 1776, 5)), Some(OutputTarget::Output(0)), Some(OutputTarget::Output(0)), vec![]);
-        let tail = stone(Some((2, 0, 77)), Some(OutputTarget::Output(0)), Some(OutputTarget::Protostone(3)), vec![]);
-
-        let (a, b) = plan_split_protostones(&[shifter, swap, cryptoswap, tail], 2).unwrap();
-        assert_eq!(a.len(), 2);
-        assert!(matches!(a[0].edicts[0].target, OutputTarget::Protostone(1)), "intra-Tx-A reference kept");
-        assert!(matches!(a[1].pointer, Some(OutputTarget::Output(SPLIT_CARRIER_VOUT))), "boundary result → carrier");
-        assert!(matches!(a[1].refund, Some(OutputTarget::Output(SPLIT_CARRIER_VOUT))), "boundary refund → carrier");
-        assert_eq!(b.len(), 2);
-        assert!(matches!(b[1].refund, Some(OutputTarget::Protostone(1))), "p3 rebased to p1 in Tx B");
-    }
-
-    #[test]
-    fn plan_split_refuses_cross_transaction_references() {
-        // RED 1: a Tx A protostone that edicts into a protostone moving to Tx B.
-        let early = stone(None, Some(OutputTarget::Output(0)), None, vec![edict_to(OutputTarget::Protostone(2))]);
-        let mid = stone(Some((4, 65522, 13)), Some(OutputTarget::Output(0)), None, vec![]);
-        let late = stone(Some((4, 1776, 5)), Some(OutputTarget::Output(0)), None, vec![]);
-        let err = plan_split_protostones(&[early, mid.clone(), late.clone()], 2).unwrap_err();
-        assert!(err.to_string().contains("moves to Tx B"), "{}", err);
-
-        // RED 2: a Tx B protostone refunding into Tx A.
-        let back = stone(Some((4, 1776, 5)), Some(OutputTarget::Output(0)), Some(OutputTarget::Protostone(0)), vec![]);
-        let err = plan_split_protostones(&[mid.clone(), late, back], 1).unwrap_err();
-        assert!(err.to_string().contains("stays in Tx A"), "{}", err);
-
-        // RED 3: out of range.
-        assert!(plan_split_protostones(&[mid.clone()], 1).is_err());
-        assert!(plan_split_protostones(&[mid.clone(), mid], 0).is_err());
-    }
-
-    #[test]
-    fn split_parent_txid_must_be_sign_stable() {
-        use bitcoin::key::Secp256k1;
-        let secp = Secp256k1::new();
-        let (_, pk) = secp.generate_keypair(&mut rand::thread_rng());
-        let compressed = bitcoin::CompressedPublicKey(pk);
-        let p2wpkh = bitcoin::ScriptBuf::new_p2wpkh(&compressed.wpubkey_hash());
-        let nested = bitcoin::ScriptBuf::new_p2sh(&p2wpkh.script_hash());
-        let tx = bitcoin::Transaction {
-            version: bitcoin::transaction::Version::TWO,
-            lock_time: bitcoin::absolute::LockTime::ZERO,
-            input: vec![bitcoin::TxIn::default()],
-            output: vec![],
-        };
-        let mut psbt = bitcoin::psbt::Psbt::from_unsigned_tx(tx).unwrap();
-        psbt.inputs[0].witness_utxo = Some(bitcoin::TxOut { value: bitcoin::Amount::from_sat(10_000), script_pubkey: p2wpkh });
-        assert!(assert_split_parent_txid_is_sign_stable(&psbt).is_ok());
-        // RED: a P2SH-wrapped input moves its redeemScript into scriptSig when signed → txid changes.
-        psbt.inputs[0].witness_utxo = Some(bitcoin::TxOut { value: bitcoin::Amount::from_sat(10_000), script_pubkey: nested });
-        assert!(assert_split_parent_txid_is_sign_stable(&psbt).is_err());
-        // RED: no witness_utxo at all → cannot be proven.
-        psbt.inputs[0].witness_utxo = None;
-        assert!(assert_split_parent_txid_is_sign_stable(&psbt).is_err());
-    }
-
-    // ── #308 review: a split request's SHAPE is refused before anything is built ──
-    // split_boundary runs at the execute gates, ahead of any build or broadcast, so an
-    // error here is the only point at which a bad split costs the user nothing.
-
-    #[test]
-    fn split_at_without_split_transactions_is_an_error_not_a_silent_single_tx() {
-        // lane A 8 / lane B F6: the caller asked for a split; one transaction is not what it asked for.
-        let swap = stone(Some((4, 65522, 13)), None, None, vec![]);
-        let err = split_boundary(&split_params(vec![swap.clone(), swap], false, Some(1))).unwrap_err();
-        assert!(err.to_string().contains("split_transactions"), "{}", err);
-    }
-
-    #[test]
-    fn split_at_with_an_envelope_is_an_error() {
-        let swap = stone(Some((4, 65522, 13)), None, None, vec![]);
-        let mut p = split_params(vec![swap.clone(), swap], true, Some(1));
-        p.envelope_data = Some(vec![1, 2, 3]);
-        let err = split_boundary(&p).unwrap_err();
-        assert!(err.to_string().contains("envelope"), "{}", err);
-    }
-
-    #[test]
-    fn a_split_with_fewer_than_two_to_addresses_is_refused_before_tx_a_exists() {
-        // lane B F4: SPLIT_CARRIER_VOUT is 1. With one to_address, v1 is whatever the builder
-        // emits next (BTC change or the OP_RETURN) and Tx B would be pinned to it — discovered
-        // only AFTER Tx A is broadcast.
-        let wrap = stone(Some((32, 0, 77)), Some(OutputTarget::Protostone(1)), None, vec![]);
-        let swap = stone(Some((4, 65522, 13)), None, None, vec![]);
-        for split_at in [None, Some(1)] {
-            let mut p = split_params(vec![wrap.clone(), swap.clone()], true, split_at);
-            p.to_addresses.truncate(1);
-            let err = split_boundary(&p).unwrap_err();
-            assert!(err.to_string().contains("to_addresses"), "split_at={:?}: {}", split_at, err);
-        }
-    }
-
-    #[test]
-    fn a_legacy_wrap_split_refuses_caller_required_outpoints() {
-        // lane A 2: in a legacy wrap split Tx A is built from params.clone(), so a caller's
-        // required PENDING carrier would probe clean and could be swept into the wrap call.
-        let wrap = stone(Some((32, 0, 77)), Some(OutputTarget::Protostone(1)), None, vec![]);
-        let swap = stone(Some((4, 65522, 13)), None, None, vec![]);
-        let mut p = split_params(vec![wrap, swap], true, None);
-        p.prefetched_utxos.push(PrefetchedUtxo {
-            outpoint: format!("{}:0", "ab".repeat(32)),
-            value: 546,
-            script_pubkey_hex: "5120".to_string(),
-            alkanes: None,
-            required: true,
-        });
-        let err = split_boundary(&p).unwrap_err();
-        assert!(err.to_string().contains("required"), "{}", err);
-    }
-
-    #[test]
-    fn tx_b_keeps_every_to_address_for_an_explicit_split_and_drops_only_the_legacy_signer() {
-        // lane A 9: plan_split_protostones rebases protostone references but NOT Output(n)
-        // targets, so Output(n) in Tx B still means to_addresses[n]. Dropping to_addresses[0]
-        // for an explicit split silently re-pointed every such target one output later.
-        let wrap = stone(Some((32, 0, 77)), Some(OutputTarget::Protostone(1)), None, vec![]);
-        let swap = stone(Some((4, 65522, 13)), Some(OutputTarget::Output(0)), Some(OutputTarget::Output(0)), vec![]);
-        let mut explicit = split_params(vec![swap.clone(), swap.clone()], true, Some(1));
-        explicit.to_addresses = vec!["user-a".to_string(), "user-b-carrier".to_string(), "user-c".to_string()];
-        assert_eq!(tx_b_to_addresses(&explicit), explicit.to_addresses);
-
-        // Legacy wrap: v0 is the wrap signer, which Tx B does not pay — unchanged.
-        let mut legacy = split_params(vec![wrap, swap], true, None);
-        legacy.to_addresses = vec!["signer".to_string(), "user-carrier".to_string()];
-        assert_eq!(tx_b_to_addresses(&legacy), vec!["user-carrier".to_string()]);
-    }
-
-    #[test]
-    fn enhanced_execute_params_reads_split_at_under_the_camel_case_alias() {
-        // lane B F7: alkanesExecute and alkanesResumeExecution deserialize EnhancedExecuteParams
-        // directly, so without the alias a camelCase `splitAt` silently became a single tx.
-        // Round-trips the REAL struct (not a local mirror of the attribute).
-        let swap = stone(Some((4, 65522, 13)), None, None, vec![]);
-        let mut value = serde_json::to_value(split_params(vec![swap.clone(), swap], true, Some(1))).unwrap();
-        let obj = value.as_object_mut().unwrap();
-        let at = obj.remove("split_at").unwrap();
-        obj.insert("splitAt".to_string(), at);
-        let parsed: EnhancedExecuteParams = serde_json::from_value(value).unwrap();
-        assert_eq!(parsed.split_at, Some(1));
-    }
-
-    #[test]
-    fn require_split_carrier_clears_caller_required_on_every_other_entry() {
-        // lane A 2: Tx B is params.clone(). A caller-required outpoint that Tx A already spent
-        // stayed required in Tx B, which then failed "required UTXO is not spendable" — after
-        // Tx A was broadcast. Only Tx A's carrier is required in Tx B; the rest stay as annotations.
-        let tx_a = bitcoin::Transaction {
-            version: bitcoin::transaction::Version::TWO,
-            lock_time: bitcoin::absolute::LockTime::ZERO,
-            input: vec![bitcoin::TxIn::default()],
-            output: vec![
-                bitcoin::TxOut { value: bitcoin::Amount::from_sat(10_000), script_pubkey: bitcoin::ScriptBuf::new() },
-                bitcoin::TxOut { value: bitcoin::Amount::from_sat(546), script_pubkey: bitcoin::ScriptBuf::from_hex("5120aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap() },
-            ],
-        };
-        let hex = bitcoin::consensus::encode::serialize_hex(&tx_a);
-        let swap = stone(Some((4, 65522, 13)), None, None, vec![]);
-        let mut original = split_params(vec![swap.clone(), swap], true, Some(1));
-        let callers = format!("{}:2", "cd".repeat(32));
-        original.prefetched_utxos.push(PrefetchedUtxo {
-            outpoint: callers.clone(),
-            value: 30_000,
-            script_pubkey_hex: "0014".to_string(),
-            alkanes: Some(vec![]),
-            required: true,
-        });
-        let mut tx_b = original.clone();
-        require_split_carrier(&mut tx_b, &hex, &original).unwrap();
-        let required: Vec<&str> = tx_b.prefetched_utxos.iter().filter(|p| p.required).map(|p| p.outpoint.as_str()).collect();
-        let carrier = format!("{}:1", tx_a.compute_txid());
-        assert_eq!(required, vec![carrier.as_str()]);
-        assert!(tx_b.prefetched_utxos.iter().any(|p| p.outpoint == callers), "the caller's entry stays as an annotation");
-    }
-
-    #[test]
-    fn require_split_carrier_binds_tx_b_to_tx_a_output_one() {
-        let tx_a = bitcoin::Transaction {
-            version: bitcoin::transaction::Version::TWO,
-            lock_time: bitcoin::absolute::LockTime::ZERO,
-            input: vec![bitcoin::TxIn::default()],
-            output: vec![
-                bitcoin::TxOut { value: bitcoin::Amount::from_sat(10_000), script_pubkey: bitcoin::ScriptBuf::new() },
-                bitcoin::TxOut { value: bitcoin::Amount::from_sat(546), script_pubkey: bitcoin::ScriptBuf::from_hex("5120aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap() },
-            ],
-        };
-        let hex = bitcoin::consensus::encode::serialize_hex(&tx_a);
-        let wrap = stone(Some((32, 0, 77)), None, None, vec![]);
-        let swap = stone(Some((4, 65522, 13)), None, None, vec![]);
-
-        // legacy wrap: the wrapped token's requirement is satisfied by the carrier; others stay.
-        let mut original = split_params(vec![wrap.clone(), swap.clone()], true, None);
-        original.input_requirements = vec![
-            InputRequirement::Bitcoin { amount: 5000 },
-            InputRequirement::Alkanes { block: 32, tx: 0, amount: 900 },
-            InputRequirement::Alkanes { block: 2, tx: 0, amount: 7 },
-        ];
-        let mut tx_b = original.clone();
-        require_split_carrier(&mut tx_b, &hex, &original).unwrap();
-        let carrier = tx_b.prefetched_utxos.iter().find(|p| p.required).expect("required carrier");
-        assert_eq!(carrier.outpoint, format!("{}:1", tx_a.compute_txid()));
-        assert_eq!(carrier.value, 546);
-        assert!(carrier.alkanes.is_none(), "unindexed carrier must not be asserted clean");
-        assert_eq!(tx_b.input_requirements.len(), 1);
-        assert!(matches!(tx_b.input_requirements[0], InputRequirement::Alkanes { block: 2, tx: 0, .. }));
-
-        // explicit split_at: every alkane requirement belongs to Tx A.
-        let mut explicit = split_params(vec![swap.clone(), swap], true, Some(1));
-        explicit.input_requirements = vec![InputRequirement::Alkanes { block: 2, tx: 0, amount: 7 }];
-        let mut tx_b = explicit.clone();
-        require_split_carrier(&mut tx_b, &hex, &explicit).unwrap();
-        assert!(tx_b.input_requirements.is_empty());
-
-        // RED: a Tx A without a v1 cannot carry anything.
-        let mut short = tx_a.clone();
-        short.output.truncate(1);
-        let mut tx_b = original.clone();
-        assert!(require_split_carrier(&mut tx_b, &bitcoin::consensus::encode::serialize_hex(&short), &original).is_err());
-    }
-
-    /// lane D (2026-09-16): the pieces above are unit-tested one by one; this drives the
-    /// whole `execute_full` → `execute_split` path on the mock provider, through real
-    /// coin selection, signing and broadcast, and checks the property the split exists
-    /// for: Tx B spends Tx A's carrier (v1) and pays the user.
-    ///
-    /// The wallet holds a SECOND clean confirmed UTXO on purpose. Without it Tx B has
-    /// nothing to spend but Tx A's outputs, so the carrier binding would pass vacuously.
-    /// With it, dropping `require_split_carrier` lets the selector fund Tx B from the
-    /// confirmed UTXO and leave the carrier behind — which is what this test must catch.
-    #[tokio::test]
-    async fn execute_split_end_to_end_tx_b_spends_tx_a_carrier() {
-        use bitcoin::key::Secp256k1;
-
-        let mut mock = MockProvider::new(Network::Regtest);
-        let secp = Secp256k1::new();
-        let (sk, pk) = secp.generate_keypair(&mut rand::thread_rng());
-        let (xonly, _) = pk.x_only_public_key();
-        let addr = bitcoin::Address::p2tr(&secp, xonly, None, Network::Regtest);
-        mock.set_keypair(sk, bitcoin::PublicKey::new(pk));
-        {
-            let mut utxos = mock.utxos.lock().unwrap();
-            for (n, sats) in [(0xe1u8, 100_000u64), (0xe2u8, 50_000u64)] {
-                utxos.push((
-                    bitcoin::OutPoint::new(bitcoin::Txid::from_str(&format!("{:02x}", n).repeat(32)).unwrap(), 0),
-                    bitcoin::TxOut { value: Amount::from_sat(sats), script_pubkey: addr.script_pubkey() },
-                ));
-            }
-        }
-
-        let first = stone(Some((4, 65522, 13)), Some(OutputTarget::Output(0)), Some(OutputTarget::Output(0)), vec![]);
-        let second = stone(Some((4, 65522, 13)), Some(OutputTarget::Output(0)), Some(OutputTarget::Output(0)), vec![]);
-        let mut params = split_params(vec![first, second], true, Some(1));
-        let a = addr.to_string();
-        params.to_addresses = vec![a.clone(), a.clone()];
-        params.from_addresses = Some(vec![a.clone()]);
-        params.change_address = Some(a.clone());
-        params.alkanes_change_address = Some(a.clone());
-        params.fee_rate = Some(2.0);
-        params.ordinals_strategy = OrdinalsStrategy::Burn;
-
-        let result = {
-            let mut executor = EnhancedAlkanesExecutor::new(&mut mock);
-            executor.execute_full(params).await.expect("split execute must succeed on the mock")
-        };
-
-        let tx_a_txid = result.wrap_txid.clone().expect("a split reports Tx A's txid");
-        let broadcast = mock.broadcasted_txs.lock().unwrap().clone();
-        assert_eq!(broadcast.len(), 2, "exactly Tx A and Tx B are broadcast");
-        let decode = |txid: &str| -> bitcoin::Transaction {
-            bitcoin::consensus::encode::deserialize(&hex::decode(&broadcast[txid]).unwrap()).unwrap()
-        };
-        let tx_a = decode(&tx_a_txid);
-        let tx_b = decode(&result.reveal_txid);
-
-        assert_eq!(tx_a.output[1].script_pubkey, addr.script_pubkey(), "Tx A's carrier pays the user's own address");
-        let carrier = bitcoin::OutPoint::new(tx_a.compute_txid(), 1);
-        assert!(
-            tx_b.input.iter().any(|i| i.previous_output == carrier),
-            "Tx B must spend Tx A's carrier {carrier}; it spent {:?}",
-            tx_b.input.iter().map(|i| i.previous_output.to_string()).collect::<Vec<_>>(),
         );
     }
 
@@ -7378,248 +6165,6 @@ mod tests {
         assert!(!result.outpoints.iter().any(|op| op.txid == txid && op.vout == 6));
     }
 
-    /// Shared fixture for the #308-review required-outpoint cases: a wallet with a confirmed
-    /// frBTC dust UTXO + clean BTC, and a PENDING parent whose v0 is a frBTC carrier and v1 its
-    /// clean funding output.
-    fn required_fixture() -> (crate::mock_provider::MockProvider, bitcoin::Address, String, String, String) {
-        use crate::mock_provider::MockProvider;
-        use bitcoin::address::Address;
-        use bitcoin::key::Secp256k1;
-        let mut mock = MockProvider::new(bitcoin::Network::Regtest);
-        let secp = Secp256k1::new();
-        let (sk, pk) = secp.generate_keypair(&mut rand::thread_rng());
-        let (xonly, _) = pk.x_only_public_key();
-        let addr = Address::p2tr(&secp, xonly, None, bitcoin::Network::Regtest);
-        mock.set_keypair(sk, bitcoin::PublicKey::new(pk));
-        mock.qubitcoin_mode = false;
-        let script = addr.script_pubkey();
-        let confirmed = bitcoin::Txid::from_str("a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1").unwrap();
-        {
-            let mut utxos = mock.utxos.lock().unwrap();
-            utxos.push((bitcoin::OutPoint::new(confirmed, 0), bitcoin::TxOut { value: bitcoin::Amount::from_sat(546), script_pubkey: script.clone() }));
-            utxos.push((bitcoin::OutPoint::new(confirmed, 1), bitcoin::TxOut { value: bitcoin::Amount::from_sat(50_000), script_pubkey: script.clone() }));
-            mock.alkane_balances.lock().unwrap().insert(format!("{}:0", confirmed), vec![(32, 0, 10_000)]);
-        }
-        let parent = bitcoin::Transaction {
-            version: bitcoin::transaction::Version::TWO,
-            lock_time: bitcoin::absolute::LockTime::ZERO,
-            input: vec![bitcoin::TxIn {
-                previous_output: bitcoin::OutPoint::new(bitcoin::Txid::from_str("b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2").unwrap(), 0),
-                script_sig: bitcoin::ScriptBuf::new(),
-                sequence: bitcoin::Sequence::ENABLE_RBF_NO_LOCKTIME,
-                witness: bitcoin::Witness::new(),
-            }],
-            output: vec![
-                bitcoin::TxOut { value: bitcoin::Amount::from_sat(546), script_pubkey: script.clone() },
-                bitcoin::TxOut { value: bitcoin::Amount::from_sat(8_000), script_pubkey: script.clone() },
-            ],
-        };
-        let parent_hex = bitcoin::consensus::encode::serialize_hex(&parent);
-        let carrier = format!("{}:0", parent.compute_txid());
-        let funding = format!("{}:1", parent.compute_txid());
-        (mock, addr, parent_hex, carrier, funding)
-    }
-
-    /// #308 review lane A 3: `required` only RE-ORDERED candidates. When the first required
-    /// outpoint already covered the need, the loop broke and the second one was never
-    /// visited, ending in "required UTXO was not selected". Every required outpoint is taken.
-    #[tokio::test]
-    async fn select_utxos_takes_every_required_outpoint_even_when_the_first_covers_the_need() {
-        let (mut mock, addr, parent_hex, carrier, funding) = required_fixture();
-        let script_hex = hex::encode(addr.script_pubkey().as_bytes());
-        let prefetched = vec![
-            PrefetchedUtxo { outpoint: carrier.clone(), value: 546, script_pubkey_hex: script_hex.clone(), alkanes: Some(vec![PrefetchedAlkane { block: 32, tx: 0, amount: "9000".to_string() }]), required: true },
-            PrefetchedUtxo { outpoint: funding.clone(), value: 8_000, script_pubkey_hex: script_hex, alkanes: Some(vec![]), required: true },
-        ];
-        let requirements = vec![InputRequirement::Alkanes { block: 32, tx: 0, amount: 5_000 }];
-        let mut executor = EnhancedAlkanesExecutor::new(&mut mock);
-        let selected = executor
-            .select_utxos(&requirements, &Some(vec![addr.to_string()]), &[parent_hex], None, &prefetched, &[], UtxoDataSource::Metashrew)
-            .await
-            .expect("both required outpoints must be selected");
-        let chosen: Vec<String> = selected.outpoints.iter().map(|o| o.to_string()).collect();
-        assert!(chosen.contains(&carrier), "carrier missing: {:?}", chosen);
-        assert!(chosen.contains(&funding), "second required outpoint missing: {:?}", chosen);
-    }
-
-    /// #308 review lane A 4: when the build has NO alkane requirement left (Tx B of an explicit
-    /// split drops them all), a required carrier that is known to hold alkanes was skipped as
-    /// "an alkane carrier we don't need" and the build failed. A required outpoint is taken
-    /// because it is required, whatever it holds.
-    #[tokio::test]
-    async fn select_utxos_takes_a_required_carrier_with_known_alkanes_when_no_alkanes_are_required() {
-        let (mut mock, addr, parent_hex, carrier, _funding) = required_fixture();
-        let script_hex = hex::encode(addr.script_pubkey().as_bytes());
-        let prefetched = vec![PrefetchedUtxo {
-            outpoint: carrier.clone(),
-            value: 546,
-            script_pubkey_hex: script_hex,
-            alkanes: Some(vec![PrefetchedAlkane { block: 32, tx: 0, amount: "9000".to_string() }]),
-            required: true,
-        }];
-        let requirements = vec![InputRequirement::Bitcoin { amount: 1_000 }];
-        let mut executor = EnhancedAlkanesExecutor::new(&mut mock);
-        let selected = executor
-            .select_utxos(&requirements, &Some(vec![addr.to_string()]), &[parent_hex], None, &prefetched, &[], UtxoDataSource::Metashrew)
-            .await
-            .expect("a required carrier must be selected even with no alkane requirement");
-        assert!(selected.outpoints.iter().any(|o| o.to_string() == carrier), "required carrier skipped: {:?}", selected.outpoints);
-    }
-
-    /// `PrefetchedUtxo.required` makes a package child spend ITS carrier. The
-    /// control shows the hazard: with a confirmed frBTC UTXO in the wallet, the
-    /// selector satisfies the frBTC ask from it and leaves the unconfirmed
-    /// carrier behind. Required → the carrier is spent. Required but not a
-    /// candidate (parent not supplied) → the build fails instead of guessing.
-    #[tokio::test]
-    async fn select_utxos_required_prefetched_outpoint_is_spent() {
-        use crate::mock_provider::MockProvider;
-        use bitcoin::address::Address;
-        use bitcoin::key::Secp256k1;
-
-        let mut mock = MockProvider::new(bitcoin::Network::Regtest);
-        let secp = Secp256k1::new();
-        let (sk, pk) = secp.generate_keypair(&mut rand::thread_rng());
-        let (xonly, _) = pk.x_only_public_key();
-        let addr = Address::p2tr(&secp, xonly, None, bitcoin::Network::Regtest);
-        mock.set_keypair(sk, bitcoin::PublicKey::new(pk));
-        mock.qubitcoin_mode = false;
-        let script = addr.script_pubkey();
-
-        // Confirmed wallet state: a frBTC dust carrier (enough for the ask) + clean BTC.
-        let confirmed = bitcoin::Txid::from_str("a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1").unwrap();
-        {
-            let mut utxos = mock.utxos.lock().unwrap();
-            utxos.push((bitcoin::OutPoint::new(confirmed, 0), bitcoin::TxOut { value: bitcoin::Amount::from_sat(546), script_pubkey: script.clone() }));
-            utxos.push((bitcoin::OutPoint::new(confirmed, 1), bitcoin::TxOut { value: bitcoin::Amount::from_sat(50_000), script_pubkey: script.clone() }));
-            mock.alkane_balances.lock().unwrap().insert(format!("{}:0", confirmed), vec![(32, 0, 10_000)]);
-        }
-
-        // Pending parent: v0 = carrier (frBTC the indexer cannot see), v1 = funding.
-        let parent = bitcoin::Transaction {
-            version: bitcoin::transaction::Version::TWO,
-            lock_time: bitcoin::absolute::LockTime::ZERO,
-            input: vec![bitcoin::TxIn {
-                previous_output: bitcoin::OutPoint::new(bitcoin::Txid::from_str("b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2").unwrap(), 0),
-                script_sig: bitcoin::ScriptBuf::new(),
-                sequence: bitcoin::Sequence::ENABLE_RBF_NO_LOCKTIME,
-                witness: bitcoin::Witness::new(),
-            }],
-            output: vec![
-                bitcoin::TxOut { value: bitcoin::Amount::from_sat(546), script_pubkey: script.clone() },
-                bitcoin::TxOut { value: bitcoin::Amount::from_sat(8_000), script_pubkey: script.clone() },
-            ],
-        };
-        let parent_hex = bitcoin::consensus::encode::serialize_hex(&parent);
-        let carrier = format!("{}:0", parent.compute_txid());
-        let carrier_entry = |required: bool| PrefetchedUtxo {
-            outpoint: carrier.clone(),
-            value: 546,
-            script_pubkey_hex: hex::encode(script.as_bytes()),
-            alkanes: Some(vec![PrefetchedAlkane { block: 32, tx: 0, amount: "9000".to_string() }]),
-            required,
-        };
-        let requirements = vec![InputRequirement::Alkanes { block: 32, tx: 0, amount: 5_000 }];
-        let mut executor = EnhancedAlkanesExecutor::new(&mut mock);
-
-        // RED control: annotation only → the confirmed frBTC is used, the carrier is left behind.
-        let annotated = executor
-            .select_utxos(&requirements, &Some(vec![addr.to_string()]), &[parent_hex.clone()], None, &[carrier_entry(false)], &[], UtxoDataSource::Metashrew)
-            .await
-            .expect("control selection");
-        assert!(
-            !annotated.outpoints.iter().any(|op| op.to_string() == carrier),
-            "control must reproduce the hazard (carrier left behind), got {:?}",
-            annotated.outpoints
-        );
-
-        // Required → the carrier is spent.
-        let forced = executor
-            .select_utxos(&requirements, &Some(vec![addr.to_string()]), &[parent_hex.clone()], None, &[carrier_entry(true)], &[], UtxoDataSource::Metashrew)
-            .await
-            .expect("required carrier is a candidate and must be selected");
-        assert!(forced.outpoints.iter().any(|op| op.to_string() == carrier), "required carrier not selected: {:?}", forced.outpoints);
-
-        // Required but the parent was not supplied → not a candidate → hard error.
-        let missing = executor
-            .select_utxos(&requirements, &Some(vec![addr.to_string()]), &[], None, &[carrier_entry(true)], &[], UtxoDataSource::Metashrew)
-            .await;
-        assert!(missing.is_err(), "a required outpoint that is not spendable must fail the build");
-
-        // Required AND excluded → contradiction → hard error.
-        let contradictory = executor
-            .select_utxos(&requirements, &Some(vec![addr.to_string()]), &[parent_hex], None, &[carrier_entry(true)], &[carrier.clone()], UtxoDataSource::Metashrew)
-            .await;
-        assert!(contradictory.is_err());
-    }
-
-    /// A caller exclusion must also bind the PENDING outputs injected from
-    /// `known_pending_tx_hexes`. The RED control proves the injection path is
-    /// reached (without the exclusion the carrier IS selected); the second call
-    /// fails on the pre-fix code, where `excluded_set` was applied before the
-    /// mempool adjustment and the carrier slipped back in.
-    #[tokio::test]
-    async fn select_utxos_exclusion_binds_mempool_injected_outputs() {
-        use crate::mock_provider::MockProvider;
-        use bitcoin::address::Address;
-        use bitcoin::key::Secp256k1;
-
-        let mut mock = MockProvider::new(bitcoin::Network::Regtest);
-        let secp = Secp256k1::new();
-        let (sk, pk) = secp.generate_keypair(&mut rand::thread_rng());
-        let (xonly, _) = pk.x_only_public_key();
-        let addr = Address::p2tr(&secp, xonly, None, bitcoin::Network::Regtest);
-        mock.set_keypair(sk, bitcoin::PublicKey::new(pk));
-        mock.qubitcoin_mode = false; // mempool adjustment is skipped in qubitcoin mode
-
-        // A pending package parent: v0 = 546-sat carrier, v1 = clean funding.
-        let parent = bitcoin::Transaction {
-            version: bitcoin::transaction::Version::TWO,
-            lock_time: bitcoin::absolute::LockTime::ZERO,
-            input: vec![bitcoin::TxIn {
-                previous_output: bitcoin::OutPoint::new(
-                    bitcoin::Txid::from_str("cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd").unwrap(),
-                    0,
-                ),
-                script_sig: bitcoin::ScriptBuf::new(),
-                sequence: bitcoin::Sequence::ENABLE_RBF_NO_LOCKTIME,
-                witness: bitcoin::Witness::new(),
-            }],
-            output: vec![
-                bitcoin::TxOut { value: bitcoin::Amount::from_sat(546), script_pubkey: addr.script_pubkey() },
-                bitcoin::TxOut { value: bitcoin::Amount::from_sat(60_000), script_pubkey: addr.script_pubkey() },
-            ],
-        };
-        let parent_hex = bitcoin::consensus::encode::serialize_hex(&parent);
-        let carrier = format!("{}:0", parent.compute_txid());
-
-        let mut executor = EnhancedAlkanesExecutor::new(&mut mock);
-        let requirements = vec![InputRequirement::Bitcoin { amount: 5_000 }];
-
-        // RED control: nothing excluded → the injected carrier is taken as fee money.
-        let unlocked = executor
-            .select_utxos(&requirements, &Some(vec![addr.to_string()]), &[parent_hex.clone()], None, &[], &[], UtxoDataSource::Metashrew)
-            .await
-            .expect("pending outputs fund the selection");
-        assert!(
-            unlocked.outpoints.iter().any(|op| op.to_string() == carrier),
-            "control: the pending carrier must be reachable through the mempool injection, got {:?}",
-            unlocked.outpoints
-        );
-
-        // Locked: the carrier must never be selected, the funding output still is.
-        let locked = executor
-            .select_utxos(&requirements, &Some(vec![addr.to_string()]), &[parent_hex], None, &[], &[carrier.clone()], UtxoDataSource::Metashrew)
-            .await
-            .expect("the funding output alone covers the ask");
-        assert!(
-            !locked.outpoints.iter().any(|op| op.to_string() == carrier),
-            "a caller-excluded pending carrier was selected: {:?}",
-            locked.outpoints
-        );
-        assert!(locked.outpoints.iter().any(|op| op.to_string() == format!("{}:1", parent.compute_txid())));
-    }
-
     // ────────────────────────────────────────────────────────────────────
     // JSON parsing — `alkanesExecuteWithStrings` and `alkanesExecuteFull`
     // both accept `max_indexed_height` (and the camelCase alias
@@ -7705,7 +6250,6 @@ mod tests {
             value: 546,
             script_pubkey_hex: "0014deadbeef00000000000000000000000000000000".to_string(),
             alkanes,
-            required: false,
         }
     }
 
@@ -8267,120 +6811,6 @@ mod dust_change_tests {
         );
     }
 
-    /// #308 review lane A 7: an output INJECTED from a pending tx probes "clean" only because
-    /// the indexer has not seen its tx yet — that is absence of information, not an all-clear.
-    /// Such an output may be spent when BTC is genuinely NEEDED, never pulled in for the dust
-    /// headroom. (Script matching made the injection reach regtest/testnet/signet too.)
-    #[tokio::test]
-    async fn headroom_never_reaches_for_unconfirmed_injected_outputs() {
-        let mut mock = MockProvider::new(bitcoin::Network::Regtest);
-        let secp = Secp256k1::new();
-        let (sk, pk) = secp.generate_keypair(&mut rand::thread_rng());
-        let (xonly, _) = pk.x_only_public_key();
-        let addr = Address::p2tr(&secp, xonly, None, bitcoin::Network::Regtest);
-        mock.set_keypair(sk, bitcoin::PublicKey::new(pk));
-        mock.qubitcoin_mode = false;
-        let script = addr.script_pubkey();
-
-        // Confirmed: exactly enough for the requirement.
-        {
-            let mut utxos = mock.utxos.lock().unwrap();
-            utxos.push((OutPoint::new(txid_n(0x91), 0), TxOut { value: Amount::from_sat(5_000), script_pubkey: script.clone() }));
-        }
-        // Pending: a tx paying the wallet four 2 000-sat outputs.
-        let pending = bitcoin::Transaction {
-            version: bitcoin::transaction::Version::TWO,
-            lock_time: bitcoin::absolute::LockTime::ZERO,
-            input: vec![bitcoin::TxIn {
-                previous_output: OutPoint::new(txid_n(0x92), 0),
-                script_sig: bitcoin::ScriptBuf::new(),
-                sequence: bitcoin::Sequence::ENABLE_RBF_NO_LOCKTIME,
-                witness: bitcoin::Witness::new(),
-            }],
-            output: (0..4).map(|_| TxOut { value: Amount::from_sat(2_000), script_pubkey: script.clone() }).collect(),
-        };
-        let pending_txid = pending.compute_txid();
-        let pending_hex = bitcoin::consensus::encode::serialize_hex(&pending);
-
-        let mut executor = EnhancedAlkanesExecutor::new(&mut mock);
-        let result = executor
-            .select_utxos_with_headroom(
-                &[InputRequirement::Bitcoin { amount: 3_000 }],
-                &Some(vec![addr.to_string()]),
-                &[pending_hex], None, &[], &[],
-                UtxoDataSource::Metashrew,
-                BtcHeadroom::new(DUST_LIMIT, 50.0),
-            )
-            .await
-            .expect("the confirmed UTXO alone meets the requirement");
-
-        let from_pending = result.outpoints.iter().filter(|op| op.txid == pending_txid).count();
-        assert_eq!(
-            from_pending, 0,
-            "took {from_pending} unconfirmed injected outputs purely as headroom; their clean status is unknown until their tx is indexed",
-        );
-    }
-
-    /// Same scenario through the ALKANE-branch loop (an alkane requirement present). This one
-    /// is a REGRESSION GUARD, not a red test: it passed before the lane A 7 fix. In this loop
-    /// an empty sheet never creates a `utxo_balances` entry (both the prefetched and RPC probe
-    /// paths insert only non-empty sheets), so an unconfirmed injected output lands in the
-    /// "no balance data" branch, which already refuses the headroom. A change that made empty
-    /// sheets create entries would reopen the path; this test is what would catch it.
-    #[tokio::test]
-    async fn headroom_never_reaches_for_unconfirmed_injected_outputs_with_an_alkane_requirement() {
-        let mut mock = MockProvider::new(bitcoin::Network::Regtest);
-        let secp = Secp256k1::new();
-        let (sk, pk) = secp.generate_keypair(&mut rand::thread_rng());
-        let (xonly, _) = pk.x_only_public_key();
-        let addr = Address::p2tr(&secp, xonly, None, bitcoin::Network::Regtest);
-        mock.set_keypair(sk, bitcoin::PublicKey::new(pk));
-        mock.qubitcoin_mode = false;
-        let script = addr.script_pubkey();
-
-        let carrier = OutPoint::new(txid_n(0xa7), 0);
-        {
-            let mut utxos = mock.utxos.lock().unwrap();
-            utxos.push((carrier, TxOut { value: Amount::from_sat(546), script_pubkey: script.clone() }));
-            utxos.push((OutPoint::new(txid_n(0xa8), 0), TxOut { value: Amount::from_sat(5_000), script_pubkey: script.clone() }));
-        }
-        mock.alkane_balances.lock().unwrap().insert(format!("{}:0", txid_n(0xa7)), vec![(32, 0, 1_000)]);
-        mock.alkane_balances.lock().unwrap().insert(format!("{}:0", txid_n(0xa8)), vec![]);
-        let pending = bitcoin::Transaction {
-            version: bitcoin::transaction::Version::TWO,
-            lock_time: bitcoin::absolute::LockTime::ZERO,
-            input: vec![bitcoin::TxIn {
-                previous_output: OutPoint::new(txid_n(0xa9), 0),
-                script_sig: bitcoin::ScriptBuf::new(),
-                sequence: bitcoin::Sequence::ENABLE_RBF_NO_LOCKTIME,
-                witness: bitcoin::Witness::new(),
-            }],
-            output: (0..4).map(|_| TxOut { value: Amount::from_sat(2_000), script_pubkey: script.clone() }).collect(),
-        };
-        let pending_txid = pending.compute_txid();
-        // The indexer answers "no balances" for the pending outputs too — exactly what an
-        // unindexed tx looks like. Only their confirmation status tells them apart.
-        for v in 0..4u32 {
-            mock.alkane_balances.lock().unwrap().insert(format!("{}:{}", pending_txid, v), vec![]);
-        }
-        let pending_hex = bitcoin::consensus::encode::serialize_hex(&pending);
-
-        let mut executor = EnhancedAlkanesExecutor::new(&mut mock);
-        let result = executor
-            .select_utxos_with_headroom(
-                &[InputRequirement::Alkanes { block: 32, tx: 0, amount: 1_000 }, InputRequirement::Bitcoin { amount: 3_000 }],
-                &Some(vec![addr.to_string()]),
-                &[pending_hex], None, &[], &[],
-                UtxoDataSource::Metashrew,
-                BtcHeadroom::new(DUST_LIMIT, 50.0),
-            )
-            .await
-            .expect("carrier + the confirmed UTXO meet the requirement");
-
-        let from_pending = result.outpoints.iter().filter(|op| op.txid == pending_txid).count();
-        assert_eq!(from_pending, 0, "took {from_pending} unconfirmed injected outputs as headroom in the alkane branch");
-    }
-
     // ── build: sub-dust change goes to the fee, not to an output ────────
 
     async fn build_with_change(
@@ -8549,8 +6979,7 @@ mod dust_change_tests {
 #[cfg(test)]
 mod diesel_mint_tests {
     //! The default-on DIESEL mint protostone (2026-07-13): every runestone this
-    //! executor builds gets `[2,0,77] → pointer 0` appended LAST (D0 2026-09-15: pinned
-    //! at 0 independently of the Runestone pointer), unless the
+    //! executor builds gets `[2,0,77] → pointer 0` appended LAST, unless the
     //! caller opts out (`skip_diesel_mint`) or already mints in the same tx
     //! (one mint per tx — an explicit `[2,0,77]` cellpack suppresses the append).
     use super::*;
@@ -8580,11 +7009,11 @@ mod diesel_mint_tests {
         let mut provider = MockProvider::new(Network::Regtest);
         let executor = EnhancedAlkanesExecutor::new(&mut provider);
         let specs = parse_protostones("[3,797,101]:v0:v0").unwrap();
-        let stones = decode(executor.construct_runestone_script(&specs, 2, 0, false).unwrap());
+        let stones = decode(executor.construct_runestone_script(&specs, 2, false).unwrap());
         assert_eq!(stones.len(), 2, "caller stone + appended mint");
         // Caller's stone first (auto-allocation target unchanged).
         assert!(!is_mint_message(&stones[0].message));
-        // Appended mint: [2,0,77] cellpack, pointer/refund = LEGACY_DIESEL_MINT_POINTER (0).
+        // Appended mint: [2,0,77] cellpack, pointer/refund = runestone pointer (0).
         let mint = &stones[1];
         assert_eq!(mint.protocol_tag, 1);
         assert!(is_mint_message(&mint.message));
@@ -8598,7 +7027,7 @@ mod diesel_mint_tests {
         let mut provider = MockProvider::new(Network::Regtest);
         let executor = EnhancedAlkanesExecutor::new(&mut provider);
         let specs = parse_protostones("[3,797,101]:v0:v0").unwrap();
-        let stones = decode(executor.construct_runestone_script(&specs, 2, 0, true).unwrap());
+        let stones = decode(executor.construct_runestone_script(&specs, 2, true).unwrap());
         assert_eq!(stones.len(), 1, "skip_diesel_mint → caller stones only");
         assert!(!is_mint_message(&stones[0].message));
     }
@@ -8610,7 +7039,7 @@ mod diesel_mint_tests {
         // An explicit DIESEL mint (e.g. devnet boot's `[2,0,77]:v0:v0`) must not
         // be doubled — a tx can only claim the emission once.
         let specs = parse_protostones("[2,0,77]:v0:v0").unwrap();
-        let stones = decode(executor.construct_runestone_script(&specs, 2, 0, false).unwrap());
+        let stones = decode(executor.construct_runestone_script(&specs, 2, false).unwrap());
         assert_eq!(stones.len(), 1, "explicit mint present → nothing appended");
         assert!(is_mint_message(&stones[0].message));
     }
@@ -8621,598 +7050,12 @@ mod diesel_mint_tests {
         let executor = EnhancedAlkanesExecutor::new(&mut provider);
         // Two-protostone shifter (subfrost swap shape): edict stone + cellpack stone.
         let specs = parse_protostones("[2:1:100:p1]:v0,[4,65498,13,2,2,1,32,0,100,95,1000]:v1:v0").unwrap();
-        let stones = decode(executor.construct_runestone_script(&specs, 2, 0, false).unwrap());
+        let stones = decode(executor.construct_runestone_script(&specs, 2, false).unwrap());
         assert_eq!(stones.len(), 3, "p0 shifter + p1 cellpack + appended mint");
         assert!(is_mint_message(&stones[2].message));
         // Caller stones keep their positions — protorune auto-allocation still
         // binds input alkanes to p0, and p1's shadow-vout reference is untouched.
         assert!(stones[0].message.is_empty());
         assert!(!stones[1].message.is_empty());
-    }
-}
-
-#[cfg(test)]
-mod d0_rune_pointer_e2e_tests {
-    //! D0 (2026-09-15, ordinals hi-fi pipeline): end-to-end through
-    //! `build_single_transaction`, the path every subfrost-app mutation takes
-    //! (`alkanesExecuteWithStrings` → `execute` → `build_single_transaction`).
-    //!
-    //! These tests use only APIs that already existed at 5974673. The same
-    //! module therefore compiles against the unfixed commit, and that is how
-    //! the red proof was run (see changes-D0.md).
-    //!
-    //! Keys and addresses are generated per run. Protostone goldens are the
-    //! `protocol` u128 values the UNFIXED 5974673 builder emitted for the same
-    //! specs and output count. They contain no keys, because protostone
-    //! encodings depend only on the specs and the number of outputs.
-    use super::*;
-    use crate::alkanes::parsing::{parse_input_requirements, parse_protostones};
-    use crate::mock_provider::MockProvider;
-    use bitcoin::key::Secp256k1;
-    use bitcoin::{Amount, Network};
-
-    struct Wallet {
-        user_taproot: Address,
-        user_segwit: Address,
-        foreign_a: Address,
-    }
-
-    fn random_taproot(secp: &Secp256k1<bitcoin::secp256k1::All>) -> Address {
-        let (_sk, pk) = secp.generate_keypair(&mut rand::thread_rng());
-        Address::p2tr(secp, pk.x_only_public_key().0, None, Network::Regtest)
-    }
-
-    fn setup(mock: &mut MockProvider) -> Wallet {
-        let secp = Secp256k1::new();
-        let (sk, pk) = secp.generate_keypair(&mut rand::thread_rng());
-        mock.set_keypair(sk, bitcoin::PublicKey::new(pk));
-        let user_taproot = Address::p2tr(&secp, pk.x_only_public_key().0, None, Network::Regtest);
-        let (_sk2, pk2) = secp.generate_keypair(&mut rand::thread_rng());
-        let user_segwit = Address::p2wpkh(&bitcoin::CompressedPublicKey(pk2), Network::Regtest);
-        let foreign_a = random_taproot(&secp);
-        let mut id = [0u8; 32];
-        rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut id);
-        mock.utxos.lock().unwrap().push((
-            OutPoint::new(bitcoin::Txid::from_byte_array(id), 0),
-            TxOut { value: Amount::from_sat(400_000), script_pubkey: user_taproot.script_pubkey() },
-        ));
-        Wallet { user_taproot, user_segwit, foreign_a }
-    }
-
-    fn params(
-        w: &Wallet,
-        to: Vec<String>,
-        reqs: &str,
-        stones: &str,
-        skip_diesel_mint: bool,
-    ) -> EnhancedExecuteParams {
-        EnhancedExecuteParams {
-            fee_rate: Some(2.0),
-            to_addresses: to,
-            from_addresses: Some(vec![w.user_taproot.to_string()]),
-            change_address: Some(w.user_segwit.to_string()),
-            alkanes_change_address: Some(w.user_taproot.to_string()),
-            input_requirements: parse_input_requirements(reqs).unwrap(),
-            protostones: parse_protostones(stones).unwrap(),
-            envelope_data: None,
-            raw_output: false,
-            trace_enabled: false,
-            mine_enabled: false,
-            auto_confirm: false,
-            ordinals_strategy: OrdinalsStrategy::Burn,
-            mempool_indexer: false,
-            split_transactions: false,
-            split_at: None,
-            known_pending_tx_hexes: vec![],
-            prefetched_utxos: vec![],
-            excluded_utxos: vec![],
-            skip_diesel_mint,
-            max_indexed_height: None,
-            utxo_source: UtxoDataSource::Metashrew,
-        }
-    }
-
-    struct Built {
-        tx: Transaction,
-        pointer: Option<u32>,
-        protocol: Vec<u128>,
-    }
-
-    async fn build(mock: &mut MockProvider, p: EnhancedExecuteParams) -> Built {
-        let mut executor = EnhancedAlkanesExecutor::new(mock);
-        let state = executor.build_single_transaction(&p).await.expect("build succeeds");
-        let ExecutionState::ReadyToSign(ready) = state else { panic!("expected ReadyToSign") };
-        let tx = ready.psbt.unsigned_tx.clone();
-        let Some(ordinals::Artifact::Runestone(rs)) = ordinals::Runestone::decipher(&tx) else {
-            panic!("tx must carry a valid (non-cenotaph) runestone");
-        };
-        Built { pointer: rs.pointer, protocol: rs.protocol.clone().unwrap_or_default(), tx }
-    }
-
-    fn owner(w: &Wallet, tx: &Transaction, vout: u32) -> &'static str {
-        let spk = &tx.output[vout as usize].script_pubkey;
-        if *spk == w.user_taproot.script_pubkey() {
-            "user-alkanes-change"
-        } else if *spk == w.user_segwit.script_pubkey() {
-            "user-btc-change"
-        } else if spk.is_op_return() {
-            "op_return"
-        } else {
-            "FOREIGN"
-        }
-    }
-
-    fn print_golden(name: &str, b: &Built) {
-        eprintln!("D0-GOLDEN {name} pointer={:?} protocol={:?}", b.pointer, b.protocol);
-    }
-
-    // `protocol` values emitted by the UNFIXED builder at 5974673 for the exact
-    // specs/output counts below (captured 2026-09-15 from this module run
-    // against the pristine 5974673 execute.rs; log in changes-D0.md).
-    const GOLDEN_5974673_WRAP: &[u128] = &[1846174955662647757353077314356737, 761413988581469];
-    const GOLDEN_5974673_BTC_SEND: &[u128] = &[1498966328321];
-    const GOLDEN_5974673_ALKANE_SEND: &[u128] = &[472255239147725273106689];
-    const GOLDEN_5974673_SWAP_SHIFTER: &[u128] = &[
-        1846174960118207572784230648449281,
-        833378897682168308980192422808059997,
-        14045608981504765505047048188759030,
-    ];
-
-    /// Protostones byte-identical to 5974673: the whole runestone with ONLY its
-    /// pointer rewritten back to the legacy 0 must encode to exactly the bytes
-    /// the unfixed builder produced.
-    fn assert_protostones_unchanged(name: &str, b: &Built, golden: &[u128]) {
-        assert_eq!(b.protocol, golden, "{name}: protostone encoding changed vs 5974673");
-        let legacy = ordinals::Runestone {
-            protocol: Some(golden.to_vec()),
-            pointer: Some(0),
-            ..Default::default()
-        }
-        .encipher();
-        let op_return = b.tx.output.iter().find(|o| o.script_pubkey.is_op_return()).unwrap();
-        let Some(ordinals::Artifact::Runestone(mut rs)) = ordinals::Runestone::decipher(&b.tx) else { unreachable!() };
-        rs.pointer = Some(0);
-        assert_eq!(rs.encipher(), legacy, "{name}: runestone differs from 5974673 in more than the pointer");
-        assert_ne!(op_return.script_pubkey, legacy, "{name}: sanity, the pointer really moved");
-    }
-
-    /// (a) frBTC wrap, `useWrapMutation.ts:180` shape: output 0 = signer.
-    #[tokio::test]
-    async fn wrap_runestone_pointer_is_the_users_alkanes_change_not_the_signer() {
-        let mut mock = MockProvider::new(Network::Regtest);
-        let w = setup(&mut mock);
-        let signer = w.foreign_a.to_string();
-        let p = params(&w, vec![signer, w.user_taproot.to_string()], "B:100000:v0", "[32,0,77]:v1:v1", false);
-        let b = build(&mut mock, p).await;
-        print_golden("wrap", &b);
-        assert_eq!(owner(&w, &b.tx, 0), "FOREIGN", "sanity: output 0 is the frBTC signer");
-        assert_eq!(b.pointer, Some(1), "unallocated runes must go to v1 (user alkanes change), got {:?}", b.pointer);
-        assert_eq!(owner(&w, &b.tx, b.pointer.unwrap()), "user-alkanes-change");
-        assert_protostones_unchanged("wrap", &b, GOLDEN_5974673_WRAP);
-    }
-
-    /// (b) plain BTC send, `useBtcSendMutation.ts:413` shape: output 0 = recipient.
-    #[tokio::test]
-    async fn btc_send_runestone_pointer_is_the_users_alkanes_change_not_the_recipient() {
-        let mut mock = MockProvider::new(Network::Regtest);
-        let w = setup(&mut mock);
-        let recipient = w.foreign_a.to_string();
-        let p = params(&w, vec![recipient, w.user_taproot.to_string()], "B:50000:v0,B:546:v1", "v1:v1", true);
-        let b = build(&mut mock, p).await;
-        print_golden("btc_send", &b);
-        assert_eq!(owner(&w, &b.tx, 0), "FOREIGN", "sanity: output 0 is the BTC recipient");
-        assert_eq!(b.pointer, Some(1), "unallocated runes must go to v1 (user alkanes change), got {:?}", b.pointer);
-        assert_eq!(owner(&w, &b.tx, b.pointer.unwrap()), "user-alkanes-change");
-        assert_protostones_unchanged("btc_send", &b, GOLDEN_5974673_BTC_SEND);
-    }
-
-    /// (c) alkane send: recipient first, the edict pays v0, leftovers to v1.
-    #[tokio::test]
-    async fn alkane_send_runestone_pointer_is_the_users_alkanes_change_not_the_recipient() {
-        let mut mock = MockProvider::new(Network::Regtest);
-        let w = setup(&mut mock);
-        let recipient = w.foreign_a.to_string();
-        let p = params(&w, vec![recipient, w.user_taproot.to_string()], "B:546:v0,B:546:v1", "[2:1:100:v0]:v1:v1", true);
-        let b = build(&mut mock, p).await;
-        print_golden("alkane_send", &b);
-        assert_eq!(owner(&w, &b.tx, 0), "FOREIGN", "sanity: output 0 is the alkane recipient");
-        assert_eq!(b.pointer, Some(1), "unallocated runes must go to v1 (user alkanes change), got {:?}", b.pointer);
-        assert_eq!(owner(&w, &b.tx, b.pointer.unwrap()), "user-alkanes-change");
-        assert_protostones_unchanged("alkane_send", &b, GOLDEN_5974673_ALKANE_SEND);
-    }
-
-    /// No `to` output is the user's: the BTC-change placeholder is the only user
-    /// output, so it becomes the pointer and is pinned (never dropped).
-    #[tokio::test]
-    async fn only_btc_change_is_users_pointer_names_the_change_output() {
-        let mut mock = MockProvider::new(Network::Regtest);
-        let w = setup(&mut mock);
-        let p = params(&w, vec![w.foreign_a.to_string()], "B:50000:v0", "v0:v0", true);
-        let b = build(&mut mock, p).await;
-        assert_eq!(owner(&w, &b.tx, 0), "FOREIGN");
-        assert_eq!(b.pointer, Some(1));
-        assert_eq!(owner(&w, &b.tx, 1), "user-btc-change");
-    }
-
-    /// When output 0 IS the user's alkanes change, it stays 0 (swap-shifter
-    /// shape: v0 = user alkanes change, v1 = frBTC signer).
-    #[tokio::test]
-    async fn swap_shifter_keeps_pointer_zero_when_v0_is_the_users_alkanes_change() {
-        let mut mock = MockProvider::new(Network::Regtest);
-        let w = setup(&mut mock);
-        let signer = w.foreign_a.to_string();
-        let p = params(
-            &w,
-            vec![w.user_taproot.to_string(), signer],
-            "B:10000:v1",
-            "[2:1:100:p1]:v0,[4,65498,13,2,2,1,32,0,100,95,1000]:v0:v0",
-            false,
-        );
-        let b = build(&mut mock, p).await;
-        print_golden("swap_shifter", &b);
-        assert_eq!(b.protocol, GOLDEN_5974673_SWAP_SHIFTER, "swap_shifter: protostone encoding changed vs 5974673");
-        assert_eq!(b.pointer, Some(0));
-        assert_eq!(owner(&w, &b.tx, 0), "user-alkanes-change");
-    }
-}
-
-#[cfg(test)]
-mod d0_select_runestone_pointer_tests {
-    //! D0 (2026-09-15): the pure pointer selector. Scripts are derived from
-    //! per-run random keys.
-    use super::*;
-    use bitcoin::key::Secp256k1;
-    use bitcoin::{Amount, Network};
-
-    fn spk() -> ScriptBuf {
-        let secp = Secp256k1::new();
-        let (_sk, pk) = secp.generate_keypair(&mut rand::thread_rng());
-        Address::p2tr(&secp, pk.x_only_public_key().0, None, Network::Regtest).script_pubkey()
-    }
-    fn out(s: &ScriptBuf) -> TxOut {
-        TxOut { value: Amount::from_sat(546), script_pubkey: s.clone() }
-    }
-
-    #[test]
-    fn prefers_alkanes_change_over_everything_including_v0_foreign() {
-        let (foreign, alk, btc) = (spk(), spk(), spk());
-        let outs = [out(&foreign), out(&alk), out(&btc)];
-        assert_eq!(select_runestone_pointer(&outs, &alk, &btc, Some(2)), Some(1));
-    }
-
-    #[test]
-    fn keeps_zero_when_v0_is_the_alkanes_change() {
-        let (foreign, alk, btc) = (spk(), spk(), spk());
-        let outs = [out(&alk), out(&foreign), out(&btc)];
-        assert_eq!(select_runestone_pointer(&outs, &alk, &btc, Some(2)), Some(0));
-    }
-
-    #[test]
-    fn non_droppable_btc_change_beats_the_droppable_placeholder() {
-        let (foreign, alk, btc) = (spk(), spk(), spk());
-        // alkanes change appears only as the droppable placeholder (alk == btc
-        // addresses collapsed): a stable user output is preferred.
-        let outs = [out(&foreign), out(&btc), out(&alk)];
-        assert_eq!(select_runestone_pointer(&outs, &alk, &btc, Some(2)), Some(1));
-    }
-
-    #[test]
-    fn falls_back_to_the_btc_change_placeholder_when_it_is_the_only_user_output() {
-        let (foreign, alk, btc) = (spk(), spk(), spk());
-        let outs = [out(&foreign), out(&btc)];
-        assert_eq!(select_runestone_pointer(&outs, &alk, &btc, Some(1)), Some(1));
-    }
-
-    #[test]
-    fn none_when_no_output_is_the_users() {
-        let (f1, f2, alk, btc) = (spk(), spk(), spk(), spk());
-        let outs = [out(&f1), out(&f2)];
-        assert_eq!(select_runestone_pointer(&outs, &alk, &btc, None), None);
-    }
-
-    #[test]
-    fn never_selects_an_op_return_even_if_scripts_collide() {
-        let op_return = ScriptBuf::new_op_return([1u8, 2, 3]);
-        let foreign = spk();
-        let outs = [out(&foreign), TxOut { value: Amount::ZERO, script_pubkey: op_return.clone() }];
-        assert_eq!(select_runestone_pointer(&outs, &op_return, &op_return, None), None);
-    }
-
-    /// The executor refuses a pointer that is not a physical output rather than
-    /// emitting a runestone ord would treat as a cenotaph.
-    #[test]
-    fn construct_rejects_out_of_range_pointer() {
-        let mut provider = crate::mock_provider::MockProvider::new(Network::Regtest);
-        let executor = EnhancedAlkanesExecutor::new(&mut provider);
-        let specs = crate::alkanes::parsing::parse_protostones("[3,797,101]:v0:v0").unwrap();
-        assert!(executor.construct_runestone_script(&specs, 2, 2, false).is_err());
-        assert!(executor.construct_runestone_script(&specs, 2, 1, false).is_ok());
-    }
-
-    /// When the pointer names the placeholder, `build_single_transaction`
-    /// passes `droppable_change_index = None`. The placeholder, and with it the
-    /// pointer's target, then cannot be removed from under the runestone.
-    #[test]
-    fn drop_is_disabled_only_when_the_pointer_names_the_placeholder() {
-        assert_eq!(pin_pointed_change(Some(2), 1), Some(2));
-        assert_eq!(pin_pointed_change(Some(1), 1), None);
-        assert_eq!(pin_pointed_change(None, 0), None);
-    }
-}
-
-#[cfg(test)]
-mod d0b_excluded_utxos_invariant_tests {
-    //! PORTED 2026-09-16 from erickdelgado-48's 40288cc1a (D0b) as a VERIFICATION of this branch's
-    //! #308 item 1 (exclusions re-applied to the final candidate set). The seven behavioural tests are
-    //! taken verbatim; `drop_caller_excluded_removes_only_the_excluded_outpoints` is not, because it
-    //! unit-tests D0b's own helper, which this branch does not have.
-    //! D0b (2026-09-15), review A1c finding C2: `excluded_utxos` holds for
-    //! EVERY candidate source, including mempool outputs that
-    //! `apply_mempool_adjustment` appends after the early confirmed-set filter.
-    //!
-    //! The scenario comes from the app. An incoming inscription or rune transfer
-    //! pays the wallet and is still unconfirmed. The app's spend guard puts it
-    //! in `excluded_utxos`. Confirmed clean BTC is short, so the selector goes
-    //! looking for more. It must fail rather than spend the excluded output.
-    //!
-    //! Keys, addresses and txids are random per run.
-    use super::*;
-    use crate::alkanes::parsing::{parse_input_requirements, parse_protostones};
-    use crate::alkanes::types::{PrefetchedAlkane, PrefetchedUtxo};
-    use crate::mock_provider::MockProvider;
-    use bitcoin::key::Secp256k1;
-    use bitcoin::{Amount, Network};
-
-    fn random_txid() -> bitcoin::Txid {
-        let mut id = [0u8; 32];
-        rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut id);
-        bitcoin::Txid::from_byte_array(id)
-    }
-
-    /// Standard-bitcoin mode (the mempool adjustment is skipped on qubitcoin),
-    /// with a fresh taproot key.
-    fn wallet(mock: &mut MockProvider) -> Address {
-        let secp = Secp256k1::new();
-        let (sk, pk) = secp.generate_keypair(&mut rand::thread_rng());
-        mock.set_keypair(sk, bitcoin::PublicKey::new(pk));
-        mock.qubitcoin_mode = false;
-        Address::p2tr(&secp, pk.x_only_public_key().0, None, Network::Regtest)
-    }
-
-    fn foreign_address() -> Address {
-        let secp = Secp256k1::new();
-        let (_sk, pk) = secp.generate_keypair(&mut rand::thread_rng());
-        Address::p2tr(&secp, pk.x_only_public_key().0, None, Network::Regtest)
-    }
-
-    fn push_confirmed(mock: &MockProvider, addr: &Address, sats: u64) -> OutPoint {
-        let op = OutPoint::new(random_txid(), 0);
-        mock.utxos.lock().unwrap().push((
-            op,
-            TxOut { value: Amount::from_sat(sats), script_pubkey: addr.script_pubkey() },
-        ));
-        op
-    }
-
-    /// An unconfirmed INCOMING payment: a foreign input, and vout 0 pays
-    /// `addr`. This is exactly the shape the esplora `txs/mempool` view hands
-    /// to `apply_mempool_adjustment`.
-    fn push_mempool_payment(mock: &MockProvider, addr: &Address, sats: u64) -> OutPoint {
-        let txid = random_txid();
-        mock.mempool_txs.lock().unwrap().push(serde_json::json!({
-            "txid": txid.to_string(),
-            "vin": [{ "txid": random_txid().to_string(), "vout": 0 }],
-            "vout": [{ "scriptpubkey_address": addr.to_string(), "value": sats }],
-        }));
-        OutPoint::new(txid, 0)
-    }
-
-    fn prefetched(op: &OutPoint, addr: &Address, sats: u64, alkanes: Vec<(u128, u128, u128)>) -> PrefetchedUtxo {
-        PrefetchedUtxo {
-            outpoint: op.to_string(),
-            value: sats,
-            script_pubkey_hex: hex::encode(addr.script_pubkey().as_bytes()),
-            alkanes: Some(
-                alkanes
-                    .into_iter()
-                    .map(|(block, tx, amount)| PrefetchedAlkane { block, tx, amount: amount.to_string() })
-                    .collect(),
-            ),
-            required: false, // field added on this branch after D0b was written
-        }
-    }
-
-    async fn select(
-        mock: &mut MockProvider,
-        reqs: Vec<InputRequirement>,
-        addr: &Address,
-        prefetched: &[PrefetchedUtxo],
-        excluded: &[OutPoint],
-    ) -> Result<UtxoSelectionResult> {
-        let excluded: Vec<String> = excluded.iter().map(|o| o.to_string()).collect();
-        let mut executor = EnhancedAlkanesExecutor::new(mock);
-        executor
-            .select_utxos(&reqs, &Some(vec![addr.to_string()]), &[], None, prefetched, &excluded, UtxoDataSource::Metashrew)
-            .await
-    }
-
-    fn assert_short_by_btc(res: &Result<UtxoSelectionResult>, expected_collected: u64) {
-        match res {
-            Err(AlkanesError::InsufficientBitcoin { collected, .. }) => assert_eq!(
-                *collected, expected_collected,
-                "only the confirmed BTC may be counted; the excluded mempool output must not be"
-            ),
-            Err(e) => panic!("expected InsufficientBitcoin, got {e}"),
-            Ok(sel) => panic!("C2: selection succeeded with {:?}; it must refuse instead", sel.outpoints),
-        }
-    }
-
-    // ── RED for C2 ───────────────────────────────────────────────────────
-
-    /// BTC-only loop: 3 000 confirmed and 5 000 needed. The excluded 50 000-sat
-    /// mempool output would cover the gap, so it is exactly the input C2 spent.
-    #[tokio::test]
-    async fn excluded_mempool_output_is_never_selected_even_when_confirmed_btc_is_short() {
-        let mut mock = MockProvider::new(Network::Regtest);
-        let addr = wallet(&mut mock);
-        push_confirmed(&mock, &addr, 3_000);
-        let incoming = push_mempool_payment(&mock, &addr, 50_000);
-
-        let res = select(&mut mock, vec![InputRequirement::Bitcoin { amount: 5_000 }], &addr, &[], &[incoming]).await;
-        assert_short_by_btc(&res, 3_000);
-    }
-
-    /// Alkane branch: its "no balance data" arm takes any candidate while BTC
-    /// is short. The excluded mempool output must not reach that arm.
-    #[tokio::test]
-    async fn excluded_mempool_output_is_never_selected_on_the_alkane_branch() {
-        let mut mock = MockProvider::new(Network::Regtest);
-        let addr = wallet(&mut mock);
-        let carrier = push_confirmed(&mock, &addr, 546);
-        mock.alkane_balances.lock().unwrap().insert(carrier.to_string(), vec![(32, 0, 1_000)]);
-        push_confirmed(&mock, &addr, 2_000);
-        let incoming = push_mempool_payment(&mock, &addr, 50_000);
-
-        let reqs = vec![
-            InputRequirement::Alkanes { block: 32, tx: 0, amount: 500 },
-            InputRequirement::Bitcoin { amount: 10_000 },
-        ];
-        let res = select(&mut mock, reqs, &addr, &[], &[incoming]).await;
-        assert_short_by_btc(&res, 2_546);
-    }
-
-    /// Prefetched assertions never override an exclusion. Here the caller's
-    /// snapshot asserts that the excluded mempool output is clean
-    /// (`Some(vec![])`), and the BTC-only loop runs.
-    #[tokio::test]
-    async fn excluded_prefetched_clean_mempool_output_is_never_selected() {
-        let mut mock = MockProvider::new(Network::Regtest);
-        let addr = wallet(&mut mock);
-        push_confirmed(&mock, &addr, 3_000);
-        let incoming = push_mempool_payment(&mock, &addr, 50_000);
-        let pre = [prefetched(&incoming, &addr, 50_000, vec![])];
-        let res = select(&mut mock, vec![InputRequirement::Bitcoin { amount: 5_000 }], &addr, &pre, &[incoming]).await;
-        assert_short_by_btc(&res, 3_000);
-
-    }
-
-    /// The caller's snapshot asserts that the excluded mempool output carries
-    /// the NEEDED alkane. Primary discovery would believe it, so the alkane
-    /// loop must still refuse to take it.
-    #[tokio::test]
-    async fn excluded_prefetched_alkane_carrier_in_mempool_is_never_selected() {
-        let mut mock = MockProvider::new(Network::Regtest);
-        let addr = wallet(&mut mock);
-        push_confirmed(&mock, &addr, 20_000);
-        let incoming = push_mempool_payment(&mock, &addr, 546);
-        let pre = [prefetched(&incoming, &addr, 546, vec![(32, 0, 1_000)])];
-        let reqs = vec![InputRequirement::Alkanes { block: 32, tx: 0, amount: 500 }];
-        match select(&mut mock, reqs, &addr, &pre, &[incoming]).await {
-            Err(AlkanesError::Wallet(msg)) => assert!(msg.contains("Insufficient alkanes"), "got: {msg}"),
-            other => panic!("C2: an excluded mempool carrier must never satisfy an alkane ask, got {:?}", other.map(|s| s.outpoints)),
-        }
-
-    }
-
-    /// An excluded CONFIRMED carrier with the same assertion. The pre-existing
-    /// early filter already covers this. It is pinned here so the invariant
-    /// test names every source.
-    #[tokio::test]
-    async fn excluded_prefetched_confirmed_carrier_is_never_selected() {
-        let mut mock = MockProvider::new(Network::Regtest);
-        let addr = wallet(&mut mock);
-        let locked = push_confirmed(&mock, &addr, 546);
-        let pre = [prefetched(&locked, &addr, 546, vec![(32, 0, 1_000)])];
-        let reqs = vec![InputRequirement::Alkanes { block: 32, tx: 0, amount: 500 }];
-        assert!(select(&mut mock, reqs, &addr, &pre, &[locked]).await.is_err());
-    }
-
-    /// End to end through `build_single_transaction`. An app-shaped BTC send
-    /// with `excluded_utxos` set on the params must refuse to build rather than
-    /// put the excluded mempool output in the PSBT. The control run without the
-    /// exclusion shows the same wallet builds by spending that output.
-    #[tokio::test]
-    async fn build_single_transaction_never_spends_an_excluded_mempool_output() {
-        async fn run(exclude: bool) -> (OutPoint, Result<ExecutionState>) {
-            let mut mock = MockProvider::new(Network::Regtest);
-            let addr = wallet(&mut mock);
-            push_confirmed(&mock, &addr, 10_000);
-            let incoming = push_mempool_payment(&mock, &addr, 200_000);
-            let p = EnhancedExecuteParams {
-                fee_rate: Some(2.0),
-                to_addresses: vec![foreign_address().to_string(), addr.to_string()],
-                from_addresses: Some(vec![addr.to_string()]),
-                change_address: Some(addr.to_string()),
-                alkanes_change_address: Some(addr.to_string()),
-                input_requirements: parse_input_requirements("B:50000:v0,B:546:v1").unwrap(),
-                protostones: parse_protostones("v1:v1").unwrap(),
-                envelope_data: None,
-                raw_output: false,
-                trace_enabled: false,
-                mine_enabled: false,
-                auto_confirm: false,
-                ordinals_strategy: OrdinalsStrategy::Burn,
-                mempool_indexer: false,
-                split_transactions: false,
-                split_at: None, // field added on this branch after D0b was written
-                known_pending_tx_hexes: vec![],
-                prefetched_utxos: vec![prefetched(&incoming, &addr, 200_000, vec![])],
-                excluded_utxos: if exclude { vec![incoming.to_string()] } else { vec![] },
-                skip_diesel_mint: true,
-                max_indexed_height: None,
-                utxo_source: UtxoDataSource::Metashrew,
-            };
-            let mut executor = EnhancedAlkanesExecutor::new(&mut mock);
-            let res = executor.build_single_transaction(&p).await;
-            (incoming, res)
-        }
-
-        let (incoming, res) = run(true).await;
-        match res {
-            Err(AlkanesError::InsufficientBitcoin { .. }) => {}
-            Err(e) => panic!("expected InsufficientBitcoin, got {e}"),
-            Ok(ExecutionState::ReadyToSign(r)) => {
-                let spent = r.psbt.unsigned_tx.input.iter().any(|i| i.previous_output == incoming);
-                panic!("C2: built a tx (spends excluded mempool output: {spent})");
-            }
-            Ok(_) => panic!("C2: build succeeded; it must refuse"),
-        }
-
-        let (incoming, res) = run(false).await;
-        let Ok(ExecutionState::ReadyToSign(r)) = res else { panic!("control: the build must succeed without the exclusion") };
-        assert!(
-            r.psbt.unsigned_tx.input.iter().any(|i| i.previous_output == incoming),
-            "control: without the exclusion the pending output funds the send"
-        );
-    }
-
-    // ── no regression: the pending-output fallback still works ──────────
-
-    #[tokio::test]
-    async fn non_excluded_mempool_outputs_still_fund_selection() {
-        // BTC-only loop, with an UNRELATED exclusion present.
-        let mut mock = MockProvider::new(Network::Regtest);
-        let addr = wallet(&mut mock);
-        push_confirmed(&mock, &addr, 3_000);
-        let incoming = push_mempool_payment(&mock, &addr, 50_000);
-        let unrelated = OutPoint::new(random_txid(), 7);
-        let sel = select(&mut mock, vec![InputRequirement::Bitcoin { amount: 5_000 }], &addr, &[], &[unrelated])
-            .await
-            .expect("a non-excluded pending output must still fund the ask");
-        assert!(sel.outpoints.contains(&incoming));
-
-        // Alkane branch.
-        let mut mock = MockProvider::new(Network::Regtest);
-        let addr = wallet(&mut mock);
-        let carrier = push_confirmed(&mock, &addr, 546);
-        mock.alkane_balances.lock().unwrap().insert(carrier.to_string(), vec![(32, 0, 1_000)]);
-        push_confirmed(&mock, &addr, 2_000);
-        let incoming = push_mempool_payment(&mock, &addr, 50_000);
-        let reqs = vec![
-            InputRequirement::Alkanes { block: 32, tx: 0, amount: 500 },
-            InputRequirement::Bitcoin { amount: 10_000 },
-        ];
-        let sel = select(&mut mock, reqs, &addr, &[], &[]).await.expect("pending output funds the alkane-branch ask");
-        assert!(sel.outpoints.contains(&incoming) && sel.outpoints.contains(&carrier));
     }
 }
