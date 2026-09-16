@@ -3158,8 +3158,9 @@ export class AlkanesProvider {
     mempoolIndexer?: boolean;
     utxoSource?: 'metashrew' | 'espo';
     /**
-     * When true and `protostones[0]` is a wrap call (target=(32,N) opcode=77),
-     * the SDK splits the request across two CPFP-chained txs:
+     * When true, the SDK splits the request across two chained txs — either at an
+     * explicit `splitAt`, or (legacy, no `splitAt`) when `protostones[0]` is a wrap call
+     * (target=(32,N) opcode=77). The legacy wrap split looks like this:
      *
      *   Tx A (parent): wrap-only protostone. Mints frBTC/frZEC/frETH to the
      *     user's alkane carrier output (v1).
@@ -3176,6 +3177,33 @@ export class AlkanesProvider {
      * Tx B's. For non-split flows, both fields behave as before.
      */
     splitTransactions?: boolean;
+    /**
+     * Explicit split boundary (requires `splitTransactions: true`): Tx A gets
+     * protostones[..splitAt], Tx B gets protostones[splitAt..]. Output `vN` targets keep
+     * meaning `toAddresses[N]` in both transactions; `toAddresses[1]` is Tx A's carrier.
+     * An out-of-range value, or `splitAt` without `splitTransactions`, is an error — never
+     * a silent single transaction.
+     */
+    splitAt?: number;
+    /**
+     * Outpoints ("txid:vout") the selector must never spend. Binds the FINAL candidate set,
+     * including outputs injected from pending transactions.
+     */
+    excludedUtxos?: string[];
+    /**
+     * Per-outpoint TxOut + alkane-balance assertions. `required: true` forces the outpoint to
+     * be spent (e.g. a package child's carrier) and fails the build if it cannot be. A
+     * malformed entry is an error, not silently dropped.
+     */
+    prefetchedUtxos?: Array<{
+      outpoint: string;
+      value: number;
+      script_pubkey_hex: string;
+      alkanes?: Array<{ block: number; tx: number; amount: string }>;
+      required?: boolean;
+    }>;
+    /** Raw hex of pending transactions whose outputs selection may use (e.g. an unconfirmed parent). */
+    knownPendingTxHexes?: string[];
   }): Promise<any> {
     const provider = await this.getProvider();
 
@@ -3201,6 +3229,12 @@ export class AlkanesProvider {
     if (params.mempoolIndexer !== undefined) options.mempool_indexer = params.mempoolIndexer;
     if (params.utxoSource !== undefined) options.utxo_source = params.utxoSource;
     if (params.splitTransactions !== undefined) options.split_transactions = params.splitTransactions;
+    // #308 options (review lane B F8, 2026-09-16): without these pass-throughs, npm consumers of
+    // this typed wrapper could not reach any of the #308 features.
+    if (params.splitAt !== undefined) options.split_at = params.splitAt;
+    if (params.excludedUtxos !== undefined) options.excluded_utxos = params.excludedUtxos;
+    if (params.prefetchedUtxos !== undefined) options.prefetched_utxos = params.prefetchedUtxos;
+    if (params.knownPendingTxHexes !== undefined) options.known_pending_tx_hexes = params.knownPendingTxHexes;
 
     const optionsJson = Object.keys(options).length > 0 ? JSON.stringify(options) : null;
 
