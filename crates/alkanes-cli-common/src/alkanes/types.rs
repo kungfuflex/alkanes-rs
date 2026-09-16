@@ -843,3 +843,108 @@ pub struct PendingUnwrap {
     pub address: Option<String>,
     pub fulfilled: bool,
 }
+
+/// Parse an optional array-valued execute option STRICTLY (2026-09-16, #308 review
+/// lane B F1, corroborated independently by lane D).
+///
+/// The web bindings used `serde_json::from_value(v).ok().unwrap_or_default()`. That is
+/// all-or-nothing: ONE malformed element — a `value` sent as a JS string, a missing
+/// `script_pubkey_hex`, `required` sent as `"true"` — silently dropped the WHOLE array.
+/// For `prefetched_utxos` that dropped the `required` carrier, and the carrier child
+/// unwrapped a confirmed frBTC UTXO instead, leaving the carrier behind (a strand). For
+/// `excluded_utxos` it dropped every caller exclusion, including lending-offer locks, so
+/// a committed UTXO became spendable as a fee input.
+///
+/// Rules: the first of `keys` present wins (snake_case, then camelCase alias). Absent or
+/// `null` → empty. Present but not an array, or any element that does not deserialize →
+/// `Err` naming the key and the element index. Never a silent partial or empty result.
+pub fn parse_array_option<T: serde::de::DeserializeOwned>(
+    opts: &JsonValue,
+    keys: &[&str],
+) -> core::result::Result<Vec<T>, String> {
+    let Some((key, value)) = keys.iter().find_map(|k| opts.get(*k).map(|v| (*k, v))) else {
+        return Ok(Vec::new());
+    };
+    if value.is_null() {
+        return Ok(Vec::new());
+    }
+    let items = value
+        .as_array()
+        .ok_or_else(|| alloc::format!("option `{}` must be an array", key))?;
+    items
+        .iter()
+        .enumerate()
+        .map(|(i, item)| {
+            serde_json::from_value::<T>(item.clone())
+                .map_err(|e| alloc::format!("option `{}` entry {} is invalid: {}", key, i, e))
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod parse_array_option_tests {
+    use super::*;
+    use serde_json::json;
+
+    const KEYS: &[&str] = &["prefetched_utxos", "prefetchedUtxos"];
+
+    fn good() -> JsonValue {
+        json!({ "outpoint": format!("{}:0", "ab".repeat(32)), "value": 546, "script_pubkey_hex": "5120", "required": true })
+    }
+
+    #[test]
+    fn absent_or_null_is_empty() {
+        assert!(parse_array_option::<PrefetchedUtxo>(&json!({}), KEYS).unwrap().is_empty());
+        assert!(parse_array_option::<PrefetchedUtxo>(&json!({ "prefetched_utxos": null }), KEYS).unwrap().is_empty());
+    }
+
+    #[test]
+    fn parses_either_spelling_and_keeps_required() {
+        let snake = parse_array_option::<PrefetchedUtxo>(&json!({ "prefetched_utxos": [good()] }), KEYS).unwrap();
+        let camel = parse_array_option::<PrefetchedUtxo>(&json!({ "prefetchedUtxos": [good()] }), KEYS).unwrap();
+        assert_eq!(snake.len(), 1);
+        assert_eq!(camel.len(), 1);
+        assert!(snake[0].required);
+    }
+
+    // RED CONTROLS: the fail-open parse returned Ok(empty) for every one of these,
+    // silently dropping the required carrier along with the bad entry.
+    #[test]
+    fn one_malformed_entry_is_an_error_not_an_empty_array() {
+        let bad = json!({ "outpoint": format!("{}:1", "cd".repeat(32)), "value": "546", "script_pubkey_hex": "5120" });
+        let err = parse_array_option::<PrefetchedUtxo>(&json!({ "prefetched_utxos": [good(), bad] }), KEYS).unwrap_err();
+        assert!(err.contains("prefetched_utxos") && err.contains("entry 1"), "{}", err);
+    }
+
+    #[test]
+    fn required_sent_as_a_string_is_an_error() {
+        let mut stringy = good();
+        stringy["required"] = json!("true");
+        assert!(parse_array_option::<PrefetchedUtxo>(&json!({ "prefetched_utxos": [stringy] }), KEYS).is_err());
+    }
+
+    #[test]
+    fn a_missing_field_is_an_error() {
+        let missing = json!({ "outpoint": format!("{}:0", "ab".repeat(32)), "value": 546 });
+        assert!(parse_array_option::<PrefetchedUtxo>(&json!({ "prefetched_utxos": [missing] }), KEYS).is_err());
+    }
+
+    #[test]
+    fn a_non_array_is_an_error() {
+        let err = parse_array_option::<String>(&json!({ "excluded_utxos": "abc:0" }), &["excluded_utxos"]).unwrap_err();
+        assert!(err.contains("must be an array"), "{}", err);
+    }
+
+    #[test]
+    fn known_pending_tx_hexes_with_one_non_string_entry_is_an_error() {
+        // The parent hex a package child depends on must not vanish because a sibling entry is bad.
+        let err = parse_array_option::<String>(&json!({ "known_pending_tx_hexes": ["02000000", { "hex": "02" }] }), &["known_pending_tx_hexes", "knownPendingTxHexes"]).unwrap_err();
+        assert!(err.contains("known_pending_tx_hexes") && err.contains("entry 1"), "{}", err);
+    }
+
+    #[test]
+    fn excluded_utxos_with_one_non_string_entry_is_an_error() {
+        let err = parse_array_option::<String>(&json!({ "excludedUtxos": [format!("{}:0", "ab".repeat(32)), 7] }), &["excluded_utxos", "excludedUtxos"]).unwrap_err();
+        assert!(err.contains("excludedUtxos") && err.contains("entry 1"), "{}", err);
+    }
+}
