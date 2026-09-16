@@ -452,6 +452,16 @@ pub fn require_split_carrier(
         alkanes: None,
         required: true,
     });
+    // #308 review lane A 5 (2026-09-16) — known limit, documented rather than "fixed".
+    // In a legacy wrap split the whole requirement for the wrapped token (`32:N`) is dropped
+    // from Tx B, on the assumption that Tx A's carrier supplies it. A caller that meant
+    // "the minted amount PLUS frBTC already in the wallet" therefore comes up short and the
+    // Tx B call reverts (fees lost, no burn). Subtracting only the minted amount would be
+    // correct, but the SDK cannot see that amount: the wrap mints against the BTC sent to the
+    // signer minus a premium set by the contract, which is not known here. Substituting a
+    // number would be a fabrication. No app caller uses the legacy wrap split. If one ever
+    // needs it, the fix is for the CALLER — which knows the minted amount — to pass it, and
+    // for this function to subtract that value instead of dropping the requirement.
     let wrapped: Option<(u64, u64)> = if original.split_at.is_none() {
         original.protostones.first().and_then(|p| p.cellpack.as_ref()).map(|c| (c.target.block as u64, c.target.tx as u64))
     } else {
@@ -470,8 +480,34 @@ pub fn require_split_carrier(
     Ok(())
 }
 
+/// Tx B's `to_addresses` (#308 review lane A 9, 2026-09-16).
+///
+/// LEGACY wrap split: to_addresses[0] is the wrap SIGNER, which only Tx A pays, so Tx B
+/// drops it (unchanged behaviour).
+///
+/// EXPLICIT `split_at`: keep them ALL. plan_split_protostones rebases protostone references
+/// (`pN`) but leaves `Output(n)` targets untouched, so in Tx B `Output(n)` still means
+/// to_addresses[n] — exactly what it meant in the single-transaction request. Dropping
+/// to_addresses[0] here re-pointed every such target one output later, a legacy
+/// "signer is v0" assumption applied to layouts that have no signer.
+pub fn tx_b_to_addresses(params: &EnhancedExecuteParams) -> Vec<String> {
+    let mut out = params.to_addresses.clone();
+    if params.split_at.is_none() && out.len() >= 2 {
+        out.remove(0);
+    }
+    out
+}
+
 /// Refuse to thread Tx B onto an unsigned Tx A whose txid provably changes when
 /// signed: any input that is not native segwit v0 (P2WPKH/P2WSH) or taproot.
+///
+/// #308 review lane A 6 (2026-09-16) — a DELIBERATE fail-closed regression, documented
+/// rather than changed. Legacy split PSBTs used to be built for these inputs and silently
+/// broken: Tx B referenced a Tx A txid that signing then changed. Refusing is the
+/// improvement. Note for a future caller: Xverse's DEFAULT payment address is nested
+/// P2SH-P2WPKH, exactly the shape refused here, so split PSBTs for browser wallets will hit
+/// this. The way around it is not to relax this check but to build Tx B from the SIGNED
+/// Tx A, as subfrost-app's carrier runner does.
 pub fn assert_split_parent_txid_is_sign_stable(psbt: &bitcoin::psbt::Psbt) -> Result<()> {
     for (i, input) in psbt.inputs.iter().enumerate() {
         let script = input
@@ -1675,11 +1711,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             )
         });
 
-        // Tx B doesn't need the wrap's signer recipient. Drop the first
-        // to_address (typically the signer) if there are at least 2.
-        if tx_b_params.to_addresses.len() >= 2 {
-            tx_b_params.to_addresses.remove(0);
-        }
+        tx_b_params.to_addresses = tx_b_to_addresses(&params);
 
         log::info!("[split-tx] Step 2/2: building execute Tx B (spends {})", wrap_txid);
         let tx_b_result = Box::pin(self.execute_full(tx_b_params)).await?;
@@ -1810,9 +1842,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                 InputRequirement::Bitcoin { .. } | InputRequirement::BitcoinOutput { .. }
             )
         });
-        if tx_b_params.to_addresses.len() >= 2 {
-            tx_b_params.to_addresses.remove(0);
-        }
+        tx_b_params.to_addresses = tx_b_to_addresses(&params);
 
         log::info!("[split-tx:psbt] Step 2/2: building unsigned execute Tx B (spends {})", wrap_txid);
         let mut tx_b_state = match self.build_single_transaction(&tx_b_params).await? {
@@ -5884,6 +5914,23 @@ mod tests {
         });
         let err = split_boundary(&p).unwrap_err();
         assert!(err.to_string().contains("required"), "{}", err);
+    }
+
+    #[test]
+    fn tx_b_keeps_every_to_address_for_an_explicit_split_and_drops_only_the_legacy_signer() {
+        // lane A 9: plan_split_protostones rebases protostone references but NOT Output(n)
+        // targets, so Output(n) in Tx B still means to_addresses[n]. Dropping to_addresses[0]
+        // for an explicit split silently re-pointed every such target one output later.
+        let wrap = stone(Some((32, 0, 77)), Some(OutputTarget::Protostone(1)), None, vec![]);
+        let swap = stone(Some((4, 65522, 13)), Some(OutputTarget::Output(0)), Some(OutputTarget::Output(0)), vec![]);
+        let mut explicit = split_params(vec![swap.clone(), swap.clone()], true, Some(1));
+        explicit.to_addresses = vec!["user-a".to_string(), "user-b-carrier".to_string(), "user-c".to_string()];
+        assert_eq!(tx_b_to_addresses(&explicit), explicit.to_addresses);
+
+        // Legacy wrap: v0 is the wrap signer, which Tx B does not pay — unchanged.
+        let mut legacy = split_params(vec![wrap, swap], true, None);
+        legacy.to_addresses = vec!["signer".to_string(), "user-carrier".to_string()];
+        assert_eq!(tx_b_to_addresses(&legacy), vec!["user-carrier".to_string()]);
     }
 
     #[test]
