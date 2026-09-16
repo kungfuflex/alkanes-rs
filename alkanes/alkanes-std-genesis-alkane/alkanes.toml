@@ -1,0 +1,14 @@
+[contract]
+name = "GenesisAlkane"
+
+[opcodes]
+initialize = 0
+mint = 77
+get-name = 99
+get-symbol = 100
+get-total-supply = 101
+
+[views]
+get-name = true
+get-symbol = true
+get-total-supply = true

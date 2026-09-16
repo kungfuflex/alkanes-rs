@@ -1,0 +1,9 @@
+[contract]
+name = "Proxy"
+
+[opcodes]
+initialize = 0
+call-witness = 1
+delegatecall-witness = 2
+call-inputs = 3
+delegatecall-inputs = 4

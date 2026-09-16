@@ -1,9 +1,14 @@
-# align-main: the workspace defaults to the native host target so the portable
-# crates (alkanes-cli, alkanes-jsonrpc, alkanes-data-api, …) build with a bare
-# `cargo build`. The reproducible indexer wasm build passes
-# `--target wasm32-unknown-unknown` explicitly (scripts/Dockerfile.wasm), and
-# the indexer's build.rs nested std-contract builds pick up per-crate
-# `crates/alkanes-std-*/.cargo/config.toml` (wasm target), so the shipped
-# indexer build is unchanged. Matches develop's native-default .cargo/config.
+# Workspace-level Cargo configuration
+
+# Default configuration for wasm32-unknown-unknown target
 [target.wasm32-unknown-unknown]
 runner = "wasm-bindgen-test-runner"
+
+# Alkanes private registry (Google Cloud Artifact Registry)
+# This allows publishing and consuming crates from the private registry
+[registries.alkanes]
+index = "sparse+https://us-central1-cargo.pkg.dev/pkg-alkanes-build/cargo-packages/"
+
+# Git fetch configuration
+[net]
+git-fetch-with-cli = true

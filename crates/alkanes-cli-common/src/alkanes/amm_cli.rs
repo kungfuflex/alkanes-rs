@@ -91,12 +91,12 @@ pub async fn init_pool(
         super::types::InputRequirement::Alkanes {
             block: params.token0.block,
             tx: params.token0.tx,
-            amount: params.amount0 as u64,
+            amount: params.amount0,
         },
         super::types::InputRequirement::Alkanes {
             block: params.token1.block,
             tx: params.token1.tx,
-            amount: params.amount1 as u64,
+            amount: params.amount1,
         },
     ];
     
@@ -128,6 +128,7 @@ pub async fn init_pool(
         known_pending_tx_hexes: Vec::new(),
         prefetched_utxos: Vec::new(),
         excluded_utxos: Vec::new(),
+        split_at: None,
         skip_diesel_mint: false,
         max_indexed_height,
         utxo_source: Default::default(),
@@ -207,7 +208,7 @@ pub async fn execute_swap(
         super::types::InputRequirement::Alkanes {
             block: input_token.block,
             tx: input_token.tx,
-            amount: params.input_amount as u64,
+            amount: params.input_amount,
         },
     ];
     
@@ -238,6 +239,7 @@ pub async fn execute_swap(
         known_pending_tx_hexes: Vec::new(),
         prefetched_utxos: Vec::new(),
         excluded_utxos: Vec::new(),
+        split_at: None,
         skip_diesel_mint: false,
         max_indexed_height,
         utxo_source: Default::default(),

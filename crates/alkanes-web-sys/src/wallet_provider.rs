@@ -999,15 +999,35 @@ impl WalletProvider for BrowserWalletProvider {
         self.web_provider.get_history(count, addr).await
     }
     
-    async fn freeze_utxo(&self, _utxo: String, _reason: Option<String>) -> Result<()> {
-        // Browser wallets typically don't support UTXO freezing
-        // We could implement this in our local storage if needed
-        Err(AlkanesError::Wallet("UTXO freezing not supported by browser wallets".to_string()))
+    async fn freeze_utxo(&self, utxo: String, reason: Option<String>) -> Result<()> {
+        // Freezing is a local wallet policy, not something the remote
+        // browser wallet has to support: the record lives in our own
+        // IndexedDB store and is applied when we select coins.
+        use alkanes_cli_common::frozen_store::FrozenStore as _;
+        let store = crate::frozen_store::IndexedDbFrozenStore::open()
+            .await
+            .map_err(|e| AlkanesError::Storage(format!("opening frozen-UTXO store: {e}")))?;
+        store
+            .freeze(&utxo, reason.as_deref())
+            .await
+            .map_err(|e| AlkanesError::Storage(format!("freezing {utxo}: {e}")))
     }
-    
-    async fn unfreeze_utxo(&self, _utxo: String) -> Result<()> {
-        // Browser wallets typically don't support UTXO freezing
-        Err(AlkanesError::Wallet("UTXO freezing not supported by browser wallets".to_string()))
+
+    async fn unfreeze_utxo(&self, utxo: String) -> Result<()> {
+        use alkanes_cli_common::frozen_store::FrozenStore as _;
+        let store = crate::frozen_store::IndexedDbFrozenStore::open()
+            .await
+            .map_err(|e| AlkanesError::Storage(format!("opening frozen-UTXO store: {e}")))?;
+        let was_frozen = store
+            .unfreeze(&utxo)
+            .await
+            .map_err(|e| AlkanesError::Storage(format!("unfreezing {utxo}: {e}")))?;
+        if !was_frozen {
+            crate::logging::console_log::info(&format!(
+                "unfreeze_utxo: {utxo} was not frozen; nothing to do"
+            ));
+        }
+        Ok(())
     }
     
     async fn create_transaction(&self, params: SendParams) -> Result<String> {
@@ -2012,6 +2032,7 @@ impl DeezelProvider for BrowserWalletProvider {
                 known_pending_tx_hexes: Vec::new(),
                 prefetched_utxos: Vec::new(),
             excluded_utxos: Vec::new(),
+            split_at: None,
             skip_diesel_mint: false,
         max_indexed_height: None,
         utxo_source: Default::default(),
@@ -2060,6 +2081,7 @@ impl DeezelProvider for BrowserWalletProvider {
                 known_pending_tx_hexes: Vec::new(),
                 prefetched_utxos: Vec::new(),
             excluded_utxos: Vec::new(),
+            split_at: None,
             skip_diesel_mint: false,
         max_indexed_height: None,
         utxo_source: Default::default(),

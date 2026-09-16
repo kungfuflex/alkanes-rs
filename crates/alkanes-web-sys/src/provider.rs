@@ -470,7 +470,10 @@ impl WebProvider {
                                     block: e.id.block as u64,
                                     tx: e.id.tx as u64,
                                 },
-                                amount: e.amount as u64,
+                                // e.amount is u128 on the wire and u128 in
+                                // ProtostoneEdict; the `as u64` here wrapped any
+                                // edict above 2^64-1 sub-units.
+                                amount: e.amount,
                                 target: t::OutputTarget::Output(e.output as u32),
                             }).collect(),
                             bitcoin_transfer: None,
@@ -1121,19 +1124,20 @@ impl WebProvider {
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
 
-                let known_pending: Vec<String> = opts.get("known_pending_tx_hexes")
-                    .or_else(|| opts.get("knownPendingTxHexes"))
-                    .and_then(|v| serde_json::from_value(v.clone()).ok())
-                    .unwrap_or_default();
+                // STRICT (review lane B F1): a malformed entry must not silently drop the
+                // parent hex a package child depends on.
+                let known_pending: Vec<String> =
+                    alkanes_cli_common::alkanes::types::parse_array_option(&opts, &["known_pending_tx_hexes", "knownPendingTxHexes"])
+                        .map_err(|e| JsValue::from_str(&e))?;
 
                 // Caller-supplied per-outpoint TxOut cache. Mirrors what
                 // `provider.get_utxo()` would otherwise fetch via per-UTXO
                 // `getrawtransaction`. See PrefetchedUtxo doc for trust model.
+                // STRICT (review lane B F1): one malformed entry used to drop the whole
+                // array — including a `required` carrier — without a word.
                 let prefetched: Vec<alkanes_cli_common::alkanes::types::PrefetchedUtxo> =
-                    opts.get("prefetched_utxos")
-                        .or_else(|| opts.get("prefetchedUtxos"))
-                        .and_then(|v| serde_json::from_value(v.clone()).ok())
-                        .unwrap_or_default();
+                    alkanes_cli_common::alkanes::types::parse_array_option(&opts, &["prefetched_utxos", "prefetchedUtxos"])
+                        .map_err(|e| JsValue::from_str(&e))?;
 
                 // Indexer-aware UTXO filter. Confirmed UTXOs at heights above
                 // `max_indexed_height` are skipped because metashrew can't yet
@@ -1142,10 +1146,11 @@ impl WebProvider {
                 // Caller-locked outpoints ("txid:vout") the selector must never
                 // spend — e.g. UTXOs committed to open lending offers. See
                 // EnhancedExecuteParams::excluded_utxos.
-                let excluded: Vec<String> = opts.get("excluded_utxos")
-                    .or_else(|| opts.get("excludedUtxos"))
-                    .and_then(|v| serde_json::from_value(v.clone()).ok())
-                    .unwrap_or_default();
+                // STRICT (review lane B F1): a malformed entry must never silently drop
+                // every caller exclusion (lending-offer locks among them).
+                let excluded: Vec<String> =
+                    alkanes_cli_common::alkanes::types::parse_array_option(&opts, &["excluded_utxos", "excludedUtxos"])
+                        .map_err(|e| JsValue::from_str(&e))?;
 
                 // Opt-out of the default DIESEL mint protostone — see
                 // EnhancedExecuteParams::skip_diesel_mint.
@@ -1204,6 +1209,7 @@ impl WebProvider {
                 known_pending_tx_hexes,
                 prefetched_utxos,
                 excluded_utxos,
+                split_at: split_at_from_options(options_json.as_deref()).map_err(|e| JsValue::from_str(&e))?,
                 skip_diesel_mint,
                 max_indexed_height,
                 utxo_source,
@@ -1289,27 +1295,29 @@ impl WebProvider {
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
 
-                let known_pending: Vec<String> = opts.get("known_pending_tx_hexes")
-                    .or_else(|| opts.get("knownPendingTxHexes"))
-                    .and_then(|v| serde_json::from_value(v.clone()).ok())
-                    .unwrap_or_default();
+                // STRICT (review lane B F1): a malformed entry must not silently drop the
+                // parent hex a package child depends on.
+                let known_pending: Vec<String> =
+                    alkanes_cli_common::alkanes::types::parse_array_option(&opts, &["known_pending_tx_hexes", "knownPendingTxHexes"])
+                        .map_err(|e| JsValue::from_str(&e))?;
 
                 // Caller-supplied per-outpoint TxOut cache. See PrefetchedUtxo
                 // doc for trust model. Mirrors alkanesExecuteWithStrings.
+                // STRICT (review lane B F1): one malformed entry used to drop the whole
+                // array — including a `required` carrier — without a word.
                 let prefetched: Vec<alkanes_cli_common::alkanes::types::PrefetchedUtxo> =
-                    opts.get("prefetched_utxos")
-                        .or_else(|| opts.get("prefetchedUtxos"))
-                        .and_then(|v| serde_json::from_value(v.clone()).ok())
-                        .unwrap_or_default();
+                    alkanes_cli_common::alkanes::types::parse_array_option(&opts, &["prefetched_utxos", "prefetchedUtxos"])
+                        .map_err(|e| JsValue::from_str(&e))?;
 
                 // Indexer-aware UTXO height filter. See EnhancedExecuteParams::max_indexed_height.
                 // Caller-locked outpoints ("txid:vout") the selector must never
                 // spend — e.g. UTXOs committed to open lending offers. See
                 // EnhancedExecuteParams::excluded_utxos.
-                let excluded: Vec<String> = opts.get("excluded_utxos")
-                    .or_else(|| opts.get("excludedUtxos"))
-                    .and_then(|v| serde_json::from_value(v.clone()).ok())
-                    .unwrap_or_default();
+                // STRICT (review lane B F1): a malformed entry must never silently drop
+                // every caller exclusion (lending-offer locks among them).
+                let excluded: Vec<String> =
+                    alkanes_cli_common::alkanes::types::parse_array_option(&opts, &["excluded_utxos", "excludedUtxos"])
+                        .map_err(|e| JsValue::from_str(&e))?;
 
                 // Opt-out of the default DIESEL mint protostone — see
                 // EnhancedExecuteParams::skip_diesel_mint.
@@ -1368,6 +1376,7 @@ impl WebProvider {
                 known_pending_tx_hexes,
                 prefetched_utxos,
                 excluded_utxos,
+                split_at: split_at_from_options(options_json.as_deref()).map_err(|e| JsValue::from_str(&e))?,
                 skip_diesel_mint,
                 max_indexed_height,
                 utxo_source,
@@ -7984,10 +7993,54 @@ impl WalletProvider for WebProvider {
             }
         }
 
+        // Mark anything the operator has frozen.
+        //
+        // Frozen UTXOs are still RETURNED — `_include_frozen` deliberately
+        // does not filter. A coin that silently vanished from the listing
+        // would read as lost funds; instead it is reported with
+        // `frozen: true` and its reason, and the selectors skip it.
+        //
+        // Opened per call rather than held on the provider: the four
+        // constructors here are synchronous and IndexedDB's open is async,
+        // and an open is cheap next to the RPC round-trips above.
+        {
+            use alkanes_cli_common::frozen_store::FrozenStore as _;
+            match crate::frozen_store::IndexedDbFrozenStore::open().await {
+                Ok(store) => match store.list().await {
+                    Ok(frozen) if !frozen.is_empty() => {
+                        let by_outpoint: std::collections::HashMap<String, Option<String>> = frozen
+                            .into_iter()
+                            .map(|r| (r.outpoint, r.reason))
+                            .collect();
+                        for (outpoint, info) in all_utxos.iter_mut() {
+                            if let Some(reason) = by_outpoint.get(&outpoint.to_string()) {
+                                info.frozen = true;
+                                info.freeze_reason = reason.clone();
+                            }
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(e) => {
+                        // Fail closed: reporting a UTXO as spendable because
+                        // the frozen set could not be read is precisely the
+                        // mistake this subsystem exists to prevent.
+                        return Err(AlkanesError::Storage(format!(
+                            "Could not read the frozen-UTXO store; refusing to report UTXOs as spendable: {e}"
+                        )));
+                    }
+                },
+                Err(e) => {
+                    return Err(AlkanesError::Storage(format!(
+                        "Could not open the frozen-UTXO store; refusing to report UTXOs as spendable: {e}"
+                    )));
+                }
+            }
+        }
+
         Ok(all_utxos)
     }
-    
-    
+
+
     async fn get_history(&self, _count: u32, address: Option<String>) -> Result<Vec<TransactionInfo>> {
         self.logger.info(&format!("[WalletProvider] Calling get_history for address: {:?}, count: {}", address, _count));
         let addr = if let Some(a) = address {
@@ -8114,16 +8167,35 @@ impl WalletProvider for WebProvider {
         })
     }
     
-    async fn freeze_utxo(&self, _utxo: String, _reason: Option<String>) -> Result<()> {
-        // This would typically interact with the wallet's internal database of UTXOs.
-        // Not implemented for this web-based, stateless provider.
-        unimplemented!()
+    async fn freeze_utxo(&self, utxo: String, reason: Option<String>) -> Result<()> {
+        // Was `unimplemented!()` — a panic across the wasm boundary. The
+        // provider is stateless, but the freeze record doesn't have to be:
+        // it lives in IndexedDB so it survives a page reload.
+        use alkanes_cli_common::frozen_store::FrozenStore as _;
+        let store = crate::frozen_store::IndexedDbFrozenStore::open()
+            .await
+            .map_err(|e| AlkanesError::Storage(format!("opening frozen-UTXO store: {e}")))?;
+        store
+            .freeze(&utxo, reason.as_deref())
+            .await
+            .map_err(|e| AlkanesError::Storage(format!("freezing {utxo}: {e}")))
     }
-    
-    async fn unfreeze_utxo(&self, _utxo: String) -> Result<()> {
-        // This would typically interact with the wallet's internal database of UTXOs.
-        // Not implemented for this web-based, stateless provider.
-        unimplemented!()
+
+    async fn unfreeze_utxo(&self, utxo: String) -> Result<()> {
+        use alkanes_cli_common::frozen_store::FrozenStore as _;
+        let store = crate::frozen_store::IndexedDbFrozenStore::open()
+            .await
+            .map_err(|e| AlkanesError::Storage(format!("opening frozen-UTXO store: {e}")))?;
+        let was_frozen = store
+            .unfreeze(&utxo)
+            .await
+            .map_err(|e| AlkanesError::Storage(format!("unfreezing {utxo}: {e}")))?;
+        if !was_frozen {
+            crate::logging::console_log::info(&format!(
+                "unfreeze_utxo: {utxo} was not frozen; nothing to do"
+            ));
+        }
+        Ok(())
     }
     
     async fn create_transaction(&self, params: SendParams) -> Result<String> {
@@ -9789,6 +9861,7 @@ impl DeezelProvider for WebProvider {
                 known_pending_tx_hexes: Vec::new(),
                 prefetched_utxos: Vec::new(),
                 excluded_utxos: Vec::new(),
+                split_at: None,
                 skip_diesel_mint: false,
                 max_indexed_height: None,
                 utxo_source: Default::default(),
@@ -9835,6 +9908,7 @@ impl DeezelProvider for WebProvider {
                 known_pending_tx_hexes: Vec::new(),
                 prefetched_utxos: Vec::new(),
                 excluded_utxos: Vec::new(),
+                split_at: None,
                 skip_diesel_mint: false,
                 max_indexed_height: None,
                 utxo_source: Default::default(),
@@ -10271,4 +10345,15 @@ impl alkanes_cli_common::traits::EspoProvider for WebProvider {
         let target = self.rpc_config.get_espo_rpc_target();
         self.call(&target.url, "pizzafun.get_alkane_ids_from_series_ids", serde_json::json!({"series_ids": series_ids}), 1).await
     }
+}
+
+/// `split_at` / `splitAt` from an execute options JSON. Absent or null → `None` (legacy
+/// wrap-only split rule). A value that is present but not a non-negative integer, or two
+/// spellings that disagree, is an ERROR (2026-09-16, #308 review lane B F6) — it used to be
+/// silently ignored, turning a requested split into one transaction. The rule lives in
+/// alkanes_cli_common::alkanes::types::parse_split_at_option, where it is unit-tested.
+fn split_at_from_options(options_json: Option<&str>) -> core::result::Result<Option<usize>, String> {
+    let Some(json) = options_json else { return Ok(None) };
+    let opts: serde_json::Value = serde_json::from_str(json).map_err(|e| format!("Invalid options JSON: {}", e))?;
+    alkanes_cli_common::alkanes::types::parse_split_at_option(&opts)
 }

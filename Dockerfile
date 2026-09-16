@@ -1,76 +1,72 @@
-FROM rust:1.85.1-slim-bullseye as builder
+# Multi-stage build for alkanes Rust binaries
+FROM rust:1.83-bookworm AS builder
 
-# Install dependencies
+# Install build dependencies
 RUN apt-get update && apt-get install -y \
-    git \
-    pkg-config \
-    libssl-dev \
     build-essential \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install wasm32-unknown-unknown target
-RUN rustup target add wasm32-unknown-unknown
-
-# Clone metashrew repository at specific branch
-WORKDIR /usr/src
-RUN git clone https://github.com/sandshrewmetaprotocols/metashrew.git -b v8.5.1-rc1
-WORKDIR /usr/src/metashrew
-RUN apt-get update && apt-get install -y \
-    libssl-dev \
-    libclang-dev \
-    clang \
     pkg-config \
-    ca-certificates \
+    libssl-dev \
+    protobuf-compiler \
     && rm -rf /var/lib/apt/lists/*
 
-# Build rockshrew-mono
-RUN cargo build --release -p rockshrew-mono
+# Create app directory
+WORKDIR /app
 
-# Copy and build alkanes-rs project
-WORKDIR /usr/src
-COPY . /usr/src/alkanes-rs
-WORKDIR /usr/src/alkanes-rs
+# Copy workspace files
+COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+COPY crates ./crates
+COPY src ./src
+COPY lua ./lua
 
-# Build alkanes with mainnet feature
-RUN cargo build --release --target wasm32-unknown-unknown --features mainnet
+# Build argument for which package to build
+ARG PACKAGE=alkanes-jsonrpc
 
-# Create a smaller runtime image
-FROM debian:bullseye-slim
+# Build the specified package in release mode
+RUN cargo build --release -p ${PACKAGE}
+
+# Also build dbctl if package is alkanes-contract-indexer
+RUN if [ "${PACKAGE}" = "alkanes-contract-indexer" ]; then \
+      cargo build --release --bin dbctl; \
+    fi
+
+# Runtime stage
+FROM debian:bookworm-slim
 
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y \
-    libssl-dev \
-    libclang-dev \
-    pkg-config \
     ca-certificates \
+    libssl3 \
+    postgresql-client \
+    curl \
+    jq \
     && rm -rf /var/lib/apt/lists/*
 
-# Create directory for RocksDB data
-RUN mkdir -p /data/rocksdb
+# Build argument (must be redeclared in each stage)
+ARG PACKAGE=alkanes-jsonrpc
 
-# Copy built binaries from builder stage
-COPY --from=builder /usr/src/metashrew/target/release/rockshrew-mono /usr/local/bin/
-COPY --from=builder /usr/src/alkanes-rs/target/wasm32-unknown-unknown/release/alkanes.wasm /usr/local/bin/
+# Copy the built binary from builder stage with its actual name
+COPY --from=builder /app/target/release/${PACKAGE} /usr/local/bin/${PACKAGE}
 
-# Set working directory
-WORKDIR /data
+# Create symlink for backwards compatibility with ENTRYPOINT
+RUN ln -sf /usr/local/bin/${PACKAGE} /usr/local/bin/app
 
-# Expose the port
-EXPOSE 8080
+# For alkanes-contract-indexer: copy dbctl
+RUN --mount=type=bind,from=builder,source=/app/target/release,target=/mnt/release \
+    if [ "${PACKAGE}" = "alkanes-contract-indexer" ] && [ -f /mnt/release/dbctl ]; then \
+      cp /mnt/release/dbctl /usr/local/bin/dbctl; \
+    fi
 
-# Set entrypoint
-ENTRYPOINT ["rockshrew-mono", \
-    "--db-path", "/data/rocksdb", \
-    "--indexer", "/usr/local/bin/alkanes.wasm", \
-    "--cors", "*", \
-    "--host", "0.0.0.0", \
-    "--port", "8080", \
-    "--start-block", "880000"]
+# For alkanes-contract-indexer: copy docker-entrypoint.sh
+RUN --mount=type=bind,source=crates/alkanes-contract-indexer,target=/mnt/indexer \
+    if [ "${PACKAGE}" = "alkanes-contract-indexer" ] && [ -f /mnt/indexer/docker-entrypoint.sh ]; then \
+      cp /mnt/indexer/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh && \
+      chmod +x /usr/local/bin/docker-entrypoint.sh; \
+    fi
 
-# Default command (can be overridden)
-CMD []
+# For alkanes-jsonrpc: create lua script directory for persistent caching
+RUN if [ "${PACKAGE}" = "alkanes-jsonrpc" ]; then \
+      mkdir -p /data/lua-scripts; \
+    fi
 
-# Usage:
-# docker build -t alkanes-rs .
-# docker run -p 8080:8080 -v /path/to/local/data:/data/rocksdb \
-#   alkanes-rs --daemon-rpc-url http://bitcoind:8332 --auth rpcuser:rpcpassword
+# Set the entrypoint
+ENTRYPOINT ["/usr/local/bin/app"]

@@ -1,3 +1,4 @@
+pub mod address_indexing;
 pub mod index_op_return_position;
 pub mod index_pointer_ll;
 pub mod index_protoburns;

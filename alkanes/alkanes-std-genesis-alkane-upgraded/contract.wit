@@ -1,0 +1,15 @@
+package example:genesis-alkane-upgraded;
+
+interface genesis-alkane-upgraded {
+    initialize: func() -> result<_, string>;
+    upgrade: func() -> result<_, string>;
+    mint: func() -> result<_, string>;
+    collect-fees: func() -> result<_, string>;
+    get-name: func() -> result<string, string>;
+    get-symbol: func() -> result<string, string>;
+    get-total-supply: func() -> result<u64, string>;
+}
+
+world genesis-alkane-upgraded-world {
+    export genesis-alkane-upgraded;
+}

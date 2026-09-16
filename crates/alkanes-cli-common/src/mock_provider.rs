@@ -71,6 +71,17 @@ pub struct MockProvider {
     /// the trait's `pending_tx_store()` accessor surfaces a real
     /// store; tests can `take()` it out for direct inspection.
     pub pending_tx_store: crate::pending_tx_store::MemoryPendingTxStore,
+    /// Frozen-UTXO store. In-memory so harness tests exercise the real
+    /// freeze behaviour with no side effects on the developer's own
+    /// `~/.alkanes/frozen.sqlite3` — a test that froze a real outpoint
+    /// would change which coins the operator's next send may spend.
+    pub frozen_store: crate::frozen_store::MemoryFrozenStore,
+    /// Esplora-shaped mempool txs (`{txid, vin[], vout[{scriptpubkey_address,
+    /// value}]}`) served by `get_address_txs_mempool`, filtered per address.
+    /// D0b (2026-09-15, C2): lets selection tests drive the real mempool re-add
+    /// path of `apply_mempool_adjustment`. Empty by default, so the mempool
+    /// stays empty as it always did.
+    pub mempool_txs: Arc<Mutex<Vec<JsonValue>>>,
 }
 
 impl Default for MockProvider {
@@ -95,6 +106,8 @@ impl MockProvider {
             alkane_balances: Arc::new(Mutex::new(HashMap::new())),
             qubitcoin_mode: true,
             pending_tx_store: crate::pending_tx_store::MemoryPendingTxStore::new(),
+            frozen_store: crate::frozen_store::MemoryFrozenStore::new(),
+            mempool_txs: Arc::new(Mutex::new(vec![])),
         }
     }
     
@@ -306,11 +319,18 @@ impl WalletProvider for MockProvider {
         }])
     }
     
-    async fn freeze_utxo(&self, _utxo: String, _reason: Option<String>) -> Result<()> {
+    async fn freeze_utxo(&self, utxo: String, reason: Option<String>) -> Result<()> {
+        // Previously `Ok(())` without storing anything, so a test could
+        // "freeze" a UTXO and then watch it get selected and spent — the
+        // mock reported success for work it never did.
+        use crate::frozen_store::FrozenStore as _;
+        self.frozen_store.freeze(&utxo, reason.as_deref()).await?;
         Ok(())
     }
-    
-    async fn unfreeze_utxo(&self, _utxo: String) -> Result<()> {
+
+    async fn unfreeze_utxo(&self, utxo: String) -> Result<()> {
+        use crate::frozen_store::FrozenStore as _;
+        self.frozen_store.unfreeze(&utxo).await?;
         Ok(())
     }
     
@@ -799,8 +819,21 @@ impl EsploraProvider for MockProvider {
         Ok(serde_json::json!([]))
     }
     
-    async fn get_address_txs_mempool(&self, _address: &str) -> Result<JsonValue> {
-        Ok(serde_json::json!([]))
+    async fn get_address_txs_mempool(&self, address: &str) -> Result<JsonValue> {
+        // Like esplora, return only the txs that pay this address.
+        let txs = self.mempool_txs.lock().unwrap();
+        let matching: Vec<JsonValue> = txs
+            .iter()
+            .filter(|tx| {
+                tx.get("vout").and_then(|v| v.as_array()).map_or(false, |vouts| {
+                    vouts.iter().any(|o| {
+                        o.get("scriptpubkey_address").and_then(|a| a.as_str()) == Some(address)
+                    })
+                })
+            })
+            .cloned()
+            .collect();
+        Ok(JsonValue::Array(matching))
     }
     
     
@@ -1150,6 +1183,10 @@ impl DeezelProvider for MockProvider {
 
     fn pending_tx_store(&self) -> Option<&dyn crate::pending_tx_store::PendingTxStore> {
         Some(&self.pending_tx_store)
+    }
+
+    fn frozen_store(&self) -> Option<&dyn crate::frozen_store::FrozenStore> {
+        Some(&self.frozen_store)
     }
 
     fn get_bitcoin_rpc_url(&self) -> Option<String> {

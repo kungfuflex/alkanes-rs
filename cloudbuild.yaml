@@ -1,0 +1,31 @@
+steps:
+  # Build the Docker image for alkanes-jsonrpc
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '--build-arg'
+      - 'PACKAGE=alkanes-jsonrpc'
+      - '-t'
+      - 'us-east1-docker.pkg.dev/crystal-moon-cluster/subkube/alkanes-jsonrpc:latest'
+      - '-t'
+      - 'us-east1-docker.pkg.dev/crystal-moon-cluster/subkube/alkanes-jsonrpc:$BUILD_ID'
+      - '-f'
+      - 'Dockerfile'
+      - '.'
+
+  # Push the images
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - '--all-tags'
+      - 'us-east1-docker.pkg.dev/crystal-moon-cluster/subkube/alkanes-jsonrpc'
+
+images:
+  - 'us-east1-docker.pkg.dev/crystal-moon-cluster/subkube/alkanes-jsonrpc:latest'
+  - 'us-east1-docker.pkg.dev/crystal-moon-cluster/subkube/alkanes-jsonrpc:$BUILD_ID'
+
+options:
+  machineType: 'E2_HIGHCPU_8'
+  logging: CLOUD_LOGGING_ONLY
+
+timeout: 2400s

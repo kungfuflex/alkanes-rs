@@ -1,0 +1,15 @@
+[contract]
+name = "Orbital"
+
+[opcodes]
+initialize = 0
+get-name = 99
+get-symbol = 100
+get-total-supply = 101
+get-data = 1000
+
+[views]
+get-name = true
+get-symbol = true
+get-total-supply = true
+get-data = true

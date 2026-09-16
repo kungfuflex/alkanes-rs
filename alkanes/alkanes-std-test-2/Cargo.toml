@@ -1,0 +1,18 @@
+[package]
+name = "alkanes-std-test-2"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+alkanes-runtime = { workspace = true }
+alkanes-support = { workspace = true }
+anyhow = { workspace = true }
+hex = { workspace = true }
+metashrew-support = { workspace = true }
+sha2 = "0.10.8"
+
+[build-dependencies]
+alkanes-wit-build = { path = "../../crates/alkanes-wit-build" }

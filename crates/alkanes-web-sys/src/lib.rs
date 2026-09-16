@@ -45,6 +45,9 @@ pub fn init_panic_hook() {
 
 
 pub mod crypto;
+/// IndexedDB-backed frozen-UTXO store — the browser counterpart to the
+/// CLI's sqlite driver, so a freeze survives a page reload.
+pub mod frozen_store;
 pub mod keystore;
 pub mod logging;
 pub mod network;

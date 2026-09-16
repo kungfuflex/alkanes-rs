@@ -1,0 +1,20 @@
+# Development override - uses BuildKit cache for faster rebuilds
+# Usage:
+#   DOCKER_BUILDKIT=1 docker compose -f docker-compose.yaml -f docker-compose.dev.yaml build jsonrpc
+#   docker compose -f docker-compose.yaml -f docker-compose.dev.yaml up -d jsonrpc
+#
+# First build: ~45 minutes (caches dependencies)
+# Subsequent builds with only code changes: ~2-5 minutes
+
+services:
+  jsonrpc:
+    build:
+      dockerfile: Dockerfile.dev
+      context: .
+      args:
+        - PACKAGE=alkanes-jsonrpc
+      cache_from:
+        - type=local,src=/tmp/buildx-cache
+      cache_to:
+        - type=local,dest=/tmp/buildx-cache,mode=max
+    image: alkanes-jsonrpc:dev

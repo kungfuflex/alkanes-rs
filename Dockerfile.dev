@@ -1,0 +1,55 @@
+# Development Dockerfile with cargo-chef for fast incremental builds
+# First build: ~45 minutes (caches all dependencies)
+# Subsequent builds with only code changes: ~2-5 minutes
+
+FROM lukemathwalker/cargo-chef:latest-rust-1.83-bookworm AS chef
+WORKDIR /app
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    pkg-config \
+    libssl-dev \
+    protobuf-compiler \
+    && rm -rf /var/lib/apt/lists/*
+
+# Planner stage - analyze dependencies
+FROM chef AS planner
+COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+COPY crates ./crates
+COPY src ./src
+RUN cargo chef prepare --recipe-path recipe.json
+
+# Builder stage - build dependencies first (cached), then code
+FROM chef AS builder
+
+# Copy and build dependencies (this layer is cached if dependencies don't change)
+COPY --from=planner /app/recipe.json recipe.json
+ARG PACKAGE=alkanes-jsonrpc
+RUN cargo chef cook --release --recipe-path recipe.json -p ${PACKAGE}
+
+# Now copy source and build (only this step runs on code changes)
+COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+COPY crates ./crates
+COPY src ./src
+COPY lua ./lua
+
+RUN cargo build --release -p ${PACKAGE}
+
+# Runtime stage
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    libssl3 \
+    curl \
+    jq \
+    && rm -rf /var/lib/apt/lists/*
+
+ARG PACKAGE=alkanes-jsonrpc
+COPY --from=builder /app/target/release/${PACKAGE} /usr/local/bin/app
+
+# For alkanes-jsonrpc: create lua script directory
+RUN mkdir -p /data/lua-scripts
+
+ENTRYPOINT ["/usr/local/bin/app"]

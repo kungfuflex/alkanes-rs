@@ -1,0 +1,16 @@
+package alkanes:owned-token;
+
+interface owned-token {
+    initialize: func(auth-token-units: u64, token-units: u64) -> result<_, string>;
+    initialize-with-name-symbol: func(auth-token-units: u64, token-units: u64, name: string, symbol: string) -> result<_, string>;
+    mint: func(token-units: u64) -> result<_, string>;
+    burn: func() -> result<_, string>;
+    get-name: func() -> result<string, string>;
+    get-symbol: func() -> result<string, string>;
+    get-total-supply: func() -> result<u64, string>;
+    get-data: func() -> result<list<u8>, string>;
+}
+
+world owned-token-world {
+    export owned-token;
+}

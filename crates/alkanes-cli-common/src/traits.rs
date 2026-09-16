@@ -355,8 +355,8 @@ pub struct SendParams {
     pub rebar_tier: u8,
     pub lock_alkanes: bool,
     /// Strategy for handling UTXOs that contain ordinal inscriptions
-    /// - 'exclude': (default) Fail if inscribed UTXOs must be spent
-    /// - 'preserve': Split inscribed UTXOs to protect inscriptions
+    /// - 'exclude': Fail if inscribed UTXOs must be spent
+    /// - 'preserve': (default) Split inscribed sats off, edict runes to safety
     /// - 'burn': Allow spending inscribed UTXOs (destroys inscriptions)
     pub ordinals_strategy: crate::alkanes::types::OrdinalsStrategy,
     /// Enable mempool indexer for tracing inscription state of pending UTXOs
@@ -1284,6 +1284,21 @@ pub trait DeezelProvider:
     /// (`WebProvider`, the CLI provider) override this with a real
     /// store so chained / atomic flows benefit automatically.
     fn pending_tx_store(&self) -> Option<&dyn crate::pending_tx_store::PendingTxStore> { None }
+
+    /// Durable set of outpoints the operator has frozen.
+    ///
+    /// Read by `get_utxos` to populate `UtxoInfo.frozen` /
+    /// `freeze_reason`, which in turn is what makes every existing
+    /// selector skip the coin (`check_utxo_eligibility` →
+    /// `UtxoSkipReason::Frozen`, `select_coins`, and the largest-first
+    /// selectors in `transaction.rs` and `brc20_prog`).
+    ///
+    /// Default returns `None`, in which case freezing is unsupported and
+    /// `freeze_utxo` / `unfreeze_utxo` report that plainly instead of
+    /// claiming a success they did not achieve. Concrete providers
+    /// override this with a platform store: sqlite on the CLI,
+    /// IndexedDB in the browser, in-memory in the harness.
+    fn frozen_store(&self) -> Option<&dyn crate::frozen_store::FrozenStore> { None }
 
     /// Create a boxed, clonable version of the provider
     fn clone_box(&self) -> Box<dyn DeezelProvider>;

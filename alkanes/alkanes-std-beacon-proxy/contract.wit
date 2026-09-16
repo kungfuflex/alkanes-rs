@@ -1,0 +1,17 @@
+package example:beacon-proxy;
+
+interface beacon-proxy {
+    record alkane-id {
+        block: u64,
+        block-hi: u64,
+        tx: u64,
+        tx-hi: u64,
+    }
+
+    initialize: func(beacon: alkane-id) -> result<_, string>;
+    forward: func() -> result<_, string>;
+}
+
+world beacon-proxy-world {
+    export beacon-proxy;
+}

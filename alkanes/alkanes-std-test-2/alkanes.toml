@@ -1,0 +1,32 @@
+[contract]
+name = "LoggerAlkane"
+
+[opcodes]
+initialize = 0
+self-call = 2
+check-incoming = 3
+mint-tokens = 4
+return-data1 = 5
+test-ordered-incoming = 6
+process-numbers = 11
+process-strings = 12
+process-nested-vec = 13
+test-infinite-loop = 20
+test-infinite-extcall = 21
+test-self-mint = 22
+test-arbitrary-mint = 30
+test-ext-call = 31
+test-ext-delegate-call = 32
+test-static-call = 33
+test-multiple-ext-call = 34
+test-large-transfer-parcel = 40
+test-large-transfer-parcel-extcall = 41
+get-transaction = 50
+hash-loop = 78
+return-default-data = 99
+revert = 100
+my-get-block-header = 101
+my-get-coinbase-tx = 102
+claimable-fees = 103
+set-claimable-fees = 104
+inc-claimable-fees = 105

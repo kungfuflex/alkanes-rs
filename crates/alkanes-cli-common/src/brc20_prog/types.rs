@@ -130,8 +130,8 @@ pub struct Brc20ProgExecuteParams {
     /// Used for FrBTC wrap (send BTC to signer) or unwrap (dust to signer)
     pub additional_outputs: Option<Vec<AdditionalOutput>>,
     /// Strategy for handling UTXOs that contain ordinal inscriptions
-    /// - exclude: Fail if inscribed UTXOs must be spent (default)
-    /// - preserve: Split inscribed UTXOs to protect inscriptions
+    /// - exclude: Fail if inscribed UTXOs must be spent
+    /// - preserve: Split inscribed UTXOs to protect inscriptions (default)
     /// - burn: Allow spending inscribed UTXOs without protection
     #[serde(default)]
     pub ordinals_strategy: OrdinalsStrategy,

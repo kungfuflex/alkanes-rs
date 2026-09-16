@@ -1,0 +1,8 @@
+[contract]
+name = "UpgradeableBeacon"
+
+[opcodes]
+initialize = 32767
+implementation = 32765
+upgrade-to = 32766
+forward = 36863

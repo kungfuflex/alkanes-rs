@@ -1,0 +1,15 @@
+curl 'https://mainnet.infura.io/v3/099fc58e0de9451d80b18d7c74caa7c1' \
+  -H 'accept: */*' \
+  -H 'accept-language: en-US,en;q=0.9' \
+  -H 'content-type: application/json' \
+  -H 'origin: https://app.uniswap.org' \
+  -H 'priority: u=1, i' \
+  -H 'referer: https://app.uniswap.org/' \
+  -H 'sec-ch-ua: "Google Chrome";v="141", "Not?A_Brand";v="8", "Chromium";v="141"' \
+  -H 'sec-ch-ua-mobile: ?0' \
+  -H 'sec-ch-ua-platform: "Linux"' \
+  -H 'sec-fetch-dest: empty' \
+  -H 'sec-fetch-mode: cors' \
+  -H 'sec-fetch-site: cross-site' \
+  -H 'user-agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36' \
+  --data-raw '{"jsonrpc":"2.0","id":0,"method":"eth_blockNumber","params":[]}'

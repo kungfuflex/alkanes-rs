@@ -1,0 +1,18 @@
+package example:upgradeable;
+
+interface upgradeable {
+    record alkane-id {
+        block: u64,
+        block-hi: u64,
+        tx: u64,
+        tx-hi: u64,
+    }
+
+    initialize: func(implementation: alkane-id, auth-token-units: u64) -> result<_, string>;
+    upgrade: func(implementation: alkane-id) -> result<_, string>;
+    forward: func() -> result<_, string>;
+}
+
+world upgradeable-world {
+    export upgradeable;
+}

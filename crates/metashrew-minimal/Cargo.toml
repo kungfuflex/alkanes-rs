@@ -1,0 +1,17 @@
+[package]
+name = "metashrew-minimal"
+version = "9.0.1"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+metashrew-core = { path = "../metashrew-core" }
+metashrew-support = { path = "../metashrew-support" }
+anyhow = "1.0.86"
+hex = "0.4.3"
+bitcoin = "0.32.6"
+
+[features]
+std = []
