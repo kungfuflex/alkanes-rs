@@ -274,8 +274,9 @@ pub enum BtcusdCommands {
     },
     /// Mempool-aware reads: what is pending, and what the next blocks look like.
     ///
-    /// Backed by `/v4/{apikey}/mempool`. ⚠️ NOT DEPLOYED YET — expect 404 until
-    /// the route ships. Written now so a workflow can be built against it.
+    /// Backed by `/v4/{apikey}/mempool`, which is live: the JSON-RPC methods and
+    /// the WebSocket both answer today. (`watch` is still unwired client-side,
+    /// and says so when you run it.)
     Mempool {
         #[command(subcommand)]
         command: MempoolCommands,
