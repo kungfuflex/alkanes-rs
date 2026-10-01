@@ -22,7 +22,7 @@ pub enum RpcError {
 use bech32::Hrp;
 use bitcoin::Script;
 use metashrew_support::address::{AddressEncoding, Payload};
-static mut _NETWORK: Option<NetworkParams> = None;
+use std::sync::{Arc, PoisonError, RwLock};
 
 /// Distinguishes the underlying blockchain type for address encoding,
 /// derivation paths, and RPC routing.
@@ -61,31 +61,90 @@ pub struct NetworkParams {
     pub p2sh_prefix_bytes: Option<Vec<u8>>,
 }
 
-#[allow(static_mut_refs)]
-pub fn set_network(params: NetworkParams) {
-    unsafe {
-        _NETWORK = Some(params);
+impl NetworkParams {
+    /// Check that the address prefixes can produce unambiguous addresses.
+    ///
+    /// Bitcoin-family chains need a valid lowercase bech32 HRP and distinct
+    /// one-byte base58 prefixes. Zcash has no bech32 encoding and instead needs
+    /// distinct, non-empty two-byte base58 prefixes.
+    pub fn validate(&self) -> Result<(), AlkanesError> {
+        let invalid = |msg: String| AlkanesError::Configuration(format!("invalid network params: {}", msg));
+        match self.chain_type {
+            ChainType::Bitcoin => {
+                let mut hrps = vec![("bech32_hrp", &self.bech32_hrp)];
+                if !self.bech32_prefix.is_empty() {
+                    hrps.push(("bech32_prefix", &self.bech32_prefix));
+                }
+                for (field, value) in hrps {
+                    let hrp = Hrp::parse(value)
+                        .map_err(|e| invalid(format!("{} {:?}: {}", field, value, e)))?;
+                    if hrp.to_lowercase() != *value {
+                        return Err(invalid(format!("{} {:?} must be lowercase", field, value)));
+                    }
+                }
+                if self.p2pkh_prefix == self.p2sh_prefix {
+                    return Err(invalid(format!(
+                        "p2pkh and p2sh prefixes must differ (both are {:#04x})",
+                        self.p2pkh_prefix
+                    )));
+                }
+            }
+            ChainType::Zcash => {
+                let pkh = self.p2pkh_prefix_bytes.as_deref().filter(|b| !b.is_empty())
+                    .ok_or_else(|| invalid("Zcash network needs p2pkh_prefix_bytes".to_string()))?;
+                let sh = self.p2sh_prefix_bytes.as_deref().filter(|b| !b.is_empty())
+                    .ok_or_else(|| invalid("Zcash network needs p2sh_prefix_bytes".to_string()))?;
+                if pkh == sh {
+                    return Err(invalid("Zcash p2pkh and p2sh prefix bytes must differ".to_string()));
+                }
+            }
+        }
+        Ok(())
     }
 }
 
-#[allow(static_mut_refs)]
-pub fn get_network() -> &'static NetworkParams {
-    unsafe { _NETWORK.as_ref().unwrap() }
+// The active configuration is shared as an `Arc` snapshot behind a lock.
+// Readers never borrow the global itself, so replacing it cannot invalidate a
+// value someone is still using, and concurrent native callers are synchronised.
+// The critical sections only move an `Option<Arc<_>>`, which a panic cannot
+// leave half-written, so a poisoned lock is still safe to use.
+static NETWORK: RwLock<Option<Arc<NetworkParams>>> = RwLock::new(None);
+
+/// Validate and install `params` as the active network configuration,
+/// replacing any previous one. Snapshots taken earlier keep their values.
+/// On error the current configuration is left unchanged.
+pub fn set_network(params: impl Into<Arc<NetworkParams>>) -> Result<(), AlkanesError> {
+    let params = params.into();
+    params.validate()?;
+    let previous = NETWORK.write().unwrap_or_else(PoisonError::into_inner).replace(params);
+    drop(previous); // outside the lock
+    Ok(())
 }
 
-#[allow(static_mut_refs)]
-pub fn get_network_option() -> Option<&'static NetworkParams> {
-    unsafe { _NETWORK.as_ref().clone() }
+/// A snapshot of the active configuration.
+///
+/// # Panics
+/// If no configuration has been installed; use [`get_network_option`] to
+/// handle that case.
+pub fn get_network() -> Arc<NetworkParams> {
+    get_network_option()
+        .expect("network not configured: call set_network() before get_network()")
+}
+
+/// A snapshot of the active configuration, or `None` before initialisation.
+pub fn get_network_option() -> Option<Arc<NetworkParams>> {
+    NETWORK.read().unwrap_or_else(PoisonError::into_inner).clone()
 }
 
 pub fn to_address_str(script: &Script) -> Result<String, anyhow::Error> {
-    let config = get_network();
+    let config = get_network_option()
+        .ok_or_else(|| anyhow::anyhow!("network not configured: call set_network() first"))?;
     let payload = Payload::from_script(script)?;
 
     // Zcash transparent addresses use 2-byte version prefixes in Base58Check.
     // Handle this separately since AddressEncoding only supports 1-byte prefixes.
     if config.chain_type == ChainType::Zcash {
-        return zcash_address_str(config, &payload);
+        return zcash_address_str(&config, &payload);
     }
 
     Ok(AddressEncoding {
@@ -753,5 +812,73 @@ impl NetworkParams {
             "mainnet".to_string(), "testnet".to_string(), "signet".to_string(), "regtest".to_string(),
             "zcash".to_string(), "zcash-testnet".to_string(), "zcash-regtest".to_string(),
         ]
+    }
+}
+
+#[cfg(test)]
+mod global_network_tests {
+    use super::*;
+
+    // These tests exercise the process-wide slot; they hold a mutex so they do
+    // not interleave with each other under the parallel test runner.
+    static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn snapshot_survives_replacement_and_invalid_params_are_rejected() {
+        let _g = SERIAL.lock().unwrap_or_else(PoisonError::into_inner);
+        set_network(NetworkParams::from_network_str("mainnet").unwrap()).unwrap();
+        let snapshot = get_network();
+        let hrp: &str = &snapshot.bech32_hrp;
+
+        set_network(NetworkParams::from_network_str("zcash").unwrap()).unwrap();
+        set_network(NetworkParams::regtest()).unwrap();
+        assert_eq!(hrp, "bc");
+        assert_eq!(snapshot.network, Network::Bitcoin);
+        assert_eq!(get_network().bech32_hrp, "bcrt");
+
+        // Rejected configurations leave the current one in place.
+        assert!(set_network(NetworkParams::default()).is_err());
+        assert!(set_network(NetworkParams::with_custom_magic(Network::Regtest, 0x05, 0x05, "bcrt".into())).is_err());
+        assert!(set_network(NetworkParams::with_custom_magic(Network::Regtest, 0x6f, 0xc4, "BCRT".into())).is_err());
+        let mut zcash = NetworkParams::from_network_str("zcash").unwrap();
+        zcash.p2sh_prefix_bytes = None;
+        assert!(set_network(zcash).is_err());
+        assert_eq!(get_network().bech32_hrp, "bcrt");
+    }
+
+    #[test]
+    fn every_builtin_network_validates() {
+        for name in NetworkParams::supported_networks().iter().chain(["bitcoin".to_string(), "subfrost-regtest".to_string()].iter()) {
+            NetworkParams::from_network_str(name).unwrap().validate()
+                .unwrap_or_else(|e| panic!("{}: {}", name, e));
+        }
+    }
+
+    #[test]
+    fn concurrent_native_callers() {
+        let _g = SERIAL.lock().unwrap_or_else(PoisonError::into_inner);
+        let a = NetworkParams::from_network_str("mainnet").unwrap();
+        let b = NetworkParams::regtest();
+        set_network(a.clone()).unwrap();
+        std::thread::scope(|s| {
+            for i in 0..2 {
+                let (a, b) = (a.clone(), b.clone());
+                s.spawn(move || {
+                    for n in 0..2_000 {
+                        set_network(if (n + i) % 2 == 0 { a.clone() } else { b.clone() }).unwrap();
+                    }
+                });
+            }
+            for _ in 0..4 {
+                s.spawn(|| {
+                    for _ in 0..10_000 {
+                        let snap = get_network();
+                        let consistent = (snap.bech32_hrp == "bc" && snap.p2pkh_prefix == 0x00)
+                            || (snap.bech32_hrp == "bcrt" && snap.p2pkh_prefix == 0x6f);
+                        assert!(consistent, "torn config: {:?}", snap);
+                    }
+                });
+            }
+        });
     }
 }

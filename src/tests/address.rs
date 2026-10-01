@@ -21,7 +21,9 @@ pub fn test_address_generation() {
         )))
         .unwrap()
     );
-    if saved.is_some() {
-        set_network(saved.unwrap().clone());
+    // `saved` is an owned snapshot, so it is still valid after the
+    // set_network() above replaced the configuration it was taken from.
+    if let Some(saved) = saved {
+        set_network(saved);
     }
 }
