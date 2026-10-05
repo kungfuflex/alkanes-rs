@@ -36,6 +36,7 @@ use metashrew_core::{
     stdio::{stdout, Write},
 };
 use metashrew_support::address::Payload;
+use metashrew_support::byte_view::ByteView;
 use metashrew_support::index_pointer::KeyValuePointer;
 use ordinals::{Artifact, RuneId, Runestone};
 use ordinals::{Etching, Rune};
@@ -175,6 +176,17 @@ pub fn num_non_op_return_outputs(tx: &Transaction) -> usize {
         .iter()
         .filter(|out| !(*out.script_pubkey).is_op_return())
         .count()
+}
+
+/// Reads an optional u64 written with `set_value`. An empty value means the field was never
+/// written (absent); any stored value, including zero, is returned as `Some`.
+fn get_optional_u64(ptr: &IndexPointer) -> Option<u64> {
+    let bytes = ptr.get();
+    if bytes.is_empty() {
+        None
+    } else {
+        Some(u64::from_bytes(bytes.as_ref().clone()))
+    }
 }
 
 #[cfg(not(feature = "mainnet"))]
@@ -541,34 +553,33 @@ impl Protorune {
             return Ok(());
         }
         if remaining > 0 {
-            let height_start: u64 = tables::RUNES.HEIGHTSTART.select(&name).get_value();
-            let height_end: u64 = tables::RUNES.HEIGHTEND.select(&name).get_value();
-            let offset_start: u64 = tables::RUNES.OFFSETSTART.select(&name).get_value();
-            let offset_end: u64 = tables::RUNES.OFFSETEND.select(&name).get_value();
+            // Mint terms are optional. `index_etching` only writes a bound when it was present
+            // in the etching (a present zero is stored as 8 zero bytes), so an empty value means
+            // "absent". Zero is a valid bound and must not be read as absent: e.g. an offset end
+            // of 0 closes the mint window at the etching height, matching ord.
+            let height_start = get_optional_u64(&tables::RUNES.HEIGHTSTART.select(&name));
+            let height_end = get_optional_u64(&tables::RUNES.HEIGHTEND.select(&name));
+            let offset_start = get_optional_u64(&tables::RUNES.OFFSETSTART.select(&name));
+            let offset_end = get_optional_u64(&tables::RUNES.OFFSETEND.select(&name));
             // the other mint terms are stored from the rune name, the etching height is
             // stored by the rune id
             let etching_height: u64 = tables::RUNES
                 .RUNE_ID_TO_HEIGHT
                 .select(&mint.to_owned().into())
                 .get_value();
-            // Compute effective start: max of absolute and relative, if both exist
-            let absolute_start = if height_start != 0 { Some(height_start) } else { None };
-            let relative_start = if offset_start != 0 { Some(offset_start + etching_height) } else { None };
-            let effective_start = match (absolute_start, relative_start) {
+            // Compute effective start: max of absolute and relative, if both exist.
+            // Relative bounds saturate like ord's RuneEntry::start/end.
+            let relative_start = offset_start.map(|o| etching_height.saturating_add(o));
+            let effective_start = match (height_start, relative_start) {
                 (Some(a), Some(r)) => Some(std::cmp::max(a, r)),
-                (Some(a), None) => Some(a),
-                (None, Some(r)) => Some(r),
-                (None, None) => None,
+                (a, r) => a.or(r),
             };
 
             // Compute effective end: min of absolute and relative, if both exist
-            let absolute_end = if height_end != 0 { Some(height_end) } else { None };
-            let relative_end = if offset_end != 0 { Some(offset_end + etching_height) } else { None };
-            let effective_end = match (absolute_end, relative_end) {
+            let relative_end = offset_end.map(|o| etching_height.saturating_add(o));
+            let effective_end = match (height_end, relative_end) {
                 (Some(a), Some(r)) => Some(std::cmp::min(a, r)),
-                (Some(a), None) => Some(a),
-                (None, Some(r)) => Some(r),
-                (None, None) => None,
+                (a, r) => a.or(r),
             };
 
             if effective_start.map_or(true, |s| height >= s)
