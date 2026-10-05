@@ -77,3 +77,5 @@ pub mod view_flag_leak_poc;
 pub mod view_dust_alloc_poc;
 #[cfg(test)]
 pub mod protoburn_divzero_poc;
+#[cfg(test)]
+pub mod declared_memory_poc;

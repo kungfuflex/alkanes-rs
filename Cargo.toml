@@ -265,6 +265,7 @@ alkanes = { path = ".", features = [
 ] }
 metashrew-core = { git = "https://github.com/kungfuflex/metashrew", tag = "v9.0.5-rc.8", features = ["test-utils"] }
 protorune = { path = "crates/protorune", features = ["test-utils"] }
+wat = { workspace = true }
 
 [build-dependencies]
 anyhow = { workspace = true }

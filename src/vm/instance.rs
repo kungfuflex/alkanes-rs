@@ -340,10 +340,13 @@ impl AlkanesInstance {
 
         let current_pages = memory.size(&alkanes_instance.store);
 
+        // The module's declared memory maximum is attacker-controlled; a
+        // maximum below 512 pages makes this grow fail. That must be a
+        // per-message revert, never a panic that halts block indexing.
         if current_pages < 512 {
             memory
                 .grow(&mut alkanes_instance.store, 512 - current_pages)
-                .expect("Failed to grow memory");
+                .map_err(|e| anyhow!("failed to grow memory to 512 pages: {:?}", e))?;
         }
 
         Ok(alkanes_instance)
