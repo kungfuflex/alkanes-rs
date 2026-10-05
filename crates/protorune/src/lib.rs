@@ -272,12 +272,51 @@ pub fn handle_transfer_runes_to_vout(
     Ok(output)
 }
 
+/// From this height on, a named-rune commitment only counts if the spent output
+/// is P2TR (matching ord's rune_updater). Below it, the original predicate is
+/// kept verbatim so historical etchings replay identically.
+#[cfg(not(feature = "mainnet"))]
+pub const ETCH_COMMIT_P2TR_FIX_HEIGHT: u64 = 0;
+#[cfg(feature = "mainnet")]
+pub const ETCH_COMMIT_P2TR_FIX_HEIGHT: u64 = 970_000;
+
+const COMMIT_CONFIRMATIONS: u64 = 6;
+
+/// Returns true only if the stored previous output for `outpoint_bytes` is P2TR.
+/// Unknown or undecodable outputs fail closed.
+fn spent_output_is_p2tr(outpoint_bytes: &Vec<u8>) -> bool {
+    let raw = tables::OUTPOINT_TO_OUTPUT.select(outpoint_bytes).get();
+    if raw.is_empty() {
+        return false;
+    }
+    match proto::protorune::Output::decode(raw.as_slice()) {
+        core::result::Result::Ok(output) => ScriptBuf::from_bytes(output.script).is_p2tr(),
+        Err(_) => false,
+    }
+}
+
 #[cfg(not(test))]
 pub fn validate_rune_etch(tx: &Transaction, commitment: Vec<u8>, height: u64) -> Result<bool> {
+    check_rune_etch_commitment(
+        tx,
+        &commitment,
+        height,
+        height >= ETCH_COMMIT_P2TR_FIX_HEIGHT,
+    )
+}
+
+/// The production commitment predicate. Unit tests call this directly, since
+/// the `cfg(test)` `validate_rune_etch` shim accepts every etching.
+pub fn check_rune_etch_commitment(
+    tx: &Transaction,
+    commitment: &[u8],
+    height: u64,
+    require_p2tr: bool,
+) -> Result<bool> {
     for input in &tx.input {
         // extracting a tapscript does not indicate that the input being spent
-        // was actually a taproot output. this is checked below, when we load the
-        // output's entry from the database
+        // was actually a taproot output. when `require_p2tr` is set this is
+        // checked below, when we load the output's entry from the database
         let Some(tapscript) = input.witness.tapscript() else {
             continue;
         };
@@ -296,14 +335,19 @@ pub fn validate_rune_etch(tx: &Transaction, commitment: Vec<u8>, height: u64) ->
                 continue;
             }
 
+            let outpoint_bytes = consensus_encode(&input.previous_output)?;
+            if require_p2tr && !spent_output_is_p2tr(&outpoint_bytes) {
+                break;
+            }
+
             let h: u64 = tables::RUNES
                 .OUTPOINT_TO_HEIGHT
-                .select(&consensus_encode(&input.previous_output)?)
+                .select(&outpoint_bytes)
                 .get_value();
 
             // add 1 to follow the ordinals spec: https://github.com/ordinals/ord/blob/master/src/index/updater/rune_updater.rs#L454
             let confirmations = height - h + 1;
-            if confirmations >= 6 {
+            if confirmations >= COMMIT_CONFIRMATIONS {
                 return Ok(true);
             }
         }
