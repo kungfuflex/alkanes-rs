@@ -836,6 +836,15 @@ impl Protorune {
                     };
                 }
                 Some(Artifact::Cenotaph(ref cenotaph)) => {
+                    // Like ord, a cenotaph's mint is processed before its etching: a valid mint
+                    // still consumes one unit of the rune's cap, but the minted amount is burned,
+                    // so it goes to a throwaway sheet that is never saved to an output.
+                    if let Some(mint) = cenotaph.mint {
+                        let mut burned = BalanceSheet::default();
+                        if let Err(e) = Self::index_mint(&mint.into(), height, &mut burned) {
+                            println!("err: {:?}", e);
+                        }
+                    }
                     if let Some(rune) = cenotaph.etching {
                         // Cenotaph etchings create the rune but with zeroed metadata
                         let mut atomic = AtomicPointer::default();
