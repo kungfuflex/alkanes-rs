@@ -180,6 +180,20 @@ pub fn run_special_cellpacks(
     } else if let Some(factory) = cellpack.target.factory() {
         // we find the factory alkane wasm and set the current alkane to the factory wasm
         payload.target = AlkaneId::new(2, next_sequence);
+        // A factory call targeting the sequence currently being allocated
+        // (e.g. 5:N where N == next_sequence) resolves to the very ID we are
+        // about to create, so the stored alias 2:N -> 2:N points at itself and
+        // binary resolution would recurse until the call stack is exhausted,
+        // aborting block indexing. Reject it as a normal message error before
+        // persisting the alias or advancing the sequence; the checkpoint rolls
+        // back the staged writes.
+        if factory == payload.target {
+            return Err(anyhow!(
+                "factory target {:?} aliases the alkane id being created ({:?})",
+                cellpack.target,
+                payload.target
+            ));
+        }
         next_sequence_pointer.set_value(next_sequence + 1);
         let factory_payload: Vec<u8> = factory.into();
         context
