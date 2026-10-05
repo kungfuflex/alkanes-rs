@@ -282,6 +282,14 @@ pub const ETCH_COMMIT_P2TR_FIX_HEIGHT: u64 = 970_000;
 
 const COMMIT_CONFIRMATIONS: u64 = 6;
 
+/// From this height on, runes spent by a transaction with no Runestone move to the
+/// first non-OP_RETURN output (matching ord). Below it they are cleared and lost, so
+/// historical state replays identically.
+#[cfg(not(feature = "mainnet"))]
+pub const NO_ARTIFACT_TRANSFER_FIX_HEIGHT: u64 = 0;
+#[cfg(feature = "mainnet")]
+pub const NO_ARTIFACT_TRANSFER_FIX_HEIGHT: u64 = 970_000;
+
 /// Returns true only if the stored previous output for `outpoint_bytes` is P2TR.
 /// Unknown or undecodable outputs fail closed.
 fn spent_output_is_p2tr(outpoint_bytes: &Vec<u8>) -> bool {
@@ -862,7 +870,18 @@ impl Protorune {
                         }
                     }
                 }
-                None => {}
+                None => {
+                    if height >= NO_ARTIFACT_TRANSFER_FIX_HEIGHT {
+                        let mut atomic = AtomicPointer::default();
+                        match Self::index_no_artifact_transfer(&mut atomic, tx) {
+                            Err(e) => {
+                                println!("err: {:?}", e);
+                                atomic.rollback();
+                            }
+                            _ => atomic.commit(),
+                        }
+                    }
+                }
             }
             for input in &tx.input {
                 //all inputs must be used up, even in cenotaphs
@@ -870,6 +889,39 @@ impl Protorune {
                 clear_balances(&mut tables::RUNES.OUTPOINT_TO_RUNES.select(&key));
             }
         }
+        Ok(())
+    }
+    /// A transaction with no Runestone and no cenotaph still moves its input runes: ord
+    /// assigns all of them to the first non-OP_RETURN output, and burns them only when
+    /// every output is OP_RETURN. The caller clears the spent inputs afterwards.
+    pub fn index_no_artifact_transfer(atomic: &mut AtomicPointer, tx: &Transaction) -> Result<()> {
+        let Some(vout) = tx
+            .output
+            .iter()
+            .position(|out| !out.script_pubkey.is_op_return())
+        else {
+            return Ok(());
+        };
+        let sheets = tx
+            .input
+            .iter()
+            .map(|input| {
+                let outpoint_bytes = consensus_encode(&input.previous_output)?;
+                Ok(load_sheet(&mut atomic.derive(
+                    &tables::RUNES.OUTPOINT_TO_RUNES.select(&outpoint_bytes),
+                )))
+            })
+            .collect::<Result<Vec<BalanceSheet<AtomicPointer>>>>()?;
+        let sheet = BalanceSheet::concat(sheets)?;
+        let outpoint = OutPoint::new(tx.compute_txid(), vout as u32);
+        sheet.save(
+            &mut atomic.derive(
+                &tables::RUNES
+                    .OUTPOINT_TO_RUNES
+                    .select(&consensus_encode(&outpoint)?),
+            ),
+            false,
+        );
         Ok(())
     }
     pub fn index_spendables(txdata: &Vec<Transaction>) -> Result<BTreeSet<Vec<u8>>> {
