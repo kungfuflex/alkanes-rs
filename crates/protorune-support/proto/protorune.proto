@@ -38,6 +38,11 @@ message OutpointWithProtocol {
   bytes txid = 1;
   uint32 vout = 2;
   uint128 protocol = 3;
+  // Optional balance-sheet pagination. Both default to 0, which preserves the
+  // legacy request shape: offset 0 = first stored entry, limit 0 = the
+  // server's per-view cap. A limit above the cap is clamped to it.
+  uint32 offset = 4;
+  uint32 limit = 5;
 }
 message Output {
   bytes script = 1;
@@ -50,6 +55,12 @@ message OutpointResponse {
   Output output = 3;
   uint32 height = 4;
   uint32 txindex = 5;
+  // Number of entries stored in the outpoint's balance sheet, regardless of
+  // how many were returned in `balances`.
+  uint32 total_entries = 6;
+  // Offset to pass to fetch the next page, or 0 when `balances` reaches the
+  // end of the sheet. A next page never starts at 0, so 0 is unambiguous.
+  uint32 next_offset = 7;
 }
 
 message PaginationInput {
@@ -59,16 +70,38 @@ message PaginationInput {
 
 message WalletRequest {
   bytes wallet = 1;
+  // Optional pagination over the address's stored outpoint list, which is
+  // append-only and so includes outpoints since spent. Both default to 0,
+  // which preserves the legacy request shape: offset 0 = first stored
+  // outpoint, limit 0 = the server's per-view scan cap. A limit above the cap
+  // is clamped to it. The server may also end a page early once it has loaded
+  // its per-view budget of balance-sheet entries.
+  uint32 offset = 2;
+  uint32 limit = 3;
 }
 
 message WalletResponse {
   repeated OutpointResponse outpoints = 1;
   BalanceSheet balances = 2;
+  // Length of the address's stored outpoint list (spent outpoints included).
+  uint32 total_outpoints = 3;
+  // Offset to pass to fetch the next page, or 0 when this page reaches the
+  // end of the list. Keep paging while it is nonzero: a page can come back
+  // with no outpoints if every one it scanned was spent.
+  uint32 next_offset = 4;
 }
 
 message ProtorunesWalletRequest {
   bytes wallet = 1;
   uint128 protocol_tag = 2;
+  // Optional pagination over the address's stored outpoint list, which is
+  // append-only and so includes outpoints since spent. Both default to 0,
+  // which preserves the legacy request shape: offset 0 = first stored
+  // outpoint, limit 0 = the server's per-view scan cap. A limit above the cap
+  // is clamped to it. The server may also end a page early once it has loaded
+  // its per-view budget of balance-sheet entries.
+  uint32 offset = 3;
+  uint32 limit = 4;
 }
 
 message RunesByHeightRequest {
