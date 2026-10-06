@@ -41,6 +41,7 @@ members = [
     "crates/alkanes-runtime",
     "crates/alkanes-std-auth-token",
     "crates/alkanes-std-beacon-proxy",
+    "crates/alkanes-std-diesel-v3",
     "crates/alkanes-std-factory-support",
     "crates/alkanes-std-genesis-alkane",
     "crates/alkanes-std-genesis-alkane-upgraded",
@@ -189,6 +190,7 @@ proxy = []
 owned_token = []
 auth_token = []
 genesis_alkane = []
+diesel_v3 = []
 regtest = []
 genesis_protorune = []
 amm_pool = ["auth_token"]

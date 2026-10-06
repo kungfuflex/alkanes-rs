@@ -115,6 +115,7 @@ fn main() {
             if v == "alkanes-std-genesis-alkane"
                 || v == "alkanes-std-genesis-alkane-upgraded"
                 || v == "alkanes-std-genesis-alkane-upgraded-eoa"
+                || v == "alkanes-std-diesel-v3"
                 || v == "alkanes-std-merkle-distributor"
             {
                 let precompiled_dir = write_dir.join("precompiled");
