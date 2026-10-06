@@ -320,4 +320,114 @@ mod tests {
         index(vec![spend.clone()], ETCH_HEIGHT + 1);
         assert_eq!(balance(&spend, 0, id), 1000);
     }
+
+    // ---- Protorune Indexes Rune Etchings Before the Mainnet Activation Height ----
+
+    fn reserved_etch_tx(input: u32) -> Transaction {
+        helpers::create_tx_from_runestone(
+            Runestone {
+                etching: Some(Etching {
+                    divisibility: Some(0),
+                    premine: Some(777),
+                    rune: None,
+                    spacers: None,
+                    symbol: Some('R'),
+                    turbo: true,
+                    terms: None,
+                }),
+                pointer: Some(0),
+                ..Default::default()
+            },
+            vec![helpers::get_mock_txin(input)],
+            vec![to(ADDRESS1())],
+        )
+    }
+
+    fn etching_name(id: RuneId) -> Vec<u8> {
+        let id: ProtoruneRuneId = id.into();
+        tables::RUNES
+            .RUNE_ID_TO_ETCHING
+            .select(&id.into())
+            .get()
+            .as_ref()
+            .clone()
+    }
+
+    #[wasm_bindgen_test]
+    fn first_rune_height_matches_ord_for_build_network() {
+        #[cfg(feature = "mainnet")]
+        assert_eq!(crate::first_rune_height(), 840_000);
+        #[cfg(not(feature = "mainnet"))]
+        assert_eq!(crate::first_rune_height(), 0);
+    }
+
+    // On non-mainnet builds (regtest semantics) runes are indexed from genesis.
+    #[cfg(not(feature = "mainnet"))]
+    #[wasm_bindgen_test]
+    fn regtest_indexes_runes_from_genesis() {
+        clear();
+        let tx = reserved_etch_tx(0);
+        index(vec![tx.clone()], 1);
+        let id = RuneId { block: 1, tx: 0 };
+        assert!(!etching_name(id).is_empty());
+        assert_eq!(balance(&tx, 0, id), 777);
+    }
+
+    #[cfg(feature = "mainnet")]
+    #[wasm_bindgen_test]
+    fn mainnet_ignores_rune_etchings_before_840000() {
+        // activation - 1: nothing is etched or credited
+        clear();
+        let before = reserved_etch_tx(0);
+        index(vec![before.clone()], 839_999);
+        let id = RuneId {
+            block: 839_999,
+            tx: 0,
+        };
+        assert!(etching_name(id).is_empty());
+        assert_eq!(balance(&before, 0, id), 0);
+        assert!(tables::HEIGHT_TO_RUNES
+            .select_value(839_999u64)
+            .get_list()
+            .is_empty());
+
+        // a pre-activation cenotaph etching (named) is ignored too
+        let cenotaph = helpers::create_tx_from_runestone(
+            Runestone {
+                etching: Some(Etching {
+                    rune: Some(Rune::from_str("AAAAAAAAAAAAAACENOTAPH").unwrap()),
+                    ..Default::default()
+                }),
+                edicts: vec![ordinals::Edict {
+                    id: RuneId { block: 0, tx: 1 },
+                    amount: 0,
+                    output: 0,
+                }],
+                ..Default::default()
+            },
+            vec![helpers::get_mock_txin(1)],
+            vec![to(ADDRESS1())],
+        );
+        assert!(matches!(
+            Runestone::decipher(&cenotaph),
+            Some(Artifact::Cenotaph(_))
+        ));
+        index(vec![cenotaph], 839_999);
+        let name = Rune::from_str("AAAAAAAAAAAAAACENOTAPH").unwrap();
+        let name = protorune_support::utils::field_to_name(&name.0);
+        assert!(tables::RUNES
+            .ETCHING_TO_RUNE_ID
+            .select(&name.as_bytes().to_vec())
+            .get()
+            .is_empty());
+
+        // activation and activation + 1: normal behaviour
+        for h in [840_000u64, 840_001] {
+            let at = reserved_etch_tx((h - 839_998) as u32);
+            index(vec![at.clone()], h);
+            let id = RuneId { block: h, tx: 0 };
+            assert!(!etching_name(id).is_empty());
+            assert_eq!(balance(&at, 0, id), 777);
+        }
+    }
 }
