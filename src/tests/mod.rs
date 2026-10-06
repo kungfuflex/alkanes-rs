@@ -50,6 +50,8 @@ pub mod memory_security_tests;
 #[cfg(test)]
 pub mod merkle_distributor;
 #[cfg(test)]
+pub mod mint_gate;
+#[cfg(test)]
 pub mod networks;
 #[cfg(test)]
 pub mod special_extcall;
