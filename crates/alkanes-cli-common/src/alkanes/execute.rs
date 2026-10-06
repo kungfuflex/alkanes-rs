@@ -270,6 +270,71 @@ pub enum UtxoSkipReason {
     UnindexedHeight { block_height: u64, max_indexed: u64 },
 }
 
+/// Pre-sign carrier invariant (Halborn: "Incomplete Wallet Carrier Validation
+/// Can Transfer Unrequested Assets to Malicious Contracts").
+///
+/// Protorune aggregates the alkane sheets of EVERY input and forwards the
+/// unallocated remainder to the first alkanes message, so any token riding an
+/// input is handed to the called contract unless the transaction routes it
+/// elsewhere first. Before a PSBT leaves the executor, every input must have a
+/// KNOWN sheet (`per_utxo_alkanes` entry, or verified clean), and every alkane
+/// id carried by the inputs must either be requested (`alkanes_needed`) or be
+/// explicitly routed to a physical output by an edict in the first protostone
+/// (the one that receives the leftover input balance) covering the full
+/// carried amount (`amount == 0` means "all").
+///
+/// Excess of a REQUESTED alkane id is not covered here — that is the
+/// requested asset and its routing is the caller's protostone semantics.
+pub(crate) fn check_input_alkane_sheets(
+    inputs: &[OutPoint],
+    per_utxo_alkanes: &alloc::collections::BTreeMap<OutPoint, Vec<(AlkaneId, u64)>>,
+    clean_outpoints: &alloc::collections::BTreeSet<OutPoint>,
+    alkanes_needed: &alloc::collections::BTreeMap<AlkaneId, u64>,
+    protostones: &[ProtostoneSpec],
+) -> Result<()> {
+    let mut unrequested: alloc::collections::BTreeMap<AlkaneId, u128> =
+        alloc::collections::BTreeMap::new();
+    for op in inputs {
+        if let Some(sheet) = per_utxo_alkanes.get(op) {
+            for (id, amount) in sheet {
+                if *amount > 0 && !alkanes_needed.contains_key(id) {
+                    *unrequested.entry(id.clone()).or_insert(0) += *amount as u128;
+                }
+            }
+        } else if !clean_outpoints.contains(op) {
+            return Err(AlkanesError::Wallet(format!(
+                "Refusing to build: input {}:{} has an unknown alkane balance; it could forward \
+                 unrequested tokens to the called contract",
+                op.txid, op.vout
+            )));
+        }
+    }
+    let routed = |id: &AlkaneId, total: u128| -> bool {
+        protostones.first().map_or(false, |p| {
+            p.edicts.iter().any(|e| {
+                e.alkane_id == *id
+                    && matches!(e.target, OutputTarget::Output(_))
+                    && (e.amount == 0 || e.amount as u128 >= total)
+            })
+        })
+    };
+    let unrouted: Vec<String> = unrequested
+        .iter()
+        .filter(|(id, total)| !routed(id, **total))
+        .map(|(id, total)| format!("{}:{} x{}", id.block, id.tx, total))
+        .collect();
+    if !unrouted.is_empty() {
+        return Err(AlkanesError::Wallet(format!(
+            "Refusing to build: selected inputs carry alkanes that were not requested and are not \
+             routed back by an edict ({}). Protorune would forward them to the called contract. \
+             Request them explicitly, add an edict in the first protostone sending them to one of \
+             your outputs, or split that UTXO first",
+            unrouted.join(", ")
+        )));
+    }
+    Ok(())
+}
+
 /// Returns `Ok(())` if `info` is eligible for coin selection, else `Err`
 /// with the structured reason for skipping. Pure function — no provider /
 /// network dependency, fully unit-testable.
@@ -446,6 +511,12 @@ pub(crate) struct UtxoSelectionResult {
     pub(crate) alkanes_found: alloc::collections::BTreeMap<AlkaneId, u64>,
     /// Per-UTXO alkane balances (for alkane-aware ordinals splitting)
     pub(crate) per_utxo_alkanes: alloc::collections::BTreeMap<OutPoint, Vec<(AlkaneId, u64)>>,
+    /// Selected outpoints whose alkane balance was POSITIVELY verified to be
+    /// empty (indexer probe succeeded, or the caller asserted it). Together
+    /// with `per_utxo_alkanes` this must cover every entry of `outpoints` —
+    /// an input of unknown alkane status is never eligible (Halborn:
+    /// "Incomplete Wallet Carrier Validation").
+    pub(crate) clean_outpoints: alloc::collections::BTreeSet<OutPoint>,
 }
 
 
@@ -1675,7 +1746,10 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                                 new_outpoints.push(*outpoint);
                             }
                         }
-                        // Add clean BTC UTXOs from split (for fee funding)
+                        // Add clean BTC UTXOs from split (for fee funding).
+                        // Built by us from inscribed inputs with alkanes routed
+                        // to `alkane_outpoints`, so they are known clean.
+                        utxo_selection.clean_outpoints.extend(clean_outpoints.iter().copied());
                         new_outpoints.extend(clean_outpoints);
                         // Add clean alkane UTXOs from split (for alkane spending)
                         new_outpoints.extend(alkane_outpoints.iter().map(|(op, _)| *op));
@@ -1810,6 +1884,16 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         
         // Validate final protostones after potential automatic protostone insertion
         self.validate_protostones(&final_protostones, outputs.len())?;
+
+        // Pre-sign carrier invariant: every input's full alkane sheet is known,
+        // and nothing unrequested rides along to the called contract.
+        check_input_alkane_sheets(
+            &final_funding_outpoints,
+            &utxo_selection.per_utxo_alkanes,
+            &utxo_selection.clean_outpoints,
+            &alkanes_needed,
+            &final_protostones,
+        )?;
         
         log::info!("🔍 About to construct runestone:");
         log::info!("   outputs.len() = {} (outputs before OP_RETURN)", outputs.len());
@@ -2413,6 +2497,22 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         let mut alkanes_collected: alloc::collections::BTreeMap<(u64, u64), u64> = alloc::collections::BTreeMap::new();
         let mut alkanes_found: alloc::collections::BTreeMap<AlkaneId, u64> = alloc::collections::BTreeMap::new();
         let mut per_utxo_alkanes: alloc::collections::BTreeMap<OutPoint, Vec<(AlkaneId, u64)>> = alloc::collections::BTreeMap::new();
+        // Outpoints whose alkane sheet was POSITIVELY verified empty (probe
+        // succeeded with no non-zero balance, or caller-asserted empty).
+        // Absence from this set and from the balance map means UNKNOWN, and
+        // unknown is never eligible as an input (Halborn: "Incomplete Wallet
+        // Carrier Validation Can Transfer Unrequested Assets to Malicious
+        // Contracts"). Every transaction this executor builds carries an
+        // alkanes message, and protorune forwards every unallocated input
+        // balance to it — so an unprobed fee input can hand someone's tokens
+        // to the called contract.
+        let mut known_clean: alloc::collections::BTreeSet<OutPoint> = alloc::collections::BTreeSet::new();
+        // Selected outpoints verified clean (subset of known_clean ∪ BTC-only
+        // verified) — surfaced in the result for the pre-sign invariant.
+        let mut selected_clean: alloc::collections::BTreeSet<OutPoint> = alloc::collections::BTreeSet::new();
+        // Candidates refused because their alkane status could not be
+        // determined. Reported in the shortfall error.
+        let mut unknown_status_skipped: usize = 0;
 
         // If we need alkanes, query protorunes_by_address directly to find UTXOs with balances
         // This bypasses the lua batch script which has issues with individual outpoint queries
@@ -2444,6 +2544,10 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
 
             // Create a map of (txid:vout) -> balance data for quick lookup
             let mut utxo_balances: alloc::collections::BTreeMap<String, serde_json::Value> = alloc::collections::BTreeMap::new();
+            // Addresses for which an address-wide protorunesbyaddress response
+            // succeeded in qubitcoin mode (see the qubitcoin branch below).
+            let mut authoritative_addresses: alloc::collections::BTreeSet<String> =
+                alloc::collections::BTreeSet::new();
 
             if using_espo_source {
                 if let Some(prefetched) = prefetched_alkanes.as_ref() {
@@ -2600,6 +2704,8 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                                     key,
                                     serde_json::json!({ "balances": balances_array }),
                                 );
+                            } else {
+                                known_clean.insert(*outpoint);
                             }
                             continue;
                         }
@@ -2637,13 +2743,16 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                                         key,
                                         serde_json::json!({ "balances": balances_array }),
                                     );
+                                } else {
+                                    known_clean.insert(*outpoint);
                                 }
                             }
                             Err(e) => {
                                 // Non-fatal: a single failed outpoint just
                                 // means we miss its balance for this call.
                                 // The address-keyed fallbacks below may pick
-                                // it up.
+                                // it up. It stays UNKNOWN (not clean), so it
+                                // can never be taken as a blind fee input.
                                 log::debug!(
                                     "protorunesbyoutpoint failed for {}:{}: {}",
                                     outpoint.txid, outpoint.vout, e
@@ -2684,6 +2793,10 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                     log::info!("Qubitcoin mode: using protorunesbyaddress for alkane UTXO discovery");
                     match self.provider.get_protorunes_by_address(address, None, 1).await {
                         Ok(response) => {
+                            // Qubitcoin has no per-outpoint view: a successful
+                            // address-wide response is the authoritative sheet
+                            // for that address, so its unlisted UTXOs are clean.
+                            authoritative_addresses.insert(address.clone());
                             for outpoint_resp in &response.balances {
                                 let key = format!("{}:{}", outpoint_resp.outpoint.txid, outpoint_resp.outpoint.vout);
                                 let mut balances_array = Vec::new();
@@ -2724,15 +2837,27 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                                             ) {
                                                 // Parse "block:tx" format
                                                 let parts: Vec<&str> = alkane_str.split(':').collect();
-                                                if parts.len() == 2 {
-                                                    if let (Ok(block), Ok(tx)) = (parts[0].parse::<u64>(), parts[1].parse::<u64>()) {
-                                                        let amount = amount_str.parse::<u64>().unwrap_or(0);
-                                                        balances_array.push(serde_json::json!({
-                                                            "block": block,
-                                                            "tx": tx,
-                                                            "amount": amount
-                                                        }));
+                                                let parsed = if parts.len() == 2 {
+                                                    match (parts[0].parse::<u64>(), parts[1].parse::<u64>()) {
+                                                        (Ok(block), Ok(tx)) => Some((block, tx)),
+                                                        _ => None,
                                                     }
+                                                } else {
+                                                    None
+                                                };
+                                                match parsed {
+                                                    // Amount passed through verbatim: an
+                                                    // unparseable / >u64 amount must make
+                                                    // the outpoint UNKNOWN downstream, never
+                                                    // silently become 0 ("clean").
+                                                    Some((block, tx)) => balances_array.push(serde_json::json!({
+                                                        "block": block,
+                                                        "tx": tx,
+                                                        "amount": amount_str
+                                                    })),
+                                                    None => balances_array.push(serde_json::json!({
+                                                        "malformed": alkane_str
+                                                    })),
                                                 }
                                             }
                                         }
@@ -2887,119 +3012,209 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                 spendable_utxos.push((outpoint, utxo_info));
             }
 
-            // Now process UTXOs using the pre-fetched balance data
+            // Now process UTXOs using the pre-fetched balance data.
+            //
+            // Every candidate's alkane sheet is RESOLVED before it can be
+            // selected (Halborn: "Incomplete Wallet Carrier Validation Can
+            // Transfer Unrequested Assets to Malicious Contracts"). Before
+            // this, a candidate with no entry in `utxo_balances` (e.g. a
+            // non-dust UTXO left unprobed because the dust pass already
+            // covered the requirement, or one whose probe failed) was taken as
+            // a "BTC-only" input whenever BTC was short. Protorune then
+            // forwards every unallocated input balance to the first alkanes
+            // message, so any tokens on that input were handed to the called
+            // contract. Resolution order:
+            //   1. a well-formed entry in `utxo_balances`;
+            //   2. positively verified clean during discovery;
+            //   3. caller-asserted (`prefetched_utxos[].alkanes` / Espo);
+            //   4. a lazy per-outpoint `protorunesbyoutpoint` probe;
+            //   5. (qubitcoin) a successful address-wide response for its address.
+            // Anything still unresolved — missing, failed, malformed — is
+            // UNKNOWN and is skipped, never treated as clean.
+            let parse_balances = |utxo_data: &serde_json::Value| -> Option<Vec<((u64, u64), u64)>> {
+                let arr = utxo_data.get("balances")?.as_array()?;
+                let as_u64 = |v: &serde_json::Value| -> Option<u64> {
+                    v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok()))
+                };
+                let mut out = Vec::with_capacity(arr.len());
+                for b in arr {
+                    // A single malformed entry poisons the whole sheet: we
+                    // cannot claim to know what this outpoint carries.
+                    let block = as_u64(b.get("block")?)?;
+                    let tx = as_u64(b.get("tx")?)?;
+                    let amount = as_u64(b.get("amount")?)?;
+                    if amount > 0 {
+                        out.push(((block, tx), amount));
+                    }
+                }
+                Some(out)
+            };
             for (outpoint, utxo) in spendable_utxos {
                 let key = format!("{}:{}", outpoint.txid, outpoint.vout);
 
-                if let Some(utxo_data) = utxo_balances.get(&key) {
-                    // Parse balance data from batch result
-                    // Note: amounts may come as strings (from lua/protobuf) or numbers
-                    let balances = utxo_data.get("balances").and_then(|v| v.as_array()).map(|arr| {
-                        arr.iter().filter_map(|b| {
-                            let block = b.get("block").and_then(|v| {
-                                v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok()))
-                            })?;
-                            let tx = b.get("tx").and_then(|v| {
-                                v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok()))
-                            })?;
-                            // Handle amount as either number or string
-                            let amount = b.get("amount").and_then(|v| {
-                                v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok()))
-                            })?;
-                            Some(((block, tx), amount))
-                        }).collect::<Vec<_>>()
-                    }).unwrap_or_default();
-                    
-                    let mut has_needed_alkane = false;
-                    let mut utxo_selected = false;
-
-                    // Check if this UTXO has any alkanes we need
-                    for ((block, tx), amount) in &balances {
-                        let key = (*block, *tx);
-                        if let Some(needed) = alkanes_needed.get(&key) {
-                            let collected = alkanes_collected.entry(key).or_insert(0);
-                            if *collected < *needed {
-                                has_needed_alkane = true;
-                                *collected += amount;
-                                log::debug!("Found {} of alkane {}:{} in UTXO {}:{} (collected: {}/{})",
-                                    amount, block, tx, outpoint.txid, outpoint.vout, *collected, needed);
+                let resolved: Option<Vec<((u64, u64), u64)>> =
+                    match utxo_balances.get(&key).and_then(|d| parse_balances(d)) {
+                        Some(b) => Some(b),
+                        None if known_clean.contains(&outpoint) => Some(Vec::new()),
+                        None => {
+                            if let Some(asserted) =
+                                prefetched_alkanes.as_ref().and_then(|m| m.get(&outpoint))
+                            {
+                                let mut v = Vec::new();
+                                let mut ok = true;
+                                for (rune_id, amount) in asserted {
+                                    if *amount == 0 {
+                                        continue;
+                                    }
+                                    match (
+                                        u64::try_from(rune_id.block),
+                                        u64::try_from(rune_id.tx),
+                                        u64::try_from(*amount),
+                                    ) {
+                                        (Ok(b), Ok(t), Ok(a)) => v.push(((b, t), a)),
+                                        _ => {
+                                            ok = false;
+                                            break;
+                                        }
+                                    }
+                                }
+                                if ok { Some(v) } else { None }
+                            } else if !self.provider.is_qubitcoin_mode() {
+                                match self
+                                    .provider
+                                    .get_protorunes_by_outpoint(&outpoint.txid.to_string(), outpoint.vout, None, 1)
+                                    .await
+                                {
+                                    Ok(response) => {
+                                        let mut v = Vec::new();
+                                        let mut ok = true;
+                                        for (rune_id, amount) in &response.balance_sheet.cached.balances {
+                                            if *amount == 0 {
+                                                continue;
+                                            }
+                                            match (
+                                                u64::try_from(rune_id.block),
+                                                u64::try_from(rune_id.tx),
+                                                u64::try_from(*amount),
+                                            ) {
+                                                (Ok(b), Ok(t), Ok(a)) => v.push(((b, t), a)),
+                                                _ => {
+                                                    ok = false;
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                        if ok { Some(v) } else { None }
+                                    }
+                                    Err(e) => {
+                                        log::warn!(
+                                            "protorunesbyoutpoint failed for {}:{} during selection: {}",
+                                            outpoint.txid, outpoint.vout, e
+                                        );
+                                        None
+                                    }
+                                }
+                            } else if authoritative_addresses.contains(&utxo.address)
+                                && !utxo_balances.contains_key(&key)
+                            {
+                                Some(Vec::new())
+                            } else {
+                                None
                             }
                         }
-                    }
-                    
-                    // Select this UTXO if it has alkanes we need.
-                    // Do NOT select alkane-carrying UTXOs just for Bitcoin — this
-                    // would accidentally spend someone's tokens as fee inputs.
-                    if has_needed_alkane {
-                        bitcoin_collected += utxo.amount;
-                        selected_outpoints.push(outpoint);
-                        utxo_selected = true;
-                        log::debug!("Selected UTXO {}:{} for required alkanes (btc: {})", outpoint.txid, outpoint.vout, utxo.amount);
-                    } else if !balances.is_empty() {
-                        // This UTXO carries alkanes we don't need — skip it for BTC
-                        log::debug!("Skipping UTXO {}:{} — has alkane balances not in requirements", outpoint.txid, outpoint.vout);
-                    } else if wants_more_btc!() {
-                        // No alkane balances — safe to use for BTC
-                        take_btc_input!(utxo.amount);
-                        selected_outpoints.push(outpoint);
-                        utxo_selected = true;
-                        log::debug!("Selected UTXO {}:{} for Bitcoin only (btc: {})", outpoint.txid, outpoint.vout, utxo.amount);
-                    }
-                    
-                    // Track ALL alkanes found in selected UTXOs (for change calculation)
-                    if utxo_selected {
-                        let mut utxo_alkane_list = Vec::new();
-                        for ((block, tx), amount) in &balances {
-                            let alkane_key = AlkaneId {
-                                block: *block,
-                                tx: *tx,
-                            };
-                            *alkanes_found.entry(alkane_key.clone()).or_insert(0) += amount;
-                            utxo_alkane_list.push((alkane_key, *amount));
+                    };
+
+                let Some(balances) = resolved else {
+                    unknown_status_skipped += 1;
+                    log::warn!(
+                        "Skipping UTXO {}:{} — alkane balance UNKNOWN (unprobed, probe failed, or malformed); \
+                         refusing to spend it in an alkanes transaction",
+                        outpoint.txid, outpoint.vout
+                    );
+                    continue;
+                };
+
+                let mut has_needed_alkane = false;
+                let mut utxo_selected = false;
+
+                // Check if this UTXO has any alkanes we need
+                for ((block, tx), amount) in &balances {
+                    let key = (*block, *tx);
+                    if let Some(needed) = alkanes_needed.get(&key) {
+                        let collected = alkanes_collected.entry(key).or_insert(0);
+                        if *collected < *needed {
+                            has_needed_alkane = true;
+                            *collected += amount;
+                            log::debug!("Found {} of alkane {}:{} in UTXO {}:{} (collected: {}/{})",
+                                amount, block, tx, outpoint.txid, outpoint.vout, *collected, needed);
                         }
-                        if !utxo_alkane_list.is_empty() {
-                            per_utxo_alkanes.insert(outpoint, utxo_alkane_list);
-                        }
-                    }
-                    
-                    // Check if we've collected enough of everything
-                    let all_alkanes_satisfied = alkanes_needed.iter().all(|(key, needed)| {
-                        alkanes_collected.get(key).unwrap_or(&0) >= needed
-                    });
-                    
-                    if !wants_more_btc!() && all_alkanes_satisfied {
-                        break;
-                    }
-                } else {
-                    // NO BALANCE DATA — absence of information, NOT an assertion
-                    // of "clean". The discovery fanout returned no entry for this
-                    // outpoint, which also happens on partial fanouts and provider
-                    // failures. The branches above are information-driven (needed
-                    // alkanes → take; unneeded alkanes → skip; balances.is_empty()
-                    // → positively asserted clean); this one is a blind spot.
-                    //
-                    // So it stays on the HARD requirement: acceptable when the
-                    // transaction is otherwise unbuildable, never to pad the
-                    // change output. Using the soft headroom here would let a
-                    // cosmetic dust fix pull up to MAX_HEADROOM_INPUTS UTXOs of
-                    // unknown alkane status into the tx as fee inputs — the exact
-                    // token-burn the surrounding code exists to prevent.
-                    // (Caught in review by casuwu.)
-                    if needs_more_btc!() {
-                        take_btc_input!(utxo.amount);
-                        selected_outpoints.push(outpoint);
-                        log::debug!("Selected UTXO {}:{} for Bitcoin only (no balance data)", outpoint.txid, outpoint.vout);
                     }
                 }
+
+                // Select this UTXO if it has alkanes we need.
+                // Do NOT select alkane-carrying UTXOs just for Bitcoin — this
+                // would accidentally spend someone's tokens as fee inputs.
+                if has_needed_alkane {
+                    bitcoin_collected += utxo.amount;
+                    selected_outpoints.push(outpoint);
+                    utxo_selected = true;
+                    log::debug!("Selected UTXO {}:{} for required alkanes (btc: {})", outpoint.txid, outpoint.vout, utxo.amount);
+                } else if !balances.is_empty() {
+                    // This UTXO carries alkanes we don't need — skip it for BTC
+                    log::debug!("Skipping UTXO {}:{} — has alkane balances not in requirements", outpoint.txid, outpoint.vout);
+                } else if wants_more_btc!() {
+                    // Positively verified clean — safe to use for BTC
+                    // (including the soft dust headroom).
+                    take_btc_input!(utxo.amount);
+                    selected_outpoints.push(outpoint);
+                    utxo_selected = true;
+                    log::debug!("Selected UTXO {}:{} for Bitcoin only (btc: {})", outpoint.txid, outpoint.vout, utxo.amount);
+                }
+
+                // Track ALL alkanes found in selected UTXOs (for change calculation
+                // and the pre-sign carrier invariant).
+                if utxo_selected {
+                    let mut utxo_alkane_list = Vec::new();
+                    for ((block, tx), amount) in &balances {
+                        let alkane_key = AlkaneId {
+                            block: *block,
+                            tx: *tx,
+                        };
+                        *alkanes_found.entry(alkane_key.clone()).or_insert(0) += amount;
+                        utxo_alkane_list.push((alkane_key, *amount));
+                    }
+                    if !utxo_alkane_list.is_empty() {
+                        per_utxo_alkanes.insert(outpoint, utxo_alkane_list);
+                    } else {
+                        selected_clean.insert(outpoint);
+                    }
+                }
+
+                // Check if we've collected enough of everything
+                let all_alkanes_satisfied = alkanes_needed.iter().all(|(key, needed)| {
+                    alkanes_collected.get(key).unwrap_or(&0) >= needed
+                });
+
+                if !wants_more_btc!() && all_alkanes_satisfied {
+                    break;
+                }
             }
-            
+
             // Validate we have enough alkanes
             for (key, needed) in &alkanes_needed {
                 let collected = alkanes_collected.get(key).unwrap_or(&0);
                 if collected < needed {
+                    let unknown_note = if unknown_status_skipped > 0 {
+                        format!(
+                            " ({} UTXO(s) were excluded because their alkane balance could not be verified; retry once the indexer is reachable)",
+                            unknown_status_skipped
+                        )
+                    } else {
+                        String::new()
+                    };
                     return Err(AlkanesError::Wallet(format!(
-                        "Insufficient alkanes: need {} of {}:{}, have {}",
-                        needed, key.0, key.1, collected
+                        "Insufficient alkanes: need {} of {}:{}, have {}{}",
+                        needed, key.0, key.1, collected, unknown_note
                     )));
                 }
             }
@@ -3075,16 +3290,20 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                                 .any(|amt| *amt > 0),
                             true,
                         ),
-                        // Unverifiable — keep the pre-existing behavior (select),
-                        // but mark it so the dust headroom won't reach for it.
+                        // Unverifiable — UNKNOWN, not clean.
                         Err(_) => (false, false),
                     }
                 };
-                if !verified && !needs_more_btc!() {
-                    // Would only be taken for headroom, and we cannot prove it
-                    // is not carrying someone's tokens. Leave it alone.
-                    log::debug!(
-                        "Not extending dust headroom onto unverified UTXO {}:{}",
+                if !verified {
+                    // Every transaction this executor builds carries an
+                    // alkanes message (runestone + protostones), so an input
+                    // whose alkane sheet we could not read may hand someone's
+                    // tokens to the called contract. Fail closed (Halborn:
+                    // "Incomplete Wallet Carrier Validation"); previously this
+                    // was accepted whenever BTC was short.
+                    unknown_status_skipped += 1;
+                    log::warn!(
+                        "Skipping UTXO {}:{} — alkane balance could not be verified",
                         outpoint.txid, outpoint.vout
                     );
                     continue;
@@ -3099,6 +3318,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                 }
                 take_btc_input!(utxo.amount);
                 selected_outpoints.push(outpoint);
+                selected_clean.insert(outpoint);
             }
             if carriers_skipped > 0 {
                 log::info!(
@@ -3116,6 +3336,16 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         // collecting is best-effort; a wallet that could fund the transaction
         // before this change still funds it, it just gets non-dust change when
         // another UTXO was available to provide it.
+        if bitcoin_collected < bitcoin_needed && unknown_status_skipped > 0 {
+            return Err(AlkanesError::Wallet(format!(
+                "Insufficient verified bitcoin: need {} sats, have {} from UTXOs with a verified alkane balance; \
+                 {} UTXO(s) were excluded because their alkane balance could not be determined \
+                 (indexer probe failed or returned malformed data). Spending them in an alkanes \
+                 transaction could forward unrequested tokens to the called contract; retry once \
+                 the indexer is reachable",
+                bitcoin_needed, bitcoin_collected, unknown_status_skipped
+            )));
+        }
         if bitcoin_collected < bitcoin_needed {
             // Typed, so callers can read the shortfall instead of regexing the
             // message and can tell the user the exact amount that WOULD fund
@@ -3184,11 +3414,22 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             })
             .collect();
 
+        // Invariant: every selected input has a KNOWN alkane sheet.
+        for op in &selected_outpoints {
+            if !per_utxo_alkanes.contains_key(op) && !selected_clean.contains(op) {
+                return Err(AlkanesError::Wallet(format!(
+                    "internal: selected UTXO {}:{} has no verified alkane balance; refusing to build",
+                    op.txid, op.vout
+                )));
+            }
+        }
+
         Ok(UtxoSelectionResult {
             outpoints: selected_outpoints,
             txouts: selected_txouts,
             alkanes_found,
             per_utxo_alkanes,
+            clean_outpoints: selected_clean,
         })
     }
 
@@ -6692,19 +6933,27 @@ mod dust_change_tests {
         mock.qubitcoin_mode = false;
         let script = addr.script_pubkey();
 
-        // One registered alkane carrier (has balance data) + several plain BTC
-        // UTXOs that are NOT registered, so the alkane-discovery pass returns
-        // nothing for them and they land in the "no balance data" branch.
+        // One registered alkane carrier + six plain BTC UTXOs: two whose
+        // per-outpoint probe FAILS (unknown status) and four that verify
+        // clean. Post-Halborn ("Incomplete Wallet Carrier Validation"),
+        // unknown status is never eligible — not for the hard requirement,
+        // and certainly not for headroom — while verified-clean UTXOs may
+        // serve both.
         let carrier = OutPoint::new(txid_n(0x77), 0);
+        let mut unknown = Vec::new();
         {
             let mut utxos = mock.utxos.lock().unwrap();
             utxos.push((carrier, TxOut { value: Amount::from_sat(546), script_pubkey: script.clone() }));
             for i in 0..6u8 {
-                utxos.push((
-                    OutPoint::new(txid_n(0x80 + i), 0),
-                    TxOut { value: Amount::from_sat(2_000), script_pubkey: script.clone() },
-                ));
+                let op = OutPoint::new(txid_n(0x80 + i), 0);
+                utxos.push((op, TxOut { value: Amount::from_sat(2_000), script_pubkey: script.clone() }));
+                if i < 2 {
+                    unknown.push(op);
+                }
             }
+        }
+        for op in &unknown {
+            mock.failing_outpoints.lock().unwrap().insert(format!("{}:{}", op.txid, op.vout));
         }
         mock.alkane_balances
             .lock()
@@ -6723,24 +6972,25 @@ mod dust_change_tests {
                 &Some(vec![addr.to_string()]),
                 &[], None, &[], &[],
                 UtxoDataSource::Metashrew,
-                // Large, obviously-unsatisfiable headroom: if unknown-status
-                // UTXOs were eligible for it, selection would keep taking them
-                // until the MAX_HEADROOM_INPUTS cap.
                 BtcHeadroom::new(DUST_LIMIT, 50.0),
             )
             .await
-            .expect("must still fund from the unknown-status UTXOs it genuinely needs");
+            .expect("verified-clean UTXOs fund the tx");
 
-        // The carrier (546) plus enough 2000-sat UTXOs to clear 3000 sats:
-        // 546 + 2000 = 2546 < 3000, so a second is required → 4546. The third
-        // onward would be pure headroom and must NOT be taken.
+        for op in &unknown {
+            assert!(
+                !result.outpoints.contains(op),
+                "selected unknown-status UTXO {op} — it may carry someone's tokens"
+            );
+        }
+        for op in &result.outpoints {
+            assert!(
+                *op == carrier || result.clean_outpoints.contains(op),
+                "{op} selected without a verified alkane sheet"
+            );
+        }
         let btc_inputs = result.outpoints.iter().filter(|op| **op != carrier).count();
-        assert_eq!(
-            btc_inputs, 2,
-            "took {btc_inputs} unknown-status UTXOs; only the 2 required to meet \
-             bitcoin_needed are permitted — the rest would be headroom reaching \
-             for UTXOs that may be carrying someone's tokens",
-        );
+        assert!(btc_inputs >= 2, "needs at least two 2000-sat inputs, took {btc_inputs}");
     }
 
     // ── build: sub-dust change goes to the fee, not to an output ────────
@@ -6989,5 +7239,249 @@ mod diesel_mint_tests {
         // binds input alkanes to p0, and p1's shadow-vout reference is untouched.
         assert!(stones[0].message.is_empty());
         assert!(!stones[1].message.is_empty());
+    }
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// Halborn: "Incomplete Wallet Carrier Validation Can Transfer Unrequested
+// Assets to Malicious Contracts". PoC shape: dust UTXOs satisfy the
+// requested alkane, so the non-dust probing pass is skipped; the selector
+// then needed BTC and took an UNPROBED funding UTXO that carried an
+// unrelated alkane. Protorune forwarded that alkane to the called contract,
+// whose owner withdrew it.
+// ────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod carrier_validation_tests {
+    use super::*;
+    use crate::mock_provider::MockProvider;
+    use bitcoin::address::Address;
+    use bitcoin::key::Secp256k1;
+    use bitcoin::{Amount, OutPoint, TxOut, Txid};
+    use std::str::FromStr;
+
+    fn txid_n(n: u8) -> Txid {
+        Txid::from_str(&format!("{:02x}", n).repeat(32)).unwrap()
+    }
+
+    /// Non-qubitcoin wallet:
+    ///   dust   546 sats  carrying 2 x 32:0 (the requested asset)
+    ///   victim 50_000    carrying 9 x 99:1 (unrelated "hidden" asset)
+    /// Returns (mock, addr, dust, victim).
+    fn poc_wallet() -> (MockProvider, Address, OutPoint, OutPoint) {
+        let mut mock = MockProvider::new(bitcoin::Network::Regtest);
+        let secp = Secp256k1::new();
+        let (sk, pk) = secp.generate_keypair(&mut rand::thread_rng());
+        let (xonly, _) = pk.x_only_public_key();
+        let addr = Address::p2tr(&secp, xonly, None, bitcoin::Network::Regtest);
+        mock.set_keypair(sk, bitcoin::PublicKey::new(pk));
+        mock.qubitcoin_mode = false;
+        let script = addr.script_pubkey();
+        let dust = OutPoint::new(txid_n(0x11), 0);
+        let victim = OutPoint::new(txid_n(0x22), 0);
+        {
+            let mut utxos = mock.utxos.lock().unwrap();
+            utxos.push((dust, TxOut { value: Amount::from_sat(546), script_pubkey: script.clone() }));
+            utxos.push((victim, TxOut { value: Amount::from_sat(50_000), script_pubkey: script.clone() }));
+        }
+        {
+            let mut b = mock.alkane_balances.lock().unwrap();
+            b.insert(format!("{}:0", txid_n(0x11)), vec![(32, 0, 2)]);
+            b.insert(format!("{}:0", txid_n(0x22)), vec![(99, 1, 9)]);
+        }
+        (mock, addr, dust, victim)
+    }
+
+    fn poc_requirements() -> Vec<InputRequirement> {
+        vec![
+            InputRequirement::Alkanes { block: 32, tx: 0, amount: 2 },
+            InputRequirement::Bitcoin { amount: 5_000 },
+        ]
+    }
+
+    async fn select(mock: &mut MockProvider, addr: &Address, reqs: &[InputRequirement]) -> Result<UtxoSelectionResult> {
+        let mut executor = EnhancedAlkanesExecutor::new(mock);
+        executor
+            .select_utxos(reqs, &Some(vec![addr.to_string()]), &[], None, &[], &[], UtxoDataSource::Metashrew)
+            .await
+    }
+
+    /// The PoC itself: dust covers the requested asset, the only BTC source
+    /// carries an unrequested alkane. Must NOT be selected -> insufficient BTC.
+    #[tokio::test]
+    async fn halborn_poc_unprobed_funding_carrier_is_never_selected() {
+        let (mut mock, addr, _dust, victim) = poc_wallet();
+        let res = select(&mut mock, &addr, &poc_requirements()).await;
+        match res {
+            Err(AlkanesError::InsufficientBitcoin { .. }) => {}
+            Err(e) => panic!("expected InsufficientBitcoin, got {e}"),
+            Ok(r) => panic!(
+                "selection succeeded with {:?} — victim carrier {} (9 x 99:1) would be forwarded to the contract: {}",
+                r.outpoints, victim, r.outpoints.contains(&victim)
+            ),
+        }
+    }
+
+    /// Same wallet plus a genuinely clean non-dust UTXO: selection succeeds,
+    /// funds from the clean one, and leaves the carrier alone.
+    #[tokio::test]
+    async fn halborn_poc_clean_funding_preferred_over_hidden_carrier() {
+        let (mut mock, addr, dust, victim) = poc_wallet();
+        let clean = OutPoint::new(txid_n(0x33), 0);
+        mock.utxos.lock().unwrap().push((
+            clean,
+            TxOut { value: Amount::from_sat(40_000), script_pubkey: addr.script_pubkey() },
+        ));
+        let r = select(&mut mock, &addr, &poc_requirements()).await.expect("clean UTXO funds the tx");
+        assert!(r.outpoints.contains(&dust));
+        assert!(r.outpoints.contains(&clean));
+        assert!(!r.outpoints.contains(&victim), "hidden 99:1 carrier must not be selected");
+        assert!(r.clean_outpoints.contains(&clean));
+        assert!(!r.alkanes_found.contains_key(&AlkaneId { block: 99, tx: 1 }));
+    }
+
+    /// Probe of the funding UTXO FAILS: unknown status is ineligible; the
+    /// error explains why instead of silently spending it.
+    #[tokio::test]
+    async fn failed_probe_funding_utxo_fails_closed() {
+        let (mut mock, addr, _dust, victim) = poc_wallet();
+        mock.alkane_balances.lock().unwrap().remove(&format!("{}:0", txid_n(0x22)));
+        mock.failing_outpoints.lock().unwrap().insert(format!("{}:{}", victim.txid, victim.vout));
+        let err = select(&mut mock, &addr, &poc_requirements())
+            .await
+            .err()
+            .expect("unknown-status UTXO must not fund an alkanes tx");
+        let msg = err.to_string();
+        assert!(msg.contains("could not be determined"), "unexpected error: {msg}");
+    }
+
+    /// BTC-only requirement (e.g. commit / reveal / wrap Tx A — all carry
+    /// alkanes messages): a failed probe used to be accepted whenever BTC was
+    /// short. Now it is refused.
+    #[tokio::test]
+    async fn btc_only_branch_refuses_unverifiable_utxo() {
+        let (mut mock, addr, _dust, victim) = poc_wallet();
+        mock.alkane_balances.lock().unwrap().remove(&format!("{}:0", txid_n(0x22)));
+        mock.failing_outpoints.lock().unwrap().insert(format!("{}:{}", victim.txid, victim.vout));
+        let err = select(&mut mock, &addr, &[InputRequirement::Bitcoin { amount: 5_000 }])
+            .await
+            .err()
+            .expect("unverifiable UTXO must not be selected");
+        assert!(err.to_string().contains("could not be determined"), "{err}");
+
+        // Control: once the probe answers "clean", the same UTXO is fine.
+        mock.failing_outpoints.lock().unwrap().clear();
+        let r = select(&mut mock, &addr, &[InputRequirement::Bitcoin { amount: 5_000 }])
+            .await
+            .expect("verified clean UTXO funds BTC-only tx");
+        assert_eq!(r.outpoints, vec![victim]);
+        assert!(r.clean_outpoints.contains(&victim));
+    }
+
+    /// Caller-asserted (prefetched) balances are honoured during lazy
+    /// resolution: an asserted carrier is skipped without any RPC, even if
+    /// the indexer probe would fail.
+    #[tokio::test]
+    async fn prefetched_assertion_marks_hidden_carrier() {
+        let (mut mock, addr, _dust, victim) = poc_wallet();
+        mock.failing_outpoints.lock().unwrap().insert(format!("{}:{}", victim.txid, victim.vout));
+        let prefetched = vec![PrefetchedUtxo {
+            outpoint: format!("{}:{}", victim.txid, victim.vout),
+            value: 50_000,
+            script_pubkey_hex: hex::encode(addr.script_pubkey().as_bytes()),
+            alkanes: Some(vec![PrefetchedAlkane { block: 99, tx: 1, amount: "9".to_string() }]),
+        }];
+        let mut executor = EnhancedAlkanesExecutor::new(&mut mock);
+        let res = executor
+            .select_utxos(&poc_requirements(), &Some(vec![addr.to_string()]), &[], None, &prefetched, &[], UtxoDataSource::Metashrew)
+            .await;
+        assert!(
+            matches!(res, Err(AlkanesError::InsufficientBitcoin { .. })),
+            "asserted carrier must be skipped: {:?}",
+            res.map(|r| r.outpoints)
+        );
+    }
+
+    // ── pre-sign invariant ────────────────────────────────────────────────
+
+    fn op(n: u8) -> OutPoint {
+        OutPoint::new(txid_n(n), 0)
+    }
+
+    fn needed_32_0() -> alloc::collections::BTreeMap<AlkaneId, u64> {
+        let mut m = alloc::collections::BTreeMap::new();
+        m.insert(AlkaneId { block: 32, tx: 0 }, 2);
+        m
+    }
+
+    fn stone(edicts: Vec<ProtostoneEdict>) -> ProtostoneSpec {
+        ProtostoneSpec {
+            cellpack: None,
+            edicts,
+            bitcoin_transfer: None,
+            pointer: Some(OutputTarget::Output(0)),
+            refund: Some(OutputTarget::Output(0)),
+        }
+    }
+
+    #[test]
+    fn invariant_rejects_unknown_input() {
+        let per = alloc::collections::BTreeMap::new();
+        let clean = alloc::collections::BTreeSet::new();
+        let err = check_input_alkane_sheets(&[op(1)], &per, &clean, &needed_32_0(), &[stone(vec![])])
+            .unwrap_err();
+        assert!(err.to_string().contains("unknown alkane balance"), "{err}");
+    }
+
+    #[test]
+    fn invariant_accepts_requested_and_clean_inputs() {
+        let mut per = alloc::collections::BTreeMap::new();
+        per.insert(op(1), vec![(AlkaneId { block: 32, tx: 0 }, 5)]);
+        let mut clean = alloc::collections::BTreeSet::new();
+        clean.insert(op(2));
+        check_input_alkane_sheets(&[op(1), op(2)], &per, &clean, &needed_32_0(), &[stone(vec![])])
+            .expect("requested asset + clean funding is fine");
+    }
+
+    #[test]
+    fn invariant_rejects_unrequested_unrouted_alkane() {
+        // Mixed carrier: requested 32:0 plus hidden 99:1 on the same UTXO.
+        let mut per = alloc::collections::BTreeMap::new();
+        per.insert(op(1), vec![(AlkaneId { block: 32, tx: 0 }, 2), (AlkaneId { block: 99, tx: 1 }, 9)]);
+        let clean = alloc::collections::BTreeSet::new();
+        let err = check_input_alkane_sheets(&[op(1)], &per, &clean, &needed_32_0(), &[stone(vec![])])
+            .unwrap_err();
+        assert!(err.to_string().contains("99:1 x9"), "{err}");
+
+        // Partial edict (less than carried) is still a leak.
+        let partial = stone(vec![ProtostoneEdict {
+            alkane_id: AlkaneId { block: 99, tx: 1 },
+            amount: 5,
+            target: OutputTarget::Output(1),
+        }]);
+        assert!(check_input_alkane_sheets(&[op(1)], &per, &clean, &needed_32_0(), &[partial]).is_err());
+
+        // Edict to another protostone is not a route back to the user.
+        let to_proto = stone(vec![ProtostoneEdict {
+            alkane_id: AlkaneId { block: 99, tx: 1 },
+            amount: 0,
+            target: OutputTarget::Protostone(1),
+        }]);
+        assert!(check_input_alkane_sheets(&[op(1)], &per, &clean, &needed_32_0(), &[to_proto]).is_err());
+    }
+
+    #[test]
+    fn invariant_accepts_unrequested_alkane_routed_by_edict() {
+        let mut per = alloc::collections::BTreeMap::new();
+        per.insert(op(1), vec![(AlkaneId { block: 32, tx: 0 }, 2), (AlkaneId { block: 99, tx: 1 }, 9)]);
+        let clean = alloc::collections::BTreeSet::new();
+        for amount in [0u64, 9, 10] {
+            let routed = stone(vec![ProtostoneEdict {
+                alkane_id: AlkaneId { block: 99, tx: 1 },
+                amount,
+                target: OutputTarget::Output(1),
+            }]);
+            check_input_alkane_sheets(&[op(1)], &per, &clean, &needed_32_0(), &[routed])
+                .unwrap_or_else(|e| panic!("edict amount {amount} routes all 9: {e}"));
+        }
     }
 }
