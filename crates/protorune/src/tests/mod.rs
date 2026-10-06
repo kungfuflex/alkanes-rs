@@ -7,6 +7,7 @@ pub mod index_runes;
 pub mod index_runes_edicts;
 pub mod index_runes_mint;
 pub mod multi_block;
+pub mod post_audit_tag1;
 #[cfg(test)]
 // pub mod multi_protocol;
 // `ord_runes_parity` validates protorune's rune-balance indexing against
