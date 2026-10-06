@@ -49,7 +49,7 @@ impl<P: DeezelProvider> Wallet<P> {
         passphrase: Option<String>,
     ) -> Result<Self> {
         let params = network_to_params(config.network);
-        crate::network::set_network(params.clone());
+        crate::network::set_network(params.clone())?;
         let trait_config = crate::traits::WalletConfig {
             wallet_path: config.wallet_path.clone(),
             bitcoin_rpc_url: config.bitcoin_rpc_url.clone(),
@@ -66,7 +66,7 @@ impl<P: DeezelProvider> Wallet<P> {
     /// Load an existing wallet
     pub async fn load(mut provider: P, config: WalletConfig, passphrase: Option<String>) -> Result<Self> {
         let params = network_to_params(config.network);
-        crate::network::set_network(params.clone());
+        crate::network::set_network(params.clone())?;
         let trait_config = crate::traits::WalletConfig {
             wallet_path: config.wallet_path.clone(),
             bitcoin_rpc_url: config.bitcoin_rpc_url.clone(),

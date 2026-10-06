@@ -59,16 +59,16 @@ pub fn configure_network() {
 pub fn configure_network() {
     set_network(NetworkParams {
         bech32_prefix: String::from("tb"),
-        p2pkh_hash: 0x6f,
-        p2sh_hash: 0xc4,
+        p2pkh_prefix: 0x6f,
+        p2sh_prefix: 0xc4,
     });
 }
 #[cfg(feature = "luckycoin")]
 pub fn configure_network() {
     set_network(NetworkParams {
         bech32_prefix: String::from("tb"),
-        p2pkh_hash: 0x6f,
-        p2sh_hash: 0xc4,
+        p2pkh_prefix: 0x6f,
+        p2sh_prefix: 0xc4,
     });
 }
 
@@ -76,16 +76,16 @@ pub fn configure_network() {
 pub fn configure_network() {
     set_network(NetworkParams {
         bech32_prefix: String::from("dc"),
-        p2pkh_hash: 0x6f,
-        p2sh_hash: 0xc4,
+        p2pkh_prefix: 0x6f,
+        p2sh_prefix: 0xc4,
     });
 }
 #[cfg(feature = "bellscoin")]
 pub fn configure_network() {
     set_network(NetworkParams {
         bech32_prefix: String::from("bel"),
-        p2pkh_hash: 0x6f,
-        p2sh_hash: 0xc4,
+        p2pkh_prefix: 0x6f,
+        p2sh_prefix: 0xc4,
     });
 }
 
