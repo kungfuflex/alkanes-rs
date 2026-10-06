@@ -29,6 +29,13 @@ use crate::chain::{ChainConfiguration, CONTEXT_HANDLE};
 #[derive(Default)]
 pub struct GenesisAlkane(());
 
+/// The largest amount `<= value` that can be minted on top of `total_supply`
+/// without the result exceeding `max_supply`. Never overflows: headroom is a
+/// saturating subtraction, and `total_supply + result <= max_supply`.
+pub fn clamp_to_cap(value: u128, total_supply: u128, max_supply: u128) -> u128 {
+    std::cmp::min(value, max_supply.saturating_sub(total_supply))
+}
+
 #[derive(MessageDispatch)]
 enum GenesisAlkaneMessage {
     #[opcode(0)]
@@ -258,23 +265,39 @@ impl GenesisAlkane {
             if self.claimable_fees_pointer().get().len() == 0 {
                 self.set_claimable_fees(0);
             }
+            // Fee accrual mints new supply too, so it is bounded by the cap:
+            // clamp it to the remaining headroom (Halborn: "Supply Cap Check
+            // Allows the Final DIESEL Mint to Exceed the Limit").
+            let diesel_fee = clamp_to_cap(diesel_fee, self.total_supply(), self.max_supply());
             self.increase_claimable_fees(diesel_fee)?;
             self.increase_total_supply(diesel_fee)?;
         }
         Ok(())
     }
 
+    /// Commit a mint of up to `value` against the supply cap and return the
+    /// amount actually minted. The FULL post-mint supply is checked, not just
+    /// the pre-mint supply: the final mint is clamped to the remaining
+    /// headroom so total supply lands exactly on `max_supply` and can never
+    /// exceed it (nor overflow u128 on the u128::MAX regtest cap). A mint with
+    /// zero headroom (supply at — or, for pre-existing state, above — the cap)
+    /// is rejected, which reverts every tentative write of the call (seen
+    /// markers, tx-hash marker, fee accrual).
+    fn commit_capped_mint(&self, value: u128) -> Result<u128> {
+        let total_supply = self.total_supply();
+        let minted = clamp_to_cap(value, total_supply, self.max_supply());
+        if minted == 0 {
+            return Err(anyhow!("total supply has been reached"));
+        }
+        self.set_total_supply(overflow_error(total_supply.checked_add(minted))?);
+        Ok(minted)
+    }
+
     // Helper method that creates a mint transfer
     pub fn create_mint_transfer(&self) -> Result<AlkaneTransfer> {
         let context = self.context()?;
         self.observe_mint()?;
-        let value = self.current_block_reward();
-        let mut total_supply_pointer = self.total_supply_pointer();
-        let total_supply = total_supply_pointer.get_value::<u128>();
-        if total_supply >= self.max_supply() {
-            return Err(anyhow!("total supply has been reached"));
-        }
-        total_supply_pointer.set_value::<u128>(total_supply + value);
+        let value = self.commit_capped_mint(self.current_block_reward())?;
         Ok(AlkaneTransfer {
             id: context.myself.clone(),
             value,
@@ -344,12 +367,13 @@ impl GenesisAlkane {
         };
         let diesel_fee = std::cmp::min(block_reward / 2, total_tx_fee); // fee is capped at 50% of the block reward
         let value_per_mint = (block_reward - diesel_fee) / total_mints;
+        // The minter's share is committed against the cap FIRST and the fee
+        // accrual (first mint of the block only) gets whatever headroom is
+        // left. The reverse order lets the fee swallow the last headroom and
+        // then reject the mint, which reverts the fee with it, so supply would
+        // stall below the cap forever.
+        let value_per_mint = self.commit_capped_mint(value_per_mint)?;
         self.observe_upgraded_mint(diesel_fee)?;
-
-        if self.total_supply() >= self.max_supply() {
-            return Err(anyhow!("total supply has been reached"));
-        }
-        self.increase_total_supply(value_per_mint)?;
         Ok(AlkaneTransfer {
             id: context.myself.clone(),
             value: value_per_mint,
@@ -585,5 +609,42 @@ impl AlkaneResponder for GenesisAlkane {}
 declare_alkane! {
     impl AlkaneResponder for GenesisAlkane {
         type Message = GenesisAlkaneMessage;
+    }
+}
+
+#[cfg(test)]
+mod cap_tests {
+    use super::clamp_to_cap;
+    const CAP: u128 = 156_250_000_000_000; // mainnet max_supply
+    const REWARD: u128 = 312_500_000;
+
+    #[test]
+    fn full_mint_below_cap() {
+        assert_eq!(clamp_to_cap(REWARD, CAP - REWARD - 1, CAP), REWARD);
+    }
+
+    #[test]
+    fn final_mint_exactly_reaches_cap() {
+        assert_eq!(clamp_to_cap(REWARD, CAP - REWARD, CAP), REWARD);
+    }
+
+    #[test]
+    fn final_mint_clamped_to_headroom() {
+        // Halborn PoC state: post-fee supply = cap - 1.
+        assert_eq!(clamp_to_cap(REWARD, CAP - 1, CAP), 1);
+        assert_eq!(clamp_to_cap(REWARD, 156_249_843_749_999, CAP), 156_250_001);
+    }
+
+    #[test]
+    fn at_or_above_cap_mints_nothing() {
+        assert_eq!(clamp_to_cap(REWARD, CAP, CAP), 0);
+        assert_eq!(clamp_to_cap(REWARD, CAP + 5, CAP), 0);
+    }
+
+    #[test]
+    fn no_overflow_on_u128_max_cap() {
+        assert_eq!(clamp_to_cap(REWARD, u128::MAX - 1, u128::MAX), 1);
+        assert_eq!(clamp_to_cap(u128::MAX, u128::MAX, u128::MAX), 0);
+        assert_eq!(clamp_to_cap(u128::MAX, 1, u128::MAX), u128::MAX - 1);
     }
 }
