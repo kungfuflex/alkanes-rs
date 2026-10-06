@@ -25,14 +25,6 @@ pub const MEMSHREW_ALLOWED_METHODS: &[&str] = &[
 
 /// Handle a JSON-RPC request using the core dispatcher with pre-dispatch
 /// interception for memshrew, subfrost, and lua/sandshrew eval methods.
-pub async fn handle_request(
-    request: &JsonRpcRequest,
-    dispatcher: &Arc<ProdDispatcher>,
-    proxy: &ProxyClient,
-) -> Result<JsonRpcResponse> {
-    handle_request_with_storage(request, dispatcher, proxy, None).await
-}
-
 pub async fn handle_request_with_storage(
     request: &JsonRpcRequest,
     dispatcher: &Arc<ProdDispatcher>,
