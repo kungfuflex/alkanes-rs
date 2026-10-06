@@ -36,6 +36,7 @@ use metashrew_core::{
     stdio::{stdout, Write},
 };
 use metashrew_support::address::Payload;
+use metashrew_support::byte_view::ByteView;
 use metashrew_support::index_pointer::KeyValuePointer;
 use ordinals::{Artifact, RuneId, Runestone};
 use ordinals::{Etching, Rune};
@@ -177,6 +178,17 @@ pub fn num_non_op_return_outputs(tx: &Transaction) -> usize {
         .count()
 }
 
+/// Reads an optional u64 written with `set_value`. An empty value means the field was never
+/// written (absent); any stored value, including zero, is returned as `Some`.
+fn get_optional_u64(ptr: &IndexPointer) -> Option<u64> {
+    let bytes = ptr.get();
+    if bytes.is_empty() {
+        None
+    } else {
+        Some(u64::from_bytes(bytes.as_ref().clone()))
+    }
+}
+
 #[cfg(not(feature = "mainnet"))]
 pub const V217_FIX_HEIGHT: u64 = 0;
 #[cfg(feature = "mainnet")]
@@ -260,12 +272,51 @@ pub fn handle_transfer_runes_to_vout(
     Ok(output)
 }
 
+/// From this height on, a named-rune commitment only counts if the spent output
+/// is P2TR (matching ord's rune_updater). Below it, the original predicate is
+/// kept verbatim so historical etchings replay identically.
+#[cfg(not(feature = "mainnet"))]
+pub const ETCH_COMMIT_P2TR_FIX_HEIGHT: u64 = 0;
+#[cfg(feature = "mainnet")]
+pub const ETCH_COMMIT_P2TR_FIX_HEIGHT: u64 = 970_000;
+
+const COMMIT_CONFIRMATIONS: u64 = 6;
+
+/// Returns true only if the stored previous output for `outpoint_bytes` is P2TR.
+/// Unknown or undecodable outputs fail closed.
+fn spent_output_is_p2tr(outpoint_bytes: &Vec<u8>) -> bool {
+    let raw = tables::OUTPOINT_TO_OUTPUT.select(outpoint_bytes).get();
+    if raw.is_empty() {
+        return false;
+    }
+    match proto::protorune::Output::decode(raw.as_slice()) {
+        core::result::Result::Ok(output) => ScriptBuf::from_bytes(output.script).is_p2tr(),
+        Err(_) => false,
+    }
+}
+
 #[cfg(not(test))]
 pub fn validate_rune_etch(tx: &Transaction, commitment: Vec<u8>, height: u64) -> Result<bool> {
+    check_rune_etch_commitment(
+        tx,
+        &commitment,
+        height,
+        height >= ETCH_COMMIT_P2TR_FIX_HEIGHT,
+    )
+}
+
+/// The production commitment predicate. Unit tests call this directly, since
+/// the `cfg(test)` `validate_rune_etch` shim accepts every etching.
+pub fn check_rune_etch_commitment(
+    tx: &Transaction,
+    commitment: &[u8],
+    height: u64,
+    require_p2tr: bool,
+) -> Result<bool> {
     for input in &tx.input {
         // extracting a tapscript does not indicate that the input being spent
-        // was actually a taproot output. this is checked below, when we load the
-        // output's entry from the database
+        // was actually a taproot output. when `require_p2tr` is set this is
+        // checked below, when we load the output's entry from the database
         let Some(tapscript) = input.witness.tapscript() else {
             continue;
         };
@@ -284,14 +335,19 @@ pub fn validate_rune_etch(tx: &Transaction, commitment: Vec<u8>, height: u64) ->
                 continue;
             }
 
+            let outpoint_bytes = consensus_encode(&input.previous_output)?;
+            if require_p2tr && !spent_output_is_p2tr(&outpoint_bytes) {
+                break;
+            }
+
             let h: u64 = tables::RUNES
                 .OUTPOINT_TO_HEIGHT
-                .select(&consensus_encode(&input.previous_output)?)
+                .select(&outpoint_bytes)
                 .get_value();
 
             // add 1 to follow the ordinals spec: https://github.com/ordinals/ord/blob/master/src/index/updater/rune_updater.rs#L454
             let confirmations = height - h + 1;
-            if confirmations >= 6 {
+            if confirmations >= COMMIT_CONFIRMATIONS {
                 return Ok(true);
             }
         }
@@ -541,34 +597,33 @@ impl Protorune {
             return Ok(());
         }
         if remaining > 0 {
-            let height_start: u64 = tables::RUNES.HEIGHTSTART.select(&name).get_value();
-            let height_end: u64 = tables::RUNES.HEIGHTEND.select(&name).get_value();
-            let offset_start: u64 = tables::RUNES.OFFSETSTART.select(&name).get_value();
-            let offset_end: u64 = tables::RUNES.OFFSETEND.select(&name).get_value();
+            // Mint terms are optional. `index_etching` only writes a bound when it was present
+            // in the etching (a present zero is stored as 8 zero bytes), so an empty value means
+            // "absent". Zero is a valid bound and must not be read as absent: e.g. an offset end
+            // of 0 closes the mint window at the etching height, matching ord.
+            let height_start = get_optional_u64(&tables::RUNES.HEIGHTSTART.select(&name));
+            let height_end = get_optional_u64(&tables::RUNES.HEIGHTEND.select(&name));
+            let offset_start = get_optional_u64(&tables::RUNES.OFFSETSTART.select(&name));
+            let offset_end = get_optional_u64(&tables::RUNES.OFFSETEND.select(&name));
             // the other mint terms are stored from the rune name, the etching height is
             // stored by the rune id
             let etching_height: u64 = tables::RUNES
                 .RUNE_ID_TO_HEIGHT
                 .select(&mint.to_owned().into())
                 .get_value();
-            // Compute effective start: max of absolute and relative, if both exist
-            let absolute_start = if height_start != 0 { Some(height_start) } else { None };
-            let relative_start = if offset_start != 0 { Some(offset_start + etching_height) } else { None };
-            let effective_start = match (absolute_start, relative_start) {
+            // Compute effective start: max of absolute and relative, if both exist.
+            // Relative bounds saturate like ord's RuneEntry::start/end.
+            let relative_start = offset_start.map(|o| etching_height.saturating_add(o));
+            let effective_start = match (height_start, relative_start) {
                 (Some(a), Some(r)) => Some(std::cmp::max(a, r)),
-                (Some(a), None) => Some(a),
-                (None, Some(r)) => Some(r),
-                (None, None) => None,
+                (a, r) => a.or(r),
             };
 
             // Compute effective end: min of absolute and relative, if both exist
-            let absolute_end = if height_end != 0 { Some(height_end) } else { None };
-            let relative_end = if offset_end != 0 { Some(offset_end + etching_height) } else { None };
-            let effective_end = match (absolute_end, relative_end) {
+            let relative_end = offset_end.map(|o| etching_height.saturating_add(o));
+            let effective_end = match (height_end, relative_end) {
                 (Some(a), Some(r)) => Some(std::cmp::min(a, r)),
-                (Some(a), None) => Some(a),
-                (None, Some(r)) => Some(r),
-                (None, None) => None,
+                (a, r) => a.or(r),
             };
 
             if effective_start.map_or(true, |s| height >= s)
@@ -781,6 +836,15 @@ impl Protorune {
                     };
                 }
                 Some(Artifact::Cenotaph(ref cenotaph)) => {
+                    // Like ord, a cenotaph's mint is processed before its etching: a valid mint
+                    // still consumes one unit of the rune's cap, but the minted amount is burned,
+                    // so it goes to a throwaway sheet that is never saved to an output.
+                    if let Some(mint) = cenotaph.mint {
+                        let mut burned = BalanceSheet::default();
+                        if let Err(e) = Self::index_mint(&mint.into(), height, &mut burned) {
+                            println!("err: {:?}", e);
+                        }
+                    }
                     if let Some(rune) = cenotaph.etching {
                         // Cenotaph etchings create the rune but with zeroed metadata
                         let mut atomic = AtomicPointer::default();

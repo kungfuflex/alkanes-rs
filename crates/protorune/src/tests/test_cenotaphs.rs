@@ -175,9 +175,9 @@ mod tests {
             }
 
             if mint.is_some() {
-                // runes that are not able to be deciphered do not count against cap
-                // official code follows this convention. weird but we have to follow convention
-                assert_mints_remaining(mint.unwrap().into(), 2);
+                // like ord, a cenotaph's valid mint still counts against the cap; the minted
+                // amount is burned (checked above: output 0 holds none of rune1)
+                assert_mints_remaining(mint.unwrap().into(), 1);
             }
             // test etched rune has supply 0 and is unmintable
             assert_etching_is_cenotaph();
@@ -337,7 +337,6 @@ mod tests {
         );
     }
 
-    /// TODO: This currently fails since the validation for block = 0 happens before indexing (during decipher)
     #[wasm_bindgen_test]
     fn cenotaph_mint_reduces_cap() {
         clear();
@@ -360,7 +359,6 @@ mod tests {
         );
     }
 
-    /// TODO: This currently fails since the validation for output = 3 happens before indexing (during decipher)
     #[wasm_bindgen_test]
     fn cenotaph2_mint_reduces_cap() {
         clear();
@@ -382,5 +380,139 @@ mod tests {
             }),
             true,
         );
+    }
+
+    // A cenotaph that mints `mint` (made a cenotaph by an edict with block 0 and tx != 0).
+    fn cenotaph_mint_tx(mint: RuneId, input: u32) -> Transaction {
+        helpers::create_tx_from_runestone(
+            Runestone {
+                mint: Some(mint),
+                edicts: vec![Edict {
+                    id: RuneId { block: 0, tx: 1 },
+                    amount: 0,
+                    output: 0,
+                }],
+                pointer: Some(0),
+                ..Default::default()
+            },
+            vec![helpers::get_mock_txin(input)],
+            vec![helpers::get_txout_transfer_to_address(&ADDRESS1(), 100)],
+        )
+    }
+
+    fn clean_mint_tx(mint: RuneId, input: u32) -> Transaction {
+        helpers::create_tx_from_runestone(
+            Runestone {
+                mint: Some(mint),
+                pointer: Some(0),
+                ..Default::default()
+            },
+            vec![helpers::get_mock_txin(input)],
+            vec![helpers::get_txout_transfer_to_address(&ADDRESS2(), 100)],
+        )
+    }
+
+    fn balance_of(tx: &Transaction, rune: RuneId) -> u128 {
+        helpers::get_rune_balance_by_outpoint(
+            OutPoint {
+                txid: tx.compute_txid(),
+                vout: 0,
+            },
+            vec![rune.into()],
+        )[0]
+    }
+
+    // Etches a rune with cap 1 and amount 100, mintable during [840000, 840010).
+    fn etch_cap_one() -> RuneId {
+        let etch = get_etching_for_tx_num(
+            "AAAAAAAAAAAAACANONICAL",
+            'C',
+            Some(Terms {
+                amount: Some(100),
+                cap: Some(1),
+                height: (Some(840000), Some(840010)),
+                offset: (None, None),
+            }),
+        );
+        Protorune::index_block::<MyMessageContext>(
+            helpers::create_block_with_txs(vec![etch]),
+            840000,
+        )
+        .unwrap();
+        let id = RuneId {
+            block: 840000,
+            tx: 0,
+        };
+        assert_mints_remaining(id.into(), 1);
+        id
+    }
+
+    #[wasm_bindgen_test]
+    fn cenotaph_mint_exhausts_cap_and_burns() {
+        clear();
+        let id = etch_cap_one();
+
+        let cenotaph = cenotaph_mint_tx(id, 1);
+        assert!(matches!(
+            Runestone::decipher(&cenotaph),
+            Some(ordinals::Artifact::Cenotaph(_))
+        ));
+        Protorune::index_block::<MyMessageContext>(
+            helpers::create_block_with_txs(vec![cenotaph.clone()]),
+            840001,
+        )
+        .unwrap();
+        assert_mints_remaining(id.into(), 0);
+        assert_eq!(balance_of(&cenotaph, id), 0);
+
+        // the cap is exhausted, so a later clean mint issues nothing
+        let later = clean_mint_tx(id, 2);
+        Protorune::index_block::<MyMessageContext>(
+            helpers::create_block_with_txs(vec![later.clone()]),
+            840002,
+        )
+        .unwrap();
+        assert_mints_remaining(id.into(), 0);
+        assert_eq!(balance_of(&later, id), 0);
+    }
+
+    #[wasm_bindgen_test]
+    fn cenotaph_mint_outside_window_does_not_consume_cap() {
+        clear();
+        let id = etch_cap_one();
+
+        Protorune::index_block::<MyMessageContext>(
+            helpers::create_block_with_txs(vec![cenotaph_mint_tx(id, 1)]),
+            840010,
+        )
+        .unwrap();
+        assert_mints_remaining(id.into(), 1);
+    }
+
+    #[wasm_bindgen_test]
+    fn cenotaph_mint_of_unknown_rune_is_ignored() {
+        clear();
+        let id = etch_cap_one();
+
+        let unknown = RuneId {
+            block: 840000,
+            tx: 7,
+        };
+        Protorune::index_block::<MyMessageContext>(
+            helpers::create_block_with_txs(vec![cenotaph_mint_tx(unknown, 1)]),
+            840001,
+        )
+        .unwrap();
+        assert_mints_remaining(id.into(), 1);
+
+        // the real rune's allowance is untouched and still mintable
+        let mint = clean_mint_tx(id, 2);
+        Protorune::index_block::<MyMessageContext>(
+            helpers::create_block_with_txs(vec![mint.clone()]),
+            840002,
+        )
+        .unwrap();
+        assert_mints_remaining(id.into(), 0);
+        assert_eq!(balance_of(&mint, id), 100);
     }
 }

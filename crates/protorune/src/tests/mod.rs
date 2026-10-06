@@ -17,5 +17,6 @@ pub mod multi_block;
 #[cfg(feature = "runes")]
 pub mod ord_runes_parity;
 pub mod test_cenotaphs;
+pub mod test_etch_commitment;
 pub mod test_many_outputs_bug;
 pub mod view_functions;

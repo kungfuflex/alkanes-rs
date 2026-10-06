@@ -6,6 +6,8 @@ mod tests {
     use crate::message::MessageContextParcel;
     use crate::test_helpers::{self as helpers};
     use crate::Protorune;
+    use crate::tables;
+    use metashrew_support::index_pointer::KeyValuePointer;
     use anyhow::Result;
     use bitcoin::{OutPoint, Transaction};
     use metashrew_core::index_pointer::AtomicPointer;
@@ -365,5 +367,152 @@ mod tests {
             }],
         );
         assert_eq!(1000, etched_runes[0]);
+    }
+
+    /// Etches at `etch_height` with `terms` (cap 10, amount 200), then mints once at each
+    /// of `mint_heights` in its own block. Returns (minted per mint, mints remaining).
+    fn mint_after_etch(etch_height: u64, terms: Terms, mint_heights: &[u64]) -> (Vec<u128>, u128) {
+        let etch = get_default_etching_tx(Some(Terms {
+            amount: Some(200),
+            cap: Some(10),
+            ..terms
+        }));
+        Protorune::index_block::<MyMessageContext>(
+            helpers::create_block_with_txs(vec![etch]),
+            etch_height,
+        )
+        .unwrap();
+        let rune = ProtoruneRuneId {
+            block: etch_height as u128,
+            tx: 0,
+        };
+        let minted = mint_heights
+            .iter()
+            .enumerate()
+            .map(|(i, height)| {
+                let mint = get_default_mint_tx(etch_height, i as u32 + 1);
+                Protorune::index_block::<MyMessageContext>(
+                    helpers::create_block_with_txs(vec![mint.clone()]),
+                    *height,
+                )
+                .unwrap();
+                helpers::get_rune_balance_by_outpoint(
+                    OutPoint {
+                        txid: mint.compute_txid(),
+                        vout: 0,
+                    },
+                    vec![rune.clone()],
+                )[0]
+            })
+            .collect();
+        let name = tables::RUNES
+            .RUNE_ID_TO_ETCHING
+            .select(&rune.into())
+            .get();
+        let remaining: u128 = tables::RUNES.MINTS_REMAINING.select(&name).get_value();
+        (minted, remaining)
+    }
+
+    fn terms(height: (Option<u64>, Option<u64>), offset: (Option<u64>, Option<u64>)) -> Terms {
+        Terms {
+            amount: None,
+            cap: None,
+            height,
+            offset,
+        }
+    }
+
+    #[wasm_bindgen_test]
+    fn rune_with_explicit_zero_offset_end_never_mintable() {
+        clear();
+        let h = 840000;
+        // ord: end = etching height + 0, and mints require height < end
+        let (minted, remaining) =
+            mint_after_etch(h, terms((None, None), (None, Some(0))), &[h, h + 1, h + 1000]);
+        assert_eq!(minted, vec![0, 0, 0]);
+        assert_eq!(remaining, 10);
+    }
+
+    #[wasm_bindgen_test]
+    fn rune_with_explicit_zero_height_end_never_mintable() {
+        clear();
+        let h = 840000;
+        let (minted, remaining) =
+            mint_after_etch(h, terms((None, Some(0)), (None, None)), &[h, h + 1]);
+        assert_eq!(minted, vec![0, 0]);
+        assert_eq!(remaining, 10);
+    }
+
+    #[wasm_bindgen_test]
+    fn rune_with_offset_end_one_closes_after_etching_block() {
+        clear();
+        let h = 840000;
+        let (minted, remaining) =
+            mint_after_etch(h, terms((None, None), (None, Some(1))), &[h, h + 1]);
+        assert_eq!(minted, vec![200, 0]);
+        assert_eq!(remaining, 9);
+    }
+
+    #[wasm_bindgen_test]
+    fn rune_with_no_end_stays_open() {
+        clear();
+        let h = 840000;
+        let (minted, remaining) =
+            mint_after_etch(h, terms((None, None), (None, None)), &[h + 1, h + 100_000]);
+        assert_eq!(minted, vec![200, 200]);
+        assert_eq!(remaining, 8);
+    }
+
+    #[wasm_bindgen_test]
+    fn rune_with_explicit_zero_start_opens_immediately() {
+        clear();
+        let h = 840000;
+        let (minted, _) = mint_after_etch(h, terms((Some(0), None), (Some(0), None)), &[h]);
+        assert_eq!(minted, vec![200]);
+    }
+
+    #[wasm_bindgen_test]
+    fn rune_with_zero_offset_end_overrides_absolute_end() {
+        clear();
+        let h = 840000;
+        // effective end = min(h + 100, h + 0) = h
+        let (minted, remaining) =
+            mint_after_etch(h, terms((None, Some(h + 100)), (None, Some(0))), &[h, h + 1]);
+        assert_eq!(minted, vec![0, 0]);
+        assert_eq!(remaining, 10);
+    }
+
+    #[wasm_bindgen_test]
+    fn rune_with_combined_bounds_uses_max_start_and_min_end() {
+        clear();
+        let h = 840000;
+        // start = max(h + 2, h + 3) = h + 3, end = min(h + 10, h + 5) = h + 5
+        let (minted, remaining) = mint_after_etch(
+            h,
+            terms((Some(h + 2), Some(h + 10)), (Some(3), Some(5))),
+            &[h + 2, h + 3, h + 4, h + 5],
+        );
+        assert_eq!(minted, vec![0, 200, 200, 0]);
+        assert_eq!(remaining, 8);
+    }
+
+    #[wasm_bindgen_test]
+    fn rune_with_max_offsets_saturates() {
+        clear();
+        let h = 840000;
+        // relative bounds saturate to u64::MAX instead of overflowing
+        let (minted, _) =
+            mint_after_etch(h, terms((None, None), (None, Some(u64::MAX))), &[h + 1]);
+        assert_eq!(minted, vec![200]);
+    }
+
+    #[wasm_bindgen_test]
+    fn rune_with_max_offset_start_never_opens() {
+        clear();
+        let h = 840000;
+        let (minted, remaining) =
+            mint_after_etch(h, terms((None, None), (Some(u64::MAX), None)), &[h + 1]);
+        assert_eq!(minted, vec![0]);
+        assert_eq!(remaining, 10);
     }
 }
