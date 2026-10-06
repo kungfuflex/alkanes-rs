@@ -892,7 +892,11 @@ impl Protorune {
                         }
                     }
                 }
-                None => {}
+                None => {
+                    // Raw-rune (RUNES table, tag 0) only; protocol-tag balances
+                    // are not handled here.
+                    Self::transfer_runes_without_runestone(tx);
+                }
             }
             for input in &tx.input {
                 //all inputs must be used up, even in cenotaphs
@@ -901,6 +905,57 @@ impl Protorune {
             }
         }
         Ok(())
+    }
+    /// Raw-rune (RUNES table, tag 0) handling for a tx that carries no
+    /// runestone. Like ord, every rune balance on the inputs is unallocated and
+    /// goes to the first non-OP_RETURN output; if there is none it is burned.
+    /// The input balances are cleared afterwards by the caller.
+    ///
+    /// Only `tables::RUNES` is read or written; protocol-tag (protorune /
+    /// alkanes) balances are not touched here.
+    pub fn transfer_runes_without_runestone(tx: &Transaction) {
+        let Some(vout) = tx
+            .output
+            .iter()
+            .position(|o| !o.script_pubkey.is_op_return())
+        else {
+            // no eligible output: the runes are burned
+            return;
+        };
+        let mut atomic = AtomicPointer::default();
+        let result = (|| -> Result<()> {
+            let sheets = tx
+                .input
+                .iter()
+                .map(|input| {
+                    let outpoint_bytes = consensus_encode(&input.previous_output)?;
+                    Ok(load_sheet(&mut atomic.derive(
+                        &tables::RUNES.OUTPOINT_TO_RUNES.select(&outpoint_bytes),
+                    )))
+                })
+                .collect::<Result<Vec<BalanceSheet<AtomicPointer>>>>()?;
+            let sheet = BalanceSheet::concat(sheets)?;
+            if sheet.balances().values().all(|v| *v == 0) {
+                return Ok(());
+            }
+            let outpoint = OutPoint::new(tx.compute_txid(), vout as u32);
+            sheet.save(
+                &mut atomic.derive(
+                    &tables::RUNES
+                        .OUTPOINT_TO_RUNES
+                        .select(&consensus_encode(&outpoint)?),
+                ),
+                false,
+            );
+            Ok(())
+        })();
+        match result {
+            Err(e) => {
+                println!("err: {:?}", e);
+                atomic.rollback();
+            }
+            _ => atomic.commit(),
+        }
     }
     pub fn index_spendables(txdata: &Vec<Transaction>) -> Result<BTreeSet<Vec<u8>>> {
         // Track unique addresses that have their spendable outpoints updated

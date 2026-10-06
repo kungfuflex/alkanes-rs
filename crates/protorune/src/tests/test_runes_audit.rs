@@ -198,4 +198,126 @@ mod tests {
         assert_eq!(balance(&tx, 0, etched_id()), 1000);
         assert_eq!(mints_remaining(etched_id()), 1);
     }
+
+    // ---- Ordinary Spends Without a Runestone Erase Rune Balances ----
+
+    fn plain_tx(inputs: Vec<OutPoint>, outputs: Vec<TxOut>) -> Transaction {
+        Transaction {
+            version: bitcoin::transaction::Version::ONE,
+            lock_time: bitcoin::absolute::LockTime::ZERO,
+            input: inputs
+                .into_iter()
+                .map(helpers::get_txin_from_outpoint)
+                .collect(),
+            output: outputs,
+        }
+    }
+
+    fn op_return() -> TxOut {
+        TxOut {
+            value: Amount::from_sat(0),
+            script_pubkey: ScriptBuf::new_op_return(&[0x42u8; 4]),
+        }
+    }
+
+    fn to(addr: String) -> TxOut {
+        helpers::get_txout_transfer_to_address(&addr, 10_000)
+    }
+
+    fn outpoint(tx: &Transaction, vout: u32) -> OutPoint {
+        OutPoint {
+            txid: tx.compute_txid(),
+            vout,
+        }
+    }
+
+    fn etch_premine() -> (Transaction, RuneId) {
+        clear();
+        let e = etch("AAAAAAAAAAAAAATOMIC", 1, 0);
+        index(vec![e.clone()], ETCH_HEIGHT);
+        assert_eq!(balance(&e, 0, etched_id()), 1000);
+        (e, etched_id())
+    }
+
+    #[wasm_bindgen_test]
+    fn no_runestone_spend_moves_runes_to_first_output() {
+        let (e, id) = etch_premine();
+        let spend = plain_tx(vec![outpoint(&e, 0)], vec![to(ADDRESS2()), to(ADDRESS1())]);
+        assert!(Runestone::decipher(&spend).is_none());
+        index(vec![spend.clone()], ETCH_HEIGHT + 1);
+        assert_eq!(balance(&e, 0, id), 0);
+        assert_eq!(balance(&spend, 0, id), 1000);
+        assert_eq!(balance(&spend, 1, id), 0);
+
+        // and the moved balance stays spendable by a further plain spend
+        let again = plain_tx(vec![outpoint(&spend, 0)], vec![to(ADDRESS1())]);
+        index(vec![again.clone()], ETCH_HEIGHT + 2);
+        assert_eq!(balance(&spend, 0, id), 0);
+        assert_eq!(balance(&again, 0, id), 1000);
+    }
+
+    #[wasm_bindgen_test]
+    fn no_runestone_spend_skips_leading_op_return() {
+        let (e, id) = etch_premine();
+        let spend = plain_tx(vec![outpoint(&e, 0)], vec![op_return(), to(ADDRESS2())]);
+        assert!(Runestone::decipher(&spend).is_none());
+        index(vec![spend.clone()], ETCH_HEIGHT + 1);
+        assert_eq!(balance(&spend, 0, id), 0);
+        assert_eq!(balance(&spend, 1, id), 1000);
+    }
+
+    #[wasm_bindgen_test]
+    fn no_runestone_spend_without_eligible_output_burns() {
+        let (e, id) = etch_premine();
+        let spend = plain_tx(vec![outpoint(&e, 0)], vec![op_return()]);
+        assert!(Runestone::decipher(&spend).is_none());
+        index(vec![spend.clone()], ETCH_HEIGHT + 1);
+        assert_eq!(balance(&e, 0, id), 0);
+        assert_eq!(balance(&spend, 0, id), 0);
+    }
+
+    #[wasm_bindgen_test]
+    fn no_runestone_spend_merges_multiple_inputs_and_runes() {
+        let (e, id) = etch_premine();
+        // a second rune etched at the next height, and an ordinary input
+        let e2 = etch("AAAAAAAAAAAAAASECOND", 1, 1);
+        index(vec![e2.clone()], ETCH_HEIGHT + 1);
+        let id2 = RuneId {
+            block: ETCH_HEIGHT + 1,
+            tx: 0,
+        };
+        // a mint gives a second balance of the first rune on another outpoint
+        let m = mint_tx(id, 2, None);
+        index(vec![m.clone()], ETCH_HEIGHT + 2);
+        assert_eq!(balance(&m, 0, id), 100);
+
+        let spend = plain_tx(
+            vec![
+                outpoint(&e, 0),
+                helpers::get_mock_outpoint(9),
+                outpoint(&e2, 0),
+                outpoint(&m, 0),
+            ],
+            vec![op_return(), to(ADDRESS1()), to(ADDRESS2())],
+        );
+        index(vec![spend.clone()], ETCH_HEIGHT + 3);
+        assert_eq!(balance(&spend, 1, id), 1100);
+        assert_eq!(balance(&spend, 1, id2), 1000);
+        assert_eq!(balance(&spend, 2, id), 0);
+        assert_eq!(balance(&e, 0, id), 0);
+        assert_eq!(balance(&e2, 0, id2), 0);
+        assert_eq!(balance(&m, 0, id), 0);
+    }
+
+    #[wasm_bindgen_test]
+    fn empty_runestone_control_moves_runes_to_first_output() {
+        let (e, id) = etch_premine();
+        let spend = helpers::create_tx_from_runestone(
+            Runestone::default(),
+            vec![helpers::get_txin_from_outpoint(outpoint(&e, 0))],
+            vec![to(ADDRESS2())],
+        );
+        index(vec![spend.clone()], ETCH_HEIGHT + 1);
+        assert_eq!(balance(&spend, 0, id), 1000);
+    }
 }
