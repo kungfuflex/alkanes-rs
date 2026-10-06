@@ -850,6 +850,10 @@ impl Protorune {
 
     pub fn index_unspendables<T: MessageContext>(block: &Block, height: u64) -> Result<()> {
         for (index, tx) in block.txdata.iter().enumerate() {
+            // Post-audit: tag-1 input balances must be settled for EVERY spent
+            // input. Only a successfully committed `index_runestone` settles
+            // them itself; every other path falls back (see below).
+            let mut protocol_inputs_settled = false;
             match Runestone::decipher(tx) {
                 Some(Artifact::Runestone(ref runestone)) => {
                     let mut atomic = AtomicPointer::default();
@@ -869,6 +873,7 @@ impl Protorune {
                         }
                         _ => {
                             atomic.commit();
+                            protocol_inputs_settled = true;
                         }
                     };
                 }
@@ -909,6 +914,9 @@ impl Protorune {
                     }
                 }
                 None => {}
+            }
+            if !protocol_inputs_settled && post_audit_fork_active(height) {
+                Self::settle_protocol_inputs_fallback::<T>(tx, height);
             }
             for input in &tx.input {
                 //all inputs must be used up, even in cenotaphs
@@ -1139,6 +1147,88 @@ impl Protorune {
         Ok(())
     }
 
+    /// Post-audit settlement of `T`'s input balances for a transaction that has
+    /// no matching protostone to route them (no runestone, cenotaph, no / empty
+    /// protocol field, input aggregation overflow, or a failed
+    /// `index_runestone`). Halborn: "Protocol Assets Are Stranded or Erased
+    /// When Spent Without a Matching Protostone".
+    ///
+    /// Every input's sheet is aggregated with per-asset SATURATING addition (so
+    /// this path cannot itself fail on overflow) and credited to
+    /// `default_output(tx)` -- the first non-OP_RETURN output, ord's default.
+    /// If every output is OP_RETURN there is no spendable target and the
+    /// balances burn. The consumed inputs are always cleared. Callers gate this
+    /// on `post_audit_fork_active(height)`.
+    pub fn settle_unmatched_protocol_inputs<T: MessageContext>(
+        atomic: &mut AtomicPointer,
+        tx: &Transaction,
+        height: u64,
+    ) -> Result<()> {
+        let table = tables::RuneTable::for_protocol(T::protocol_tag());
+        let mut aggregate = BalanceSheet::<AtomicPointer>::default();
+        let mut has_balance = false;
+        for input in &tx.input {
+            let sheet = load_sheet(&mut atomic.derive(
+                &table
+                    .OUTPOINT_TO_RUNES
+                    .select(&consensus_encode(&input.previous_output)?),
+            ));
+            for (id, amount) in sheet.balances() {
+                if *amount == 0 {
+                    continue;
+                }
+                has_balance = true;
+                let current = aggregate.get(id);
+                aggregate.set(id, current.saturating_add(*amount));
+            }
+        }
+        if !has_balance {
+            return Ok(());
+        }
+        let target = default_output(tx);
+        let mut map = BTreeMap::<u32, BalanceSheet<AtomicPointer>>::new();
+        if (target as usize) < tx.output.len()
+            && !tx.output[target as usize].script_pubkey.is_op_return()
+        {
+            map.insert(target, aggregate);
+        }
+        if !should_skip_protostone_persistence() {
+            Self::save_balances::<T>(
+                height,
+                &mut atomic.derive(&IndexPointer::default()),
+                &table,
+                tx,
+                &map,
+            )?;
+            for input in &tx.input {
+                let key = consensus_encode(&input.previous_output)?;
+                clear_balances(&mut atomic.derive(&table.OUTPOINT_TO_RUNES.select(&key)));
+            }
+        }
+        FINAL_BALANCES_SINK.with(|c| {
+            if let Some(sink) = c.borrow_mut().as_mut() {
+                sink.clear();
+                for (vout, sheet) in map.iter() {
+                    sink.push((*vout, sheet.clone()));
+                }
+            }
+        });
+        Ok(())
+    }
+
+    /// `settle_unmatched_protocol_inputs` in its own atomic, for transactions
+    /// whose runestone path did not commit (none, cenotaph, or rolled back).
+    fn settle_protocol_inputs_fallback<T: MessageContext>(tx: &Transaction, height: u64) {
+        let mut atomic = AtomicPointer::default();
+        match Self::settle_unmatched_protocol_inputs::<T>(&mut atomic, tx, height) {
+            Err(e) => {
+                println!("protocol input fallback settlement failed: {:?}", e);
+                atomic.rollback();
+            }
+            _ => atomic.commit(),
+        }
+    }
+
     pub fn index_protostones<T: MessageContext>(
         atomic: &mut AtomicPointer,
         tx: &Transaction,
@@ -1165,6 +1255,14 @@ impl Protorune {
         }
 
         let protostones = Protostone::from_runestone(runestone)?;
+        let post_audit = post_audit_fork_active(height);
+
+        // Post-audit: a runestone with no protocol field / an empty one carries
+        // no protostones at all; settle tag-1 inputs ord-style instead of
+        // leaving them on the spent outpoints.
+        if protostones.len() == 0 && post_audit {
+            return Self::settle_unmatched_protocol_inputs::<T>(atomic, tx, height);
+        }
 
         if protostones.len() != 0 {
             let mut proto_balances_by_output = BTreeMap::<u32, BalanceSheet<AtomicPointer>>::new();
@@ -1217,6 +1315,16 @@ impl Protorune {
                     &mut balance_sheet,
                     &mut proto_balances_by_output,
                     (tx.output.len() as u32) + 1 + position as u32,
+                )?;
+            } else if post_audit {
+                // Only foreign-tag protostones: below the fork the inputs were
+                // loaded, never assigned, then cleared -- erased. At/after the
+                // fork they go to the first non-OP_RETURN output (an all-
+                // OP_RETURN tx burns them, as save_balances skips OP_RETURNs).
+                Self::handle_leftover_runes(
+                    &mut balance_sheet,
+                    &mut proto_balances_by_output,
+                    default_output(tx),
                 )?;
             }
             protostones_iter
