@@ -39,12 +39,20 @@ const MAX_MULTICALL_DEPTH: u32 = 2;
 /// summed across every nesting level.
 ///
 /// Real callers batch tens to low hundreds of entries (per-outpoint and
-/// per-alkane probes). 1024 leaves roughly an order of magnitude of headroom
-/// over the largest batch observed in production while making the worst case a
-/// FIXED, LINEAR 1024 backend calls per HTTP request rather than an unbounded
-/// exponential. Entries past the budget are not dropped silently — each gets
-/// an error entry, so the results array stays 1:1 with the request.
-const MAX_MULTICALL_SUBCALLS: u32 = 1024;
+/// per-alkane probes). #295 set 1024; Halborn ("Unbounded RPC Multicalls
+/// Exhaust Shared Backend Workers") showed that even a linear 1024 backend
+/// calls per anonymous HTTP request, fired all at once, saturates the shared
+/// backend pools, so the default is lowered to 256 and the fan-out is also
+/// concurrency-bounded (`MULTICALL_CONCURRENCY`). Entries past the budget are
+/// not dropped silently — each gets an error entry, so the results array
+/// stays 1:1 with the request.
+pub const MAX_MULTICALL_SUBCALLS: u32 = 256;
+
+/// Sub-calls of ONE top-level multicall in flight at once. Nested multicall
+/// frames (depth >= 1) run their entries sequentially, so a whole request
+/// tree never has more than this many backend calls outstanding (the old
+/// `join_all` fired every entry simultaneously).
+pub const MULTICALL_CONCURRENCY: usize = 16;
 
 // ---------------------------------------------------------------------------
 // Backend passthrough allow-lists (Halborn: "Unauthenticated Gateway Forwards
@@ -1458,7 +1466,9 @@ where
 
         let mut requests = Vec::new();
 
-        for call in params {
+        // Entries past the remaining allowance are never parsed or cloned.
+        let parse_limit = params.len().min(budget.remaining() as usize);
+        for call in &params[..parse_limit] {
             let call_tuple = match call.as_array() {
                 Some(arr) if arr.len() == 2 => arr,
                 _ => {
@@ -1505,15 +1515,21 @@ where
         // so the results array stays 1:1 with the request.
         // See MAX_MULTICALL_SUBCALLS.
         let granted = budget.take(requests.len());
-        let refused = requests.len() - granted;
+        let refused = params.len() - granted;
 
-        // Execute all requests in parallel, one level deeper.
+        // Execute with bounded concurrency, one level deeper. `buffered`
+        // preserves request order. Only the outermost frame runs entries
+        // concurrently; nested frames run sequentially, so the total in-flight
+        // backend calls for one request tree stay <= MULTICALL_CONCURRENCY.
+        use futures::stream::StreamExt;
         let child = budget.child();
-        let futures: Vec<_> = requests[..granted].iter()
-            .map(|req| self.dispatch_with_budget(req, child.clone()))
-            .collect();
-
-        let results = futures::future::join_all(futures).await;
+        let concurrency = if budget.depth == 0 { MULTICALL_CONCURRENCY } else { 1 };
+        let results: Vec<Result<JsonRpcResponse>> = futures::stream::iter(
+            requests[..granted].iter().map(|req| self.dispatch_with_budget(req, child.clone())),
+        )
+        .buffered(concurrency)
+        .collect()
+        .await;
 
         let mut formatted: Vec<Value> = results.into_iter().map(|r| {
             match r {
