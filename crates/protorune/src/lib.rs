@@ -1288,7 +1288,24 @@ impl Protorune {
                     ))
                 })
                 .collect::<Result<Vec<BalanceSheet<AtomicPointer>>>>()?;
-            let mut balance_sheet = BalanceSheet::concat(sheets)?;
+            // Halborn: "Input Balance Aggregation Overflow Can Strand Co-Spent
+            // Alkane Assets". Below the fork an overflowing same-asset sum
+            // returns Err, rolling the tx back and stranding every co-spent
+            // asset on the consumed inputs. At/after the fork the tx is treated
+            // as unprocessable: no protostone executes, and the inputs are
+            // settled to the default output with per-asset SATURATING
+            // aggregation (only an asset whose supply already exceeds u128::MAX
+            // can lose its excess; every other co-spent asset is conserved).
+            let mut balance_sheet = match BalanceSheet::concat(sheets) {
+                std::result::Result::Ok(sheet) => sheet,
+                Err(e) => {
+                    if post_audit {
+                        println!("input aggregation overflow, settling to default output: {:?}", e);
+                        return Self::settle_unmatched_protocol_inputs::<T>(atomic, tx, height);
+                    }
+                    return Err(e);
+                }
+            };
             // TODO: Enable this at a future block when protoburns have been fully tested. For now only enabled in tests
             #[cfg(test)]
             {
