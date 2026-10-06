@@ -34,6 +34,42 @@ pub trait PersistentRecord: BalanceSheetOperations {
             }
         }
     }
+    /// Post-audit persistence for the protocol RUNTIME balance sheet.
+    ///
+    /// Halborn: "Zero Runtime Balance Updates Leave Previous Stored Balances
+    /// Active". `save` skips zero entries, so a runtime balance debited to
+    /// exactly zero left the previous positive `/id_to_balance` value (and the
+    /// previous positive `/runes`+`/balances` list entry) in place, and the next
+    /// transaction's lazily-loaded runtime sheet resurrected it.
+    ///
+    /// Semantics: the sheet is a PARTIAL update. An asset absent from the cache
+    /// keeps its stored value. A cached nonzero is written exactly as `save`
+    /// does. A cached explicit ZERO clears the asset: `/id_to_balance` is set to
+    /// 0 and a `(rune, 0)` entry is appended to the list so the list form's
+    /// last-wins reload (`load_sheet`) also yields 0. The zero is only written
+    /// when the stored keyed value is nonzero, so untouched / already-zero
+    /// assets cost no writes.
+    ///
+    /// Only used for RUNTIME_BALANCE: outpoint sheets are written once to a
+    /// fresh key, so there is no prior value to shadow and `save` is kept there.
+    fn save_runtime<T: KeyValuePointer>(&self, ptr: &T) {
+        let runes_ptr = ptr.keyword("/runes");
+        let balances_ptr = ptr.keyword("/balances");
+        let runes_to_balances_ptr = ptr.keyword("/id_to_balance");
+
+        for (rune, balance) in self.balances() {
+            let rune_bytes: Vec<u8> = (*rune).into();
+            let mut keyed = runes_to_balances_ptr.select(&rune_bytes);
+            if *balance == 0u128 {
+                if keyed.get().len() == 0 || keyed.get_value::<u128>() == 0 {
+                    continue;
+                }
+            }
+            runes_ptr.append(rune_bytes.clone().into());
+            balances_ptr.append_value::<u128>(*balance);
+            keyed.set_value::<u128>(*balance);
+        }
+    }
     fn save_index<T: KeyValuePointer>(
         &self,
         rune: &ProtoruneRuneId,
