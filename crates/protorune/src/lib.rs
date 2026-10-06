@@ -180,7 +180,7 @@ pub fn num_non_op_return_outputs(tx: &Transaction) -> usize {
 
 /// Reads an optional u64 written with `set_value`. An empty value means the field was never
 /// written (absent); any stored value, including zero, is returned as `Some`.
-fn get_optional_u64(ptr: &IndexPointer) -> Option<u64> {
+fn get_optional_u64<P: KeyValuePointer>(ptr: &P) -> Option<u64> {
     let bytes = ptr.get();
     if bytes.is_empty() {
         None
@@ -385,6 +385,16 @@ impl Protorune {
             Some(v) => v,
             None => default_output(tx),
         };
+        // Like ord, the mint is processed before the etching, so a runestone
+        // cannot mint the rune it etches. The allowance is read and consumed
+        // through the tx's atomic pointer, so if anything later in this tx
+        // fails (e.g. malformed protostones) the rollback restores the cap
+        // together with the output balances.
+        if let Some(mint) = runestone.mint {
+            if !mint.to_string().is_empty() {
+                Self::index_mint(atomic, &mint.into(), height, &mut balance_sheet)?;
+            }
+        }
         let etched = if let Some(etching) = runestone.etching.as_ref() {
             let success = Self::index_etching(
                 atomic,
@@ -412,11 +422,6 @@ impl Protorune {
         } else {
             false
         };
-        if let Some(mint) = runestone.mint {
-            if !mint.to_string().is_empty() {
-                Self::index_mint(&mint.into(), height, &mut balance_sheet)?;
-            }
-        }
         // Resolve RuneId(0,0) to the etched rune id in edicts
         let resolved_edicts: Vec<ordinals::Edict> = runestone.edicts.iter().filter_map(|e| {
             if e.id == RuneId::default() {
@@ -578,17 +583,28 @@ impl Protorune {
         //     });
         // }
     }
+    /// Consumes one unit of `mint`'s allowance and credits the mint amount to
+    /// `balance_sheet` if the mint is open. Every read and the allowance write
+    /// go through `atomic` (the caller's per-tx pointer), so the allowance
+    /// consumption and the issuance commit or roll back together.
     pub fn index_mint(
+        atomic: &mut AtomicPointer,
         mint: &ProtoruneRuneId,
         height: u64,
         balance_sheet: &mut BalanceSheet<AtomicPointer>,
     ) -> Result<()> {
-        let name = tables::RUNES
-            .RUNE_ID_TO_ETCHING
-            .select(&mint.clone().into())
+        let name = atomic
+            .derive(&tables::RUNES.RUNE_ID_TO_ETCHING.select(&mint.clone().into()))
             .get();
-        let remaining: u128 = tables::RUNES.MINTS_REMAINING.select(&name).get_value();
-        let amount: u128 = tables::RUNES.AMOUNT.select(&name).get_value();
+        if name.is_empty() {
+            // unknown rune id
+            return Ok(());
+        }
+        let mut remaining_ptr = atomic.derive(&tables::RUNES.MINTS_REMAINING.select(&name));
+        let remaining: u128 = remaining_ptr.get_value();
+        let amount: u128 = atomic
+            .derive(&tables::RUNES.AMOUNT.select(&name))
+            .get_value();
 
         if remaining == 0 {
             // 2 ways we can reach this statement:
@@ -601,15 +617,18 @@ impl Protorune {
             // in the etching (a present zero is stored as 8 zero bytes), so an empty value means
             // "absent". Zero is a valid bound and must not be read as absent: e.g. an offset end
             // of 0 closes the mint window at the etching height, matching ord.
-            let height_start = get_optional_u64(&tables::RUNES.HEIGHTSTART.select(&name));
-            let height_end = get_optional_u64(&tables::RUNES.HEIGHTEND.select(&name));
-            let offset_start = get_optional_u64(&tables::RUNES.OFFSETSTART.select(&name));
-            let offset_end = get_optional_u64(&tables::RUNES.OFFSETEND.select(&name));
+            let height_start =
+                get_optional_u64(&atomic.derive(&tables::RUNES.HEIGHTSTART.select(&name)));
+            let height_end =
+                get_optional_u64(&atomic.derive(&tables::RUNES.HEIGHTEND.select(&name)));
+            let offset_start =
+                get_optional_u64(&atomic.derive(&tables::RUNES.OFFSETSTART.select(&name)));
+            let offset_end =
+                get_optional_u64(&atomic.derive(&tables::RUNES.OFFSETEND.select(&name)));
             // the other mint terms are stored from the rune name, the etching height is
             // stored by the rune id
-            let etching_height: u64 = tables::RUNES
-                .RUNE_ID_TO_HEIGHT
-                .select(&mint.to_owned().into())
+            let etching_height: u64 = atomic
+                .derive(&tables::RUNES.RUNE_ID_TO_HEIGHT.select(&mint.to_owned().into()))
                 .get_value();
             // Compute effective start: max of absolute and relative, if both exist.
             // Relative bounds saturate like ord's RuneEntry::start/end.
@@ -629,10 +648,7 @@ impl Protorune {
             if effective_start.map_or(true, |s| height >= s)
                 && effective_end.map_or(true, |e| height < e)
             {
-                tables::RUNES
-                    .MINTS_REMAINING
-                    .select(&name)
-                    .set_value(remaining.sub(1));
+                remaining_ptr.set_value(remaining.sub(1));
                 balance_sheet.increase(
                     &(ProtoruneRuneId {
                         block: u128::from(mint.block),
@@ -840,9 +856,14 @@ impl Protorune {
                     // still consumes one unit of the rune's cap, but the minted amount is burned,
                     // so it goes to a throwaway sheet that is never saved to an output.
                     if let Some(mint) = cenotaph.mint {
+                        let mut atomic = AtomicPointer::default();
                         let mut burned = BalanceSheet::default();
-                        if let Err(e) = Self::index_mint(&mint.into(), height, &mut burned) {
-                            println!("err: {:?}", e);
+                        match Self::index_mint(&mut atomic, &mint.into(), height, &mut burned) {
+                            Err(e) => {
+                                println!("err: {:?}", e);
+                                atomic.rollback();
+                            }
+                            _ => atomic.commit(),
                         }
                     }
                     if let Some(rune) = cenotaph.etching {
