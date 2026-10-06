@@ -100,8 +100,7 @@ mod tests {
     }
 
     fn check(tx: &Transaction, confirmations: u64) -> bool {
-        check_rune_etch_commitment(tx, &commitment(), COMMIT_HEIGHT + confirmations - 1, true)
-            .unwrap()
+        check_rune_etch_commitment(tx, &commitment(), COMMIT_HEIGHT + confirmations - 1).unwrap()
     }
 
     #[wasm_bindgen_test]
@@ -121,11 +120,15 @@ mod tests {
         }
     }
 
+    // The P2TR requirement is ungated: a P2WSH commitment is rejected even at
+    // early heights (the old 970_000 activation gate was removed).
     #[wasm_bindgen_test]
-    fn legacy_predicate_still_accepts_p2wsh_below_activation() {
-        clear();
-        let tx = spend(fund(p2wsh(), COMMIT_HEIGHT), script_path_witness(&commitment()));
-        assert!(check_rune_etch_commitment(&tx, &commitment(), COMMIT_HEIGHT + 5, false).unwrap());
+    fn p2wsh_rejected_at_any_height() {
+        for commit_height in [0u64, 840_000, 969_999] {
+            clear();
+            let tx = spend(fund(p2wsh(), commit_height), script_path_witness(&commitment()));
+            assert!(!check_rune_etch_commitment(&tx, &commitment(), commit_height + 5).unwrap());
+        }
     }
 
     #[wasm_bindgen_test]
@@ -154,8 +157,6 @@ mod tests {
         };
         let tx = spend(outpoint, script_path_witness(&commitment()));
         assert!(!check(&tx, 6));
-        // the legacy predicate reads height 0 for unknown outpoints and accepts
-        assert!(check_rune_etch_commitment(&tx, &commitment(), COMMIT_HEIGHT, false).unwrap());
     }
 
     #[wasm_bindgen_test]
