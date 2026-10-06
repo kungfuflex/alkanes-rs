@@ -29,6 +29,41 @@ use crate::chain::{ChainConfiguration, CONTEXT_HANDLE};
 #[derive(Default)]
 pub struct GenesisAlkane(());
 
+/// Opcode DIESEL invokes on the mint gate. FIXED by DIESEL and never taken
+/// from the minter's calldata: if the minter could pick the opcode, `[77, 102]`
+/// (or any view that does `CallResponse::forward(incoming)`) would hand the
+/// whole mint straight back, bypassing the split. 1 = SUBMINER-GATE
+/// `mint-split`.
+pub const MINT_GATE_OPCODE: u128 = 1;
+
+/// The mint gate in effect when governance has never set one (`/mint-gate`
+/// storage empty): SUBMINER-GATE, deployed by create-at-reserved-slot
+/// `[3, 1001, 0, 2,0, 2,96782, 4,866, 192]` and so living at `4:1001`.
+///
+/// 🔴 RELEASE GATE: this id MUST be checked against the actually deployed
+/// SUBMINER-GATE (id AND codehash, and its initialize args diesel=2:0,
+/// treasury=2:96782, sigil=4:866) before the release that activates DIESEL v3
+/// is tagged. Reserved slots are first-come: whoever deploys at 4:1001 first
+/// receives every DIESEL mint from activation on. If nothing is deployed there
+/// at activation, every mint reverts (the runtime traps on a missing binary).
+/// Same id on every network so the regtest test-suite exercises the mainnet
+/// default (regtest only activates v3 at 2_000_000).
+pub const DEFAULT_MINT_GATE: AlkaneId = AlkaneId { block: 4, tx: 1001 };
+
+/// cFIRE-SIGIL: the bearer capability that governs the mint gate (opcode 80).
+/// Possession-based, mirroring SUBMINER-GATE's own `require_auth`: >= 1 unit in
+/// incoming_alkanes, and the sigil's `authenticate` (opcode 1) must return
+/// `[0x01]`. DIESEL's own DSIGIL auth token does NOT govern the gate.
+pub const CFIRE_SIGIL: AlkaneId = AlkaneId { block: 4, tx: 866 };
+
+/// The sigil's `authenticate` opcode.
+const SIGIL_AUTHENTICATE_OPCODE: u128 = 1;
+
+/// Mint-gate source byte reported by the view (opcode 102, byte 41).
+const GATE_SOURCE_DEFAULT: u8 = 0;
+const GATE_SOURCE_SET: u8 = 1;
+const GATE_SOURCE_CLEARED: u8 = 2;
+
 /// The largest amount `<= value` that can be minted on top of `total_supply`
 /// without the result exceeding `max_supply`. Never overflows: headroom is a
 /// saturating subtraction, and `total_supply + result <= max_supply`.
@@ -439,42 +474,64 @@ impl GenesisAlkane {
             self.create_upgraded_mint_transfer()?
         };
 
-        // Mint gate: when governance has set a gate, forward the freshly minted
-        // DIESEL to it as incoming_alkanes and pass the calldata FOLLOWING the
-        // mint opcode (77) through as the gate's cellpack inputs. The gate (e.g.
-        // a share-token contract) receives the mint WITHOUT subcalling DIESEL
-        // back, while the user still calls the real [2,0] contract. The gate
-        // only ever sees the minted DIESEL; whatever it returns, plus any stray
-        // tokens attached to the mint, are handed back to the caller.
+        // Mint gate: EVERY mint (bare `[77]` included) is forwarded to the gate
+        // as incoming_alkanes, calling the gate with the FIXED opcode
+        // `MINT_GATE_OPCODE` and no other calldata. Whatever follows 77 in the
+        // minter's calldata is ignored, so the minter cannot choose which gate
+        // entry point receives the mint. The gate decides the split and
+        // returns the minter's share; stray tokens attached to the mint are
+        // handed back to the caller and never reach the gate.
         if let Some(gate) = self.mint_gate() {
-            let forward_calldata: Vec<u128> = context.inputs.iter().skip(1).cloned().collect();
-            // Forward ONLY when the gate opcode (the first word after 77) is
-            // non-zero. Calldata is zero-padded on the wire, so a bare mint
-            // ([77]) arrives as [77, 0, 0, ...]; forwarding that would call the
-            // gate with opcode 0 (Initialize) and revert every ordinary mint.
-            // A zero lead word is never a real dispatch opcode, so this is also
-            // the correct guard.
-            if forward_calldata.first().is_some_and(|&op| op != 0) {
-                let parcel = AlkaneTransferParcel(vec![transfer]);
-                let cellpack = Cellpack {
-                    target: gate,
-                    inputs: forward_calldata,
-                };
-                let mut response = self.call(&cellpack, &parcel, self.fuel())?;
-                response
-                    .alkanes
-                    .0
-                    .extend(context.incoming_alkanes.0.iter().cloned());
-                return Ok(response);
+            let parcel = AlkaneTransferParcel(vec![transfer.clone()]);
+            let cellpack = Cellpack {
+                target: gate,
+                inputs: vec![MINT_GATE_OPCODE],
+            };
+            match self.call(&cellpack, &parcel, self.fuel()) {
+                Ok(mut response) => {
+                    // The gate may only pay out of the mint it was handed. A
+                    // gate returning more DIESEL than was minted (it can only
+                    // do so out of DIESEL it already held) is a broken or
+                    // hostile gate: error out so the WHOLE call reverts
+                    // atomically. Falling back to fees here would not work —
+                    // the gate's call already succeeded, so its state and the
+                    // excess transfer are committed in this frame.
+                    let mut returned: u128 = 0;
+                    for t in response.alkanes.0.iter() {
+                        if t.id == context.myself {
+                            returned = overflow_error(returned.checked_add(t.value))?;
+                        }
+                    }
+                    if returned > transfer.value {
+                        return Err(anyhow!(
+                            "mint gate returned {} DIESEL for a mint of {}",
+                            returned,
+                            transfer.value
+                        ));
+                    }
+                    response.data = Vec::new();
+                    response
+                        .alkanes
+                        .0
+                        .extend(context.incoming_alkanes.0.iter().cloned());
+                    return Ok(response);
+                }
+                Err(_) => {
+                    // Gate reverted. The runtime rolls back the child frame
+                    // (including the transfer of the minted DIESEL into it), so
+                    // fall through to the accrual default: minting must never
+                    // brick because the gate or its treasury is broken.
+                    // NOTE: see the report — in the current runtime a child
+                    // revert zeroes the parent's remaining fuel, so this branch
+                    // is only reachable if the runtime leaves fuel for it.
+                }
             }
         }
 
-        // Default (no gate, or a bare mint with no gate calldata): the mint is
-        // NOT paid to the caller. It accrues to the contract's claimable-fees
+        // No gate (explicitly cleared), or the gate reverted: the mint is NOT
+        // paid to the caller. It accrues to the contract's claimable-fees
         // balance, which only the DSIGIL auth-token holder can withdraw via
-        // `collect_fees` (opcode 78, `only_owner`). This is the v3 default:
-        // emission collects in the contract until governance points it at a
-        // gate.
+        // `collect_fees` (opcode 78, `only_owner`).
         self.increase_claimable_fees(transfer.value)?;
         Ok(CallResponse::forward(&context.incoming_alkanes))
     }
@@ -493,62 +550,100 @@ impl GenesisAlkane {
 
     // ---- Mint gate: one governance-set forward target ------------------------
     //
-    // A single slot holding the current target. Changes take effect
-    // immediately: there is no timelock and no expiry. `0:0` (or unset) means
-    // no gate, in which case the mint accrues to claimable fees for the owner.
+    // `/mint-gate` storage:
+    //   empty            -> DEFAULT_MINT_GATE (no governance tx needed);
+    //   32 zero bytes    -> explicitly cleared by governance: no gate;
+    //   AlkaneId bytes   -> that gate.
+    // Changes take effect immediately: there is no timelock and no expiry.
 
     fn mint_gate_pointer(&self) -> StoragePointer {
         StoragePointer::from_keyword("/mint-gate")
     }
 
-    /// The current mint-gate target, or None when unset or explicitly cleared
-    /// to `0:0`.
-    fn mint_gate(&self) -> Option<AlkaneId> {
+    /// The effective gate and where it came from.
+    fn mint_gate_with_source(&self) -> (Option<AlkaneId>, u8) {
         let raw = self.mint_gate_pointer().get();
         if raw.len() == 0 {
-            return None;
+            return (Some(DEFAULT_MINT_GATE), GATE_SOURCE_DEFAULT);
         }
         let gate = AlkaneId::try_from(raw.as_ref().clone()).unwrap_or(AlkaneId::new(0, 0));
         if gate.block == 0 && gate.tx == 0 {
-            return None;
+            return (None, GATE_SOURCE_CLEARED);
         }
-        Some(gate)
+        (Some(gate), GATE_SOURCE_SET)
     }
 
-    /// Owner-only switch (auth token in incoming_alkanes). Point DIESEL's mint
-    /// gate at `gate_block:gate_tx`, effective immediately. `0:0` clears it,
-    /// returning to the default where emission accrues to claimable fees.
+    /// The effective mint-gate target, or None when governance cleared it.
+    fn mint_gate(&self) -> Option<AlkaneId> {
+        self.mint_gate_with_source().0
+    }
+
+    /// Capability-by-possession check against the cFIRE-SIGIL, mirroring
+    /// SUBMINER-GATE's `require_auth`: >= 1 unit in incoming, then the sigil's
+    /// authenticate op must return `[0x01]`. Non-consuming: the caller forwards
+    /// incoming (sigil included) back.
+    fn require_cfire_sigil(&self) -> Result<()> {
+        let context = self.context()?;
+        if !context
+            .incoming_alkanes
+            .0
+            .iter()
+            .any(|t| t.id == CFIRE_SIGIL && t.value > 0)
+        {
+            return Err(anyhow!("cFIRE-SIGIL not present in incoming alkanes"));
+        }
+        let response = self.call(
+            &Cellpack {
+                target: CFIRE_SIGIL,
+                inputs: vec![SIGIL_AUTHENTICATE_OPCODE],
+            },
+            &AlkaneTransferParcel(vec![AlkaneTransfer {
+                id: CFIRE_SIGIL,
+                value: 1,
+            }]),
+            self.fuel(),
+        )?;
+        if response.data != vec![0x01] {
+            return Err(anyhow!("cFIRE-SIGIL authentication failed"));
+        }
+        Ok(())
+    }
+
+    /// cFIRE-SIGIL-gated switch. Point DIESEL's mint gate at
+    /// `gate_block:gate_tx`, effective immediately. `0:0` clears it (persisted
+    /// as an explicit "no gate", distinct from the unset default), returning to
+    /// the default where emission accrues to claimable fees.
     fn set_mint_gate(&self, gate_block: u128, gate_tx: u128) -> Result<CallResponse> {
-        self.only_owner()?;
+        self.require_cfire_sigil()?;
         let context = self.context()?;
         let gate = AlkaneId::new(gate_block, gate_tx);
-
-        if gate.block == 0 && gate.tx == 0 {
-            self.mint_gate_pointer().set(Arc::new(Vec::new()));
-        } else {
-            self.mint_gate_pointer()
-                .set(Arc::new(<AlkaneId as Into<Vec<u8>>>::into(gate)));
-        }
+        // 0:0 serializes to 32 zero bytes: the "cleared" sentinel.
+        self.mint_gate_pointer()
+            .set(Arc::new(<AlkaneId as Into<Vec<u8>>>::into(gate)));
         Ok(CallResponse::forward(&context.incoming_alkanes))
     }
 
     /// Read-only audit view of the mint gate. Fixed little-endian layout:
-    ///   [0..16)  gate block u128 (0:0 = no gate)
-    ///   [16..32) gate tx u128
+    ///   [0..16)  effective gate block u128 (0:0 = no gate)
+    ///   [16..32) effective gate tx u128
     ///   [32..40) current height u64
-    ///   [40]     live u8 (1 = a gate is set)
+    ///   [40]     live u8 (1 = a gate is in effect)
+    ///   [41]     source u8 (0 = compile-time default, 1 = set by governance,
+    ///            2 = cleared by governance)
     fn get_mint_gate(&self) -> Result<CallResponse> {
         let context = self.context()?;
         let mut response = CallResponse::forward(&context.incoming_alkanes);
 
-        let gate = self.mint_gate().unwrap_or(AlkaneId::new(0, 0));
-        let live: u8 = if self.mint_gate().is_some() { 1 } else { 0 };
+        let (gate, source) = self.mint_gate_with_source();
+        let live: u8 = if gate.is_some() { 1 } else { 0 };
+        let gate = gate.unwrap_or(AlkaneId::new(0, 0));
 
-        let mut data = Vec::with_capacity(41);
+        let mut data = Vec::with_capacity(42);
         data.extend_from_slice(&gate.block.to_le_bytes());
         data.extend_from_slice(&gate.tx.to_le_bytes());
         data.extend_from_slice(&self.height().to_le_bytes());
         data.push(live);
+        data.push(source);
         response.data = data;
         Ok(response)
     }

@@ -854,6 +854,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "alkanes-std-test-mint-gate"
+version = "2.2.1-rc.4"
+dependencies = [
+ "alkanes-runtime",
+ "alkanes-support",
+ "anyhow",
+ "metashrew-support",
+]
+
+[[package]]
 name = "alkanes-std-upgradeable"
 version = "2.2.1-rc.4"
 dependencies = [

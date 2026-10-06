@@ -54,6 +54,7 @@ members = [
     "crates/alkanes-std-recycle",
     "crates/alkanes-std-test",
     "crates/alkanes-std-test-2",
+    "crates/alkanes-std-test-mint-gate",
     "crates/alkanes-std-upgradeable",
     "crates/alkanes-std-upgradeable-beacon",
     "crates/alkanes-support",
