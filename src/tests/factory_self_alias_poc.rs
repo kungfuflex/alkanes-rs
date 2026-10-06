@@ -180,3 +180,74 @@ fn attack_current_sequence_factory_self_alias() -> Result<()> {
     })?;
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// Defense in depth: `get_alkane_binary` alias resolution is iterative with
+// cycle detection and a depth cap. #313 blocks the direct self-alias at
+// creation; these seed alias chains directly into the index to prove that any
+// cycle / over-long chain is an ordinary error, never a stack overflow.
+// ---------------------------------------------------------------------------
+
+mod alias_depth {
+    use crate::tests::helpers;
+    use crate::vm::utils::{get_alkane_binary, MAX_FACTORY_ALIAS_DEPTH};
+    use alkanes_support::{gz::compress, id::AlkaneId};
+    use anyhow::Result;
+    use metashrew_core::index_pointer::IndexPointer;
+    use metashrew_support::index_pointer::KeyValuePointer;
+    use std::sync::Arc;
+    #[cfg(target_arch = "wasm32")]
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    const HEIGHT: u32 = 880_000;
+
+    fn alias(ptr: &IndexPointer, from: AlkaneId, to: AlkaneId) {
+        let bytes: Vec<u8> = to.into();
+        ptr.select(&from.into()).set(Arc::new(bytes));
+    }
+
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    fn two_id_alias_cycle_is_an_error() -> Result<()> {
+        helpers::clear();
+        let ptr = IndexPointer::from_keyword("/alkanes/");
+        let a = AlkaneId::new(2, 70_001);
+        let b = AlkaneId::new(2, 70_002);
+        alias(&ptr, a, b);
+        alias(&ptr, b, a);
+        let err = get_alkane_binary(ptr.clone(), &a, HEIGHT).unwrap_err();
+        assert!(err.to_string().contains("cycle"), "{err}");
+        // direct self-alias too
+        alias(&ptr, a, a);
+        let err = get_alkane_binary(ptr, &a, HEIGHT).unwrap_err();
+        assert!(err.to_string().contains("cycle"), "{err}");
+        Ok(())
+    }
+
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    fn alias_chain_resolves_up_to_cap_and_errors_beyond() -> Result<()> {
+        helpers::clear();
+        let ptr = IndexPointer::from_keyword("/alkanes/");
+        let base = 80_000u128;
+        let wasm = b"\0asm\x01\0\0\0".to_vec();
+        // terminal binary at base; ids base+1..=base+N each alias the previous.
+        ptr.select(&AlkaneId::new(2, base).into())
+            .set(Arc::new(compress(wasm.clone())?));
+        let n = MAX_FACTORY_ALIAS_DEPTH as u128 + 1;
+        for i in 1..=n {
+            alias(&ptr, AlkaneId::new(2, base + i), AlkaneId::new(2, base + i - 1));
+        }
+        // exactly MAX hops: resolves
+        let ok = get_alkane_binary(
+            ptr.clone(),
+            &AlkaneId::new(2, base + MAX_FACTORY_ALIAS_DEPTH as u128),
+            HEIGHT,
+        )?;
+        assert_eq!(ok.as_ref(), &wasm);
+        // MAX + 1 hops: bounded error
+        let err = get_alkane_binary(ptr, &AlkaneId::new(2, base + n), HEIGHT).unwrap_err();
+        assert!(err.to_string().contains("max depth"), "{err}");
+        Ok(())
+    }
+}
