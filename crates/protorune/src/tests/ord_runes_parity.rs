@@ -564,9 +564,10 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-    fn cenotaph_mint_does_not_decrement_cap() {
-        // Ord: a mint in a cenotaph tx does NOT reduce the cap
-        // (because the cenotaph burns everything, but the mint count is not incremented)
+    fn cenotaph_mint_decrements_cap() {
+        // Ord processes artifact.mint() before the cenotaph branch: a valid
+        // cenotaph mint increments the mint count (consumes cap) and the minted
+        // amount is burned. (Halborn: "Cenotaph Mints Do Not Consume Rune Allowance")
         clear();
         let block_height: u64 = 840000;
 
@@ -608,13 +609,18 @@ mod tests {
         let block = helpers::create_block_with_txs(vec![tx0, tx1]);
         let _ = Protorune::index_block::<TestContext>(block.clone(), block_height);
 
-        // Cap should still be 5 (mint didn't count)
+        // One unit of cap is consumed
         let name = tables::RUNES
             .RUNE_ID_TO_ETCHING
             .select(&<ProtoruneRuneId as Into<Vec<u8>>>::into(rune_id(block_height, 0)))
             .get();
         let remaining: u128 = tables::RUNES.MINTS_REMAINING.select(&name).get_value();
-        assert_eq!(remaining, 5, "cenotaph mint should not decrement cap");
+        assert_eq!(remaining, 4, "cenotaph mint should decrement cap");
+        let b0 = balance_at(
+            OutPoint { txid: block.txdata[1].compute_txid(), vout: 0 },
+            rune_id(block_height, 0),
+        );
+        assert_eq!(b0, 0, "cenotaph mint amount is burned");
     }
 
     // =========================================================================
@@ -1502,9 +1508,9 @@ mod tests {
         let block1 = helpers::create_block_with_txs(vec![tx1.clone()]);
         let _ = Protorune::index_block::<TestContext>(block1.clone(), block_height + 1);
 
-        // Without a runestone, runes should go to first non-OP_RETURN output
-        // BUT in ord, no-runestone means the runes from input just get cleared (burned)
-        // because index_runes is only called when decipher returns Some(artifact)
+        // Without a runestone, ord loads the input balances regardless of the
+        // artifact and assigns the unallocated runes to the first non-OP_RETURN
+        // output. (Halborn: "Ordinary Spends Without a Runestone Erase Rune Balances")
         let b0 = balance_at(
             OutPoint { txid: tx1.compute_txid(), vout: 0 },
             rune_id(block_height, 0),
@@ -1517,12 +1523,12 @@ mod tests {
         );
         assert_eq!(input_balance, 0, "input should be cleared");
 
-        // In ord, without a runestone, rune outputs from inputs go to first non-OP_RETURN
-        // ONLY IF there's an artifact. No artifact = just cleared.
-        // Our implementation clears inputs for ALL txs, so this should be 0.
-        // Actually, in ord, unallocated() REMOVES from outpoint_to_balances, so even
-        // without a runestone the runes disappear.
-        assert_eq!(b0, 0, "without runestone, runes are effectively burned");
+        assert_eq!(b0, 1000, "without runestone, runes go to the first non-OP_RETURN output");
+        let b1 = balance_at(
+            OutPoint { txid: tx1.compute_txid(), vout: 1 },
+            rune_id(block_height, 0),
+        );
+        assert_eq!(b1, 0);
     }
 
     // =========================================================================
