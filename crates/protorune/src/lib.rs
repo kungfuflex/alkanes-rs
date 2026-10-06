@@ -285,6 +285,29 @@ pub const POST_AUDIT_FORK_HEIGHT: u64 = 975_000;
 
 const COMMIT_CONFIRMATIONS: u64 = 6;
 
+/// The chain whose rune activation height applies to this build. Mainnet
+/// builds use Bitcoin (first rune height 840_000); every other build uses
+/// Regtest semantics (first rune height 0), which keeps regtest / test chains
+/// indexing runes from genesis.
+#[cfg(feature = "mainnet")]
+const RUNES_NETWORK: Network = Network::Bitcoin;
+#[cfg(not(feature = "mainnet"))]
+const RUNES_NETWORK: Network = Network::Regtest;
+
+/// First height at which raw runes (RUNES tables) are indexed, matching ord's
+/// `Rune::first_rune_height` for the configured network.
+pub fn first_rune_height() -> u64 {
+    Rune::first_rune_height(RUNES_NETWORK) as u64
+}
+
+/// Whether raw-rune etchings and mints are indexed at `height`. Below the
+/// activation height no rune is etched or minted, so no RUNES balance can
+/// exist and edicts / transfers have nothing to move. Protostone (protorune /
+/// alkanes) processing of the same transactions is not affected.
+pub fn runes_active(height: u64) -> bool {
+    height >= first_rune_height()
+}
+
 /// Returns true only if the stored previous output for `outpoint_bytes` is P2TR.
 /// Unknown or undecodable outputs fail closed.
 fn spent_output_is_p2tr(outpoint_bytes: &Vec<u8>) -> bool {
@@ -390,12 +413,13 @@ impl Protorune {
         // through the tx's atomic pointer, so if anything later in this tx
         // fails (e.g. malformed protostones) the rollback restores the cap
         // together with the output balances.
-        if let Some(mint) = runestone.mint {
+        let runes_active = runes_active(height);
+        if let Some(mint) = runestone.mint.filter(|_| runes_active) {
             if !mint.to_string().is_empty() {
                 Self::index_mint(atomic, &mint.into(), height, &mut balance_sheet)?;
             }
         }
-        let etched = if let Some(etching) = runestone.etching.as_ref() {
+        let etched = if let Some(etching) = runestone.etching.as_ref().filter(|_| runes_active) {
             let success = Self::index_etching(
                 atomic,
                 etching,
@@ -855,7 +879,8 @@ impl Protorune {
                     // Like ord, a cenotaph's mint is processed before its etching: a valid mint
                     // still consumes one unit of the rune's cap, but the minted amount is burned,
                     // so it goes to a throwaway sheet that is never saved to an output.
-                    if let Some(mint) = cenotaph.mint {
+                    // Before the rune activation height a cenotaph has no rune effect.
+                    if let Some(mint) = cenotaph.mint.filter(|_| runes_active(height)) {
                         let mut atomic = AtomicPointer::default();
                         let mut burned = BalanceSheet::default();
                         match Self::index_mint(&mut atomic, &mint.into(), height, &mut burned) {
@@ -866,7 +891,7 @@ impl Protorune {
                             _ => atomic.commit(),
                         }
                     }
-                    if let Some(rune) = cenotaph.etching {
+                    if let Some(rune) = cenotaph.etching.filter(|_| runes_active(height)) {
                         // Cenotaph etchings create the rune but with zeroed metadata
                         let mut atomic = AtomicPointer::default();
                         let etching = Etching {
