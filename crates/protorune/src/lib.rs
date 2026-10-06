@@ -1124,10 +1124,17 @@ impl Protorune {
             );
         }
         if map.contains_key(&u32::MAX) {
-            map.get(&u32::MAX)
+            let runtime = map
+                .get(&u32::MAX)
                 .map(|v| v.clone())
-                .unwrap_or_else(|| BalanceSheet::default())
-                .save(&mut atomic.derive(&table.RUNTIME_BALANCE), false);
+                .unwrap_or_else(|| BalanceSheet::default());
+            if post_audit_fork_active(height) {
+                // Explicit zeros clear the stored runtime balance (see
+                // PersistentRecord::save_runtime).
+                runtime.save_runtime(&mut atomic.derive(&table.RUNTIME_BALANCE));
+            } else {
+                runtime.save(&mut atomic.derive(&table.RUNTIME_BALANCE), false);
+            }
         }
         index_unique_protorunes::<T>(
             atomic,
