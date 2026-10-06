@@ -254,15 +254,19 @@ fn nested_multicall_is_depth_limited() {
 
 #[test]
 fn multicall_fanout_is_budget_capped() {
+    // Halborn "Unbounded RPC Multicalls Exhaust Shared Backend Workers":
+    // an over-cap multicall is refused past MAX_MULTICALL_SUBCALLS.
+    let cap = alkanes_rpc_core::dispatch::MAX_MULTICALL_SUBCALLS as usize;
     let d = dispatcher();
-    let calls: Vec<Value> = (0..1200).map(|_| json!(["btc_getblockcount", []])).collect();
+    let n = cap + 200;
+    let calls: Vec<Value> = (0..n).map(|_| json!(["btc_getblockcount", []])).collect();
     let resp = block_on(d.dispatch(&req("sandshrew_multicall", calls))).expect("dispatch");
     let out = results(&resp);
 
     // Response stays 1:1 with the request…
-    assert_eq!(out.len(), 1200);
+    assert_eq!(out.len(), n);
     // …but only the budgeted prefix actually reached a backend.
-    assert_eq!(*d.bitcoin.calls.borrow(), 1024);
+    assert_eq!(*d.bitcoin.calls.borrow(), cap);
     let refused = out
         .iter()
         .filter(|r| {
@@ -273,21 +277,94 @@ fn multicall_fanout_is_budget_capped() {
                 .unwrap_or(false)
         })
         .count();
-    assert_eq!(refused, 1200 - 1024);
+    assert_eq!(refused, n - cap);
 }
 
 #[test]
 fn each_top_level_request_gets_a_fresh_budget() {
     // The budget is per-dispatch, so back-to-back (or concurrently polled)
     // requests must not starve each other.
+    let cap = alkanes_rpc_core::dispatch::MAX_MULTICALL_SUBCALLS as usize;
     let d = dispatcher();
-    let calls: Vec<Value> = (0..600).map(|_| json!(["btc_getblockcount", []])).collect();
+    let calls: Vec<Value> = (0..cap).map(|_| json!(["btc_getblockcount", []])).collect();
     for _ in 0..3 {
         let resp = block_on(d.dispatch(&req("sandshrew_multicall", calls.clone()))).expect("dispatch");
         let out = results(&resp);
         assert!(out.iter().all(|r| r.get("result").is_some()), "budget leaked across requests");
     }
-    assert_eq!(*d.bitcoin.calls.borrow(), 1800);
+    assert_eq!(*d.bitcoin.calls.borrow(), 3 * cap);
+}
+
+#[test]
+fn shared_budget_spans_multiple_dispatches() {
+    // The Lua executor dispatches every `_RPC.sandshrew_multicall` of one
+    // script against ONE CallBudget, so a loop of multicalls cannot multiply
+    // the cap.
+    use alkanes_rpc_core::dispatch::CallBudget;
+    let d = dispatcher();
+    let budget = CallBudget::with_limit(100);
+    let calls: Vec<Value> = (0..60).map(|_| json!(["btc_getblockcount", []])).collect();
+    for _ in 0..5 {
+        let _ = block_on(d.dispatch_with_budget(&req("sandshrew_multicall", calls.clone()), budget.clone()))
+            .expect("dispatch");
+    }
+    assert_eq!(*d.bitcoin.calls.borrow(), 100);
+    assert_eq!(budget.remaining(), 0);
+}
+
+// A bitcoind mock whose calls stay pending for one poll, so overlapping calls
+// are observable.
+#[derive(Default)]
+struct SlowBitcoin {
+    in_flight: std::cell::Cell<usize>,
+    max_in_flight: std::cell::Cell<usize>,
+}
+
+struct YieldOnce(bool);
+impl std::future::Future for YieldOnce {
+    type Output = ();
+    fn poll(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<()> {
+        if self.0 {
+            std::task::Poll::Ready(())
+        } else {
+            self.0 = true;
+            cx.waker().wake_by_ref();
+            std::task::Poll::Pending
+        }
+    }
+}
+
+#[async_trait(?Send)]
+impl BitcoinBackend for SlowBitcoin {
+    async fn call(&self, _method: &str, _params: Vec<Value>, id: Value) -> Result<JsonRpcResponse> {
+        self.in_flight.set(self.in_flight.get() + 1);
+        self.max_in_flight.set(self.max_in_flight.get().max(self.in_flight.get()));
+        YieldOnce(false).await;
+        self.in_flight.set(self.in_flight.get() - 1);
+        Ok(JsonRpcResponse::success(json!(1), id))
+    }
+}
+
+#[test]
+fn multicall_concurrency_is_bounded() {
+    let d = RpcDispatcher::new(SlowBitcoin::default(), MockMetashrew::default(), MockEsplora::default(), NoOrd);
+    let calls: Vec<Value> = (0..200).map(|_| json!(["btc_getblockcount", []])).collect();
+    let resp = block_on(d.dispatch(&req("sandshrew_multicall", calls))).expect("dispatch");
+    assert_eq!(results(&resp).len(), 200);
+    let max = d.bitcoin.max_in_flight.get();
+    assert!(max > 1, "fan-out should still be concurrent, saw {max}");
+    assert!(
+        max <= alkanes_rpc_core::dispatch::MULTICALL_CONCURRENCY,
+        "{max} sub-calls in flight, limit {}",
+        alkanes_rpc_core::dispatch::MULTICALL_CONCURRENCY
+    );
+
+    // Nested frames run sequentially: total in flight still bounded.
+    let d = RpcDispatcher::new(SlowBitcoin::default(), MockMetashrew::default(), MockEsplora::default(), NoOrd);
+    let inner: Vec<Value> = (0..10).map(|_| json!(["btc_getblockcount", []])).collect();
+    let outer: Vec<Value> = (0..20).map(|_| json!(["sandshrew_multicall", inner.clone()])).collect();
+    let _ = block_on(d.dispatch(&req("sandshrew_multicall", outer))).expect("dispatch");
+    assert!(d.bitcoin.max_in_flight.get() <= alkanes_rpc_core::dispatch::MULTICALL_CONCURRENCY);
 }
 
 // ---------------------------------------------------------------------------
