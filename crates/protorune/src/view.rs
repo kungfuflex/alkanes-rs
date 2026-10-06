@@ -1,5 +1,8 @@
 use crate::tables::RuneTable;
-use crate::{balance_sheet::load_sheet_page, tables};
+use crate::{
+    balance_sheet::{load_sheet_page, MAX_VIEW_SHEET_ENTRIES},
+    tables,
+};
 use anyhow::{anyhow, Result};
 use bitcoin;
 use protorune_support::balance_sheet::{BalanceSheetOperations, ProtoruneRuneId};
@@ -37,6 +40,34 @@ pub fn core_outpoint_to_proto(outpoint: &OutPoint) -> Outpoint {
     }
 }
 
+/// Position of `txid` in the block at `height`, as recorded in
+/// `HEIGHT_TO_TRANSACTION_IDS`. Tries the `TXID_TO_TXINDEX` index first and
+/// confirms it with a single list read. If that misses, falls back to scanning
+/// the block's whole txid list, as this used to do for every outpoint. The
+/// genesis outpoint, for example, is in the list but not the index. Either way
+/// the result is identical to the scan; the index only saves reads.
+fn txindex_in_block(txid: &bitcoin::Txid, height: u64) -> Result<u128> {
+    let txid_bytes = txid.as_byte_array().to_vec();
+    let block_txids = tables::RUNES
+        .HEIGHT_TO_TRANSACTION_IDS
+        .select_value::<u64>(height);
+    // Raw bytes rather than `get_value`, which panics on a value that is not
+    // 4 bytes; anything unexpected just takes the fallback.
+    let raw = tables::RUNES.TXID_TO_TXINDEX.select(&txid_bytes).get();
+    if let Ok(hint) = <[u8; 4]>::try_from(raw.as_slice()) {
+        let hint = u32::from_le_bytes(hint);
+        if block_txids.select_index(hint).get().as_ref() == &txid_bytes {
+            return Ok(hint as u128);
+        }
+    }
+    Ok(block_txids
+        .get_list()
+        .into_iter()
+        .position(|v| v.as_ref().to_vec() == txid_bytes)
+        .ok_or("")
+        .map_err(|_| anyhow!("txid not indexed in table"))? as u128)
+}
+
 /// Build an `OutpointResponse` from one page of the balance sheet at
 /// `sheet_ptr`. Reads at most `MAX_VIEW_SHEET_ENTRIES` entries; see
 /// `load_sheet_page` for the `offset`/`limit` semantics.
@@ -55,14 +86,7 @@ fn sheet_to_outpoint_response<T: KeyValuePointer + Clone>(
         .select(&outpoint_bytes)
         .get_value::<u64>()
         .into();
-    let mut txindex: u128 = tables::RUNES
-        .HEIGHT_TO_TRANSACTION_IDS
-        .select_value::<u64>(height as u64)
-        .get_list()
-        .into_iter()
-        .position(|v| v.as_ref().to_vec() == outpoint.txid.as_byte_array().to_vec())
-        .ok_or("")
-        .map_err(|_| anyhow!("txid not indexed in table"))? as u128;
+    let mut txindex: u128 = txindex_in_block(&outpoint.txid, height as u64)?;
 
     // Derived from the lowest rune id in the returned page, so on a sheet
     // spanning several pages each page can report a different height/txindex.
@@ -128,36 +152,77 @@ pub fn outpoint_to_outpoint_response(outpoint: &OutPoint) -> Result<OutpointResp
     rune_outpoint_to_outpoint_response(outpoint)
 }
 
-pub fn runes_by_address(input: &Vec<u8>) -> Result<WalletResponse> {
-    let mut result: WalletResponse = WalletResponse::default();
-    if let Some(req) = proto::protorune::WalletRequest::decode(input.as_ref()).ok() {
-        result.outpoints = tables::OUTPOINTS_FOR_ADDRESS
-            .select(&req.wallet)
-            .get_list()
-            .into_iter()
-            .map(|v| -> Result<OutPoint> {
-                let mut cursor = Cursor::new(v.as_ref().clone());
-                Ok(consensus_decode::<bitcoin::blockdata::transaction::OutPoint>(&mut cursor)?)
-            })
-            .collect::<Result<Vec<OutPoint>>>()?
-            .into_iter()
-            .filter_map(|v| -> Option<Result<OutpointResponse>> {
-                let outpoint_bytes = match outpoint_to_bytes(&v) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        return Some(Err(e));
-                    }
-                };
-                let _address = tables::OUTPOINT_SPENDABLE_BY.select(&outpoint_bytes).get();
-                if req.wallet.len() == _address.len() {
-                    Some(outpoint_to_outpoint_response(&v))
-                } else {
-                    None
-                }
-            })
-            .collect::<Result<Vec<OutpointResponse>>>()?;
+/// Most stored outpoint-list positions one wallet view call scans.
+///
+/// `OUTPOINTS_FOR_ADDRESS` is append-only: every output ever paid to the
+/// address stays in it, spent or not. Without a bound, a view over a busy
+/// address walks its entire history while holding a metashrew view permit.
+pub const MAX_VIEW_WALLET_OUTPOINTS: u32 = 10_000;
+
+/// Most balance-sheet entries one wallet view call loads, summed over the
+/// outpoints it returns. Each outpoint is still capped at
+/// `MAX_VIEW_SHEET_ENTRIES` by `load_sheet_page`.
+pub const MAX_VIEW_WALLET_ENTRIES: u32 = 10_000;
+
+/// One bounded page of an address's spendable outpoints. `sheet_for` picks
+/// the balance-sheet table (runes, or a protorune protocol) for an outpoint.
+///
+/// Scans stored positions `[offset, offset + n)`, where `n` is `limit`
+/// clamped to `1..=MAX_VIEW_WALLET_OUTPOINTS` (0 = the cap). Spent outpoints
+/// are skipped but still count as scanned. The page ends early, before the
+/// outpoint that would overrun `MAX_VIEW_WALLET_ENTRIES`. The first outpoint
+/// returned on a page is always included, so every page makes progress. An
+/// outpoint whose own sheet exceeds the per-outpoint cap comes back as its
+/// first page, with `total_entries`/`next_offset` set, so the caller can
+/// fetch the rest from the by-outpoint view.
+fn wallet_page<F>(wallet: &Vec<u8>, offset: u32, limit: u32, sheet_for: F) -> Result<WalletResponse>
+where
+    F: Fn(&Vec<u8>) -> metashrew_core::index_pointer::IndexPointer,
+{
+    let list = tables::OUTPOINTS_FOR_ADDRESS.select(wallet);
+    let total = list.length();
+    let limit = if limit == 0 {
+        MAX_VIEW_WALLET_OUTPOINTS
+    } else {
+        limit.min(MAX_VIEW_WALLET_OUTPOINTS)
+    };
+    let end = offset.min(total).saturating_add(limit).min(total);
+    let mut result = WalletResponse::default();
+    let mut entries_left = MAX_VIEW_WALLET_ENTRIES;
+    let mut i = offset.min(total);
+    while i < end {
+        let mut cursor = Cursor::new(list.select_index(i).get().as_ref().clone());
+        let outpoint = consensus_decode::<bitcoin::blockdata::transaction::OutPoint>(&mut cursor)?;
+        let outpoint_bytes = outpoint_to_bytes(&outpoint)?;
+        let spendable_by = tables::OUTPOINT_SPENDABLE_BY.select(&outpoint_bytes).get();
+        if wallet.len() == spendable_by.len() {
+            let sheet_ptr = sheet_for(&outpoint_bytes);
+            let cost = sheet_ptr
+                .keyword("/runes")
+                .length()
+                .min(MAX_VIEW_SHEET_ENTRIES);
+            if cost > entries_left && !result.outpoints.is_empty() {
+                break;
+            }
+            result
+                .outpoints
+                .push(sheet_to_outpoint_response(&outpoint, &sheet_ptr, 0, 0)?);
+            entries_left = entries_left.saturating_sub(cost);
+        }
+        i += 1;
     }
+    result.total_outpoints = total;
+    result.next_offset = if i < total { i } else { 0 };
     Ok(result)
+}
+
+pub fn runes_by_address(input: &Vec<u8>) -> Result<WalletResponse> {
+    match proto::protorune::WalletRequest::decode(input.as_ref()).ok() {
+        Some(req) => wallet_page(&req.wallet, req.offset, req.limit, |outpoint_bytes| {
+            tables::RUNES.OUTPOINT_TO_RUNES.select(outpoint_bytes)
+        }),
+        None => Ok(WalletResponse::default()),
+    }
 }
 
 pub fn protorunes_by_outpoint(input: &Vec<u8>) -> Result<OutpointResponse> {
@@ -193,38 +258,16 @@ pub fn runes_by_outpoint(input: &Vec<u8>) -> Result<OutpointResponse> {
 }
 
 pub fn protorunes_by_address(input: &Vec<u8>) -> Result<WalletResponse> {
-    let mut result: WalletResponse = WalletResponse::default();
-    if let Some(req) = proto::protorune::ProtorunesWalletRequest::decode(input.as_ref()).ok() {
-        result.outpoints = tables::OUTPOINTS_FOR_ADDRESS
-            .select(&req.wallet)
-            .get_list()
-            .into_iter()
-            .map(|v| -> Result<OutPoint> {
-                let mut cursor = Cursor::new(v.as_ref().clone());
-                Ok(consensus_decode::<bitcoin::blockdata::transaction::OutPoint>(&mut cursor)?)
+    match proto::protorune::ProtorunesWalletRequest::decode(input.as_ref()).ok() {
+        Some(req) => {
+            let protocol_tag: u128 = req.protocol_tag.unwrap().into();
+            let table = tables::RuneTable::for_protocol(protocol_tag);
+            wallet_page(&req.wallet, req.offset, req.limit, |outpoint_bytes| {
+                table.OUTPOINT_TO_RUNES.select(outpoint_bytes)
             })
-            .collect::<Result<Vec<OutPoint>>>()?
-            .into_iter()
-            .filter_map(|v| -> Option<Result<OutpointResponse>> {
-                let outpoint_bytes = match outpoint_to_bytes(&v) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        return Some(Err(e));
-                    }
-                };
-                let _address = tables::OUTPOINT_SPENDABLE_BY.select(&outpoint_bytes).get();
-                if req.wallet.len() == _address.len() {
-                    Some(protorune_outpoint_to_outpoint_response(
-                        &v,
-                        req.clone().protocol_tag.unwrap().into(),
-                    ))
-                } else {
-                    None
-                }
-            })
-            .collect::<Result<Vec<OutpointResponse>>>()?;
+        }
+        None => Ok(WalletResponse::default()),
     }
-    Ok(result)
 }
 
 pub fn protorunes_by_address2(input: &Vec<u8>) -> Result<WalletResponse> {

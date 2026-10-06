@@ -1,11 +1,13 @@
 #[cfg(test)]
 mod tests {
     use crate::balance_sheet::{load_sheet, PersistentRecord, MAX_VIEW_SHEET_ENTRIES};
+    use crate::view::MAX_VIEW_WALLET_ENTRIES;
     use crate::message::MessageContext;
     use protorune_support::balance_sheet::{BalanceSheet, BalanceSheetOperations, ProtoruneRuneId};
     use protorune_support::proto::protorune::{
-        Outpoint as OutpointProto, OutpointResponse, OutpointWithProtocol, Rune as RuneProto,
-        RunesByHeightRequest, WalletRequest,
+        Outpoint as OutpointProto, OutpointResponse, OutpointWithProtocol,
+        ProtorunesWalletRequest, Rune as RuneProto, RunesByHeightRequest, WalletRequest,
+        WalletResponse,
     };
 
     use crate::test_helpers::{self as helpers, RunesTestingConfig, ADDRESS1, ADDRESS2};
@@ -172,6 +174,7 @@ mod tests {
         // Query runes_by_address for address2
         let req = (WalletRequest {
             wallet: ADDRESS2().as_bytes().to_vec(),
+            ..Default::default()
         })
         .encode_to_vec();
 
@@ -324,5 +327,210 @@ mod tests {
         assert_eq!(response.balances.unwrap().entries.len(), 1);
         assert_eq!(response.total_entries, 1);
         assert_eq!(response.next_offset, 0);
+    }
+
+    const WALLET_HEIGHT: u64 = 840001;
+
+    /// Index one block paying `n` outputs to ADDRESS2, and give protocol 100
+    /// a balance sheet of `entries` (distinct runes) on every one of them.
+    /// Returns the funding tx's txid; output `i` is stored at list position `i`.
+    fn setup_wallet(n: u32, entries: u128) -> bitcoin::Txid {
+        clear();
+        let funding = bitcoin::Transaction {
+            version: bitcoin::blockdata::transaction::Version::ONE,
+            lock_time: bitcoin::absolute::LockTime::ZERO,
+            input: vec![helpers::get_mock_txin(1)],
+            output: (0..n)
+                .map(|_| helpers::get_txout_transfer_to_address(&ADDRESS2(), 1000))
+                .collect(),
+        };
+        let block = helpers::create_block_with_txs(vec![
+            helpers::create_coinbase_transaction(WALLET_HEIGHT as u32),
+            funding.clone(),
+        ]);
+        let _ = Protorune::index_block::<MyMessageContext>(block, WALLET_HEIGHT);
+        let txid = funding.compute_txid();
+        for vout in 0..n {
+            let ptr = tables::RuneTable::for_protocol(100)
+                .OUTPOINT_TO_RUNES
+                .select(&view::outpoint_to_bytes(&OutPoint { txid, vout }).unwrap());
+            let mut sheet: BalanceSheet<IndexPointer> = BalanceSheet::default();
+            for j in 0..entries {
+                sheet.set(&ProtoruneRuneId::new(3, j + 1), 1);
+            }
+            sheet.save(&ptr, false);
+        }
+        txid
+    }
+
+    /// Spend outputs `vouts` of `txid` in a later block.
+    fn spend(txid: bitcoin::Txid, vouts: std::ops::Range<u32>) {
+        let spender = bitcoin::Transaction {
+            version: bitcoin::blockdata::transaction::Version::ONE,
+            lock_time: bitcoin::absolute::LockTime::ZERO,
+            input: vouts
+                .map(|vout| helpers::get_txin_from_outpoint(OutPoint { txid, vout }))
+                .collect(),
+            output: vec![helpers::get_txout_transfer_to_address(&ADDRESS1(), 1000)],
+        };
+        let block = helpers::create_block_with_txs(vec![
+            helpers::create_coinbase_transaction(WALLET_HEIGHT as u32 + 1),
+            spender,
+        ]);
+        let _ = Protorune::index_block::<MyMessageContext>(block, WALLET_HEIGHT + 1);
+    }
+
+    fn protorunes_by_address_page(offset: u32, limit: u32) -> WalletResponse {
+        let req = ProtorunesWalletRequest {
+            wallet: ADDRESS2().as_bytes().to_vec(),
+            protocol_tag: Some(100u128.into()),
+            offset,
+            limit,
+        }
+        .encode_to_vec();
+        view::protorunes_by_address(&req).unwrap()
+    }
+
+    fn vouts(response: &WalletResponse) -> Vec<u32> {
+        response
+            .outpoints
+            .iter()
+            .map(|o| o.outpoint.as_ref().unwrap().vout)
+            .collect()
+    }
+
+    /// A legacy request (no pagination fields) on a small wallet returns every
+    /// outpoint in one page, with the correct txindex from the indexed lookup.
+    #[wasm_bindgen_test]
+    fn test_protorunes_by_address_legacy_request_small_wallet() {
+        let txid = setup_wallet(5, 1);
+        let legacy = ProtorunesWalletRequest {
+            wallet: ADDRESS2().as_bytes().to_vec(),
+            protocol_tag: Some(100u128.into()),
+            ..Default::default()
+        }
+        .encode_to_vec();
+        let response = view::protorunes_by_address(&legacy).unwrap();
+        assert_eq!(vouts(&response), vec![0, 1, 2, 3, 4]);
+        assert_eq!(response.total_outpoints, 5);
+        assert_eq!(response.next_offset, 0);
+        for o in &response.outpoints {
+            assert_eq!(o.outpoint.as_ref().unwrap().txid, txid.as_byte_array().to_vec());
+            assert_eq!(o.balances.as_ref().unwrap().entries.len(), 1);
+        }
+    }
+
+    /// `limit` bounds the positions scanned, and walking next_offset visits
+    /// every outpoint exactly once, in stored order.
+    #[wasm_bindgen_test]
+    fn test_protorunes_by_address_pages_by_limit() {
+        setup_wallet(10, 1);
+        let first = protorunes_by_address_page(0, 4);
+        assert_eq!(vouts(&first), vec![0, 1, 2, 3]);
+        assert_eq!(first.total_outpoints, 10);
+        assert_eq!(first.next_offset, 4);
+
+        let mut all = Vec::new();
+        let mut offset = 0;
+        loop {
+            let page = protorunes_by_address_page(offset, 3);
+            all.extend(vouts(&page));
+            if page.next_offset == 0 {
+                break;
+            }
+            offset = page.next_offset;
+        }
+        assert_eq!(all, (0..10).collect::<Vec<u32>>());
+
+        let past_end = protorunes_by_address_page(50, 3);
+        assert!(past_end.outpoints.is_empty());
+        assert_eq!(past_end.next_offset, 0);
+    }
+
+    /// Spent outpoints are skipped but still count against the scan window, so
+    /// a page can be empty while next_offset says to keep going.
+    #[wasm_bindgen_test]
+    fn test_protorunes_by_address_skips_spent_outpoints() {
+        let txid = setup_wallet(6, 1);
+        spend(txid, 0..3);
+        let page = protorunes_by_address_page(0, 3);
+        assert!(page.outpoints.is_empty());
+        assert_eq!(page.next_offset, 3);
+        let page = protorunes_by_address_page(3, 3);
+        assert_eq!(vouts(&page), vec![3, 4, 5]);
+        assert_eq!(page.next_offset, 0);
+    }
+
+    /// Once the summed sheet entries would pass MAX_VIEW_WALLET_ENTRIES the
+    /// page ends early; the next page picks up at the first outpoint left out.
+    #[wasm_bindgen_test]
+    fn test_protorunes_by_address_ends_page_at_entry_budget() {
+        let per_outpoint = MAX_VIEW_SHEET_ENTRIES as u128;
+        let fits = (MAX_VIEW_WALLET_ENTRIES / MAX_VIEW_SHEET_ENTRIES) as u32;
+        setup_wallet(fits + 2, per_outpoint);
+
+        let first = protorunes_by_address_page(0, 0);
+        assert_eq!(vouts(&first), (0..fits).collect::<Vec<u32>>());
+        assert_eq!(first.next_offset, fits);
+
+        let rest = protorunes_by_address_page(first.next_offset, 0);
+        assert_eq!(vouts(&rest), vec![fits, fits + 1]);
+        assert_eq!(rest.next_offset, 0);
+    }
+
+    /// An outpoint whose sheet exceeds the per-outpoint cap still comes back
+    /// first on its page, truncated, with total_entries/next_offset set so the
+    /// rest can be paged through protorunesbyoutpoint.
+    #[wasm_bindgen_test]
+    fn test_protorunes_by_address_oversized_outpoint_sheet() {
+        setup_wallet(2, 2500);
+        let page = protorunes_by_address_page(1, 1);
+        assert_eq!(vouts(&page), vec![1]);
+        let o = &page.outpoints[0];
+        assert_eq!(
+            o.balances.as_ref().unwrap().entries.len(),
+            MAX_VIEW_SHEET_ENTRIES as usize
+        );
+        assert_eq!(o.total_entries, 2500);
+        assert_eq!(o.next_offset, MAX_VIEW_SHEET_ENTRIES);
+    }
+
+    /// runes_by_address goes through the same bounded scan.
+    #[wasm_bindgen_test]
+    fn test_runes_by_address_pages_by_limit() {
+        setup_wallet(5, 0);
+        let req = WalletRequest {
+            wallet: ADDRESS2().as_bytes().to_vec(),
+            offset: 1,
+            limit: 2,
+        }
+        .encode_to_vec();
+        let response = view::runes_by_address(&req).unwrap();
+        assert_eq!(vouts(&response), vec![1, 2]);
+        assert_eq!(response.total_outpoints, 5);
+        assert_eq!(response.next_offset, 3);
+    }
+
+    /// With empty sheets, height/txindex come from the block indexes. The
+    /// TXID_TO_TXINDEX fast path and the full-scan fallback must agree.
+    #[wasm_bindgen_test]
+    fn test_wallet_txindex_fast_path_matches_scan() {
+        let txid = setup_wallet(2, 0);
+        let req = WalletRequest {
+            wallet: ADDRESS2().as_bytes().to_vec(),
+            ..Default::default()
+        }
+        .encode_to_vec();
+        let fast = view::runes_by_address(&req).unwrap();
+        // The funding tx sits after the coinbase.
+        assert!(fast.outpoints.iter().all(|o| o.txindex == 1));
+        assert!(fast.outpoints.iter().all(|o| o.height == WALLET_HEIGHT as u32));
+
+        tables::RUNES
+            .TXID_TO_TXINDEX
+            .select(&txid.as_byte_array().to_vec())
+            .nullify();
+        let scanned = view::runes_by_address(&req).unwrap();
+        assert_eq!(fast, scanned);
     }
 }
