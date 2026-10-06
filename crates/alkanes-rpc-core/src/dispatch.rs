@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -9,6 +11,202 @@ use serde_json::{Value, json};
 use crate::backend::{BitcoinBackend, MetashrewBackend, EsploraBackend, OrdBackend};
 use crate::codec;
 use crate::types::*;
+
+// ---------------------------------------------------------------------------
+// Multicall recursion guard
+//
+// `handle_multicall` re-enters `dispatch` once per entry, and an entry may
+// itself be a `sandshrew_multicall`. Without a bound that is EXPONENTIAL
+// amplification on an UNAUTHENTICATED endpoint: nesting is limited only by
+// serde_json's 128-deep recursion ceiling, so one ~100KB request expands into
+// thousands of internal calls against rockshrew and electrs.
+//
+// Two independent bounds, because either alone is insufficient: a depth cap
+// alone still permits N^depth, and a total cap alone still lets a deep chain
+// burn the whole allowance on stack frames.
+// ---------------------------------------------------------------------------
+
+/// Maximum number of `sandshrew_multicall` frames that may be on the stack.
+///
+/// The SDK's multicall.lua (lua/multicall.lua) is a FLAT `ipairs` loop over
+/// `[method, params]` tuples — it never nests, so a legitimate multicall is
+/// depth 1. Depth 2 is allowed purely so a `lua_evalsaved(<multicall hash>)`
+/// envelope whose entries are themselves `sandshrew_multicall` keeps working.
+/// Exponential blow-up requires depth >= 3, which is refused.
+const MAX_MULTICALL_DEPTH: u32 = 2;
+
+/// Maximum sub-calls one top-level request may fan out through multicall,
+/// summed across every nesting level.
+///
+/// Real callers batch tens to low hundreds of entries (per-outpoint and
+/// per-alkane probes). #295 set 1024; Halborn ("Unbounded RPC Multicalls
+/// Exhaust Shared Backend Workers") showed that even a linear 1024 backend
+/// calls per anonymous HTTP request, fired all at once, saturates the shared
+/// backend pools, so the default is lowered to 256 and the fan-out is also
+/// concurrency-bounded (`MULTICALL_CONCURRENCY`). Entries past the budget are
+/// not dropped silently — each gets an error entry, so the results array
+/// stays 1:1 with the request.
+pub const MAX_MULTICALL_SUBCALLS: u32 = 256;
+
+/// Sub-calls of ONE top-level multicall in flight at once. Nested multicall
+/// frames (depth >= 1) run their entries sequentially, so a whole request
+/// tree never has more than this many backend calls outstanding (the old
+/// `join_all` fired every entry simultaneously).
+pub const MULTICALL_CONCURRENCY: usize = 16;
+
+// ---------------------------------------------------------------------------
+// Backend passthrough allow-lists (Halborn: "Unauthenticated Gateway Forwards
+// Privileged Bitcoin RPC Methods")
+//
+// `btc_*` forwarded ANY method name straight to bitcoind with the gateway's
+// credentials, and the unknown-namespace arm of `dispatch_with_budget`
+// forwarded the LAST underscore-separated word of any unrecognised method as
+// well - so `btc_dumpprivkey` reached the wallet and `anything_bar_stop`
+// reached `stop`. The endpoint is unauthenticated, so that was a node-control
+// and key-extraction surface rather than a read API. The same request shape
+// also reaches the dispatcher from Lua `_RPC` calls and from multicall
+// entries, so the check lives HERE, on the only road to the backend.
+//
+// Deny by default: a name that is not listed is refused rather than forwarded,
+// so a new bitcoind method cannot silently widen the surface. Operators that
+// need extra methods (e.g. `generatetoaddress` on a regtest gateway) opt in
+// explicitly via `RpcDispatcher::with_extra_bitcoind_methods`.
+// ---------------------------------------------------------------------------
+
+/// Bitcoin Core methods the gateway may forward.
+///
+/// The documented public surface (`crates/alkanes-jsonrpc/RPC_METHODS.md`)
+/// minus `gettxoutsetinfo` (walks the whole UTXO set; exhaustion class),
+/// `getpeerinfo` and `getnettotals` (node topology, not chain data).
+/// Nothing wallet, mining-control, network-control or process-control is
+/// reachable: no `stop`, `setban`, `addnode`, `generatetoaddress`,
+/// `invalidateblock`, `submitblock`, `importprivkey`, `dumpprivkey`,
+/// `dumpwallet`, `walletpassphrase`, `signrawtransactionwithwallet`,
+/// `sendtoaddress`, `loadwallet`, ...
+pub const BITCOIND_ALLOWED_METHODS: &[&str] = &[
+    // Blockchain
+    "getbestblockhash",
+    "getblock",
+    "getblockchaininfo",
+    "getblockcount",
+    "getblockhash",
+    "getblockheader",
+    "getblockstats",
+    "getchaintips",
+    "getchaintxstats",
+    "getdifficulty",
+    "getmempoolancestors",
+    "getmempooldescendants",
+    "getmempoolentry",
+    "getmempoolinfo",
+    "getrawmempool",
+    "gettxout",
+    "gettxoutproof",
+    "verifytxoutproof",
+    // Mining (read-only)
+    "getmininginfo",
+    "getnetworkhashps",
+    // Network (read-only, non-topological)
+    "getnetworkinfo",
+    "ping",
+    // Raw transactions / utilities (pure decoders + the broadcast path)
+    "decoderawtransaction",
+    "decodescript",
+    "getrawtransaction",
+    "sendrawtransaction",
+    "testmempoolaccept",
+    "estimatesmartfee",
+    "validateaddress",
+];
+
+/// metashrew (rockshrew-mono) JSON-RPC methods the gateway may forward.
+///
+/// `metashrew_*` used to be forwarded verbatim. rockshrew-mono also serves
+/// operational methods (`metashrew_snapshot`, ...) that are not part of the
+/// public read API; only the read methods below are passed through.
+pub const METASHREW_ALLOWED_METHODS: &[&str] = &[
+    "metashrew_view",
+    "metashrew_preview",
+    "metashrew_height",
+    "metashrew_getblockhash",
+    "metashrew_stateroot",
+];
+
+/// Per-top-level-request recursion/fan-out allowance for multicall.
+///
+/// Minted fresh by every public `dispatch()` call, so concurrently dispatched
+/// requests (e.g. the entries of a JSON-RPC batch, which the edge polls
+/// together) can never share or steal each other's allowance — the failure
+/// mode a dispatcher-owned counter would have.
+///
+/// Public so a caller that issues MANY dispatches on behalf of ONE client
+/// request (the alkanes-jsonrpc Lua executor: every `_RPC.*` call a script
+/// makes) can share one allowance across them via
+/// [`RpcDispatcher::dispatch_with_budget`] instead of getting a fresh one per
+/// call. Cloning shares the allowance.
+#[derive(Clone, Debug)]
+pub struct CallBudget {
+    /// `sandshrew_multicall` frames already entered on this path.
+    depth: u32,
+    /// Sub-calls still available to the whole request tree.
+    remaining: Arc<AtomicU32>,
+}
+
+impl CallBudget {
+    /// A root budget with the default allowance (`MAX_MULTICALL_SUBCALLS`).
+    pub fn root() -> Self {
+        Self::with_limit(MAX_MULTICALL_SUBCALLS)
+    }
+
+    /// A root budget with a caller-chosen allowance.
+    pub fn with_limit(max_subcalls: u32) -> Self {
+        Self { depth: 0, remaining: Arc::new(AtomicU32::new(max_subcalls)) }
+    }
+
+    /// Sub-calls still available.
+    pub fn remaining(&self) -> u32 {
+        self.remaining.load(Ordering::Relaxed)
+    }
+
+    /// Budget for the sub-requests of a multicall frame: one level deeper,
+    /// sharing the same remaining allowance.
+    fn child(&self) -> Self {
+        Self { depth: self.depth + 1, remaining: Arc::clone(&self.remaining) }
+    }
+
+    /// Reserve up to `n` sub-calls, returning how many were actually granted.
+    pub fn take(&self, n: usize) -> usize {
+        let want = n.min(u32::MAX as usize) as u32;
+        let mut granted = 0;
+        let _ = self.remaining.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |avail| {
+            granted = want.min(avail);
+            Some(avail - granted)
+        });
+        granted as usize
+    }
+}
+
+/// Percent-encode one path segment.
+///
+/// The esplora path is assembled from a caller-controlled method name and raw
+/// params, so an unencoded param such as `"../../whatever"` yields an
+/// arbitrary GET path against the in-cluster electrs. Everything outside the
+/// RFC 3986 unreserved set is escaped, which in particular escapes `/` — so a
+/// traversal payload collapses into a single inert segment. Every legitimate
+/// value here (addresses, txids, block hashes, heights) is unreserved already,
+/// so encoding is a no-op for real traffic.
+fn encode_path_segment(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                out.push(b as char)
+            }
+            _ => out.push_str(&format!("%{:02X}", b)),
+        }
+    }
+    out
+}
 
 /// Core RPC dispatcher that routes JSON-RPC requests to the appropriate backend.
 ///
@@ -19,6 +217,9 @@ pub struct RpcDispatcher<B, M, E, O> {
     pub metashrew: M,
     pub esplora: E,
     pub ord: O,
+    /// Operator opt-in additions to `BITCOIND_ALLOWED_METHODS`
+    /// (see `with_extra_bitcoind_methods`). Empty by default.
+    extra_bitcoind_methods: Vec<String>,
 }
 
 impl<B, M, E, O> RpcDispatcher<B, M, E, O>
@@ -29,7 +230,31 @@ where
     O: OrdBackend,
 {
     pub fn new(bitcoin: B, metashrew: M, esplora: E, ord: O) -> Self {
-        Self { bitcoin, metashrew, esplora, ord }
+        Self { bitcoin, metashrew, esplora, ord, extra_bitcoind_methods: Vec::new() }
+    }
+
+    /// Allow additional bitcoind methods on top of `BITCOIND_ALLOWED_METHODS`.
+    ///
+    /// For operator-controlled deployments only (e.g. a regtest gateway that
+    /// must serve `generatetoaddress`). Never enable wallet or node-control
+    /// methods on a publicly reachable gateway.
+    pub fn with_extra_bitcoind_methods<I, S>(mut self, methods: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.extra_bitcoind_methods = methods
+            .into_iter()
+            .map(Into::into)
+            .filter(|m: &String| !m.is_empty())
+            .collect();
+        self
+    }
+
+    /// Whether `method` (a bare bitcoind method name) may be forwarded.
+    pub fn bitcoind_method_is_allowed(&self, method: &str) -> bool {
+        BITCOIND_ALLOWED_METHODS.contains(&method)
+            || self.extra_bitcoind_methods.iter().any(|m| m == method)
     }
 
     /// Dispatch a JSON-RPC request to the appropriate backend.
@@ -39,6 +264,20 @@ where
     pub fn dispatch<'a>(
         &'a self,
         request: &'a JsonRpcRequest,
+    ) -> Pin<Box<dyn Future<Output = Result<JsonRpcResponse>> + 'a>> {
+        // Every top-level entry mints its own multicall allowance.
+        self.dispatch_with_budget(request, CallBudget::root())
+    }
+
+    /// `dispatch` carrying the multicall recursion/fan-out budget. Internal
+    /// recursion that can reach `handle_multicall` goes through here so the
+    /// budget is threaded rather than reset. Public so a caller issuing many
+    /// dispatches for ONE client request (the Lua executor) can share one
+    /// allowance across them.
+    pub fn dispatch_with_budget<'a>(
+        &'a self,
+        request: &'a JsonRpcRequest,
+        budget: CallBudget,
     ) -> Pin<Box<dyn Future<Output = Result<JsonRpcResponse>> + 'a>> {
         Box::pin(async move {
             let method_parts: Vec<&str> = request.method.split('_').collect();
@@ -67,18 +306,44 @@ where
                 "ord" => self.handle_ord_method(&method_name, &request.params, &request.id).await,
                 "esplora" => self.handle_esplora_method(&method_name, &request.params, &request.id).await,
                 "alkanes" => self.handle_alkanes_method(&method_name, &request.params, &request.id).await,
-                "metashrew" => self.metashrew.forward(request).await,
-                "sandshrew" => self.handle_sandshrew_method(&method_name, &request.params, &request.id).await,
-                "lua" => self.handle_lua_method(&method_name, &request.params, &request.id).await,
+                "metashrew" => {
+                    if METASHREW_ALLOWED_METHODS.contains(&request.method.as_str()) {
+                        self.metashrew.forward(request).await
+                    } else {
+                        Ok(JsonRpcResponse::error(
+                            METHOD_NOT_FOUND,
+                            format!("method not found: {}", request.method),
+                            request.id.clone(),
+                        ))
+                    }
+                }
+                "sandshrew" => self.handle_sandshrew_method(&method_name, &request.params, &request.id, &budget).await,
+                "lua" => self.handle_lua_method(&method_name, &request.params, &request.id, &budget).await,
                 "btc" => self.handle_bitcoind_method(&method_name, &request.params, &request.id).await,
                 // Espo (OYL data API) — polyfill using alkanes indexer data
                 // essentials.get_address_outpoints → split by _ → ["essentials.get", "address", "outpoints"]
                 "essentials.get" => self.handle_essentials_method(&method_name, &request.params, &request.id).await,
                 "essentials" => self.handle_essentials_method(&method_name, &request.params, &request.id).await,
                 _ => {
-                    // Default: forward to bitcoind with last underscore-separated part as method
-                    let actual_method = method_parts.last().unwrap_or(&"");
-                    self.bitcoin.call(actual_method, request.params.clone(), request.id.clone()).await
+                    // A bare bitcoind method name (`getblockcount`, no
+                    // namespace) arrives here because `split('_')` makes the
+                    // whole name the namespace. That keeps working - but only
+                    // for allow-listed names, matched WHOLE.
+                    //
+                    // This used to forward `method_parts.last()`, so any
+                    // unrecognised method ending in a privileged word reached
+                    // that word: `anything_bar_stop` called `stop`.
+                    if self.bitcoind_method_is_allowed(&request.method) {
+                        self.bitcoin
+                            .call(&request.method, request.params.clone(), request.id.clone())
+                            .await
+                    } else {
+                        Ok(JsonRpcResponse::error(
+                            METHOD_NOT_FOUND,
+                            format!("method not found: {}", request.method),
+                            request.id.clone(),
+                        ))
+                    }
                 }
             }
         })
@@ -94,6 +359,16 @@ where
         params: &[Value],
         request_id: &Value,
     ) -> Result<JsonRpcResponse> {
+        if !self.bitcoind_method_is_allowed(method) {
+            // Same code as an unknown method, deliberately: a caller probing
+            // for `btc_dumpprivkey` learns only that the gateway does not
+            // serve it, not whether bitcoind has it or a wallet is loaded.
+            return Ok(JsonRpcResponse::error(
+                METHOD_NOT_FOUND,
+                format!("method not found: btc_{}", method),
+                request_id.clone(),
+            ));
+        }
         self.bitcoin.call(method, params.to_vec(), request_id.clone()).await
     }
 
@@ -119,13 +394,18 @@ where
         let mut path = String::from("/");
         let mut param_index = 0;
 
+        // Params are interpolated as PATH SEGMENTS, so each one is
+        // percent-encoded (see `encode_path_segment`) — otherwise a param like
+        // "../../whatever" turns a caller-chosen esplora method into an
+        // arbitrary GET against the in-cluster electrs. The literal method
+        // parts are not encoded: they are the crate's own route template.
         for (i, part) in path_parts.iter().enumerate() {
             if part.is_empty() {
                 if param_index < params.len() {
                     if let Some(param_str) = params[param_index].as_str() {
-                        path.push_str(param_str);
+                        path.push_str(&encode_path_segment(param_str));
                     } else {
-                        path.push_str(&params[param_index].to_string());
+                        path.push_str(&encode_path_segment(&params[param_index].to_string()));
                     }
                     param_index += 1;
                 }
@@ -141,9 +421,9 @@ where
         while param_index < params.len() {
             path.push('/');
             if let Some(param_str) = params[param_index].as_str() {
-                path.push_str(param_str);
+                path.push_str(&encode_path_segment(param_str));
             } else {
-                path.push_str(&params[param_index].to_string());
+                path.push_str(&encode_path_segment(&params[param_index].to_string()));
             }
             param_index += 1;
         }
@@ -602,7 +882,7 @@ where
             anyhow::anyhow!("address must be a string")
         })?;
 
-        let path = format!("/address/{}/utxo", address);
+        let path = format!("/address/{}/utxo", encode_path_segment(address));
         let utxos = self.esplora.fetch(&path).await?;
 
         let empty_vec = vec![];
@@ -631,11 +911,12 @@ where
         method: &str,
         params: &[Value],
         request_id: &Value,
+        budget: &CallBudget,
     ) -> Result<JsonRpcResponse> {
         match method {
-            "multicall" => self.handle_multicall(params, request_id).await,
+            "multicall" => self.handle_multicall(params, request_id, budget).await,
             "balances" => self.handle_balances(params, request_id).await,
-            "evalscript" | "evalsaved" => self.handle_lua_method(method, params, request_id).await,
+            "evalscript" | "evalsaved" => self.handle_lua_method(method, params, request_id, budget).await,
             _ => Ok(JsonRpcResponse::error(
                 METHOD_NOT_FOUND,
                 format!("sandshrew method not supported in core: {}", method),
@@ -804,11 +1085,19 @@ where
         method: &str,
         params: &[Value],
         request_id: &Value,
+        budget: &CallBudget,
     ) -> Result<JsonRpcResponse> {
         // params[0] = script hash (evalsaved) or script content (evalscript)
         // params[1..] = script arguments
+        //
+        // `JsonRpcRequest.params` is `#[serde(default)]` and its custom
+        // deserializer maps `null` to an empty Vec, so `"params":[]`,
+        // `"params":null` and a MISSING `params` member all arrive here as a
+        // zero-length slice. `&params[1..]` panics on that ("range start index
+        // 1 out of range for slice of length 0") — an unauthenticated remote
+        // panic. `get(1..)` yields None instead of trapping.
         let identifier = params.get(0).and_then(|v| v.as_str()).unwrap_or("");
-        let args = &params[1..];
+        let args = params.get(1..).unwrap_or(&[]);
 
         // Determine which script is being called
         let script_type = match method {
@@ -820,13 +1109,22 @@ where
         match script_type.as_deref() {
             Some("balances") => self.lua_shim_balances(args, request_id).await,
             Some("spendable_utxos") => self.lua_shim_spendable_utxos(args, request_id).await,
-            Some("multicall") => self.lua_shim_multicall(args, request_id).await,
+            Some("multicall") => self.lua_shim_multicall(args, request_id, budget).await,
             Some("batch_utxo_balances") => self.lua_shim_batch_utxo_balances(args, request_id).await,
             _ => {
-                // Unknown script — return error so the SDK can fall back
+                // Unknown script — return error so the SDK can fall back.
+                //
+                // The identifier is caller-controlled and arbitrary UTF-8.
+                // `&identifier[..16]` slices by BYTE, so a multi-byte
+                // character straddling byte 16 panics ("byte index 16 is not a
+                // char boundary"). This is the ERROR path — it runs for every
+                // unrecognised script, i.e. the common case — so byte-slicing
+                // here was a remotely reachable panic on unauthenticated
+                // input. Truncate by CHARACTER instead.
+                let short: String = identifier.chars().take(16).collect();
                 Ok(JsonRpcResponse::error(
                     INTERNAL_ERROR,
-                    format!("Lua script not available (hash: {})", &identifier[..identifier.len().min(16)]),
+                    format!("Lua script not available (hash: {})", short),
                     request_id.clone(),
                 ))
             }
@@ -1117,10 +1415,14 @@ where
         &self,
         args: &[Value],
         request_id: &Value,
+        budget: &CallBudget,
     ) -> Result<JsonRpcResponse> {
-        // The multicall script expects args as a single array param
+        // The multicall script expects args as a single array param.
+        // The Lua envelope is the SAME logical multicall level as the
+        // sandshrew_multicall it shims, so the budget passes through
+        // unchanged — handle_multicall is what charges the frame.
         let calls = args.get(0).cloned().unwrap_or(Value::Array(vec![]));
-        let inner = self.handle_multicall(&[calls], request_id).await?;
+        let inner = self.handle_multicall(&[calls], request_id, budget).await?;
 
         match inner {
             JsonRpcResponse::Success { result, id, .. } => {
@@ -1138,7 +1440,22 @@ where
         &self,
         params: &[Value],
         request_id: &Value,
+        budget: &CallBudget,
     ) -> Result<JsonRpcResponse> {
+        // Recursion guard. A multicall entry may itself be a
+        // sandshrew_multicall; refuse once too many frames are stacked rather
+        // than let the fan-out compound. See MAX_MULTICALL_DEPTH.
+        if budget.depth >= MAX_MULTICALL_DEPTH {
+            return Ok(JsonRpcResponse::error(
+                INVALID_PARAMS,
+                format!(
+                    "multicall nesting too deep (limit {})",
+                    MAX_MULTICALL_DEPTH
+                ),
+                request_id.clone(),
+            ));
+        }
+
         if params.is_empty() {
             return Ok(JsonRpcResponse::error(
                 INVALID_PARAMS,
@@ -1149,7 +1466,9 @@ where
 
         let mut requests = Vec::new();
 
-        for call in params {
+        // Entries past the remaining allowance are never parsed or cloned.
+        let parse_limit = params.len().min(budget.remaining() as usize);
+        for call in &params[..parse_limit] {
             let call_tuple = match call.as_array() {
                 Some(arr) if arr.len() == 2 => arr,
                 _ => {
@@ -1191,14 +1510,28 @@ where
             });
         }
 
-        // Execute all requests in parallel
-        let futures: Vec<_> = requests.iter()
-            .map(|req| self.dispatch(req))
-            .collect();
+        // Charge the shared per-request allowance BEFORE fanning out. Entries
+        // past the budget are answered with an error instead of being dropped,
+        // so the results array stays 1:1 with the request.
+        // See MAX_MULTICALL_SUBCALLS.
+        let granted = budget.take(requests.len());
+        let refused = params.len() - granted;
 
-        let results = futures::future::join_all(futures).await;
+        // Execute with bounded concurrency, one level deeper. `buffered`
+        // preserves request order. Only the outermost frame runs entries
+        // concurrently; nested frames run sequentially, so the total in-flight
+        // backend calls for one request tree stay <= MULTICALL_CONCURRENCY.
+        use futures::stream::StreamExt;
+        let child = budget.child();
+        let concurrency = if budget.depth == 0 { MULTICALL_CONCURRENCY } else { 1 };
+        let results: Vec<Result<JsonRpcResponse>> = futures::stream::iter(
+            requests[..granted].iter().map(|req| self.dispatch_with_budget(req, child.clone())),
+        )
+        .buffered(concurrency)
+        .collect()
+        .await;
 
-        let formatted: Vec<Value> = results.into_iter().map(|r| {
+        let mut formatted: Vec<Value> = results.into_iter().map(|r| {
             match r {
                 Ok(JsonRpcResponse::Success { result, .. }) => {
                     json!({ "result": result })
@@ -1216,6 +1549,18 @@ where
                 }
             }
         }).collect();
+
+        for _ in 0..refused {
+            formatted.push(json!({
+                "error": {
+                    "code": INVALID_PARAMS,
+                    "message": format!(
+                        "multicall sub-call budget exhausted (limit {} per request)",
+                        MAX_MULTICALL_SUBCALLS
+                    )
+                }
+            }));
+        }
 
         Ok(JsonRpcResponse::success(
             serde_json::to_value(formatted)?,
