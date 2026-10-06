@@ -1,8 +1,8 @@
-use std::cell::Cell;
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
-use std::rc::Rc;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -46,37 +46,135 @@ const MAX_MULTICALL_DEPTH: u32 = 2;
 /// an error entry, so the results array stays 1:1 with the request.
 const MAX_MULTICALL_SUBCALLS: u32 = 1024;
 
+// ---------------------------------------------------------------------------
+// Backend passthrough allow-lists (Halborn: "Unauthenticated Gateway Forwards
+// Privileged Bitcoin RPC Methods")
+//
+// `btc_*` forwarded ANY method name straight to bitcoind with the gateway's
+// credentials, and the unknown-namespace arm of `dispatch_with_budget`
+// forwarded the LAST underscore-separated word of any unrecognised method as
+// well - so `btc_dumpprivkey` reached the wallet and `anything_bar_stop`
+// reached `stop`. The endpoint is unauthenticated, so that was a node-control
+// and key-extraction surface rather than a read API. The same request shape
+// also reaches the dispatcher from Lua `_RPC` calls and from multicall
+// entries, so the check lives HERE, on the only road to the backend.
+//
+// Deny by default: a name that is not listed is refused rather than forwarded,
+// so a new bitcoind method cannot silently widen the surface. Operators that
+// need extra methods (e.g. `generatetoaddress` on a regtest gateway) opt in
+// explicitly via `RpcDispatcher::with_extra_bitcoind_methods`.
+// ---------------------------------------------------------------------------
+
+/// Bitcoin Core methods the gateway may forward.
+///
+/// The documented public surface (`crates/alkanes-jsonrpc/RPC_METHODS.md`)
+/// minus `gettxoutsetinfo` (walks the whole UTXO set; exhaustion class),
+/// `getpeerinfo` and `getnettotals` (node topology, not chain data).
+/// Nothing wallet, mining-control, network-control or process-control is
+/// reachable: no `stop`, `setban`, `addnode`, `generatetoaddress`,
+/// `invalidateblock`, `submitblock`, `importprivkey`, `dumpprivkey`,
+/// `dumpwallet`, `walletpassphrase`, `signrawtransactionwithwallet`,
+/// `sendtoaddress`, `loadwallet`, ...
+pub const BITCOIND_ALLOWED_METHODS: &[&str] = &[
+    // Blockchain
+    "getbestblockhash",
+    "getblock",
+    "getblockchaininfo",
+    "getblockcount",
+    "getblockhash",
+    "getblockheader",
+    "getblockstats",
+    "getchaintips",
+    "getchaintxstats",
+    "getdifficulty",
+    "getmempoolancestors",
+    "getmempooldescendants",
+    "getmempoolentry",
+    "getmempoolinfo",
+    "getrawmempool",
+    "gettxout",
+    "gettxoutproof",
+    "verifytxoutproof",
+    // Mining (read-only)
+    "getmininginfo",
+    "getnetworkhashps",
+    // Network (read-only, non-topological)
+    "getnetworkinfo",
+    "ping",
+    // Raw transactions / utilities (pure decoders + the broadcast path)
+    "decoderawtransaction",
+    "decodescript",
+    "getrawtransaction",
+    "sendrawtransaction",
+    "testmempoolaccept",
+    "estimatesmartfee",
+    "validateaddress",
+];
+
+/// metashrew (rockshrew-mono) JSON-RPC methods the gateway may forward.
+///
+/// `metashrew_*` used to be forwarded verbatim. rockshrew-mono also serves
+/// operational methods (`metashrew_snapshot`, ...) that are not part of the
+/// public read API; only the read methods below are passed through.
+pub const METASHREW_ALLOWED_METHODS: &[&str] = &[
+    "metashrew_view",
+    "metashrew_preview",
+    "metashrew_height",
+    "metashrew_getblockhash",
+    "metashrew_stateroot",
+];
+
 /// Per-top-level-request recursion/fan-out allowance for multicall.
 ///
 /// Minted fresh by every public `dispatch()` call, so concurrently dispatched
 /// requests (e.g. the entries of a JSON-RPC batch, which the edge polls
 /// together) can never share or steal each other's allowance — the failure
 /// mode a dispatcher-owned counter would have.
-#[derive(Clone)]
-struct CallBudget {
+///
+/// Public so a caller that issues MANY dispatches on behalf of ONE client
+/// request (the alkanes-jsonrpc Lua executor: every `_RPC.*` call a script
+/// makes) can share one allowance across them via
+/// [`RpcDispatcher::dispatch_with_budget`] instead of getting a fresh one per
+/// call. Cloning shares the allowance.
+#[derive(Clone, Debug)]
+pub struct CallBudget {
     /// `sandshrew_multicall` frames already entered on this path.
     depth: u32,
     /// Sub-calls still available to the whole request tree.
-    remaining: Rc<Cell<u32>>,
+    remaining: Arc<AtomicU32>,
 }
 
 impl CallBudget {
-    fn root() -> Self {
-        Self { depth: 0, remaining: Rc::new(Cell::new(MAX_MULTICALL_SUBCALLS)) }
+    /// A root budget with the default allowance (`MAX_MULTICALL_SUBCALLS`).
+    pub fn root() -> Self {
+        Self::with_limit(MAX_MULTICALL_SUBCALLS)
+    }
+
+    /// A root budget with a caller-chosen allowance.
+    pub fn with_limit(max_subcalls: u32) -> Self {
+        Self { depth: 0, remaining: Arc::new(AtomicU32::new(max_subcalls)) }
+    }
+
+    /// Sub-calls still available.
+    pub fn remaining(&self) -> u32 {
+        self.remaining.load(Ordering::Relaxed)
     }
 
     /// Budget for the sub-requests of a multicall frame: one level deeper,
     /// sharing the same remaining allowance.
     fn child(&self) -> Self {
-        Self { depth: self.depth + 1, remaining: Rc::clone(&self.remaining) }
+        Self { depth: self.depth + 1, remaining: Arc::clone(&self.remaining) }
     }
 
     /// Reserve up to `n` sub-calls, returning how many were actually granted.
-    fn take(&self, n: usize) -> usize {
-        let available = self.remaining.get() as usize;
-        let granted = n.min(available);
-        self.remaining.set((available - granted) as u32);
-        granted
+    pub fn take(&self, n: usize) -> usize {
+        let want = n.min(u32::MAX as usize) as u32;
+        let mut granted = 0;
+        let _ = self.remaining.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |avail| {
+            granted = want.min(avail);
+            Some(avail - granted)
+        });
+        granted as usize
     }
 }
 
@@ -111,6 +209,9 @@ pub struct RpcDispatcher<B, M, E, O> {
     pub metashrew: M,
     pub esplora: E,
     pub ord: O,
+    /// Operator opt-in additions to `BITCOIND_ALLOWED_METHODS`
+    /// (see `with_extra_bitcoind_methods`). Empty by default.
+    extra_bitcoind_methods: Vec<String>,
 }
 
 impl<B, M, E, O> RpcDispatcher<B, M, E, O>
@@ -121,7 +222,31 @@ where
     O: OrdBackend,
 {
     pub fn new(bitcoin: B, metashrew: M, esplora: E, ord: O) -> Self {
-        Self { bitcoin, metashrew, esplora, ord }
+        Self { bitcoin, metashrew, esplora, ord, extra_bitcoind_methods: Vec::new() }
+    }
+
+    /// Allow additional bitcoind methods on top of `BITCOIND_ALLOWED_METHODS`.
+    ///
+    /// For operator-controlled deployments only (e.g. a regtest gateway that
+    /// must serve `generatetoaddress`). Never enable wallet or node-control
+    /// methods on a publicly reachable gateway.
+    pub fn with_extra_bitcoind_methods<I, S>(mut self, methods: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.extra_bitcoind_methods = methods
+            .into_iter()
+            .map(Into::into)
+            .filter(|m: &String| !m.is_empty())
+            .collect();
+        self
+    }
+
+    /// Whether `method` (a bare bitcoind method name) may be forwarded.
+    pub fn bitcoind_method_is_allowed(&self, method: &str) -> bool {
+        BITCOIND_ALLOWED_METHODS.contains(&method)
+            || self.extra_bitcoind_methods.iter().any(|m| m == method)
     }
 
     /// Dispatch a JSON-RPC request to the appropriate backend.
@@ -138,9 +263,10 @@ where
 
     /// `dispatch` carrying the multicall recursion/fan-out budget. Internal
     /// recursion that can reach `handle_multicall` goes through here so the
-    /// budget is threaded rather than reset; the public `dispatch` signature is
-    /// unchanged for consumers.
-    fn dispatch_with_budget<'a>(
+    /// budget is threaded rather than reset. Public so a caller issuing many
+    /// dispatches for ONE client request (the Lua executor) can share one
+    /// allowance across them.
+    pub fn dispatch_with_budget<'a>(
         &'a self,
         request: &'a JsonRpcRequest,
         budget: CallBudget,
@@ -172,7 +298,17 @@ where
                 "ord" => self.handle_ord_method(&method_name, &request.params, &request.id).await,
                 "esplora" => self.handle_esplora_method(&method_name, &request.params, &request.id).await,
                 "alkanes" => self.handle_alkanes_method(&method_name, &request.params, &request.id).await,
-                "metashrew" => self.metashrew.forward(request).await,
+                "metashrew" => {
+                    if METASHREW_ALLOWED_METHODS.contains(&request.method.as_str()) {
+                        self.metashrew.forward(request).await
+                    } else {
+                        Ok(JsonRpcResponse::error(
+                            METHOD_NOT_FOUND,
+                            format!("method not found: {}", request.method),
+                            request.id.clone(),
+                        ))
+                    }
+                }
                 "sandshrew" => self.handle_sandshrew_method(&method_name, &request.params, &request.id, &budget).await,
                 "lua" => self.handle_lua_method(&method_name, &request.params, &request.id, &budget).await,
                 "btc" => self.handle_bitcoind_method(&method_name, &request.params, &request.id).await,
@@ -181,9 +317,25 @@ where
                 "essentials.get" => self.handle_essentials_method(&method_name, &request.params, &request.id).await,
                 "essentials" => self.handle_essentials_method(&method_name, &request.params, &request.id).await,
                 _ => {
-                    // Default: forward to bitcoind with last underscore-separated part as method
-                    let actual_method = method_parts.last().unwrap_or(&"");
-                    self.bitcoin.call(actual_method, request.params.clone(), request.id.clone()).await
+                    // A bare bitcoind method name (`getblockcount`, no
+                    // namespace) arrives here because `split('_')` makes the
+                    // whole name the namespace. That keeps working - but only
+                    // for allow-listed names, matched WHOLE.
+                    //
+                    // This used to forward `method_parts.last()`, so any
+                    // unrecognised method ending in a privileged word reached
+                    // that word: `anything_bar_stop` called `stop`.
+                    if self.bitcoind_method_is_allowed(&request.method) {
+                        self.bitcoin
+                            .call(&request.method, request.params.clone(), request.id.clone())
+                            .await
+                    } else {
+                        Ok(JsonRpcResponse::error(
+                            METHOD_NOT_FOUND,
+                            format!("method not found: {}", request.method),
+                            request.id.clone(),
+                        ))
+                    }
                 }
             }
         })
@@ -199,6 +351,16 @@ where
         params: &[Value],
         request_id: &Value,
     ) -> Result<JsonRpcResponse> {
+        if !self.bitcoind_method_is_allowed(method) {
+            // Same code as an unknown method, deliberately: a caller probing
+            // for `btc_dumpprivkey` learns only that the gateway does not
+            // serve it, not whether bitcoind has it or a wallet is loaded.
+            return Ok(JsonRpcResponse::error(
+                METHOD_NOT_FOUND,
+                format!("method not found: btc_{}", method),
+                request_id.clone(),
+            ));
+        }
         self.bitcoin.call(method, params.to_vec(), request_id.clone()).await
     }
 
@@ -712,7 +874,7 @@ where
             anyhow::anyhow!("address must be a string")
         })?;
 
-        let path = format!("/address/{}/utxo", address);
+        let path = format!("/address/{}/utxo", encode_path_segment(address));
         let utxos = self.esplora.fetch(&path).await?;
 
         let empty_vec = vec![];

@@ -18,6 +18,13 @@ pub struct Config {
     pub subfrost_url: String,
 
     pub lua_script_path: Option<String>,
+
+    /// Extra bitcoind methods to forward on top of the read-only allow-list
+    /// in `alkanes_rpc_core::dispatch::BITCOIND_ALLOWED_METHODS`
+    /// (`BITCOIND_EXTRA_ALLOWED_METHODS`, comma-separated). Empty by default.
+    /// Intended for operator-controlled regtest gateways (`generatetoaddress`);
+    /// never enable wallet/node-control methods on a public gateway.
+    pub bitcoind_extra_allowed_methods: Vec<String>,
 }
 
 impl Config {
@@ -50,6 +57,15 @@ impl Config {
                 .unwrap_or_else(|_| "http://localhost:8545".to_string()),
 
             lua_script_path: env::var("LUA_SCRIPT_PATH").ok(),
+
+            bitcoind_extra_allowed_methods: env::var("BITCOIND_EXTRA_ALLOWED_METHODS")
+                .map(|v| {
+                    v.split(',')
+                        .map(|m| m.trim().to_string())
+                        .filter(|m| !m.is_empty())
+                        .collect()
+                })
+                .unwrap_or_default(),
         }
     }
 

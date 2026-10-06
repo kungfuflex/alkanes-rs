@@ -24,22 +24,27 @@ use serde_json::{json, Value};
 #[derive(Default)]
 struct MockBitcoin {
     calls: RefCell<usize>,
+    methods: RefCell<Vec<String>>,
 }
 
 #[async_trait(?Send)]
 impl BitcoinBackend for MockBitcoin {
-    async fn call(&self, _method: &str, _params: Vec<Value>, id: Value) -> Result<JsonRpcResponse> {
+    async fn call(&self, method: &str, _params: Vec<Value>, id: Value) -> Result<JsonRpcResponse> {
         *self.calls.borrow_mut() += 1;
+        self.methods.borrow_mut().push(method.to_string());
         Ok(JsonRpcResponse::success(json!(1), id))
     }
 }
 
 #[derive(Default)]
-struct MockMetashrew;
+struct MockMetashrew {
+    methods: RefCell<Vec<String>>,
+}
 
 #[async_trait(?Send)]
 impl MetashrewBackend for MockMetashrew {
     async fn forward(&self, request: &JsonRpcRequest) -> Result<JsonRpcResponse> {
+        self.methods.borrow_mut().push(request.method.clone());
         Ok(JsonRpcResponse::success(json!(null), request.id.clone()))
     }
 }
@@ -62,7 +67,7 @@ type Dispatcher = RpcDispatcher<MockBitcoin, MockMetashrew, MockEsplora, NoOrd>;
 fn dispatcher() -> Dispatcher {
     RpcDispatcher::new(
         MockBitcoin::default(),
-        MockMetashrew,
+        MockMetashrew::default(),
         MockEsplora::default(),
         NoOrd,
     )
@@ -305,4 +310,99 @@ fn esplora_normal_params_are_unchanged() {
     let addr = "bc1pk6nvyxrxmryqsuahhhpal5hkjy4kx6cjmzchqu9xrfhhqfr8dv2skgpwvj";
     let _ = block_on(d.dispatch(&req("esplora_address::utxo", vec![json!(addr)]))).expect("dispatch");
     assert_eq!(d.esplora.paths.borrow()[0], format!("/address/{addr}/utxo"));
+}
+
+// ---------------------------------------------------------------------------
+// Halborn: "Unauthenticated Gateway Forwards Privileged Bitcoin RPC Methods"
+//
+// Every road to bitcoind (btc_* prefix, bare names, the old "last word of an
+// unknown namespace" fallback, and multicall entries) goes through one
+// deny-by-default allow-list.
+// ---------------------------------------------------------------------------
+
+const PRIVILEGED: &[&str] = &[
+    "stop",
+    "dumpprivkey",
+    "dumpwallet",
+    "importprivkey",
+    "sendtoaddress",
+    "walletpassphrase",
+    "signrawtransactionwithwallet",
+    "generatetoaddress",
+    "invalidateblock",
+    "setban",
+    "addnode",
+    "loadwallet",
+    "getpeerinfo",
+    "gettxoutsetinfo",
+];
+
+fn assert_method_not_found(resp: &JsonRpcResponse) {
+    match resp {
+        JsonRpcResponse::Error { error, .. } => {
+            assert_eq!(error.code, alkanes_rpc_core::types::METHOD_NOT_FOUND, "{:?}", error)
+        }
+        other => panic!("expected METHOD_NOT_FOUND, got {:?}", serde_json::to_string(other)),
+    }
+}
+
+#[test]
+fn forbidden_bitcoind_methods_rejected_on_every_path() {
+    let d = dispatcher();
+    for m in PRIVILEGED {
+        // btc_ prefix
+        assert_method_not_found(&block_on(d.dispatch(&req(&format!("btc_{m}"), vec![]))).unwrap());
+        // bare name
+        assert_method_not_found(&block_on(d.dispatch(&req(m, vec![]))).unwrap());
+        // old fallback: unknown namespace, privileged LAST word
+        assert_method_not_found(&block_on(d.dispatch(&req(&format!("anything_bar_{m}"), vec![]))).unwrap());
+        // multicall entry
+        let resp = block_on(d.dispatch(&req(
+            "sandshrew_multicall",
+            vec![json!([format!("btc_{m}"), []]), json!([m, []])],
+        )))
+        .unwrap();
+        for entry in results(&resp) {
+            assert_eq!(
+                entry.pointer("/error/code").and_then(|c| c.as_i64()),
+                Some(alkanes_rpc_core::types::METHOD_NOT_FOUND as i64),
+                "{m}: {entry}"
+            );
+        }
+    }
+    assert!(
+        d.bitcoin.methods.borrow().is_empty(),
+        "privileged methods reached bitcoind: {:?}",
+        d.bitcoin.methods.borrow()
+    );
+}
+
+#[test]
+fn allowed_bitcoind_methods_still_forwarded() {
+    let d = dispatcher();
+    block_on(d.dispatch(&req("btc_getblockcount", vec![]))).unwrap();
+    block_on(d.dispatch(&req("getblockcount", vec![]))).unwrap();
+    block_on(d.dispatch(&req("btc_sendrawtransaction", vec![json!("00")]))).unwrap();
+    assert_eq!(
+        *d.bitcoin.methods.borrow(),
+        vec!["getblockcount", "getblockcount", "sendrawtransaction"]
+    );
+}
+
+#[test]
+fn operator_extra_bitcoind_methods_opt_in() {
+    let d = dispatcher().with_extra_bitcoind_methods(["generatetoaddress"]);
+    block_on(d.dispatch(&req("btc_generatetoaddress", vec![json!(1), json!("bcrt1q")]))).unwrap();
+    assert_method_not_found(&block_on(d.dispatch(&req("btc_stop", vec![]))).unwrap());
+    assert_eq!(*d.bitcoin.methods.borrow(), vec!["generatetoaddress"]);
+}
+
+#[test]
+fn metashrew_passthrough_is_allow_listed() {
+    let d = dispatcher();
+    block_on(d.dispatch(&req("metashrew_height", vec![]))).unwrap();
+    block_on(d.dispatch(&req("metashrew_view", vec![json!("x"), json!("0x"), json!("latest")]))).unwrap();
+    assert_method_not_found(&block_on(d.dispatch(&req("metashrew_snapshot", vec![]))).unwrap());
+    assert_method_not_found(&block_on(d.dispatch(&req("metashrew_anything", vec![]))).unwrap());
+    assert_eq!(*d.metashrew.methods.borrow(), vec!["metashrew_height", "metashrew_view"]);
 }
