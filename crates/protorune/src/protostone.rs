@@ -82,15 +82,52 @@ impl MessageProcessor for Protostone {
     ) -> Result<bool> {
         // Validate output indexes and protomessage_vout
         let num_outputs = transaction.output.len();
+        let post_audit = crate::post_audit_fork_active(height);
+
+        // Halborn: "Pre-Message Validation Errors Roll Back Whole Protocol
+        // Transactions and Strand Spent-Input Assets".
+        //
+        // A malformed protostone header (absent or out-of-range pointer /
+        // refund_pointer) used to return `Err` from the checks below. `Err` is
+        // NOT "this message failed" -- it propagates out of `index_protostones`
+        // and voids the WHOLE transaction's protorune processing, including
+        // protostones that already succeeded, leaving the spent inputs' assets
+        // stranded with no refund.
+        //
+        // At/after POST_AUDIT_FORK_HEIGHT these become an ordinary failed
+        // message: `Ok(false)` plus an explicit refund, exactly like a reverting
+        // call. (`Ok(false)` alone does NOT refund.) Below the fork the legacy
+        // `Err` stands so historical indexing replays byte-identically.
+        let bound = (num_outputs + num_protostones) as u32;
+        let header_is_malformed = match (self.pointer, self.refund) {
+            (Some(p), Some(r)) => p > bound || r > bound,
+            _ => true,
+        };
+        if header_is_malformed && post_audit {
+            // Honour the declared refund_pointer only when it names a REAL,
+            // non-OP_RETURN output; a shadow vout addresses another protostone, which may
+            // itself fail and re-strand. Otherwise fall back to
+            // `default_output` (first non-OP_RETURN). If every output is
+            // OP_RETURN there is nowhere spendable and the refund burns, which
+            // matches existing semantics for unallocated balances.
+            let safe_refund = self
+                .refund
+                .filter(|r| {
+                    (*r as usize) < num_outputs
+                        && !transaction.output[*r as usize].script_pubkey.is_op_return()
+                })
+                .unwrap_or_else(|| crate::default_output(transaction));
+            refund_to_refund_pointer(balances_by_output, protomessage_vout, safe_refund)?;
+            return Ok(false);
+        }
+
         let pointer = self.pointer.ok_or_else(|| anyhow!("Missing pointer"))?;
         let refund_pointer = self
             .refund
             .ok_or_else(|| anyhow!("Missing refund pointer"))?;
 
         // Ensure pointers are valid transaction outputs
-        if pointer > (num_outputs + num_protostones) as u32
-            || refund_pointer > (num_outputs + num_protostones) as u32
-        {
+        if pointer > bound || refund_pointer > bound {
             return Err(anyhow::anyhow!("Invalid output pointer"));
         }
 
@@ -118,11 +155,17 @@ impl MessageProcessor for Protostone {
             }
         }
 
-        // Validate protomessage vout to prevent overflow attacks
-        // Add a reasonable maximum based on transaction size
-        let max_virtual_vout = num_outputs + 100; // Adjust limit as needed
-        if protomessage_vout >= max_virtual_vout as u32 {
-            return Err(anyhow::anyhow!("Protomessage vout exceeds maximum allowed"));
+        // Legacy protostone-count cap (`num_outputs + 100`), retired at
+        // POST_AUDIT_FORK_HEIGHT. It guards nothing (`protomessage_vout` is a
+        // BTreeMap key, VM work is bounded by fuel) and it returns `Err`, which
+        // voids the whole transaction and strands its inputs (mainnet block
+        // 954425: 364 FIRE bonds). Kept below the fork for byte-identical
+        // replay.
+        if !post_audit {
+            let max_virtual_vout = num_outputs + 100;
+            if protomessage_vout >= max_virtual_vout as u32 {
+                return Err(anyhow::anyhow!("Protomessage vout exceeds maximum allowed"));
+            }
         }
         let initial_sheet = balances_by_output
             .get(&protomessage_vout)
