@@ -1,5 +1,5 @@
 use crate::tables::RuneTable;
-use crate::{balance_sheet::load_sheet, tables};
+use crate::{balance_sheet::load_sheet_page, tables};
 use anyhow::{anyhow, Result};
 use bitcoin;
 use protorune_support::balance_sheet::{BalanceSheetOperations, ProtoruneRuneId};
@@ -37,17 +37,18 @@ pub fn core_outpoint_to_proto(outpoint: &OutPoint) -> Outpoint {
     }
 }
 
-pub fn protorune_outpoint_to_outpoint_response(
+/// Build an `OutpointResponse` from one page of the balance sheet at
+/// `sheet_ptr`. Reads at most `MAX_VIEW_SHEET_ENTRIES` entries; see
+/// `load_sheet_page` for the `offset`/`limit` semantics.
+fn sheet_to_outpoint_response<T: KeyValuePointer + Clone>(
     outpoint: &OutPoint,
-    protocol_id: u128,
+    sheet_ptr: &T,
+    offset: u32,
+    limit: u32,
 ) -> Result<OutpointResponse> {
-    //    println!("protocol_id: {}", protocol_id);
     let outpoint_bytes = outpoint_to_bytes(outpoint)?;
-    let balance_sheet = load_sheet(
-        &tables::RuneTable::for_protocol(protocol_id)
-            .OUTPOINT_TO_RUNES
-            .select(&outpoint_bytes),
-    );
+    let page = load_sheet_page(sheet_ptr, offset, limit);
+    let balance_sheet = page.sheet;
 
     let mut height: u128 = tables::RUNES
         .OUTPOINT_TO_HEIGHT
@@ -63,81 +64,8 @@ pub fn protorune_outpoint_to_outpoint_response(
         .ok_or("")
         .map_err(|_| anyhow!("txid not indexed in table"))? as u128;
 
-    if let Some((rune_id, _)) = balance_sheet.balances().iter().next() {
-        height = rune_id.block.into();
-        txindex = rune_id.tx.into();
-    }
-    let decoded_output: Output = Output::decode(
-        tables::OUTPOINT_TO_OUTPUT
-            .select(&outpoint_bytes)
-            .get()
-            .as_ref()
-            .as_slice(),
-    )?;
-    Ok(OutpointResponse {
-        balances: Some(balance_sheet.into()),
-        outpoint: Some(core_outpoint_to_proto(&outpoint)),
-        output: Some(decoded_output),
-        height: height as u32,
-        txindex: txindex as u32,
-    })
-}
-
-pub fn rune_outpoint_to_outpoint_response(outpoint: &OutPoint) -> Result<OutpointResponse> {
-    let outpoint_bytes = outpoint_to_bytes(outpoint)?;
-    let balance_sheet = load_sheet(&tables::RUNES.OUTPOINT_TO_RUNES.select(&outpoint_bytes));
-
-    let mut height: u128 = tables::RUNES
-        .OUTPOINT_TO_HEIGHT
-        .select(&outpoint_bytes)
-        .get_value::<u64>()
-        .into();
-    let mut txindex: u128 = tables::RUNES
-        .HEIGHT_TO_TRANSACTION_IDS
-        .select_value::<u64>(height as u64)
-        .get_list()
-        .into_iter()
-        .position(|v| v.as_ref().to_vec() == outpoint.txid.as_byte_array().to_vec())
-        .ok_or("")
-        .map_err(|_| anyhow!("txid not indexed in table"))? as u128;
-
-    if let Some((rune_id, _)) = balance_sheet.balances().iter().next() {
-        height = rune_id.block.into();
-        txindex = rune_id.tx.into();
-    }
-    let decoded_output: Output = Output::decode(
-        tables::OUTPOINT_TO_OUTPUT
-            .select(&outpoint_bytes)
-            .get()
-            .as_ref()
-            .as_slice(),
-    )?;
-    Ok(OutpointResponse {
-        balances: Some(balance_sheet.into()),
-        outpoint: Some(core_outpoint_to_proto(&outpoint)),
-        output: Some(decoded_output),
-        height: height as u32,
-        txindex: txindex as u32,
-    })
-}
-
-pub fn outpoint_to_outpoint_response(outpoint: &OutPoint) -> Result<OutpointResponse> {
-    let outpoint_bytes = outpoint_to_bytes(outpoint)?;
-    let balance_sheet = load_sheet(&tables::RUNES.OUTPOINT_TO_RUNES.select(&outpoint_bytes));
-    let mut height: u128 = tables::RUNES
-        .OUTPOINT_TO_HEIGHT
-        .select(&outpoint_bytes)
-        .get_value::<u64>()
-        .into();
-    let mut txindex: u128 = tables::RUNES
-        .HEIGHT_TO_TRANSACTION_IDS
-        .select_value::<u64>(height as u64)
-        .get_list()
-        .into_iter()
-        .position(|v| v.as_ref().to_vec() == outpoint.txid.as_byte_array().to_vec())
-        .ok_or("")
-        .map_err(|_| anyhow!("txid not indexed in table"))? as u128;
-
+    // Derived from the lowest rune id in the returned page, so on a sheet
+    // spanning several pages each page can report a different height/txindex.
     if let Some((rune_id, _)) = balance_sheet.balances().iter().next() {
         height = rune_id.block;
         txindex = rune_id.tx;
@@ -155,7 +83,49 @@ pub fn outpoint_to_outpoint_response(outpoint: &OutPoint) -> Result<OutpointResp
         output: Some(decoded_output),
         height: height as u32,
         txindex: txindex as u32,
+        total_entries: page.total_entries,
+        next_offset: page.next_offset,
     })
+}
+
+/// First page of the outpoint's protorune balance sheet (at most
+/// `MAX_VIEW_SHEET_ENTRIES` entries). Wallet views use this per outpoint.
+pub fn protorune_outpoint_to_outpoint_response(
+    outpoint: &OutPoint,
+    protocol_id: u128,
+) -> Result<OutpointResponse> {
+    protorune_outpoint_to_outpoint_response_paged(outpoint, protocol_id, 0, 0)
+}
+
+pub fn protorune_outpoint_to_outpoint_response_paged(
+    outpoint: &OutPoint,
+    protocol_id: u128,
+    offset: u32,
+    limit: u32,
+) -> Result<OutpointResponse> {
+    let outpoint_bytes = outpoint_to_bytes(outpoint)?;
+    sheet_to_outpoint_response(
+        outpoint,
+        &tables::RuneTable::for_protocol(protocol_id)
+            .OUTPOINT_TO_RUNES
+            .select(&outpoint_bytes),
+        offset,
+        limit,
+    )
+}
+
+pub fn rune_outpoint_to_outpoint_response(outpoint: &OutPoint) -> Result<OutpointResponse> {
+    let outpoint_bytes = outpoint_to_bytes(outpoint)?;
+    sheet_to_outpoint_response(
+        outpoint,
+        &tables::RUNES.OUTPOINT_TO_RUNES.select(&outpoint_bytes),
+        0,
+        0,
+    )
+}
+
+pub fn outpoint_to_outpoint_response(outpoint: &OutPoint) -> Result<OutpointResponse> {
+    rune_outpoint_to_outpoint_response(outpoint)
 }
 
 pub fn runes_by_address(input: &Vec<u8>) -> Result<WalletResponse> {
@@ -201,7 +171,7 @@ pub fn protorunes_by_outpoint(input: &Vec<u8>) -> Result<OutpointResponse> {
                 ),
                 vout: req.vout,
             };
-            protorune_outpoint_to_outpoint_response(&outpoint, protocol_tag)
+            protorune_outpoint_to_outpoint_response_paged(&outpoint, protocol_tag, req.offset, req.limit)
         }
         None => Err(anyhow!("malformed request")),
     }

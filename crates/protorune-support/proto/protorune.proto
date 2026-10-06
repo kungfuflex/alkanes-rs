@@ -38,6 +38,11 @@ message OutpointWithProtocol {
   bytes txid = 1;
   uint32 vout = 2;
   uint128 protocol = 3;
+  // Optional balance-sheet pagination. Both default to 0, which preserves the
+  // legacy request shape: offset 0 = first stored entry, limit 0 = the
+  // server's per-view cap. A limit above the cap is clamped to it.
+  uint32 offset = 4;
+  uint32 limit = 5;
 }
 message Output {
   bytes script = 1;
@@ -50,6 +55,12 @@ message OutpointResponse {
   Output output = 3;
   uint32 height = 4;
   uint32 txindex = 5;
+  // Number of entries stored in the outpoint's balance sheet, regardless of
+  // how many were returned in `balances`.
+  uint32 total_entries = 6;
+  // Offset to pass to fetch the next page, or 0 when `balances` reaches the
+  // end of the sheet. A next page never starts at 0, so 0 is unambiguous.
+  uint32 next_offset = 7;
 }
 
 message PaginationInput {

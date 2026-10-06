@@ -1,11 +1,11 @@
 #[cfg(test)]
 mod tests {
-    use crate::balance_sheet::load_sheet;
+    use crate::balance_sheet::{load_sheet, PersistentRecord, MAX_VIEW_SHEET_ENTRIES};
     use crate::message::MessageContext;
-    use protorune_support::balance_sheet::{BalanceSheet, ProtoruneRuneId};
+    use protorune_support::balance_sheet::{BalanceSheet, BalanceSheetOperations, ProtoruneRuneId};
     use protorune_support::proto::protorune::{
-        Outpoint as OutpointProto, OutpointResponse, Rune as RuneProto, RunesByHeightRequest,
-        WalletRequest,
+        Outpoint as OutpointProto, OutpointResponse, OutpointWithProtocol, Rune as RuneProto,
+        RunesByHeightRequest, WalletRequest,
     };
 
     use crate::test_helpers::{self as helpers, RunesTestingConfig, ADDRESS1, ADDRESS2};
@@ -24,7 +24,7 @@ mod tests {
         println,
         stdio::{stdout, Write},
     };
-    use metashrew_core::index_pointer::AtomicPointer;
+    use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
     use metashrew_support::index_pointer::KeyValuePointer;
     use ordinals::{Edict, RuneId};
 
@@ -197,5 +197,132 @@ mod tests {
         let balances = matched.balances.as_ref().unwrap();
         assert_eq!(balances.entries.len(), 1);
         assert_eq!(balances.entries[0].balance.clone().unwrap().lo, 200);
+    }
+
+    /// Etch a rune, then stuff `n` extra entries into protocol 100's balance
+    /// sheet for the etched outpoint so the stored `/runes` length exceeds the
+    /// per-view cap. Returns the outpoint.
+    fn setup_oversized_protorune_sheet(n: u128) -> OutPoint {
+        clear();
+        let (test_block, config) = helpers::create_block_with_rune_tx(None);
+        let _ =
+            Protorune::index_block::<MyMessageContext>(test_block.clone(), config.rune_etch_height);
+        let outpoint = OutPoint {
+            txid: test_block.txdata[0].compute_txid(),
+            vout: 0,
+        };
+        let ptr = tables::RuneTable::for_protocol(100)
+            .OUTPOINT_TO_RUNES
+            .select(&view::outpoint_to_bytes(&outpoint).unwrap());
+        let mut sheet: BalanceSheet<IndexPointer> = BalanceSheet::default();
+        for i in 0..n {
+            sheet.set(&ProtoruneRuneId::new(2, i + 1), i + 1);
+        }
+        sheet.save(&ptr, false);
+        outpoint
+    }
+
+    fn protorunes_by_outpoint_page(
+        outpoint: &OutPoint,
+        offset: u32,
+        limit: u32,
+    ) -> OutpointResponse {
+        let req = OutpointWithProtocol {
+            txid: outpoint.txid.as_byte_array().to_vec(),
+            vout: outpoint.vout,
+            protocol: Some(100u128.into()),
+            offset,
+            limit,
+        }
+        .encode_to_vec();
+        view::protorunes_by_outpoint(&req).unwrap()
+    }
+
+    /// A request without pagination fields gets at most MAX_VIEW_SHEET_ENTRIES
+    /// entries, plus the total and the offset of the next page.
+    #[wasm_bindgen_test]
+    fn test_protorunes_by_outpoint_caps_default_request() {
+        let outpoint = setup_oversized_protorune_sheet(2500);
+        let response = protorunes_by_outpoint_page(&outpoint, 0, 0);
+        assert_eq!(
+            response.balances.unwrap().entries.len(),
+            MAX_VIEW_SHEET_ENTRIES as usize
+        );
+        assert_eq!(response.total_entries, 2500);
+        assert_eq!(response.next_offset, MAX_VIEW_SHEET_ENTRIES);
+
+        // The legacy 3-field encoding is wire-identical to offset=0, limit=0.
+        let legacy = protorune_support::proto::protorune::OutpointWithProtocol {
+            txid: outpoint.txid.as_byte_array().to_vec(),
+            vout: outpoint.vout,
+            protocol: Some(100u128.into()),
+            ..Default::default()
+        }
+        .encode_to_vec();
+        let legacy_response = view::protorunes_by_outpoint(&legacy).unwrap();
+        assert_eq!(legacy_response.balances.unwrap().entries.len(), 1000);
+    }
+
+    /// Walking next_offset visits every stored entry exactly once, and an
+    /// oversized limit is clamped to the cap.
+    #[wasm_bindgen_test]
+    fn test_protorunes_by_outpoint_pagination_walks_whole_sheet() {
+        let outpoint = setup_oversized_protorune_sheet(2500);
+        let mut seen = std::collections::BTreeSet::new();
+        let mut offset = 0;
+        let mut pages = 0;
+        loop {
+            let response = protorunes_by_outpoint_page(&outpoint, offset, 100_000);
+            let entries = response.balances.unwrap().entries;
+            assert!(entries.len() <= MAX_VIEW_SHEET_ENTRIES as usize);
+            for entry in entries {
+                let id = entry.rune.unwrap().rune_id.unwrap();
+                assert!(seen.insert(id.txindex.unwrap().lo));
+            }
+            pages += 1;
+            if response.next_offset == 0 {
+                break;
+            }
+            offset = response.next_offset;
+        }
+        assert_eq!(pages, 3);
+        assert_eq!(seen.len(), 2500);
+    }
+
+    /// Small limits page exactly; an offset past the end returns no entries.
+    #[wasm_bindgen_test]
+    fn test_protorunes_by_outpoint_small_page_and_past_end() {
+        let outpoint = setup_oversized_protorune_sheet(25);
+        let response = protorunes_by_outpoint_page(&outpoint, 20, 10);
+        assert_eq!(response.balances.unwrap().entries.len(), 5);
+        assert_eq!(response.total_entries, 25);
+        assert_eq!(response.next_offset, 0);
+
+        let response = protorunes_by_outpoint_page(&outpoint, 10, 10);
+        assert_eq!(response.balances.unwrap().entries.len(), 10);
+        assert_eq!(response.next_offset, 20);
+
+        let response = protorunes_by_outpoint_page(&outpoint, 100, 10);
+        assert_eq!(response.balances.unwrap().entries.len(), 0);
+        assert_eq!(response.total_entries, 25);
+        assert_eq!(response.next_offset, 0);
+    }
+
+    /// A sheet under the cap comes back whole, exactly as before.
+    #[wasm_bindgen_test]
+    fn test_runes_by_outpoint_reports_total_entries() {
+        clear();
+        let (test_block, config) = helpers::create_block_with_rune_tx(None);
+        let _ =
+            Protorune::index_block::<MyMessageContext>(test_block.clone(), config.rune_etch_height);
+        let req = (OutpointProto {
+            txid: test_block.txdata[0].compute_txid().as_byte_array().to_vec(),
+            vout: 0,
+        })
+        .encode_to_vec();
+        let response = view::runes_by_outpoint(&req).unwrap();
+        assert_eq!(response.balances.unwrap().entries.len(), 1);
+        assert_eq!(response.total_entries, 1);
+        assert_eq!(response.next_offset, 0);
     }
 }
