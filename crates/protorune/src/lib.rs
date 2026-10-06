@@ -283,6 +283,32 @@ pub const POST_AUDIT_FORK_HEIGHT: u64 = 0;
 #[cfg(feature = "mainnet")]
 pub const POST_AUDIT_FORK_HEIGHT: u64 = 975_000;
 
+#[cfg(any(test, feature = "test-utils"))]
+thread_local! {
+    static POST_AUDIT_FORK_HEIGHT_OVERRIDE: std::cell::Cell<Option<u64>> =
+        std::cell::Cell::new(None);
+}
+
+/// Test-only: pretend the post-audit fork activates at `height` (None restores
+/// `POST_AUDIT_FORK_HEIGHT`). Lets tests exercise both sides of the gate on
+/// non-mainnet builds, where the constant is 0. Only affects callers that go
+/// through [`post_audit_fork_active`].
+#[cfg(any(test, feature = "test-utils"))]
+pub fn set_post_audit_fork_height_override(height: Option<u64>) {
+    POST_AUDIT_FORK_HEIGHT_OVERRIDE.with(|c| c.set(height));
+}
+
+/// True at/after the post-audit consensus fork (see `POST_AUDIT_FORK_HEIGHT`).
+pub fn post_audit_fork_active(height: u64) -> bool {
+    #[cfg(any(test, feature = "test-utils"))]
+    {
+        if let Some(h) = POST_AUDIT_FORK_HEIGHT_OVERRIDE.with(|c| c.get()) {
+            return height >= h;
+        }
+    }
+    height >= POST_AUDIT_FORK_HEIGHT
+}
+
 /// From this height on, a named-rune commitment only counts if the spent output
 /// is P2TR (matching ord's rune_updater). Below it, the original predicate is
 /// kept verbatim so historical etchings replay identically.
