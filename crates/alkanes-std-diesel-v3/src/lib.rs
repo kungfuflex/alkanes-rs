@@ -292,9 +292,9 @@ impl GenesisAlkane {
         }
     }
 
-    pub fn observe_upgraded_mint(&self, diesel_fee: u128) -> Result<()> {
-        let height = self.height().to_le_bytes().to_vec();
-        let mut pointer = self.upgraded_seen_pointer(&height);
+    pub fn observe_upgraded_mint(&self, diesel_fee: u128, distributable: u128) -> Result<()> {
+        let height = self.height();
+        let mut pointer = self.upgraded_seen_pointer(&height.to_le_bytes().to_vec());
         if pointer.get().len() == 0 {
             pointer.set_value::<u32>(1);
             if self.claimable_fees_pointer().get().len() == 0 {
@@ -306,7 +306,78 @@ impl GenesisAlkane {
             let diesel_fee = clamp_to_cap(diesel_fee, self.total_supply(), self.max_supply());
             self.increase_claimable_fees(diesel_fee)?;
             self.increase_total_supply(diesel_fee)?;
+            self.settle_emission_ledger(height)?;
+            self.open_emission_ledger(height, distributable);
         }
+        Ok(())
+    }
+
+    // ---- Emission ledger ------------------------------------------------------
+    //
+    // Halborn (DIESEL v3 adjacent review, finding 2): `number_diesel_mints`
+    // counts every syntactically valid `[2:0, 77]` protostone in the block,
+    // including mints that later fail (second mint in a tx, non-EOA caller,
+    // legacy mint in the block, gate revert). Each failed mint's share of the
+    // block's distributable emission was never issued, and the integer-division
+    // remainder was dropped the same way, so valid minters were diluted and
+    // the emission vanished.
+    //
+    // There is no end-of-block hook, so the shortfall is settled lazily: the
+    // first SUCCESSFUL upgraded mint of a block opens a ledger
+    // `{height, expected = block_reward - diesel_fee, issued = 0}`, every
+    // successful mint adds what it actually minted to `issued`, and the first
+    // successful mint of a LATER block mints `expected - issued` of the
+    // previous ledger into claimable fees (the DSIGIL bucket, opcode 78),
+    // clamped to the supply cap. A mint that reverts rolls back its own ledger
+    // writes, so only real issuance is ever recorded. A block in which no mint
+    // succeeds opens no ledger: with no valid minter there is nothing to
+    // dilute, exactly as before v3.
+
+    fn emission_height_pointer(&self) -> StoragePointer {
+        StoragePointer::from_keyword("/emission/height")
+    }
+    fn emission_expected_pointer(&self) -> StoragePointer {
+        StoragePointer::from_keyword("/emission/expected")
+    }
+    fn emission_issued_pointer(&self) -> StoragePointer {
+        StoragePointer::from_keyword("/emission/issued")
+    }
+
+    /// Mint the previous block's unissued emission into claimable fees. A
+    /// no-op when no ledger is open (first v3 mint ever) or the open ledger
+    /// is for this same block.
+    fn settle_emission_ledger(&self, height: u64) -> Result<()> {
+        if self.emission_height_pointer().get().len() == 0 {
+            return Ok(());
+        }
+        let ledger_height = self.emission_height_pointer().get_value::<u64>();
+        if ledger_height >= height {
+            return Ok(());
+        }
+        let expected = self.emission_expected_pointer().get_value::<u128>();
+        let issued = self.emission_issued_pointer().get_value::<u128>();
+        let deficit = clamp_to_cap(
+            expected.saturating_sub(issued),
+            self.total_supply(),
+            self.max_supply(),
+        );
+        if deficit > 0 {
+            self.increase_claimable_fees(deficit)?;
+            self.increase_total_supply(deficit)?;
+        }
+        Ok(())
+    }
+
+    fn open_emission_ledger(&self, height: u64, expected: u128) {
+        self.emission_height_pointer().set_value::<u64>(height);
+        self.emission_expected_pointer().set_value::<u128>(expected);
+        self.emission_issued_pointer().set_value::<u128>(0);
+    }
+
+    fn record_emission_issued(&self, minted: u128) -> Result<()> {
+        let issued = self.emission_issued_pointer().get_value::<u128>();
+        self.emission_issued_pointer()
+            .set_value::<u128>(overflow_error(issued.checked_add(minted))?);
         Ok(())
     }
 
@@ -401,14 +472,18 @@ impl GenesisAlkane {
             0
         };
         let diesel_fee = std::cmp::min(block_reward / 2, total_tx_fee); // fee is capped at 50% of the block reward
-        let value_per_mint = (block_reward - diesel_fee) / total_mints;
+        let distributable = block_reward - diesel_fee;
+        let value_per_mint = distributable / total_mints;
         // The minter's share is committed against the cap FIRST and the fee
         // accrual (first mint of the block only) gets whatever headroom is
         // left. The reverse order lets the fee swallow the last headroom and
         // then reject the mint, which reverts the fee with it, so supply would
-        // stall below the cap forever.
+        // stall below the cap forever. The previous block's emission
+        // shortfall is settled in the same place, after the minter, for the
+        // same reason.
         let value_per_mint = self.commit_capped_mint(value_per_mint)?;
-        self.observe_upgraded_mint(diesel_fee)?;
+        self.observe_upgraded_mint(diesel_fee, distributable)?;
+        self.record_emission_issued(value_per_mint)?;
         Ok(AlkaneTransfer {
             id: context.myself.clone(),
             value: value_per_mint,
