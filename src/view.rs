@@ -1233,12 +1233,18 @@ pub fn simulate_transaction_with_overrides(
     let probe_atomic = AtomicPointer::default();
     let mut combined: Vec<alkanes_support::parcel::AlkaneTransfer> = Vec::new();
     for input in &tx.input {
-        use protorune::balance_sheet::load_sheet;
-        let sheet = load_sheet(&mut probe_atomic.derive(
-            &table
-                .OUTPOINT_TO_RUNES
-                .select(&consensus_encode(&input.previous_output)?),
-        ));
+        use protorune::balance_sheet::{load_sheet_bounded, VIEW_SHEET_MAX_ENTRIES};
+        // Bounded: this is a VIEW probe over live OUTPOINT_TO_RUNES — a
+        // corrupt stored length (2026-08-22 hang incident) must error fast,
+        // not walk unbounded inside a simulate call.
+        let sheet = load_sheet_bounded(
+            &mut probe_atomic.derive(
+                &table
+                    .OUTPOINT_TO_RUNES
+                    .select(&consensus_encode(&input.previous_output)?),
+            ),
+            VIEW_SHEET_MAX_ENTRIES,
+        )?;
         for (rune_id, balance) in sheet.balances().iter() {
             if *balance == 0 {
                 continue;
