@@ -380,6 +380,46 @@ pub fn protorunesbyoutpoint() -> i32 {
     export_bytes(result.encode_to_vec())
 }
 
+/// Paged `protorunesbyoutpoint`: takes an `OutpointCursorRequest`, returns an
+/// `OutpointCursorResponse` with at most one page of the balance sheet and the
+/// cursor to resume from. An error returns an empty response, as the legacy
+/// view does.
+#[cfg(not(test))]
+#[no_mangle]
+pub fn protorunesbyoutpointcursor() -> i32 {
+    configure_network();
+    let mut data: Cursor<Vec<u8>> = Cursor::new(input());
+    let _height = consume_sized_int::<u32>(&mut data).unwrap();
+    let result: protorune_support::proto::protorune::OutpointCursorResponse =
+        view::protorunes_by_outpoint_cursor(&consume_to_end(&mut data).unwrap())
+            .unwrap_or_else(|_| {
+                protorune_support::proto::protorune::OutpointCursorResponse::default()
+            });
+    export_bytes(result.encode_to_vec())
+}
+
+/// Paged `protorunesbyaddress`: takes a `ProtorunesWalletCursorRequest`,
+/// returns a `WalletCursorResponse` with at most one page of balance-sheet
+/// entries across the address's outpoints and the cursors to resume from.
+#[cfg(not(test))]
+#[no_mangle]
+pub fn protorunesbyaddresscursor() -> i32 {
+    configure_network();
+    let mut data: Cursor<Vec<u8>> = Cursor::new(input());
+    let _height = consume_sized_int::<u32>(&mut data).unwrap();
+    let result: protorune_support::proto::protorune::WalletCursorResponse =
+        view::protorunes_by_address_cursor(&consume_to_end(&mut data).unwrap())
+            .unwrap_or_else(|_| {
+                // `done` so a client looping until done stops instead of
+                // re-requesting the same failing page forever.
+                protorune_support::proto::protorune::WalletCursorResponse {
+                    done: true,
+                    ..Default::default()
+                }
+            });
+    export_bytes(result.encode_to_vec())
+}
+
 #[cfg(not(test))]
 #[no_mangle]
 pub fn runesbyheight() -> i32 {

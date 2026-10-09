@@ -136,7 +136,6 @@ mod tests {
         let _ = Protorune::index_block::<MyMessageContext>(test_block.clone(), 840001);
         let req = (WalletRequest {
             wallet: helpers::ADDRESS1().as_bytes().to_vec(),
-            ..Default::default()
         })
         .encode_to_vec();
         let test_val = view::runes_by_address(&req).unwrap();
