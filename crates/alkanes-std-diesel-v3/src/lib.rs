@@ -50,6 +50,18 @@ pub const MINT_GATE_OPCODE: u128 = 1;
 /// default (regtest only activates v3 at 2_000_000).
 pub const DEFAULT_MINT_GATE: AlkaneId = AlkaneId { block: 4, tx: 1001 };
 
+/// Fuel DIESEL keeps back from the mint gate so that, if the gate reverts
+/// (or burns its whole allotment), DIESEL can still route the mint to
+/// claimable fees instead of reverting the protostone. The gate gets
+/// `fuel() - GATE_FALLBACK_RESERVE`. Requires the post-audit runtime, which
+/// honors the extcall fuel argument as a cap and leaves the caller its unallotted
+/// fuel when the callee reverts. Sized from `tests::mint_gate`: the fallback
+/// (extcall charge, revert read-back, claimable-fees write, response) measures
+/// ~106k against a gate that reverts or spins until out of fuel, so this keeps
+/// a >4x margin. The mainnet SUBMINER-GATE + treasury deposit measures ~330k,
+/// against ~2.65M allotted on a minimum-fuel (3.5M) mint tx.
+pub const GATE_FALLBACK_RESERVE: u64 = 500_000;
+
 /// cFIRE-SIGIL: the bearer capability that governs the mint gate (opcode 80).
 /// Possession-based, mirroring SUBMINER-GATE's own `require_auth`: >= 1 unit in
 /// incoming_alkanes, and the sigil's `authenticate` (opcode 1) must return
@@ -402,6 +414,10 @@ impl GenesisAlkane {
         };
         let diesel_fee = std::cmp::min(block_reward / 2, total_tx_fee); // fee is capped at 50% of the block reward
         let value_per_mint = (block_reward - diesel_fee) / total_mints;
+        // The integer-division remainder goes to claimable fees with the
+        // block's fee accrual (first mint only), so when every counted mint
+        // executes the block emits exactly `block_reward`, never more.
+        let diesel_fee = diesel_fee + (block_reward - diesel_fee) % total_mints;
         // The minter's share is committed against the cap FIRST and the fee
         // accrual (first mint of the block only) gets whatever headroom is
         // left. The reverse order lets the fee swallow the last headroom and
@@ -487,7 +503,10 @@ impl GenesisAlkane {
                 target: gate,
                 inputs: vec![MINT_GATE_OPCODE],
             };
-            match self.call(&cellpack, &parcel, self.fuel()) {
+            // Cap the gate's fuel so DIESEL keeps GATE_FALLBACK_RESERVE for
+            // the fallback below. Never pass 0: the runtime reads 0 as "all".
+            let gate_fuel = self.fuel().saturating_sub(GATE_FALLBACK_RESERVE).max(1);
+            match self.call(&cellpack, &parcel, gate_fuel) {
                 Ok(mut response) => {
                     // The gate may only pay out of the mint it was handed. A
                     // gate returning more DIESEL than was minted (it can only
@@ -517,13 +536,13 @@ impl GenesisAlkane {
                     return Ok(response);
                 }
                 Err(_) => {
-                    // Gate reverted. The runtime rolls back the child frame
-                    // (including the transfer of the minted DIESEL into it), so
-                    // fall through to the accrual default: minting must never
-                    // brick because the gate or its treasury is broken.
-                    // NOTE: see the report — in the current runtime a child
-                    // revert zeroes the parent's remaining fuel, so this branch
-                    // is only reachable if the runtime leaves fuel for it.
+                    // Gate reverted (or ran out of its capped fuel). The
+                    // runtime rolls back the child frame, including the
+                    // transfer of the minted DIESEL into it, and leaves DIESEL
+                    // its reserved fuel, so fall through to the accrual
+                    // default: the mint goes to claimable fees (DSIGIL) and the
+                    // protostone still succeeds. Minting must never brick
+                    // because the gate or its treasury is broken.
                 }
             }
         }

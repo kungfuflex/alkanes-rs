@@ -5,7 +5,8 @@
 //!   mode 0 (default): return half of the incoming DIESEL, keep the rest;
 //!   mode 1: revert;
 //!   mode 2: return the incoming DIESEL PLUS everything previously retained
-//!           (i.e. more than was minted).
+//!           (i.e. more than was minted);
+//!   mode 3: spin until out of fuel (a gate that burns its whole allotment).
 //! Opcode 1 also records the full calldata it was called with (opcode 4 reads
 //! it back) so a test can prove DIESEL, not the minter, chose the opcode.
 use alkanes_runtime::{
@@ -74,6 +75,15 @@ impl TestMintGate {
         let mut response = CallResponse::default();
         match self.mode() {
             1 => return Err(anyhow!("test gate: forced revert")),
+            3 => {
+                // Write storage forever: every write costs fuel, so this traps
+                // with out-of-fuel, and the optimizer can't drop it.
+                let mut spin = StoragePointer::from_keyword("/spin");
+                loop {
+                    let v = spin.get_value::<u128>();
+                    spin.set_value::<u128>(v.wrapping_add(1));
+                }
+            }
             2 => {
                 let held = self.balance(&context.myself, &DIESEL);
                 response.alkanes.0.push(AlkaneTransfer { id: DIESEL, value: held });

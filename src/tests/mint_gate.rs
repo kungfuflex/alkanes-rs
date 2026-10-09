@@ -10,6 +10,13 @@
 //!   - `set_mint_gate` (opcode 80) is gated on the cFIRE-SIGIL (4:866), not on
 //!     DIESEL's own DSIGIL auth token; clearing to `0:0` persists as "no gate"
 //!     and mints then accrue to claimable fees for the DSIGIL owner;
+//!   - a gate that reverts or runs out of fuel does NOT revert the mint: DIESEL
+//!     caps the gate's fuel (post-audit runtime) and routes the mint to
+//!     claimable fees, so the block still emits exactly its reward; before
+//!     POST_AUDIT_FORK_HEIGHT the old all-or-nothing behaviour is kept;
+//!   - the per-block division remainder goes to claimable fees, so a block's
+//!     emission lands exactly on the reward;
+//!   - the real mainnet SUBMINER-GATE + treasury bytecode fits its allotment;
 //!   - a gate that returns more DIESEL than was minted reverts the mint;
 //!   - the supply cap is enforced on the FULL post-mint supply;
 //!   - below `DIESEL_V3_BLOCK_HEIGHT` the pre-v3 eoa binary still governs.
@@ -61,6 +68,9 @@ const REWARD: u128 = 5_000_000_000u128 >> ((V3 as u128) / 210_000);
 const MINT: u128 = REWARD - REWARD / 2;
 /// The test gate (mode 0) hands the minter half of what it receives.
 const SHARE: u128 = MINT / 2;
+/// Mirrors `alkanes_std_diesel_v3::GATE_FALLBACK_RESERVE` (the contract crate
+/// is not a dependency of the indexer). Keep in step.
+const GATE_FALLBACK_RESERVE: u64 = 500_000;
 
 // ---------------------------------------------------------------- setup ----
 
@@ -503,26 +513,222 @@ fn test_collect_fees_requires_auth() -> Result<()> {
     Ok(())
 }
 
-#[wasm_bindgen_test]
-fn test_gate_revert_reverts_mint_in_current_runtime() -> Result<()> {
+/// Wasm fuel each frame of a mint consumed, from `crate::fuel_probe` (records
+/// every frame, reverts included; excludes the per-byte storage fee charged on
+/// success). A child's whole cost, storage fee included, is charged back into
+/// its parent's store, so DIESEL's own record covers the gate (and treasury).
+fn probe_gas(records: &[crate::fuel_probe::Record], target: AlkaneId, opcode: u128) -> u64 {
+    records
+        .iter()
+        .filter(|r| r.target == target && r.opcode == opcode)
+        .map(|r| r.gas_used)
+        .sum()
+}
+
+/// From the trace: the fuel the top-level DIESEL call started with, and the
+/// fuel DIESEL handed `gate` (its EnterCall).
+fn mint_fuel_allotments(b: &Block, gate: AlkaneId) -> Result<(u64, u64)> {
+    use alkanes_support::trace::{Trace, TraceEvent};
+    let outpoint = OutPoint {
+        txid: b.txdata[1].compute_txid(),
+        vout: 3,
+    };
+    let trace: Trace = crate::view::trace(&outpoint)?.try_into()?;
+    let events = trace.0.lock().expect("Mutex poisoned").clone();
+    let mut diesel_start = None;
+    for e in events.iter() {
+        if let TraceEvent::EnterCall(c) = e {
+            if diesel_start.is_none() {
+                diesel_start = Some(c.fuel);
+            } else if c.target == gate {
+                return Ok((diesel_start.unwrap(), c.fuel));
+            }
+        }
+    }
+    Err(anyhow::anyhow!("gate was not called"))
+}
+
+/// Shared body of the two "broken gate" tests: the gate is put into `mode`
+/// (1 = revert, 3 = spin until out of fuel); the mint must SUCCEED, pay the
+/// minter nothing, and route its share to claimable fees, so the block still
+/// emits exactly REWARD (MINT to fees via the fallback + REWARD/2 fee accrual).
+fn assert_broken_gate_routes_to_fees(mode: u128) -> Result<()> {
     setup(true)?;
-    // Put the default gate into revert mode (its own opcode 2, called directly).
-    view_of(V3, DEFAULT_GATE, vec![2, 1])?;
+    view_of(V3, DEFAULT_GATE, vec![2, mode])?;
     let supply_before = total_supply();
     let fees_before = claimable_fees();
 
-    // DIESEL's fallback-to-fees branch is NOT reachable today: on a child
-    // revert the host (`extcall`, post-V220 containment) rolls the child back
-    // but sets the PARENT's remaining fuel to 0, so DIESEL traps with
-    // out-of-fuel on its next instruction and the whole mint reverts. Pin that
-    // so a runtime change that makes the fallback live is a visible diff.
+    crate::fuel_probe::clear();
     let b = mint_with_tail(V3 + 1, &[])?;
-    assert_mint_reverted(&b, "all fuel consumed")?;
-    assert_eq!(minter_diesel(&b)?, 0);
-    // Atomic: supply / fee accounting untouched, gate frame rolled back.
-    assert_eq!(total_supply(), supply_before);
-    assert_eq!(claimable_fees(), fees_before);
+    let records = crate::fuel_probe::snapshot();
+    assert_mint_ok(&b)?;
+    assert_eq!(minter_diesel(&b)?, 0, "a reverted gate pays the minter nothing");
+    assert_eq!(total_supply() - supply_before, REWARD, "block emits exactly the reward");
+    assert_eq!(
+        claimable_fees() - fees_before,
+        REWARD,
+        "the mint's share and the fee accrual both land in claimable fees"
+    );
+    // The gate frame was rolled back.
     assert_eq!(gate_calls(V3 + 2, DEFAULT_GATE)?, 0);
+
+    // DIESEL called the gate holding exactly allotted + RESERVE (it passes
+    // fuel() - RESERVE), and the gate burned (mode 3) or forfeited (mode 1)
+    // its whole allotment. So what DIESEL spent AFTER the gate failed (the
+    // extcall charge, the revert read-back, the claimable-fees write and the
+    // response) is consumed - (start - RESERVE). It must fit the reserve with
+    // a wide margin.
+    let (diesel_start, allotted) = mint_fuel_allotments(&b, DEFAULT_GATE)?;
+    let consumed = probe_gas(&records, DIESEL, 77);
+    let fallback = consumed - (diesel_start - GATE_FALLBACK_RESERVE);
+    wasm_bindgen_test::console_log!(
+        "gate mode {}: DIESEL start {}; gate allotted {}; DIESEL consumed {}; fallback after the gate failed {} of reserve {}",
+        mode, diesel_start, allotted, consumed, fallback, GATE_FALLBACK_RESERVE
+    );
+    assert!(
+        fallback * 4 <= GATE_FALLBACK_RESERVE,
+        "fallback used {}; keep a 4x margin under reserve {}",
+        fallback,
+        GATE_FALLBACK_RESERVE
+    );
+    Ok(())
+}
+
+#[wasm_bindgen_test]
+fn test_gate_revert_routes_mint_to_claimable_fees() -> Result<()> {
+    assert_broken_gate_routes_to_fees(1)
+}
+
+#[wasm_bindgen_test]
+fn test_gate_out_of_fuel_routes_mint_to_claimable_fees() -> Result<()> {
+    // The worst case: the gate burns its whole allotment. DIESEL's reserve is
+    // never handed to it, so the fallback still runs.
+    assert_broken_gate_routes_to_fees(3)
+}
+
+#[wasm_bindgen_test]
+fn test_gate_revert_reverts_mint_before_post_audit_fork() -> Result<()> {
+    // Below POST_AUDIT_FORK_HEIGHT the runtime ignores the extcall fuel cap
+    // and zeroes the caller's fuel on a child revert (the pre-fork consensus
+    // rule), so the fallback is unreachable and the whole mint reverts.
+    protorune::set_post_audit_fork_height_override(Some(V3 as u64 + 1_000));
+    let result = (|| -> Result<()> {
+        setup(true)?;
+        view_of(V3, DEFAULT_GATE, vec![2, 1])?;
+        let supply_before = total_supply();
+        let fees_before = claimable_fees();
+        let b = mint_with_tail(V3 + 1, &[])?;
+        assert_mint_reverted(&b, "all fuel consumed")?;
+        assert_eq!(minter_diesel(&b)?, 0);
+        assert_eq!(total_supply(), supply_before);
+        assert_eq!(claimable_fees(), fees_before);
+        Ok(())
+    })();
+    protorune::set_post_audit_fork_height_override(None);
+    result
+}
+
+#[wasm_bindgen_test]
+fn test_block_emission_lands_exactly_on_reward() -> Result<()> {
+    // Three mints in one block: (REWARD - fee) is not divisible by 3, and the
+    // remainder must go to claimable fees so supply grows by exactly REWARD.
+    setup(true)?;
+    let supply_before = total_supply();
+    let fees_before = claimable_fees();
+    let height = V3;
+    let mut test_block = create_block_with_coinbase_tx(height);
+    let coinbase = create_coinbase_transaction(height).compute_txid();
+    for i in 0..3u32 {
+        test_block.txdata.push(alkane_helpers::create_multiple_cellpack_with_witness_and_in(
+            Witness::new(),
+            vec![Cellpack {
+                target: DIESEL,
+                inputs: vec![77],
+            }],
+            OutPoint::new(coinbase, i),
+            false,
+        ));
+    }
+    index_block(&test_block, height)?;
+    let fee = REWARD / 2;
+    let per_mint = (REWARD - fee) / 3;
+    let remainder = (REWARD - fee) % 3;
+    assert!(remainder > 0, "test needs a non-zero remainder");
+    let mut to_minters = 0u128;
+    for i in 1..=3usize {
+        to_minters += get_sheet_for_outpoint(&test_block, i, 0)?
+            .get(&ProtoruneRuneId { block: 2, tx: 0 });
+    }
+    // mode-0 test gate returns half of each mint and keeps the rest
+    assert_eq!(to_minters, 3 * (per_mint / 2));
+    assert_eq!(total_supply() - supply_before, REWARD);
+    assert_eq!(claimable_fees() - fees_before, fee + remainder);
+    Ok(())
+}
+
+/// The mainnet SUBMINER-GATE (4:1001, keccak 1925e997…) and SUBMINER treasury
+/// (2:96782, keccak a11e447d…) bytecode, fetched with `getbytecode`.
+const MAINNET_SUBMINER_GATE: &[u8] = include_bytes!("static/mainnet_4_1001_subminer_gate.wasm");
+const MAINNET_SUBMINER_TREASURY: &[u8] =
+    include_bytes!("static/mainnet_2_96782_subminer_treasury.wasm");
+
+#[wasm_bindgen_test]
+fn test_mainnet_subminer_gate_fuel() -> Result<()> {
+    // Deploy the exact mainnet bytecode: treasury by plain CREATE (2:2), the
+    // gate at its reserved slot with the mainnet init args (caller_bp 192).
+    setup(false)?;
+    let treasury = AlkaneId { block: 2, tx: 2 };
+    deploy(
+        3,
+        MAINNET_SUBMINER_TREASURY.to_vec(),
+        Cellpack {
+            target: AlkaneId { block: 1, tx: 0 },
+            inputs: vec![0, 2, 0, SIGIL.block, SIGIL.tx],
+        },
+    )?;
+    deploy(
+        4,
+        MAINNET_SUBMINER_GATE.to_vec(),
+        Cellpack {
+            target: AlkaneId { block: 3, tx: DEFAULT_GATE.tx },
+            inputs: vec![0, 2, 0, treasury.block, treasury.tx, SIGIL.block, SIGIL.tx, 192],
+        },
+    )?;
+
+    crate::fuel_probe::clear();
+    let b = mint_with_tail(V3, &[])?;
+    let records = crate::fuel_probe::snapshot();
+    assert_mint_ok(&b)?;
+    let caller_share = MINT * 192 / 10_000;
+    assert_eq!(minter_diesel(&b)?, caller_share);
+    let deposited = u128::from_le_bytes(view_of(V3 + 1, treasury, vec![102])?[0..16].try_into()?);
+    assert_eq!(deposited, MINT - caller_share);
+
+    // DIESEL's record includes the gate + treasury frames charged back into it,
+    // so it is an upper bound on what the gate needs.
+    let gate_own = probe_gas(&records, DEFAULT_GATE, 1);
+    let treasury_own = probe_gas(&records, treasury, 1);
+    let diesel_total = probe_gas(&records, DIESEL, 77);
+    let (diesel_start, allotted) = mint_fuel_allotments(&b, DEFAULT_GATE)?;
+    // DIESEL's work before the call is start - (allotted + RESERVE); the rest of
+    // its consumption is the gate (incl. treasury + extcall charge) and a small
+    // tail, so this is an upper bound on what the gate needs.
+    let pre_gate = diesel_start - allotted - GATE_FALLBACK_RESERVE;
+    let gate_upper = diesel_total - pre_gate;
+    wasm_bindgen_test::console_log!(
+        "SUBMINER-GATE 4:1001 mint-split: gate wasm {} + treasury deposit wasm {}; gate incl. charges (upper bound) {}; allotted {} on a {}-fuel tx",
+        gate_own, treasury_own, gate_upper, allotted, diesel_start
+    );
+    assert!(gate_own > 0 && treasury_own > 0, "both frames must have run");
+    // The test tx carries the minimum per-tx fuel, so `allotted` is the least
+    // the gate can get on mainnet. Keep a 4x margin.
+    assert_eq!(diesel_start, crate::vm::fuel::minimum_fuel(V3));
+    assert!(
+        gate_upper * 4 <= allotted,
+        "gate used up to {} fuel; allotted {}",
+        gate_upper,
+        allotted
+    );
     Ok(())
 }
 
