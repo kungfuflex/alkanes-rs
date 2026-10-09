@@ -275,7 +275,7 @@ pub mod genesis {
     /// for the DSIGIL owner (opcode 78, `only_owner`) instead of paying the
     /// caller. Future block — coordinated hard fork; all indexers MUST ship this
     /// activation before this height or they diverge at 2:0.
-    pub const DIESEL_V3_BLOCK_HEIGHT: u32 = 975_000;
+    pub const DIESEL_V3_BLOCK_HEIGHT: u32 = 972_000;
     /// v2.2.0 mainnet fork: slim fr_btc.wasm + extcall revert containment.
     pub const V220_FORK_HEIGHT: u32 = 950_000;
     /// v2.2.1-alpha.3 mainnet fork: activates fr_btc v1.3.0. Future block —

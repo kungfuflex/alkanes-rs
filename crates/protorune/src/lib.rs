@@ -281,7 +281,7 @@ pub fn handle_transfer_runes_to_vout(
 #[cfg(not(feature = "mainnet"))]
 pub const POST_AUDIT_FORK_HEIGHT: u64 = 0;
 #[cfg(feature = "mainnet")]
-pub const POST_AUDIT_FORK_HEIGHT: u64 = 975_000;
+pub const POST_AUDIT_FORK_HEIGHT: u64 = 972_000;
 
 #[cfg(any(test, feature = "test-utils"))]
 thread_local! {
