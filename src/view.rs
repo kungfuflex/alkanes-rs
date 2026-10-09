@@ -309,6 +309,45 @@ pub fn protorunes_by_address(
     })
 }
 
+/// Cursor variant of `protorunes_by_outpoint`: one bounded page of the
+/// outpoint's balance sheet (see `protorune::view::protorunes_by_outpoint_cursor`).
+pub fn protorunes_by_outpoint_cursor(
+    input: &Vec<u8>,
+) -> Result<protorune_support::proto::protorune::OutpointCursorResponse> {
+    let request = protorune_support::proto::protorune::OutpointCursorRequest::decode(&**input)?;
+    view::protorunes_by_outpoint_cursor(input).map(|mut response| {
+        if into_u128(request.protocol.unwrap_or_else(|| {
+            <u128 as Into<protorune_support::proto::protorune::Uint128>>::into(1u128)
+        })) == AlkaneMessageContext::protocol_tag()
+        {
+            if let Some(outpoint) = response.outpoint.as_mut() {
+                outpoint.balances = Some(to_alkanes_balances(
+                    outpoint.balances.clone().unwrap_or_default(),
+                ));
+            }
+        }
+        response
+    })
+}
+
+/// Cursor variant of `protorunes_by_address`: one bounded page of everything
+/// the address holds (see `protorune::view::protorunes_by_address_cursor`).
+pub fn protorunes_by_address_cursor(
+    input: &Vec<u8>,
+) -> Result<protorune_support::proto::protorune::WalletCursorResponse> {
+    let request =
+        protorune_support::proto::protorune::ProtorunesWalletCursorRequest::decode(&**input)?;
+    view::protorunes_by_address_cursor(input).map(|mut response| {
+        if into_u128(request.protocol_tag.unwrap_or_else(|| {
+            <u128 as Into<protorune_support::proto::protorune::Uint128>>::into(1u128)
+        })) == AlkaneMessageContext::protocol_tag()
+        {
+            response.outpoints = to_alkanes_outpoints(response.outpoints.clone());
+        }
+        response
+    })
+}
+
 pub fn protorunes_by_address2(
     input: &Vec<u8>,
 ) -> Result<protorune_support::proto::protorune::WalletResponse> {
