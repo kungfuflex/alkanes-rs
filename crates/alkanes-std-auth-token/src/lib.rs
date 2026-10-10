@@ -71,7 +71,10 @@ impl AuthToken {
             ));
         }
         response.data = vec![0x01];
-        response.alkanes.0.push(transfer);
+        // `forward` already returns the incoming unit. Pushing `transfer` again
+        // returned TWO units for the one supplied, minting a stray auth unit
+        // into every `only_owner` caller on each authentication.
+        let _ = transfer;
         Ok(response)
     }
 
