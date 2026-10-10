@@ -41,6 +41,7 @@ members = [
     "crates/alkanes-runtime",
     "crates/alkanes-std-auth-token",
     "crates/alkanes-std-beacon-proxy",
+    "crates/alkanes-std-diesel-v3",
     "crates/alkanes-std-factory-support",
     "crates/alkanes-std-genesis-alkane",
     "crates/alkanes-std-genesis-alkane-upgraded",
@@ -53,6 +54,7 @@ members = [
     "crates/alkanes-std-recycle",
     "crates/alkanes-std-test",
     "crates/alkanes-std-test-2",
+    "crates/alkanes-std-test-mint-gate",
     "crates/alkanes-std-upgradeable",
     "crates/alkanes-std-upgradeable-beacon",
     "crates/alkanes-support",
@@ -189,6 +191,7 @@ proxy = []
 owned_token = []
 auth_token = []
 genesis_alkane = []
+diesel_v3 = []
 regtest = []
 genesis_protorune = []
 amm_pool = ["auth_token"]

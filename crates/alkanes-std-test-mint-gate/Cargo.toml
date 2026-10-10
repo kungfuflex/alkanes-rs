@@ -1,0 +1,13 @@
+[package]
+name = "alkanes-std-test-mint-gate"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+alkanes-runtime = { workspace = true }
+alkanes-support = { workspace = true }
+anyhow = { workspace = true }
+metashrew-support = { workspace = true }

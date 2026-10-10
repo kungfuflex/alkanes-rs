@@ -454,3 +454,72 @@ fn test_auth_and_owned_token_multiple() -> Result<()> {
     )?;
     Ok(())
 }
+
+/// Read a contract's committed inventory balance of `token`.
+fn held_by_alkane(holder: AlkaneId, token: AlkaneId) -> u128 {
+    let token_bytes: Vec<u8> = token.into();
+    let holder_bytes: Vec<u8> = holder.into();
+    IndexPointer::from_keyword("/alkanes/")
+        .select(&token_bytes)
+        .keyword("/balances/")
+        .select(&holder_bytes)
+        .get_value::<u128>()
+}
+
+/// `authenticate` must return exactly the auth unit it was given. It used to
+/// return the incoming unit twice (`forward` + an extra push), so every
+/// `only_owner` call left one stray auth unit inside the guarded contract
+/// (frFB 4:88888 held one per mint).
+#[wasm_bindgen_test]
+fn test_authenticate_returns_exactly_one_unit() -> Result<()> {
+    clear();
+    let auth_cellpack = Cellpack {
+        target: AlkaneId { block: 3, tx: AUTH_TOKEN_FACTORY_ID },
+        inputs: vec![100],
+    };
+    let init_cellpack = Cellpack {
+        target: AlkaneId { block: 1, tx: 0 },
+        inputs: vec![0, 1, 1000],
+    };
+    let init_block = alkane_helpers::init_with_multiple_cellpacks_with_tx(
+        [
+            alkanes_std_auth_token_build::get_bytes(),
+            alkanes_std_owned_token_build::get_bytes(),
+        ]
+        .into(),
+        [auth_cellpack, init_cellpack].into(),
+    );
+    index_block(&init_block, 0)?;
+
+    let auth_token_id = AlkaneId { block: 2, tx: 2 };
+    let owned_token_id = AlkaneId { block: 2, tx: 1 };
+    let holding = OutPoint {
+        txid: init_block.txdata.last().ok_or(anyhow!("no last el"))?.compute_txid(),
+        vout: 0,
+    };
+
+    // Spend the outpoint holding the auth unit into an owner-gated mint.
+    let mint_tx = alkane_helpers::create_multiple_cellpack_with_witness_and_in(
+        Witness::new(),
+        vec![Cellpack { target: owned_token_id.clone(), inputs: vec![77, 500] }],
+        holding,
+        false,
+    );
+    let mint_block = protorune::test_helpers::create_block_with_txs(vec![mint_tx.clone()]);
+    index_block(&mint_block, 1)?;
+
+    let out = OutPoint { txid: mint_tx.compute_txid(), vout: 0 };
+    let sheet = load_sheet(
+        &RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
+            .OUTPOINT_TO_RUNES
+            .select(&consensus_encode(&out)?),
+    );
+    assert_eq!(sheet.get_cached(&owned_token_id.clone().into()), 1500, "mint should have succeeded");
+    assert_eq!(sheet.get_cached(&auth_token_id.clone().into()), 1, "the owner gets its one auth unit back");
+    assert_eq!(
+        held_by_alkane(owned_token_id, auth_token_id),
+        0,
+        "no stray auth unit may be left inside the guarded contract"
+    );
+    Ok(())
+}

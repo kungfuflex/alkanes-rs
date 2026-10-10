@@ -309,6 +309,45 @@ pub fn protorunes_by_address(
     })
 }
 
+/// Cursor variant of `protorunes_by_outpoint`: one bounded page of the
+/// outpoint's balance sheet (see `protorune::view::protorunes_by_outpoint_cursor`).
+pub fn protorunes_by_outpoint_cursor(
+    input: &Vec<u8>,
+) -> Result<protorune_support::proto::protorune::OutpointCursorResponse> {
+    let request = protorune_support::proto::protorune::OutpointCursorRequest::decode(&**input)?;
+    view::protorunes_by_outpoint_cursor(input).map(|mut response| {
+        if into_u128(request.protocol.unwrap_or_else(|| {
+            <u128 as Into<protorune_support::proto::protorune::Uint128>>::into(1u128)
+        })) == AlkaneMessageContext::protocol_tag()
+        {
+            if let Some(outpoint) = response.outpoint.as_mut() {
+                outpoint.balances = Some(to_alkanes_balances(
+                    outpoint.balances.clone().unwrap_or_default(),
+                ));
+            }
+        }
+        response
+    })
+}
+
+/// Cursor variant of `protorunes_by_address`: one bounded page of everything
+/// the address holds (see `protorune::view::protorunes_by_address_cursor`).
+pub fn protorunes_by_address_cursor(
+    input: &Vec<u8>,
+) -> Result<protorune_support::proto::protorune::WalletCursorResponse> {
+    let request =
+        protorune_support::proto::protorune::ProtorunesWalletCursorRequest::decode(&**input)?;
+    view::protorunes_by_address_cursor(input).map(|mut response| {
+        if into_u128(request.protocol_tag.unwrap_or_else(|| {
+            <u128 as Into<protorune_support::proto::protorune::Uint128>>::into(1u128)
+        })) == AlkaneMessageContext::protocol_tag()
+        {
+            response.outpoints = to_alkanes_outpoints(response.outpoints.clone());
+        }
+        response
+    })
+}
+
 pub fn protorunes_by_address2(
     input: &Vec<u8>,
 ) -> Result<protorune_support::proto::protorune::WalletResponse> {
@@ -1233,12 +1272,30 @@ pub fn simulate_transaction_with_overrides(
     let probe_atomic = AtomicPointer::default();
     let mut combined: Vec<alkanes_support::parcel::AlkaneTransfer> = Vec::new();
     for input in &tx.input {
-        use protorune::balance_sheet::load_sheet;
-        let sheet = load_sheet(&mut probe_atomic.derive(
-            &table
-                .OUTPOINT_TO_RUNES
-                .select(&consensus_encode(&input.previous_output)?),
-        ));
+        use protorune::balance_sheet::{load_sheet_page, MAX_VIEW_SHEET_ENTRIES};
+        // Bounded (Halborn: "Unbounded Protorune Views..."; port of #304's
+        // simulate hunk onto #314's paging API): `load_sheet` trusts the stored
+        // `/runes` length and walks it unbounded inside a view call. A sheet
+        // larger than the view cap is refused rather than silently truncated,
+        // since a partial input sheet would simulate a different transaction.
+        let page = load_sheet_page(
+            &probe_atomic.derive(
+                &table
+                    .OUTPOINT_TO_RUNES
+                    .select(&consensus_encode(&input.previous_output)?),
+            ),
+            0,
+            MAX_VIEW_SHEET_ENTRIES,
+        );
+        if page.total_entries > MAX_VIEW_SHEET_ENTRIES {
+            return Err(anyhow!(
+                "input {} balance sheet has {} entries, exceeds view cap {}",
+                input.previous_output,
+                page.total_entries,
+                MAX_VIEW_SHEET_ENTRIES
+            ));
+        }
+        let sheet = page.sheet;
         for (rune_id, balance) in sheet.balances().iter() {
             if *balance == 0 {
                 continue;

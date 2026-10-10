@@ -222,6 +222,41 @@ mod tests {
         Ok(())
     }
 
+    /// Halborn "Unbounded Protorune Views...": `simulate_transaction` loaded
+    /// every input's balance sheet with the unbounded `load_sheet`, walking
+    /// whatever `/runes` length is stored. A sheet over the view cap is now
+    /// refused instead of walked.
+    #[wasm_bindgen_test]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    fn simulate_transaction_refuses_oversized_input_sheet() -> Result<()> {
+        use protorune::balance_sheet::MAX_VIEW_SHEET_ENTRIES;
+        use std::sync::Arc;
+        clear();
+        let prev = OutPoint {
+            txid: bitcoin::Txid::from_str(
+                "2a1538bf00000000000000000000000000000000000000000000000000002e28",
+            )
+            .unwrap(),
+            vout: 0,
+        };
+        let sheet = RuneTable::for_protocol(AlkaneMessageContext::protocol_tag())
+            .OUTPOINT_TO_RUNES
+            .select(&consensus_encode(&prev)?);
+        let runes = sheet.keyword("/runes");
+        let balances = sheet.keyword("/balances");
+        for i in 0..(MAX_VIEW_SHEET_ENTRIES + 1) {
+            let mut id = vec![0u8; 32];
+            id[..4].copy_from_slice(&i.to_le_bytes());
+            runes.append(Arc::new(id));
+            balances.append_value::<u128>(1);
+        }
+        let tx = build_invoke_tx(AlkaneId { block: 2, tx: 0 }, 0, prev);
+        let tx_hex = hex::encode(serialize(&tx));
+        let err = simulate_transaction(&tx_hex, 1u64).expect_err("oversized sheet must be refused");
+        assert!(err.to_string().contains("exceeds view cap"), "{err}");
+        Ok(())
+    }
+
     #[wasm_bindgen_test]
     #[cfg_attr(not(target_arch = "wasm32"), test)]
     fn simulate_transaction_rejects_garbage_hex() -> Result<()> {

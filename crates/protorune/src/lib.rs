@@ -180,7 +180,7 @@ pub fn num_non_op_return_outputs(tx: &Transaction) -> usize {
 
 /// Reads an optional u64 written with `set_value`. An empty value means the field was never
 /// written (absent); any stored value, including zero, is returned as `Some`.
-fn get_optional_u64(ptr: &IndexPointer) -> Option<u64> {
+fn get_optional_u64<P: KeyValuePointer>(ptr: &P) -> Option<u64> {
     let bytes = ptr.get();
     if bytes.is_empty() {
         None
@@ -272,15 +272,67 @@ pub fn handle_transfer_runes_to_vout(
     Ok(output)
 }
 
-/// From this height on, a named-rune commitment only counts if the spent output
-/// is P2TR (matching ord's rune_updater). Below it, the original predicate is
-/// kept verbatim so historical etchings replay identically.
+/// Post-Halborn-audit consensus fork for protocol (protorune / alkanes tag-1)
+/// state. Every audit fix that changes protorune or alkanes balances is gated
+/// on this one height so the whole bundle activates together with DIESEL v3
+/// (`DIESEL_V3_BLOCK_HEIGHT` in the alkanes crate). Raw-Rune fixes are NOT
+/// gated on it: runes are not consumed in production, so they apply from
+/// genesis.
 #[cfg(not(feature = "mainnet"))]
-pub const ETCH_COMMIT_P2TR_FIX_HEIGHT: u64 = 0;
+pub const POST_AUDIT_FORK_HEIGHT: u64 = 0;
 #[cfg(feature = "mainnet")]
-pub const ETCH_COMMIT_P2TR_FIX_HEIGHT: u64 = 970_000;
+pub const POST_AUDIT_FORK_HEIGHT: u64 = 972_000;
+
+#[cfg(any(test, feature = "test-utils"))]
+thread_local! {
+    static POST_AUDIT_FORK_HEIGHT_OVERRIDE: std::cell::Cell<Option<u64>> =
+        std::cell::Cell::new(None);
+}
+
+/// Test-only: pretend the post-audit fork activates at `height` (None restores
+/// `POST_AUDIT_FORK_HEIGHT`). Lets tests exercise both sides of the gate on
+/// non-mainnet builds, where the constant is 0. Only affects callers that go
+/// through [`post_audit_fork_active`].
+#[cfg(any(test, feature = "test-utils"))]
+pub fn set_post_audit_fork_height_override(height: Option<u64>) {
+    POST_AUDIT_FORK_HEIGHT_OVERRIDE.with(|c| c.set(height));
+}
+
+/// True at/after the post-audit consensus fork (see `POST_AUDIT_FORK_HEIGHT`).
+pub fn post_audit_fork_active(height: u64) -> bool {
+    #[cfg(any(test, feature = "test-utils"))]
+    {
+        if let Some(h) = POST_AUDIT_FORK_HEIGHT_OVERRIDE.with(|c| c.get()) {
+            return height >= h;
+        }
+    }
+    height >= POST_AUDIT_FORK_HEIGHT
+}
 
 const COMMIT_CONFIRMATIONS: u64 = 6;
+
+/// The chain whose rune activation height applies to this build. Mainnet
+/// builds use Bitcoin (first rune height 840_000); every other build uses
+/// Regtest semantics (first rune height 0), which keeps regtest / test chains
+/// indexing runes from genesis.
+#[cfg(feature = "mainnet")]
+const RUNES_NETWORK: Network = Network::Bitcoin;
+#[cfg(not(feature = "mainnet"))]
+const RUNES_NETWORK: Network = Network::Regtest;
+
+/// First height at which raw runes (RUNES tables) are indexed, matching ord's
+/// `Rune::first_rune_height` for the configured network.
+pub fn first_rune_height() -> u64 {
+    Rune::first_rune_height(RUNES_NETWORK) as u64
+}
+
+/// Whether raw-rune etchings and mints are indexed at `height`. Below the
+/// activation height no rune is etched or minted, so no RUNES balance can
+/// exist and edicts / transfers have nothing to move. Protostone (protorune /
+/// alkanes) processing of the same transactions is not affected.
+pub fn runes_active(height: u64) -> bool {
+    height >= first_rune_height()
+}
 
 /// Returns true only if the stored previous output for `outpoint_bytes` is P2TR.
 /// Unknown or undecodable outputs fail closed.
@@ -297,26 +349,23 @@ fn spent_output_is_p2tr(outpoint_bytes: &Vec<u8>) -> bool {
 
 #[cfg(not(test))]
 pub fn validate_rune_etch(tx: &Transaction, commitment: Vec<u8>, height: u64) -> Result<bool> {
-    check_rune_etch_commitment(
-        tx,
-        &commitment,
-        height,
-        height >= ETCH_COMMIT_P2TR_FIX_HEIGHT,
-    )
+    check_rune_etch_commitment(tx, &commitment, height)
 }
 
 /// The production commitment predicate. Unit tests call this directly, since
 /// the `cfg(test)` `validate_rune_etch` shim accepts every etching.
+///
+/// Like ord's rune_updater, a commitment only counts if the spent output is
+/// P2TR. This applies from genesis (raw-rune fixes are ungated).
 pub fn check_rune_etch_commitment(
     tx: &Transaction,
     commitment: &[u8],
     height: u64,
-    require_p2tr: bool,
 ) -> Result<bool> {
     for input in &tx.input {
         // extracting a tapscript does not indicate that the input being spent
-        // was actually a taproot output. when `require_p2tr` is set this is
-        // checked below, when we load the output's entry from the database
+        // was actually a taproot output. this is checked below, when we load
+        // the output's entry from the database
         let Some(tapscript) = input.witness.tapscript() else {
             continue;
         };
@@ -336,7 +385,7 @@ pub fn check_rune_etch_commitment(
             }
 
             let outpoint_bytes = consensus_encode(&input.previous_output)?;
-            if require_p2tr && !spent_output_is_p2tr(&outpoint_bytes) {
+            if !spent_output_is_p2tr(&outpoint_bytes) {
                 break;
             }
 
@@ -385,7 +434,18 @@ impl Protorune {
             Some(v) => v,
             None => default_output(tx),
         };
-        let etched = if let Some(etching) = runestone.etching.as_ref() {
+        // Like ord, the mint is processed before the etching, so a runestone
+        // cannot mint the rune it etches. The allowance is read and consumed
+        // through the tx's atomic pointer, so if anything later in this tx
+        // fails (e.g. malformed protostones) the rollback restores the cap
+        // together with the output balances.
+        let runes_active = runes_active(height);
+        if let Some(mint) = runestone.mint.filter(|_| runes_active) {
+            if !mint.to_string().is_empty() {
+                Self::index_mint(atomic, &mint.into(), height, &mut balance_sheet)?;
+            }
+        }
+        let etched = if let Some(etching) = runestone.etching.as_ref().filter(|_| runes_active) {
             let success = Self::index_etching(
                 atomic,
                 etching,
@@ -412,11 +472,6 @@ impl Protorune {
         } else {
             false
         };
-        if let Some(mint) = runestone.mint {
-            if !mint.to_string().is_empty() {
-                Self::index_mint(&mint.into(), height, &mut balance_sheet)?;
-            }
-        }
         // Resolve RuneId(0,0) to the etched rune id in edicts
         let resolved_edicts: Vec<ordinals::Edict> = runestone.edicts.iter().filter_map(|e| {
             if e.id == RuneId::default() {
@@ -578,17 +633,28 @@ impl Protorune {
         //     });
         // }
     }
+    /// Consumes one unit of `mint`'s allowance and credits the mint amount to
+    /// `balance_sheet` if the mint is open. Every read and the allowance write
+    /// go through `atomic` (the caller's per-tx pointer), so the allowance
+    /// consumption and the issuance commit or roll back together.
     pub fn index_mint(
+        atomic: &mut AtomicPointer,
         mint: &ProtoruneRuneId,
         height: u64,
         balance_sheet: &mut BalanceSheet<AtomicPointer>,
     ) -> Result<()> {
-        let name = tables::RUNES
-            .RUNE_ID_TO_ETCHING
-            .select(&mint.clone().into())
+        let name = atomic
+            .derive(&tables::RUNES.RUNE_ID_TO_ETCHING.select(&mint.clone().into()))
             .get();
-        let remaining: u128 = tables::RUNES.MINTS_REMAINING.select(&name).get_value();
-        let amount: u128 = tables::RUNES.AMOUNT.select(&name).get_value();
+        if name.is_empty() {
+            // unknown rune id
+            return Ok(());
+        }
+        let mut remaining_ptr = atomic.derive(&tables::RUNES.MINTS_REMAINING.select(&name));
+        let remaining: u128 = remaining_ptr.get_value();
+        let amount: u128 = atomic
+            .derive(&tables::RUNES.AMOUNT.select(&name))
+            .get_value();
 
         if remaining == 0 {
             // 2 ways we can reach this statement:
@@ -601,15 +667,18 @@ impl Protorune {
             // in the etching (a present zero is stored as 8 zero bytes), so an empty value means
             // "absent". Zero is a valid bound and must not be read as absent: e.g. an offset end
             // of 0 closes the mint window at the etching height, matching ord.
-            let height_start = get_optional_u64(&tables::RUNES.HEIGHTSTART.select(&name));
-            let height_end = get_optional_u64(&tables::RUNES.HEIGHTEND.select(&name));
-            let offset_start = get_optional_u64(&tables::RUNES.OFFSETSTART.select(&name));
-            let offset_end = get_optional_u64(&tables::RUNES.OFFSETEND.select(&name));
+            let height_start =
+                get_optional_u64(&atomic.derive(&tables::RUNES.HEIGHTSTART.select(&name)));
+            let height_end =
+                get_optional_u64(&atomic.derive(&tables::RUNES.HEIGHTEND.select(&name)));
+            let offset_start =
+                get_optional_u64(&atomic.derive(&tables::RUNES.OFFSETSTART.select(&name)));
+            let offset_end =
+                get_optional_u64(&atomic.derive(&tables::RUNES.OFFSETEND.select(&name)));
             // the other mint terms are stored from the rune name, the etching height is
             // stored by the rune id
-            let etching_height: u64 = tables::RUNES
-                .RUNE_ID_TO_HEIGHT
-                .select(&mint.to_owned().into())
+            let etching_height: u64 = atomic
+                .derive(&tables::RUNES.RUNE_ID_TO_HEIGHT.select(&mint.to_owned().into()))
                 .get_value();
             // Compute effective start: max of absolute and relative, if both exist.
             // Relative bounds saturate like ord's RuneEntry::start/end.
@@ -629,10 +698,7 @@ impl Protorune {
             if effective_start.map_or(true, |s| height >= s)
                 && effective_end.map_or(true, |e| height < e)
             {
-                tables::RUNES
-                    .MINTS_REMAINING
-                    .select(&name)
-                    .set_value(remaining.sub(1));
+                remaining_ptr.set_value(remaining.sub(1));
                 balance_sheet.increase(
                     &(ProtoruneRuneId {
                         block: u128::from(mint.block),
@@ -813,6 +879,10 @@ impl Protorune {
 
     pub fn index_unspendables<T: MessageContext>(block: &Block, height: u64) -> Result<()> {
         for (index, tx) in block.txdata.iter().enumerate() {
+            // Post-audit: tag-1 input balances must be settled for EVERY spent
+            // input. Only a successfully committed `index_runestone` settles
+            // them itself; every other path falls back (see below).
+            let mut protocol_inputs_settled = false;
             match Runestone::decipher(tx) {
                 Some(Artifact::Runestone(ref runestone)) => {
                     let mut atomic = AtomicPointer::default();
@@ -832,6 +902,7 @@ impl Protorune {
                         }
                         _ => {
                             atomic.commit();
+                            protocol_inputs_settled = true;
                         }
                     };
                 }
@@ -839,13 +910,19 @@ impl Protorune {
                     // Like ord, a cenotaph's mint is processed before its etching: a valid mint
                     // still consumes one unit of the rune's cap, but the minted amount is burned,
                     // so it goes to a throwaway sheet that is never saved to an output.
-                    if let Some(mint) = cenotaph.mint {
+                    // Before the rune activation height a cenotaph has no rune effect.
+                    if let Some(mint) = cenotaph.mint.filter(|_| runes_active(height)) {
+                        let mut atomic = AtomicPointer::default();
                         let mut burned = BalanceSheet::default();
-                        if let Err(e) = Self::index_mint(&mint.into(), height, &mut burned) {
-                            println!("err: {:?}", e);
+                        match Self::index_mint(&mut atomic, &mint.into(), height, &mut burned) {
+                            Err(e) => {
+                                println!("err: {:?}", e);
+                                atomic.rollback();
+                            }
+                            _ => atomic.commit(),
                         }
                     }
-                    if let Some(rune) = cenotaph.etching {
+                    if let Some(rune) = cenotaph.etching.filter(|_| runes_active(height)) {
                         // Cenotaph etchings create the rune but with zeroed metadata
                         let mut atomic = AtomicPointer::default();
                         let etching = Etching {
@@ -871,7 +948,14 @@ impl Protorune {
                         }
                     }
                 }
-                None => {}
+                None => {
+                    // Raw-rune (RUNES table, tag 0) only; protocol-tag balances
+                    // are not handled here.
+                    Self::transfer_runes_without_runestone(tx);
+                }
+            }
+            if !protocol_inputs_settled && post_audit_fork_active(height) {
+                Self::settle_protocol_inputs_fallback::<T>(tx, height);
             }
             for input in &tx.input {
                 //all inputs must be used up, even in cenotaphs
@@ -880,6 +964,57 @@ impl Protorune {
             }
         }
         Ok(())
+    }
+    /// Raw-rune (RUNES table, tag 0) handling for a tx that carries no
+    /// runestone. Like ord, every rune balance on the inputs is unallocated and
+    /// goes to the first non-OP_RETURN output; if there is none it is burned.
+    /// The input balances are cleared afterwards by the caller.
+    ///
+    /// Only `tables::RUNES` is read or written; protocol-tag (protorune /
+    /// alkanes) balances are not touched here.
+    pub fn transfer_runes_without_runestone(tx: &Transaction) {
+        let Some(vout) = tx
+            .output
+            .iter()
+            .position(|o| !o.script_pubkey.is_op_return())
+        else {
+            // no eligible output: the runes are burned
+            return;
+        };
+        let mut atomic = AtomicPointer::default();
+        let result = (|| -> Result<()> {
+            let sheets = tx
+                .input
+                .iter()
+                .map(|input| {
+                    let outpoint_bytes = consensus_encode(&input.previous_output)?;
+                    Ok(load_sheet(&mut atomic.derive(
+                        &tables::RUNES.OUTPOINT_TO_RUNES.select(&outpoint_bytes),
+                    )))
+                })
+                .collect::<Result<Vec<BalanceSheet<AtomicPointer>>>>()?;
+            let sheet = BalanceSheet::concat(sheets)?;
+            if sheet.balances().values().all(|v| *v == 0) {
+                return Ok(());
+            }
+            let outpoint = OutPoint::new(tx.compute_txid(), vout as u32);
+            sheet.save(
+                &mut atomic.derive(
+                    &tables::RUNES
+                        .OUTPOINT_TO_RUNES
+                        .select(&consensus_encode(&outpoint)?),
+                ),
+                false,
+            );
+            Ok(())
+        })();
+        match result {
+            Err(e) => {
+                println!("err: {:?}", e);
+                atomic.rollback();
+            }
+            _ => atomic.commit(),
+        }
     }
     pub fn index_spendables(txdata: &Vec<Transaction>) -> Result<BTreeSet<Vec<u8>>> {
         // Track unique addresses that have their spendable outpoints updated
@@ -1079,10 +1214,17 @@ impl Protorune {
             );
         }
         if map.contains_key(&u32::MAX) {
-            map.get(&u32::MAX)
+            let runtime = map
+                .get(&u32::MAX)
                 .map(|v| v.clone())
-                .unwrap_or_else(|| BalanceSheet::default())
-                .save(&mut atomic.derive(&table.RUNTIME_BALANCE), false);
+                .unwrap_or_else(|| BalanceSheet::default());
+            if post_audit_fork_active(height) {
+                // Explicit zeros clear the stored runtime balance (see
+                // PersistentRecord::save_runtime).
+                runtime.save_runtime(&mut atomic.derive(&table.RUNTIME_BALANCE));
+            } else {
+                runtime.save(&mut atomic.derive(&table.RUNTIME_BALANCE), false);
+            }
         }
         index_unique_protorunes::<T>(
             atomic,
@@ -1100,6 +1242,88 @@ impl Protorune {
                 .collect::<Vec<ProtoruneRuneId>>(),
         );
         Ok(())
+    }
+
+    /// Post-audit settlement of `T`'s input balances for a transaction that has
+    /// no matching protostone to route them (no runestone, cenotaph, no / empty
+    /// protocol field, input aggregation overflow, or a failed
+    /// `index_runestone`). Halborn: "Protocol Assets Are Stranded or Erased
+    /// When Spent Without a Matching Protostone".
+    ///
+    /// Every input's sheet is aggregated with per-asset SATURATING addition (so
+    /// this path cannot itself fail on overflow) and credited to
+    /// `default_output(tx)` -- the first non-OP_RETURN output, ord's default.
+    /// If every output is OP_RETURN there is no spendable target and the
+    /// balances burn. The consumed inputs are always cleared. Callers gate this
+    /// on `post_audit_fork_active(height)`.
+    pub fn settle_unmatched_protocol_inputs<T: MessageContext>(
+        atomic: &mut AtomicPointer,
+        tx: &Transaction,
+        height: u64,
+    ) -> Result<()> {
+        let table = tables::RuneTable::for_protocol(T::protocol_tag());
+        let mut aggregate = BalanceSheet::<AtomicPointer>::default();
+        let mut has_balance = false;
+        for input in &tx.input {
+            let sheet = load_sheet(&mut atomic.derive(
+                &table
+                    .OUTPOINT_TO_RUNES
+                    .select(&consensus_encode(&input.previous_output)?),
+            ));
+            for (id, amount) in sheet.balances() {
+                if *amount == 0 {
+                    continue;
+                }
+                has_balance = true;
+                let current = aggregate.get(id);
+                aggregate.set(id, current.saturating_add(*amount));
+            }
+        }
+        if !has_balance {
+            return Ok(());
+        }
+        let target = default_output(tx);
+        let mut map = BTreeMap::<u32, BalanceSheet<AtomicPointer>>::new();
+        if (target as usize) < tx.output.len()
+            && !tx.output[target as usize].script_pubkey.is_op_return()
+        {
+            map.insert(target, aggregate);
+        }
+        if !should_skip_protostone_persistence() {
+            Self::save_balances::<T>(
+                height,
+                &mut atomic.derive(&IndexPointer::default()),
+                &table,
+                tx,
+                &map,
+            )?;
+            for input in &tx.input {
+                let key = consensus_encode(&input.previous_output)?;
+                clear_balances(&mut atomic.derive(&table.OUTPOINT_TO_RUNES.select(&key)));
+            }
+        }
+        FINAL_BALANCES_SINK.with(|c| {
+            if let Some(sink) = c.borrow_mut().as_mut() {
+                sink.clear();
+                for (vout, sheet) in map.iter() {
+                    sink.push((*vout, sheet.clone()));
+                }
+            }
+        });
+        Ok(())
+    }
+
+    /// `settle_unmatched_protocol_inputs` in its own atomic, for transactions
+    /// whose runestone path did not commit (none, cenotaph, or rolled back).
+    fn settle_protocol_inputs_fallback<T: MessageContext>(tx: &Transaction, height: u64) {
+        let mut atomic = AtomicPointer::default();
+        match Self::settle_unmatched_protocol_inputs::<T>(&mut atomic, tx, height) {
+            Err(e) => {
+                println!("protocol input fallback settlement failed: {:?}", e);
+                atomic.rollback();
+            }
+            _ => atomic.commit(),
+        }
     }
 
     pub fn index_protostones<T: MessageContext>(
@@ -1128,6 +1352,14 @@ impl Protorune {
         }
 
         let protostones = Protostone::from_runestone(runestone)?;
+        let post_audit = post_audit_fork_active(height);
+
+        // Post-audit: a runestone with no protocol field / an empty one carries
+        // no protostones at all; settle tag-1 inputs ord-style instead of
+        // leaving them on the spent outpoints.
+        if protostones.len() == 0 && post_audit {
+            return Self::settle_unmatched_protocol_inputs::<T>(atomic, tx, height);
+        }
 
         if protostones.len() != 0 {
             let mut proto_balances_by_output = BTreeMap::<u32, BalanceSheet<AtomicPointer>>::new();
@@ -1153,7 +1385,24 @@ impl Protorune {
                     ))
                 })
                 .collect::<Result<Vec<BalanceSheet<AtomicPointer>>>>()?;
-            let mut balance_sheet = BalanceSheet::concat(sheets)?;
+            // Halborn: "Input Balance Aggregation Overflow Can Strand Co-Spent
+            // Alkane Assets". Below the fork an overflowing same-asset sum
+            // returns Err, rolling the tx back and stranding every co-spent
+            // asset on the consumed inputs. At/after the fork the tx is treated
+            // as unprocessable: no protostone executes, and the inputs are
+            // settled to the default output with per-asset SATURATING
+            // aggregation (only an asset whose supply already exceeds u128::MAX
+            // can lose its excess; every other co-spent asset is conserved).
+            let mut balance_sheet = match BalanceSheet::concat(sheets) {
+                std::result::Result::Ok(sheet) => sheet,
+                Err(e) => {
+                    if post_audit {
+                        println!("input aggregation overflow, settling to default output: {:?}", e);
+                        return Self::settle_unmatched_protocol_inputs::<T>(atomic, tx, height);
+                    }
+                    return Err(e);
+                }
+            };
             // TODO: Enable this at a future block when protoburns have been fully tested. For now only enabled in tests
             #[cfg(test)]
             {
@@ -1180,6 +1429,16 @@ impl Protorune {
                     &mut balance_sheet,
                     &mut proto_balances_by_output,
                     (tx.output.len() as u32) + 1 + position as u32,
+                )?;
+            } else if post_audit {
+                // Only foreign-tag protostones: below the fork the inputs were
+                // loaded, never assigned, then cleared -- erased. At/after the
+                // fork they go to the first non-OP_RETURN output (an all-
+                // OP_RETURN tx burns them, as save_balances skips OP_RETURNs).
+                Self::handle_leftover_runes(
+                    &mut balance_sheet,
+                    &mut proto_balances_by_output,
+                    default_output(tx),
                 )?;
             }
             protostones_iter

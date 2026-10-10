@@ -34,6 +34,42 @@ pub trait PersistentRecord: BalanceSheetOperations {
             }
         }
     }
+    /// Post-audit persistence for the protocol RUNTIME balance sheet.
+    ///
+    /// Halborn: "Zero Runtime Balance Updates Leave Previous Stored Balances
+    /// Active". `save` skips zero entries, so a runtime balance debited to
+    /// exactly zero left the previous positive `/id_to_balance` value (and the
+    /// previous positive `/runes`+`/balances` list entry) in place, and the next
+    /// transaction's lazily-loaded runtime sheet resurrected it.
+    ///
+    /// Semantics: the sheet is a PARTIAL update. An asset absent from the cache
+    /// keeps its stored value. A cached nonzero is written exactly as `save`
+    /// does. A cached explicit ZERO clears the asset: `/id_to_balance` is set to
+    /// 0 and a `(rune, 0)` entry is appended to the list so the list form's
+    /// last-wins reload (`load_sheet`) also yields 0. The zero is only written
+    /// when the stored keyed value is nonzero, so untouched / already-zero
+    /// assets cost no writes.
+    ///
+    /// Only used for RUNTIME_BALANCE: outpoint sheets are written once to a
+    /// fresh key, so there is no prior value to shadow and `save` is kept there.
+    fn save_runtime<T: KeyValuePointer>(&self, ptr: &T) {
+        let runes_ptr = ptr.keyword("/runes");
+        let balances_ptr = ptr.keyword("/balances");
+        let runes_to_balances_ptr = ptr.keyword("/id_to_balance");
+
+        for (rune, balance) in self.balances() {
+            let rune_bytes: Vec<u8> = (*rune).into();
+            let mut keyed = runes_to_balances_ptr.select(&rune_bytes);
+            if *balance == 0u128 {
+                if keyed.get().len() == 0 || keyed.get_value::<u128>() == 0 {
+                    continue;
+                }
+            }
+            runes_ptr.append(rune_bytes.clone().into());
+            balances_ptr.append_value::<u128>(*balance);
+            keyed.set_value::<u128>(*balance);
+        }
+    }
     fn save_index<T: KeyValuePointer>(
         &self,
         rune: &ProtoruneRuneId,
@@ -181,6 +217,57 @@ pub fn load_sheet<T: KeyValuePointer + Clone>(ptr: &T) -> BalanceSheet<T> {
         result.set(&rune, balance);
     }
     result
+}
+
+/// Hard ceiling on balance-sheet entries a single view call will read.
+///
+/// `load_sheet` trusts the stored `/runes` length and does two host reads per
+/// entry, so a view over a pathological outpoint runs for as long as that
+/// length allows while holding one of metashrew's finite view permits. Views
+/// go through `load_sheet_page` instead, which reads at most this many entries.
+/// The indexer keeps using `load_sheet`: consensus needs the whole sheet.
+pub const MAX_VIEW_SHEET_ENTRIES: u32 = 1000;
+
+/// One page of a stored balance sheet, read by `load_sheet_page`.
+pub struct SheetPage<T: KeyValuePointer + Clone> {
+    pub sheet: BalanceSheet<T>,
+    /// Stored `/runes` length — the size of the whole sheet.
+    pub total_entries: u32,
+    /// Offset of the next page, or 0 when this page reaches the end.
+    pub next_offset: u32,
+}
+
+/// Bounded `load_sheet` for views: reads stored entries `[offset, offset + n)`
+/// where `n` is `limit` clamped to `1..=MAX_VIEW_SHEET_ENTRIES` (0 = the cap).
+/// Pages follow storage order; entries within a page are keyed by rune id as
+/// usual, so a rune stored twice collapses within a page but not across pages.
+pub fn load_sheet_page<T: KeyValuePointer + Clone>(
+    ptr: &T,
+    offset: u32,
+    limit: u32,
+) -> SheetPage<T> {
+    let runes_ptr = ptr.keyword("/runes");
+    let balances_ptr = ptr.keyword("/balances");
+    let total_entries = runes_ptr.length();
+    let limit = if limit == 0 {
+        MAX_VIEW_SHEET_ENTRIES
+    } else {
+        limit.min(MAX_VIEW_SHEET_ENTRIES)
+    };
+    let start = offset.min(total_entries);
+    let end = start.saturating_add(limit).min(total_entries);
+    let mut sheet = BalanceSheet::default();
+
+    for i in start..end {
+        let rune = ProtoruneRuneId::from(runes_ptr.select_index(i).get());
+        let balance = balances_ptr.select_index(i).get_value::<u128>();
+        sheet.set(&rune, balance);
+    }
+    SheetPage {
+        sheet,
+        total_entries,
+        next_offset: if end < total_entries { end } else { 0 },
+    }
 }
 
 pub fn clear_balances<T: KeyValuePointer>(ptr: &T) {
