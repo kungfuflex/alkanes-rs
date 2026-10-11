@@ -183,6 +183,57 @@ pub fn load_sheet<T: KeyValuePointer + Clone>(ptr: &T) -> BalanceSheet<T> {
     result
 }
 
+/// Hard ceiling on balance-sheet entries a single view call will read.
+///
+/// `load_sheet` trusts the stored `/runes` length and does two host reads per
+/// entry, so a view over a pathological outpoint runs for as long as that
+/// length allows while holding one of metashrew's finite view permits. Views
+/// go through `load_sheet_page` instead, which reads at most this many entries.
+/// The indexer keeps using `load_sheet`: consensus needs the whole sheet.
+pub const MAX_VIEW_SHEET_ENTRIES: u32 = 1000;
+
+/// One page of a stored balance sheet, read by `load_sheet_page`.
+pub struct SheetPage<T: KeyValuePointer + Clone> {
+    pub sheet: BalanceSheet<T>,
+    /// Stored `/runes` length — the size of the whole sheet.
+    pub total_entries: u32,
+    /// Offset of the next page, or 0 when this page reaches the end.
+    pub next_offset: u32,
+}
+
+/// Bounded `load_sheet` for views: reads stored entries `[offset, offset + n)`
+/// where `n` is `limit` clamped to `1..=MAX_VIEW_SHEET_ENTRIES` (0 = the cap).
+/// Pages follow storage order; entries within a page are keyed by rune id as
+/// usual, so a rune stored twice collapses within a page but not across pages.
+pub fn load_sheet_page<T: KeyValuePointer + Clone>(
+    ptr: &T,
+    offset: u32,
+    limit: u32,
+) -> SheetPage<T> {
+    let runes_ptr = ptr.keyword("/runes");
+    let balances_ptr = ptr.keyword("/balances");
+    let total_entries = runes_ptr.length();
+    let limit = if limit == 0 {
+        MAX_VIEW_SHEET_ENTRIES
+    } else {
+        limit.min(MAX_VIEW_SHEET_ENTRIES)
+    };
+    let start = offset.min(total_entries);
+    let end = start.saturating_add(limit).min(total_entries);
+    let mut sheet = BalanceSheet::default();
+
+    for i in start..end {
+        let rune = ProtoruneRuneId::from(runes_ptr.select_index(i).get());
+        let balance = balances_ptr.select_index(i).get_value::<u128>();
+        sheet.set(&rune, balance);
+    }
+    SheetPage {
+        sheet,
+        total_entries,
+        next_offset: if end < total_entries { end } else { 0 },
+    }
+}
+
 pub fn clear_balances<T: KeyValuePointer>(ptr: &T) {
     let runes_ptr = ptr.keyword("/runes");
     let balances_ptr = ptr.keyword("/balances");
