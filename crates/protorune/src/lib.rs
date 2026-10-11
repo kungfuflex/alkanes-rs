@@ -1653,6 +1653,10 @@ impl Protorune {
     pub fn freeze_storage(height: u64) {}
 
     pub fn index_block<T: MessageContext>(block: Block, height: u64) -> Result<BTreeSet<Vec<u8>>> {
+        // One shared copy of the block for every message parcel of this block.
+        let shared = std::sync::Arc::new(block);
+        let _shared_guard = crate::message::SharedBlockGuard::set(shared.clone());
+        let block: &Block = &shared;
         let init_result = initialized_protocol_index().map_err(|e| anyhow!(e.to_string()));
         let add_result =
             add_to_indexable_protocols(T::protocol_tag()).map_err(|e| anyhow!(e.to_string()));

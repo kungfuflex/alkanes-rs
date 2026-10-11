@@ -189,7 +189,7 @@ impl MessageProcessor for Protostone {
             atomic: atomic.derive(&IndexPointer::default()),
             runes: RuneTransfer::from_balance_sheet(initial_sheet.clone()),
             transaction: transaction.clone(),
-            block: block.clone(),
+            block: crate::message::shared_block(block),
             height,
             vout: protomessage_vout,
             pointer,

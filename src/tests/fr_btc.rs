@@ -58,7 +58,7 @@ pub fn simulate_cellpack(height: u64, cellpack: Cellpack) -> Result<(ExtendedCal
             output: vec![],
             lock_time: bitcoin::absolute::LockTime::ZERO,
         },
-        block: create_block_with_coinbase_tx(height as u32),
+        block: std::sync::Arc::new(create_block_with_coinbase_tx(height as u32)),
         height,
         pointer: 0,
         refund_pointer: 0,

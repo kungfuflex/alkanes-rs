@@ -55,11 +55,11 @@ pub fn parcels_from_protobuf(v: proto::alkanes::MultiSimulateRequest) -> Vec<Mes
 pub fn parcel_from_protobuf(v: proto::alkanes::MessageContextParcel) -> MessageContextParcel {
     let mut result = MessageContextParcel::default();
     result.height = v.height;
-    result.block = if v.block.len() > 0 {
+    result.block = std::sync::Arc::new(if v.block.len() > 0 {
         consensus_decode::<Block>(&mut Cursor::new(v.block)).unwrap()
     } else {
         default_block()
-    };
+    });
     result.transaction = if v.transaction.len() > 0 {
         consensus_decode::<Transaction>(&mut Cursor::new(v.transaction)).unwrap()
     } else {
@@ -105,7 +105,7 @@ fn default_block() -> Block {
 
 pub fn plain_parcel_from_cellpack(cellpack: Cellpack) -> MessageContextParcel {
     let mut result = MessageContextParcel::default();
-    result.block = default_block();
+    result.block = std::sync::Arc::new(default_block());
     result.transaction = default_transaction();
     result.calldata = cellpack.encipher();
     result
