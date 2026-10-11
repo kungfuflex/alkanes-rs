@@ -85,17 +85,48 @@ pub fn get_alkane_binary<T: KeyValuePointer>(
     // range; a new version + fork height activates directly from the binary on
     // every node — no state migration, and immune to the
     // rolled-pod-inert-swap failure mode.
-    if let Some(bytes) = crate::network::precompiled_alkane_wasm_for_height(alkane_id, height) {
-        return Ok(Arc::new(bytes));
+    //
+    // A 32-byte payload is a factory alias (an encoded `AlkaneId`) and is
+    // followed to the aliased id. Resolution is iterative with cycle detection
+    // and a depth cap, so a cyclic or pathologically long alias chain becomes an
+    // ordinary message error instead of exhausting the native / wasm call stack
+    // (which would halt block indexing). #313 already rejects the direct
+    // self-alias at creation time; this is defense in depth.
+    let mut current = alkane_id.clone();
+    let mut visited = std::collections::BTreeSet::<AlkaneId>::new();
+    loop {
+        if let Some(bytes) = crate::network::precompiled_alkane_wasm_for_height(&current, height) {
+            return Ok(Arc::new(bytes));
+        }
+        let wasm_payload_arc = ptr.select(&current.clone().into()).get();
+        let wasm_payload = wasm_payload_arc.as_ref();
+        if wasm_payload.len() != 32 {
+            return Ok(Arc::new(decompress(wasm_payload.clone())?));
+        }
+        if visited.contains(&current) {
+            return Err(anyhow!(
+                "factory alias cycle while resolving binary for {:?} (revisited {:?})",
+                alkane_id,
+                current
+            ));
+        }
+        if visited.len() >= MAX_FACTORY_ALIAS_DEPTH {
+            return Err(anyhow!(
+                "factory alias chain for {:?} exceeds max depth {}",
+                alkane_id,
+                MAX_FACTORY_ALIAS_DEPTH
+            ));
+        }
+        visited.insert(current.clone());
+        current = wasm_payload.to_vec().try_into()?;
     }
-    let wasm_payload_arc = ptr.select(&alkane_id.clone().into()).get();
-    let wasm_payload = wasm_payload_arc.as_ref();
-    if wasm_payload.len() == 32 {
-        let factory_id = wasm_payload.to_vec().try_into()?;
-        return get_alkane_binary(ptr, &factory_id, height);
-    }
-    Ok(Arc::new(decompress(wasm_payload.clone())?))
 }
+
+/// Maximum number of factory-alias hops `get_alkane_binary` follows before
+/// failing the message. Deliberately generous: a legitimate alias chain (a
+/// factory clone of a factory clone ...) only grows by one paid transaction per
+/// hop, and the cap exists to bound work / stack, not to restrict real usage.
+pub const MAX_FACTORY_ALIAS_DEPTH: usize = 1024;
 
 pub fn get_alkane_binary_from_context(
     context: Arc<Mutex<AlkanesRuntimeContext>>,
