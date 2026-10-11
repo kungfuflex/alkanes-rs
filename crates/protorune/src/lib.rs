@@ -272,6 +272,16 @@ pub fn handle_transfer_runes_to_vout(
     Ok(output)
 }
 
+/// Post-Halborn-audit consensus fork for protocol (protorune / alkanes tag-1)
+/// state. Every audit fix that changes protorune or alkanes balances is gated
+/// on this one height so the whole bundle activates together. Raw-Rune fixes
+/// are NOT gated on it: runes are not consumed in production, so they apply
+/// from genesis.
+#[cfg(not(feature = "mainnet"))]
+pub const POST_AUDIT_FORK_HEIGHT: u64 = 0;
+#[cfg(feature = "mainnet")]
+pub const POST_AUDIT_FORK_HEIGHT: u64 = 972_000;
+
 /// From this height on, a named-rune commitment only counts if the spent output
 /// is P2TR (matching ord's rune_updater). Below it, the original predicate is
 /// kept verbatim so historical etchings replay identically.
