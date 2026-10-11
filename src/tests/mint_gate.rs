@@ -9,7 +9,16 @@
 //!     select a different gate entry point;
 //!   - `set_mint_gate` (opcode 80) is gated on the cFIRE-SIGIL (4:866), not on
 //!     DIESEL's own DSIGIL auth token; clearing to `0:0` persists as "no gate"
-//!     and mints then accrue to claimable fees for the DSIGIL owner;
+//!     and mints then accrue to claimable fees;
+//!   - `collect_fees` (opcode 78) is gated on the cFIRE-SIGIL too: DSIGIL is
+//!     frozen out, and the v3 `upgrade` (opcode 1, the only `/auth` writer) is
+//!     retired;
+//!   - emission ledger: from activation every block issues exactly its reward.
+//!     The first successful mint of a block settles into claimable fees the
+//!     open ledger block's shortfall (e.g. a counted mint that failed) plus the
+//!     full reward of every mint-free block since; the first ledger ever
+//!     back-fills from activation. So any test that indexes non-mint blocks at
+//!     or after V3 before a mint sees those rewards land in fees + supply;
 //!   - a gate that reverts or runs out of fuel does NOT revert the mint: DIESEL
 //!     caps the gate's fuel (post-audit runtime) and routes the mint to
 //!     claimable fees, so the block still emits exactly its reward; before
@@ -232,6 +241,49 @@ fn gate_calls(height: u32, gate: AlkaneId) -> Result<u128> {
     Ok(u128::from_le_bytes(d[0..16].try_into()?))
 }
 
+/// Regtest block reward at `h`, as the contract computes it.
+fn reward(h: u32) -> u128 {
+    5_000_000_000u128 >> (h / 210_000)
+}
+
+/// What the mint-free heights `from..to` owe under the emission ledger: their
+/// full rewards, settled into claimable fees by the next successful mint.
+fn rewards(from: u32, to: u32) -> u128 {
+    (from..to).map(reward).sum()
+}
+
+/// One block at `height` with one tx per call (in order), each spending its
+/// own coinbase output. Tx `i + 1` of the block carries `calls[i]`.
+fn block_of(height: u32, calls: Vec<(AlkaneId, Vec<u128>)>) -> Result<Block> {
+    let mut test_block = create_block_with_coinbase_tx(height);
+    let coinbase = create_coinbase_transaction(height).compute_txid();
+    for (i, (target, inputs)) in calls.into_iter().enumerate() {
+        test_block.txdata.push(alkane_helpers::create_multiple_cellpack_with_witness_and_in(
+            Witness::new(),
+            vec![Cellpack { target, inputs }],
+            OutPoint::new(coinbase, i as u32),
+            false,
+        ));
+    }
+    index_block(&test_block, height)?;
+    Ok(test_block)
+}
+
+fn tx_ok(b: &Block, i: usize) -> Result<()> {
+    alkane_helpers::assert_return_context(
+        &OutPoint { txid: b.txdata[i].compute_txid(), vout: 3 },
+        |_| Ok(()),
+    )
+}
+
+fn tx_reverted(b: &Block, i: usize, needle: &str) -> Result<()> {
+    assert_revert_context(&OutPoint { txid: b.txdata[i].compute_txid(), vout: 3 }, needle)
+}
+
+fn diesel_at(b: &Block, i: usize) -> Result<u128> {
+    Ok(get_sheet_for_outpoint(b, i, 0)?.get(&ProtoruneRuneId { block: 2, tx: 0 }))
+}
+
 fn diesel_storage(key: &[u8]) -> IndexPointer {
     IndexPointer::default()
         .keyword("/alkanes/")
@@ -304,8 +356,9 @@ fn set_gate(height: u32, auth: OutPoint, gate_block: u128, gate_tx: u128) -> Res
     Ok(out)
 }
 
-/// Call collect_fees (opcode 78) with the auth token attached. Returns the
-/// outpoint carrying the payout + the forwarded auth token.
+/// Call collect_fees (opcode 78) spending `auth` (the cFIRE-SIGIL to claim, or
+/// anything else to be refused). Returns the outpoint carrying the payout +
+/// the forwarded (or refunded) tokens.
 fn collect_fees(height: u32, auth: OutPoint) -> Result<(Block, OutPoint)> {
     let (block, out, _) = call_diesel(height, vec![78], auth)?;
     Ok((block, out))
@@ -474,32 +527,51 @@ fn test_sigil_clear_and_reset() -> Result<()> {
     let b = mint_with_tail(V3 + 2, &[])?;
     assert_mint_ok(&b)?;
     assert_eq!(minter_diesel(&b)?, 0, "cleared gate: mint accrues to fees");
-    // diesel_fee + the whole (ungated) mint
-    assert_eq!(claimable_fees(), fees_before + REWARD);
+    // diesel_fee + the whole (ungated) mint, plus the spill-over: V3 (set_gate)
+    // and V3 + 1 (view) had no mints, and this first-ever ledger back-fills
+    // their full rewards from activation.
+    let owed = rewards(V3, V3 + 2);
+    assert_eq!(owed, 2 * REWARD);
+    assert_eq!(claimable_fees(), fees_before + REWARD + owed);
     assert_eq!(gate_calls(V3 + 3, DEFAULT_GATE)?, 0);
 
-    // collect_fees stays only_owner (DSIGIL), not sigil.
+    // DSIGIL (the legacy only_owner token) no longer collects: refused, and
+    // nothing moves.
+    let fees = claimable_fees();
     let (block, _) = collect_fees(V3 + 4, auth)?;
-    let collected = get_sheet_for_outpoint(&block, 1, 0)?.get(&ProtoruneRuneId { block: 2, tx: 0 });
-    // The regtest premine (50_000_000) spent into the upgrade rides along on
-    // the DSIGIL outpoint and is forwarded back with it.
-    assert_eq!(collected, fees_before + REWARD + 50_000_000);
+    tx_reverted(&block, 1, "cFIRE-SIGIL not present in incoming alkanes")?;
+    assert_eq!(claimable_fees(), fees, "DSIGIL cannot claim");
+
+    // The cFIRE-SIGIL collects the full balance and gets its units back. Its
+    // outpoint carries no DIESEL of its own, so the payout is exactly `fees`.
+    let (block, sigil) = collect_fees(V3 + 5, sigil)?;
+    tx_ok(&block, 1)?;
+    let sheet = get_sheet_for_outpoint(&block, 1, 0)?;
+    assert_eq!(sheet.get(&ProtoruneRuneId { block: 2, tx: 0 }), fees);
+    assert_eq!(sheet.get(&ProtoruneRuneId { block: SIGIL.block, tx: SIGIL.tx }), 5);
     assert_eq!(claimable_fees(), 0);
 
     // Point it back at 4:1001 explicitly: source becomes "set".
-    set_gate(V3 + 5, sigil, DEFAULT_GATE.block, DEFAULT_GATE.tx)?;
-    let b = mint_with_tail(V3 + 6, &[])?;
+    set_gate(V3 + 6, sigil, DEFAULT_GATE.block, DEFAULT_GATE.tx)?;
+    let b = mint_with_tail(V3 + 7, &[])?;
     assert_eq!(minter_diesel(&b)?, SHARE);
-    let d = view_of(V3 + 7, DIESEL, vec![102])?;
+    // V3 + 2 issued its whole reward (no shortfall); V3 + 3 ..= V3 + 6 had no
+    // mints and spill over now, on top of this block's diesel_fee.
+    assert_eq!(claimable_fees(), rewards(V3 + 3, V3 + 7) + (REWARD - MINT));
+    let d = view_of(V3 + 8, DIESEL, vec![102])?;
     assert_eq!((d[40], d[41]), (1, 1));
     Ok(())
 }
 
 #[wasm_bindgen_test]
-fn test_collect_fees_requires_auth() -> Result<()> {
-    let (_, sigil) = setup(true)?;
-    set_gate(V3, sigil, 0, 0)?;
+fn test_collect_fees_requires_cfire_sigil() -> Result<()> {
+    let (auth, sigil) = setup(true)?;
+    let sigil = set_gate(V3, sigil, 0, 0)?;
     mint_with_tail(V3 + 1, &[])?;
+    let fees = claimable_fees();
+    assert!(fees > 0);
+
+    // Nothing attached.
     let height = V3 + 2;
     let (_, _, txid) = call_diesel(
         height,
@@ -508,8 +580,25 @@ fn test_collect_fees_requires_auth() -> Result<()> {
     )?;
     assert_revert_context(
         &OutPoint { txid, vout: 3 },
-        "Auth token is not in incoming alkanes",
+        "cFIRE-SIGIL not present in incoming alkanes",
     )?;
+    assert_eq!(claimable_fees(), fees);
+
+    // DIESEL's own DSIGIL auth token: frozen out in v3. The refund returns
+    // only what it carried in (the regtest premine, 50_000_000, spent into the
+    // pre-v3 upgrade rides on the DSIGIL outpoint); no payout.
+    let (block, _) = collect_fees(V3 + 3, auth)?;
+    tx_reverted(&block, 1, "cFIRE-SIGIL not present in incoming alkanes")?;
+    assert_eq!(claimable_fees(), fees, "DSIGIL cannot claim");
+    assert_eq!(diesel_at(&block, 1)?, 50_000_000, "only the forwarded premine");
+
+    // The cFIRE-SIGIL claims the full balance; its 5 units come back with it.
+    let (block, _) = collect_fees(V3 + 4, sigil)?;
+    tx_ok(&block, 1)?;
+    let sheet = get_sheet_for_outpoint(&block, 1, 0)?;
+    assert_eq!(sheet.get(&ProtoruneRuneId { block: 2, tx: 0 }), fees);
+    assert_eq!(sheet.get(&ProtoruneRuneId { block: SIGIL.block, tx: SIGIL.tx }), 5);
+    assert_eq!(claimable_fees(), 0);
     Ok(())
 }
 
@@ -563,11 +652,19 @@ fn assert_broken_gate_routes_to_fees(mode: u128) -> Result<()> {
     let records = crate::fuel_probe::snapshot();
     assert_mint_ok(&b)?;
     assert_eq!(minter_diesel(&b)?, 0, "a reverted gate pays the minter nothing");
-    assert_eq!(total_supply() - supply_before, REWARD, "block emits exactly the reward");
+    // V3 (the set-mode block) had no mint: this first-ever ledger settles its
+    // full reward too.
+    let owed = rewards(V3, V3 + 1);
+    assert_eq!(owed, REWARD);
+    assert_eq!(
+        total_supply() - supply_before,
+        REWARD + owed,
+        "block emits exactly the reward (plus the mint-free V3 block's)"
+    );
     assert_eq!(
         claimable_fees() - fees_before,
-        REWARD,
-        "the mint's share and the fee accrual both land in claimable fees"
+        REWARD + owed,
+        "the mint's share, the fee accrual and the spill-over all land in claimable fees"
     );
     // The gate frame was rolled back.
     assert_eq!(gate_calls(V3 + 2, DEFAULT_GATE)?, 0);
@@ -759,8 +856,9 @@ fn test_cap_final_mint_clamped_to_headroom() -> Result<()> {
     let b = mint_with_tail(V3 + 1, &[])?;
     assert_mint_ok(&b)?;
     assert_eq!(total_supply(), u128::MAX, "final mint lands exactly on the cap");
-    // The minter's share is committed first (clamped to 1000); the diesel_fee
-    // finds no headroom left and accrues 0.
+    // The minter's share is committed first (clamped to 1000); the spill-over
+    // owed for the mint-free V3 block and the diesel_fee find no headroom left
+    // and accrue 0.
     assert_eq!(claimable_fees() - fees_before, 1000, "final mint clamped to the headroom");
 
     // At the cap: rejected, nothing changes.
@@ -789,5 +887,96 @@ fn test_cap_exact_boundary_and_overflow_edge() -> Result<()> {
     assert_mint_ok(&b)?;
     assert_eq!(total_supply(), u128::MAX);
     assert_eq!(gate_calls(V3 + 2, DEFAULT_GATE)?, 2);
+    Ok(())
+}
+
+#[wasm_bindgen_test]
+fn test_failed_counted_mint_shortfall_settles_next_block() -> Result<()> {
+    setup(true)?;
+    let supply0 = total_supply();
+    let fees0 = claimable_fees();
+    // Block V3, two counted mints: the first succeeds through the mode-0 gate
+    // (which keeps half); then the gate goes to mode 2 and the second mint
+    // reverts ("mint gate returned"), so its share is never issued.
+    let b = block_of(
+        V3,
+        vec![(DIESEL, vec![77]), (DEFAULT_GATE, vec![2, 2]), (DIESEL, vec![77])],
+    )?;
+    let fee = REWARD / 2;
+    let per = (REWARD - fee) / 2;
+    let rem = (REWARD - fee) % 2;
+    tx_ok(&b, 1)?;
+    tx_ok(&b, 2)?;
+    tx_reverted(&b, 3, "mint gate returned")?;
+    assert_eq!(diesel_at(&b, 1)?, per / 2);
+    assert_eq!(diesel_at(&b, 3)?, 0);
+    assert_eq!(total_supply() - supply0, REWARD - per, "the failed mint's share is not issued yet");
+    assert_eq!(claimable_fees() - fees0, fee + rem);
+
+    // Block V3 + 1: gate back to mode 0, then one mint. Its settlement issues
+    // V3's shortfall (exactly the failed mint's share) into claimable fees.
+    let b = block_of(V3 + 1, vec![(DEFAULT_GATE, vec![2, 0]), (DIESEL, vec![77])])?;
+    tx_ok(&b, 1)?;
+    tx_ok(&b, 2)?;
+    assert_eq!(diesel_at(&b, 2)?, SHARE);
+    assert_eq!(claimable_fees() - fees0, (fee + rem) + per + (REWARD - MINT));
+    assert_eq!(
+        total_supply() - supply0,
+        reward(V3) + reward(V3 + 1),
+        "emission over the span is exactly the sum of the rewards"
+    );
+    Ok(())
+}
+
+#[wasm_bindgen_test]
+fn test_v3_upgrade_is_retired() -> Result<()> {
+    let (auth, _) = setup(true)?;
+    let auth_slot = diesel_storage(b"/auth").get().as_ref().clone();
+    assert!(!auth_slot.is_empty(), "the pre-v3 upgrade wrote /auth");
+    let supply = total_supply();
+    // Even with the DSIGIL attached, opcode 1 always reverts in v3.
+    let (_, _, txid) = call_diesel(V3, vec![1], auth)?;
+    assert_revert_context(&OutPoint { txid, vout: 3 }, "DIESEL v3: upgrade is retired")?;
+    assert_eq!(diesel_storage(b"/auth").get().as_ref().clone(), auth_slot, "/auth frozen");
+    assert_eq!(total_supply(), supply);
+    Ok(())
+}
+
+#[wasm_bindgen_test]
+fn test_first_ledger_backfills_from_activation() -> Result<()> {
+    setup(true)?;
+    // A pre-v3 mint (eoa binary) is outside the ledger and owes nothing.
+    mint_with_tail(4, &[])?;
+    let supply0 = total_supply();
+    let fees0 = claimable_fees();
+    // V3 ..= V3 + 4 have no successful mint: one is indexed with a view, the
+    // others are not indexed at all. The first mint ever back-fills them.
+    assert_eq!(gate_calls(V3 + 1, DEFAULT_GATE)?, 0);
+    let b = mint_with_tail(V3 + 5, &[])?;
+    assert_mint_ok(&b)?;
+    assert_eq!(minter_diesel(&b)?, SHARE);
+    let owed = rewards(V3, V3 + 5);
+    assert_eq!(owed, 5 * REWARD);
+    assert_eq!(total_supply() - supply0, owed + REWARD);
+    assert_eq!(claimable_fees() - fees0, owed + (REWARD - MINT));
+
+    // Next block: the open ledger was fully issued, nothing more is owed.
+    let b = mint_with_tail(V3 + 6, &[])?;
+    assert_mint_ok(&b)?;
+    assert_eq!(total_supply() - supply0, owed + 2 * REWARD);
+    assert_eq!(claimable_fees() - fees0, owed + 2 * (REWARD - MINT));
+
+    // A long gap across the regtest halving at 2_100_000 is settled at each
+    // era's reward.
+    let h = 2_100_002u32;
+    let r = reward(h);
+    assert_eq!(r, 5_000_000_000u128 >> 10);
+    let gap = rewards(V3 + 7, h);
+    assert_eq!(gap, (2_100_000 - (V3 as u128 + 7)) * REWARD + 2 * r);
+    let b = mint_with_tail(h, &[])?;
+    assert_mint_ok(&b)?;
+    assert_eq!(minter_diesel(&b)?, (r - r / 2) / 2);
+    assert_eq!(total_supply() - supply0, owed + 2 * REWARD + gap + r);
+    assert_eq!(claimable_fees() - fees0, owed + 2 * (REWARD - MINT) + gap + r / 2);
     Ok(())
 }

@@ -1,5 +1,5 @@
 use alkanes_runtime::message::MessageDispatch;
-use alkanes_runtime::{auth::AuthenticatedResponder, declare_alkane};
+use alkanes_runtime::declare_alkane;
 #[allow(unused_imports)]
 use alkanes_runtime::{
     println,
@@ -61,6 +61,16 @@ pub const DEFAULT_MINT_GATE: AlkaneId = AlkaneId { block: 4, tx: 1001 };
 /// a >4x margin. The mainnet SUBMINER-GATE + treasury deposit measures ~330k,
 /// against ~2.65M allotted on a minimum-fuel (3.5M) mint tx.
 pub const GATE_FALLBACK_RESERVE: u64 = 500_000;
+
+/// First height at which `2:0` runs this binary. MUST equal the indexer's
+/// `genesis::DIESEL_V3_BLOCK_HEIGHT` for the network this artifact is built
+/// for (the indexer only ships the mainnet and regtest builds of v3). Blocks
+/// from here on are covered by the emission ledger: none of their reward is
+/// lost (see `settle_unissued`).
+#[cfg(feature = "mainnet")]
+pub const V3_ACTIVATION_HEIGHT: u64 = 972_000;
+#[cfg(not(feature = "mainnet"))]
+pub const V3_ACTIVATION_HEIGHT: u64 = 2_000_000;
 
 /// cFIRE-SIGIL: the bearer capability that governs the mint gate (opcode 80).
 /// Possession-based, mirroring SUBMINER-GATE's own `require_auth`: >= 1 unit in
@@ -312,13 +322,96 @@ impl GenesisAlkane {
             if self.claimable_fees_pointer().get().len() == 0 {
                 self.set_claimable_fees(0);
             }
+            self.settle_unissued()?;
             // Fee accrual mints new supply too, so it is bounded by the cap:
             // clamp it to the remaining headroom (Halborn: "Supply Cap Check
             // Allows the Final DIESEL Mint to Exceed the Limit").
             let diesel_fee = clamp_to_cap(diesel_fee, self.total_supply(), self.max_supply());
             self.increase_claimable_fees(diesel_fee)?;
             self.increase_total_supply(diesel_fee)?;
+            self.record_issued(diesel_fee)?;
         }
+        Ok(())
+    }
+
+    // ---- Emission ledger: no block's reward is lost --------------------------
+    //
+    // From `V3_ACTIVATION_HEIGHT` on, every block issues exactly its
+    // `block_reward`. Minters receive what the block's mints pay out; whatever
+    // they do not receive goes to claimable fees (cFIRE-SIGIL, opcode 78):
+    //   - a block with NO mints: its whole reward;
+    //   - counted mints that fail (non-EOA caller, legacy mint in the block,
+    //     supply cap, a gate that over-returns): their share;
+    //   - anything else short of the reward.
+    // There is no end-of-block hook, so the shortfall is settled lazily: the
+    // first successful mint of a block settles everything owed since the ledger
+    // was last opened, then opens the ledger for its own block. A mint that
+    // reverts rolls back its own ledger writes, so only real issuance is
+    // recorded. Settlement is bounded by the supply cap like any other accrual.
+    //
+    // `/emission/height`: the block whose ledger is open (empty = none yet).
+    // `/emission/issued`: what that block has issued so far.
+
+    fn emission_height_pointer(&self) -> StoragePointer {
+        StoragePointer::from_keyword("/emission/height")
+    }
+
+    fn emission_issued_pointer(&self) -> StoragePointer {
+        StoragePointer::from_keyword("/emission/issued")
+    }
+
+    /// Sum of `block_reward(k)` for `from <= k < to`, one multiplication per
+    /// halving era so a long mint-free stretch costs O(eras), not O(blocks).
+    fn rewards_between(&self, from: u64, to: u64) -> Result<u128> {
+        let mut total: u128 = 0;
+        let mut k = from;
+        while k < to {
+            let era_end = (k / 210_000 + 1) * 210_000;
+            let seg_end = std::cmp::min(to, era_end);
+            let span = (seg_end - k) as u128;
+            total = overflow_error(
+                total.checked_add(overflow_error(span.checked_mul(self.block_reward(k)))?),
+            )?;
+            k = seg_end;
+        }
+        Ok(total)
+    }
+
+    /// First successful mint of the block at `height`: issue into claimable
+    /// fees what earlier blocks still owe, then open the ledger for `height`.
+    fn settle_unissued(&self) -> Result<()> {
+        let height = self.height();
+        let mut height_ptr = self.emission_height_pointer();
+        let mut issued_ptr = self.emission_issued_pointer();
+        let owed = if height_ptr.get().len() == 0 {
+            // First ledger ever: every block since activation that had no
+            // successful mint is owed in full.
+            self.rewards_between(V3_ACTIVATION_HEIGHT, height)?
+        } else {
+            let open = height_ptr.get_value::<u64>();
+            if open >= height {
+                // Cannot happen (the per-height seen marker gates this call),
+                // but never settle a block twice.
+                return Ok(());
+            }
+            let reward = self.block_reward(open);
+            let shortfall = reward.saturating_sub(issued_ptr.get_value::<u128>());
+            overflow_error(shortfall.checked_add(self.rewards_between(open + 1, height)?))?
+        };
+        let owed = clamp_to_cap(owed, self.total_supply(), self.max_supply());
+        if owed > 0 {
+            self.increase_claimable_fees(owed)?;
+            self.increase_total_supply(owed)?;
+        }
+        height_ptr.set_value::<u64>(height);
+        issued_ptr.set_value::<u128>(0);
+        Ok(())
+    }
+
+    /// Count `v` of new supply against the open (current) block's reward.
+    fn record_issued(&self, v: u128) -> Result<()> {
+        let mut issued_ptr = self.emission_issued_pointer();
+        issued_ptr.set_value::<u128>(overflow_error(issued_ptr.get_value::<u128>().checked_add(v))?);
         Ok(())
     }
 
@@ -424,31 +517,14 @@ impl GenesisAlkane {
         // then reject the mint, which reverts the fee with it, so supply would
         // stall below the cap forever.
         let value_per_mint = self.commit_capped_mint(value_per_mint)?;
+        // Settles earlier blocks and opens this block's ledger on the first
+        // successful mint, so this mint is recorded against THIS block.
         self.observe_upgraded_mint(diesel_fee)?;
+        self.record_issued(value_per_mint)?;
         Ok(AlkaneTransfer {
             id: context.myself.clone(),
             value: value_per_mint,
         })
-    }
-
-    fn observe_upgrade_initialization(&self) -> Result<()> {
-        let context = self.context()?;
-        let premine = self.premine()?;
-        if !context
-            .incoming_alkanes
-            .0
-            .iter()
-            .any(|i| (i.id == context.myself && i.value == premine))
-        {
-            return Err(anyhow!("Premine is not spent into the upgrade"));
-        }
-        let mut pointer = StoragePointer::from_keyword("/upgrade_initialized");
-        if pointer.get().len() == 0 {
-            pointer.set_value::<u8>(0x01);
-            Ok(())
-        } else {
-            Err(anyhow!("already upgraded diesel"))
-        }
     }
 
     fn initialize(&self) -> Result<CallResponse> {
@@ -467,14 +543,13 @@ impl GenesisAlkane {
         Ok(response)
     }
 
+    /// Retired in v3. The premine upgrade ran long before activation on
+    /// mainnet; it was also the only path that writes DIESEL's `/auth` slot
+    /// (the DSIGIL auth token). With it retired and `collect_fees` gated on the
+    /// cFIRE-SIGIL, v3 never reads or writes `/auth`: DSIGIL is frozen out from
+    /// `V3_ACTIVATION_HEIGHT` on.
     fn upgrade(&self) -> Result<CallResponse> {
-        let context = self.context()?;
-        let mut response = CallResponse::forward(&context.incoming_alkanes);
-
-        self.observe_upgrade_initialization()?;
-        response.alkanes.0.push(self.deploy_auth_token(5)?); // hardcode 5 auth tokens
-
-        Ok(response)
+        Err(anyhow!("DIESEL v3: upgrade is retired"))
     }
 
     // Method that matches the MessageDispatch enum
@@ -540,7 +615,7 @@ impl GenesisAlkane {
                     // runtime rolls back the child frame, including the
                     // transfer of the minted DIESEL into it, and leaves DIESEL
                     // its reserved fuel, so fall through to the accrual
-                    // default: the mint goes to claimable fees (DSIGIL) and the
+                    // default: the mint goes to claimable fees (cFIRE-SIGIL) and the
                     // protostone still succeeds. Minting must never brick
                     // because the gate or its treasury is broken.
                 }
@@ -549,14 +624,17 @@ impl GenesisAlkane {
 
         // No gate (explicitly cleared), or the gate reverted: the mint is NOT
         // paid to the caller. It accrues to the contract's claimable-fees
-        // balance, which only the DSIGIL auth-token holder can withdraw via
-        // `collect_fees` (opcode 78, `only_owner`).
+        // balance, which only the cFIRE-SIGIL bearer can withdraw via
+        // `collect_fees` (opcode 78).
         self.increase_claimable_fees(transfer.value)?;
         Ok(CallResponse::forward(&context.incoming_alkanes))
     }
 
+    /// Pay out everything claimable. Gated on the cFIRE-SIGIL (4:866), the
+    /// same bearer check as `set_mint_gate`. DIESEL's legacy DSIGIL auth token
+    /// (`/auth`, `only_owner`) no longer authorizes anything in v3.
     fn collect_fees(&self) -> Result<CallResponse> {
-        self.only_owner()?;
+        self.require_cfire_sigil()?;
         let context = self.context()?;
         let mut response = CallResponse::forward(&context.incoming_alkanes);
         response.alkanes.pay(AlkaneTransfer {
@@ -716,7 +794,6 @@ impl GenesisAlkane {
     }
 }
 
-impl AuthenticatedResponder for GenesisAlkane {}
 impl AlkaneResponder for GenesisAlkane {}
 
 // Use the new macro format
