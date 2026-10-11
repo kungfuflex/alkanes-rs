@@ -85,6 +85,7 @@ use std::sync::Arc;
 pub fn index_block(block: &Block, height: u32) -> Result<()> {
     configure_network();
     clear_diesel_mints_cache();
+    let _vm_cache_guard = crate::vm::instance::VmCacheGuard::new();
     let really_is_genesis = is_genesis(height.into());
     if really_is_genesis {
         genesis().unwrap();

@@ -28,6 +28,7 @@ pub mod diesel_gas_paths;
 #[cfg(test)]
 pub mod diesel_mainnet_smoke;
 pub mod fork_972000;
+pub mod vm_cache;
 #[cfg(test)]
 pub mod diesel_shadow;
 #[cfg(test)]
