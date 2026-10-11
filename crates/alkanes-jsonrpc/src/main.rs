@@ -85,7 +85,13 @@ async fn main() -> std::io::Result<()> {
         backends::ReqwestMetashrewBackend::new(client.clone(), &config),
         backends::ReqwestEsploraBackend::new(client.clone(), &config),
         backends::ReqwestOrdBackend::new(client.clone(), &config),
-    ));
+    ).with_extra_bitcoind_methods(config.bitcoind_extra_allowed_methods.clone()));
+    if !config.bitcoind_extra_allowed_methods.is_empty() {
+        log::warn!(
+            "Extra bitcoind methods enabled (BITCOIND_EXTRA_ALLOWED_METHODS): {:?}",
+            config.bitcoind_extra_allowed_methods
+        );
+    }
 
     let server_host = config.server_host.clone();
     let server_port = config.server_port;

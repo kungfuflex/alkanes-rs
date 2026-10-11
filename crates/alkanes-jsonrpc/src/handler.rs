@@ -1,4 +1,4 @@
-use alkanes_rpc_core::types::{JsonRpcRequest, JsonRpcResponse};
+use alkanes_rpc_core::types::{JsonRpcRequest, JsonRpcResponse, METHOD_NOT_FOUND};
 use alkanes_rpc_core::RpcDispatcher;
 use anyhow::Result;
 use std::sync::Arc;
@@ -15,16 +15,16 @@ pub type ProdDispatcher = RpcDispatcher<
     ReqwestOrdBackend,
 >;
 
+/// memshrew-p2p JSON-RPC methods the gateway may forward (all read-only).
+pub const MEMSHREW_ALLOWED_METHODS: &[&str] = &[
+    "memshrew_build",
+    "memshrew_getmempooltxs",
+    "memshrew_getblocktemplates",
+    "memshrew_estimatefees",
+];
+
 /// Handle a JSON-RPC request using the core dispatcher with pre-dispatch
 /// interception for memshrew, subfrost, and lua/sandshrew eval methods.
-pub async fn handle_request(
-    request: &JsonRpcRequest,
-    dispatcher: &Arc<ProdDispatcher>,
-    proxy: &ProxyClient,
-) -> Result<JsonRpcResponse> {
-    handle_request_with_storage(request, dispatcher, proxy, None).await
-}
-
 pub async fn handle_request_with_storage(
     request: &JsonRpcRequest,
     dispatcher: &Arc<ProdDispatcher>,
@@ -41,7 +41,18 @@ pub async fn handle_request_with_storage(
 
     // Pre-dispatch interception for methods not in rpc-core
     match namespace {
-        "memshrew" => return proxy.forward_to_memshrew(request).await,
+        "memshrew" => {
+            // Deny-by-default, like every other backend passthrough: only the
+            // read methods memshrew-p2p serves are forwarded.
+            if MEMSHREW_ALLOWED_METHODS.contains(&request.method.as_str()) {
+                return proxy.forward_to_memshrew(request).await;
+            }
+            return Ok(JsonRpcResponse::error(
+                METHOD_NOT_FOUND,
+                format!("method not found: {}", request.method),
+                request.id.clone(),
+            ));
+        }
         "subfrost" => return proxy.forward_to_subfrost(request).await,
         "lua" => {
             return sandshrew::handle_lua_method(
