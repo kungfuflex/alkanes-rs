@@ -1,8 +1,7 @@
 // RunestoneProtostoneUpgrade - Encode Runestones with embedded Protostones
 // Forked from @magiceden-oss/runestone-lib/src/runestone with protostone extensions
-// Uses bitcoinjs-lib for script compilation (already a ts-sdk dependency)
+// Script pushes are written by hand (see `encipher` below), not via bitcoinjs script.compile
 
-import * as bitcoin from 'bitcoinjs-lib';
 import { ProtoruneRuneId } from './protoruneruneid';
 import { ProtoruneEdict } from './protoruneedict';
 import { Tag as ProtoTag } from './tag';
@@ -15,6 +14,14 @@ import { unpack, encipher } from './bytes';
 const OP_RETURN = 0x6a;
 const MAGIC_NUMBER = 0x5d; // OP_13
 const MAX_SCRIPT_ELEMENT_SIZE = 520;
+
+/** A data push of `data` (≤ 520 bytes): direct length, OP_PUSHDATA1 or OP_PUSHDATA2. Never an opcode. */
+function pushData(data: Buffer): Buffer {
+  const n = data.length;
+  if (n <= 75) return Buffer.concat([Buffer.from([n]), data]);
+  if (n <= 0xff) return Buffer.concat([Buffer.from([0x4c, n]), data]);
+  return Buffer.concat([Buffer.from([0x4d, n & 0xff, n >> 8]), data]);
+}
 
 // Standard Rune tags (from Runes protocol, not Protostone tags)
 const RuneTag = {
@@ -218,17 +225,21 @@ export class RunestoneProtostoneUpgrade {
       }
     }
 
-    // Compile to Bitcoin script
-    const stack: (Buffer | number)[] = [];
-    stack.push(OP_RETURN);
-    stack.push(MAGIC_NUMBER);
-
+    // Compile to Bitcoin script: OP_RETURN OP_13 <data push>...
+    //
+    // The pushes are written by hand, NOT through `bitcoin.script.compile`. bitcoinjs applies
+    // BIP62 minimal pushes there: a ONE-byte chunk holding 1..16 (or 0x81) is emitted as OP_1..OP_16
+    // (OP_1NEGATE) instead of a data push. The runestone decoder treats any opcode after the magic
+    // as a cenotaph (ordinals runestone.rs: Instruction::Op -> Flaw::Opcode), so the indexer runs
+    // NOTHING in that runestone. It happens when the payload is 520·k + 1 bytes and its last byte is
+    // in that set. Every other script is byte-identical to the old output; the Rust encoder already
+    // pushes the byte as data. Found by the subfrost wallet-core golden replay (2026-10-10).
     const payload = encipher(payloads);
+    const parts: Buffer[] = [Buffer.from([OP_RETURN, MAGIC_NUMBER])];
     for (let i = 0; i < payload.length; i += MAX_SCRIPT_ELEMENT_SIZE) {
-      stack.push(payload.subarray(i, i + MAX_SCRIPT_ELEMENT_SIZE));
+      parts.push(pushData(payload.subarray(i, i + MAX_SCRIPT_ELEMENT_SIZE)));
     }
-
-    return bitcoin.script.compile(stack);
+    return Buffer.concat(parts);
   }
 }
 
