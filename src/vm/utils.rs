@@ -85,17 +85,165 @@ pub fn get_alkane_binary<T: KeyValuePointer>(
     // range; a new version + fork height activates directly from the binary on
     // every node — no state migration, and immune to the
     // rolled-pod-inert-swap failure mode.
-    if let Some(bytes) = crate::network::precompiled_alkane_wasm_for_height(alkane_id, height) {
-        return Ok(Arc::new(bytes));
+    //
+    // A 32-byte payload is a factory alias (an encoded `AlkaneId`) and is
+    // followed to the aliased id. Resolution is iterative with cycle detection
+    // and a depth cap, so a cyclic or pathologically long alias chain becomes an
+    // ordinary message error instead of exhausting the native / wasm call stack
+    // (which would halt block indexing). #313 already rejects the direct
+    // self-alias at creation time; this is defense in depth.
+    let mut current = alkane_id.clone();
+    let mut visited = std::collections::BTreeSet::<AlkaneId>::new();
+    loop {
+        if let Some(bytes) = cached_precompiled(&current, height) {
+            return Ok(bytes);
+        }
+        let wasm_payload_arc = ptr.select(&current.clone().into()).get();
+        let wasm_payload = wasm_payload_arc.as_ref();
+        if wasm_payload.len() != 32 {
+            return cached_decompress(&wasm_payload_arc);
+        }
+        if visited.contains(&current) {
+            return Err(anyhow!(
+                "factory alias cycle while resolving binary for {:?} (revisited {:?})",
+                alkane_id,
+                current
+            ));
+        }
+        if visited.len() >= MAX_FACTORY_ALIAS_DEPTH {
+            return Err(anyhow!(
+                "factory alias chain for {:?} exceeds max depth {}",
+                alkane_id,
+                MAX_FACTORY_ALIAS_DEPTH
+            ));
+        }
+        visited.insert(current.clone());
+        current = wasm_payload.to_vec().try_into()?;
     }
-    let wasm_payload_arc = ptr.select(&alkane_id.clone().into()).get();
-    let wasm_payload = wasm_payload_arc.as_ref();
-    if wasm_payload.len() == 32 {
-        let factory_id = wasm_payload.to_vec().try_into()?;
-        return get_alkane_binary(ptr, &factory_id, height);
-    }
-    Ok(Arc::new(decompress(wasm_payload.clone())?))
 }
+
+// ---- Per-block bytecode cache --------------------------------------------
+//
+// Returns the SAME `Arc` for the same code within a block, which is what lets
+// `vm::instance::VmCache` reuse the compiled module, and skips re-inflating a
+// contract's gz payload on every call. Keyed by CONTENT, never by alkane id:
+// a reverted CREATE rolls the sequence back, so a later CREATE in the same
+// block can put different bytes at the same 2:N. Precompiled built-ins are
+// keyed by (id, height) because their code map is static per height. Reset
+// with the VM cache at the start of every block (`reset_vm_cache`).
+
+#[derive(Default)]
+struct BinaryCache {
+    precompiled: std::collections::HashMap<(u128, u128, u32), Arc<Vec<u8>>>,
+    /// hash(compressed) -> [(compressed, decompressed)], compared in full on hit.
+    decompressed: std::collections::HashMap<u64, Vec<(Arc<Vec<u8>>, Arc<Vec<u8>>)>>,
+    /// Fast path: the storage layer usually hands back the SAME payload `Arc`
+    /// for the same key, so check identity before hashing. The entry holds the
+    /// payload `Arc`, so its address cannot be reused while cached.
+    by_ptr: std::collections::HashMap<usize, (Arc<Vec<u8>>, Arc<Vec<u8>>)>,
+    entries: usize,
+    bytes: usize,
+}
+
+const BINARY_CACHE_MAX_ENTRIES: usize = 512;
+/// Decompressed bytes held per block. Hitting it resets this cache AND the VM
+/// cache together (`reset_vm_cache`). With `VM_CACHE_MAX_BINARY_BYTES` per
+/// entry, a block of zip bombs cannot accumulate past this.
+const BINARY_CACHE_MAX_BYTES: usize = 128 * 1024 * 1024;
+
+thread_local! {
+    static BINARY_CACHE: std::cell::RefCell<BinaryCache> = std::cell::RefCell::new(BinaryCache::default());
+}
+
+/// (entries, decompressed bytes) currently held. For tests and diagnostics.
+pub fn binary_cache_stats() -> (usize, usize) {
+    BINARY_CACHE.with(|c| {
+        let c = c.borrow();
+        (c.entries, c.bytes)
+    })
+}
+
+pub fn reset_binary_cache() {
+    BINARY_CACHE.with(|c| *c.borrow_mut() = BinaryCache::default());
+}
+
+fn cached_precompiled(id: &AlkaneId, height: u32) -> Option<Arc<Vec<u8>>> {
+    let key = (id.block, id.tx, height);
+    if let Some(hit) = BINARY_CACHE.with(|c| c.borrow().precompiled.get(&key).cloned()) {
+        return Some(hit);
+    }
+    let bytes = Arc::new(crate::network::precompiled_alkane_wasm_for_height(id, height)?);
+    BINARY_CACHE.with(|c| {
+        let mut c = c.borrow_mut();
+        if c.precompiled.len() >= BINARY_CACHE_MAX_ENTRIES {
+            c.precompiled.clear();
+        }
+        c.precompiled.insert(key, bytes.clone());
+    });
+    Some(bytes)
+}
+
+pub(crate) fn cached_decompress(payload: &Arc<Vec<u8>>) -> Result<Arc<Vec<u8>>> {
+    let ptr = Arc::as_ptr(payload) as usize;
+    let fast = BINARY_CACHE.with(|c| {
+        c.borrow()
+            .by_ptr
+            .get(&ptr)
+            .filter(|(p, _)| Arc::ptr_eq(p, payload))
+            .map(|(_, binary)| binary.clone())
+    });
+    if let Some(binary) = fast {
+        return Ok(binary);
+    }
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    payload.as_slice().hash(&mut hasher);
+    let key = hasher.finish();
+    let hit = BINARY_CACHE.with(|c| {
+        c.borrow().decompressed.get(&key).and_then(|bucket| {
+            bucket
+                .iter()
+                .find(|(compressed, _)| {
+                    Arc::ptr_eq(compressed, payload) || compressed.as_slice() == payload.as_slice()
+                })
+                .map(|(_, binary)| binary.clone())
+        })
+    });
+    if let Some(binary) = hit {
+        BINARY_CACHE.with(|c| {
+            c.borrow_mut().by_ptr.insert(ptr, (payload.clone(), binary.clone()));
+        });
+        return Ok(binary);
+    }
+    let binary = Arc::new(decompress(payload.as_ref().clone())?);
+    if binary.len() > crate::vm::instance::VM_CACHE_MAX_BINARY_BYTES {
+        return Ok(binary);
+    }
+    let over = BINARY_CACHE.with(|c| {
+        let c = c.borrow();
+        c.entries + 1 > BINARY_CACHE_MAX_ENTRIES || c.bytes + binary.len() > BINARY_CACHE_MAX_BYTES
+    });
+    if over {
+        crate::vm::instance::reset_vm_cache();
+    }
+    BINARY_CACHE.with(|c| {
+        let mut c = c.borrow_mut();
+        c.entries += 1;
+        c.bytes += binary.len();
+        c.decompressed
+            .entry(key)
+            .or_default()
+            .push((payload.clone(), binary.clone()));
+        c.by_ptr.insert(ptr, (payload.clone(), binary.clone()));
+    });
+    Ok(binary)
+}
+
+/// Maximum number of factory-alias hops `get_alkane_binary` follows before
+/// failing the message. Deliberately generous: a legitimate alias chain (a
+/// factory clone of a factory clone ...) only grows by one paid transaction per
+/// hop, and the cap exists to bound work / stack, not to restrict real usage.
+pub const MAX_FACTORY_ALIAS_DEPTH: usize = 1024;
 
 pub fn get_alkane_binary_from_context(
     context: Arc<Mutex<AlkanesRuntimeContext>>,

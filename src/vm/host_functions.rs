@@ -533,7 +533,7 @@ impl AlkanesHostFunctionsImpl {
         cellpack_ptr: i32,
         incoming_alkanes_ptr: i32,
         checkpoint_ptr: i32,
-        _start_fuel: u64, // this arg is not used, but cannot be removed due to backwards compat
+        requested_fuel: u64, // the callee's fuel cap; honored from POST_AUDIT_FORK_HEIGHT (see `extcall`)
     ) -> i32 {
         match Self::_prepare_extcall_before_checkpoint::<T>(
             caller,
@@ -556,6 +556,7 @@ impl AlkanesHostFunctionsImpl {
                     incoming_alkanes,
                     storage_map,
                     storage_map_len,
+                    requested_fuel,
                 ) {
                     Ok(v) => v,
                     Err(e) => Self::_handle_extcall_abort::<T>(caller, e, pushed_checkpoint),
@@ -757,6 +758,7 @@ impl AlkanesHostFunctionsImpl {
         incoming_alkanes: AlkaneTransferParcel,
         storage_map: StorageMap,
         storage_map_len: u64,
+        requested_fuel: u64,
     ) -> Result<i32> {
         // Check for precompiled contract addresses
         if cellpack.target.block == 800000000 {
@@ -826,7 +828,25 @@ impl AlkanesHostFunctionsImpl {
         consume_fuel(caller, total_fuel)?;
 
         let mut trace_context: TraceContext = subcontext.flat().into();
-        let start_fuel: u64 = caller.get_fuel()?;
+        // Fuel the caller holds after paying for the extcall itself.
+        let remaining_fuel: u64 = caller.get_fuel()?;
+        // Fuel allotted to the callee. Before POST_AUDIT_FORK_HEIGHT the
+        // caller's `fuel` argument was ignored and the callee got everything.
+        // From the fork it is a cap: the callee gets min(requested, remaining)
+        // and the caller keeps the rest even if the callee reverts, so a parent
+        // can reserve enough fuel to handle a child's failure (DIESEL v3 relies
+        // on this to route a reverted mint-gate's mint to claimable fees).
+        // Callers passing `self.fuel()` or u64::MAX request >= remaining (the
+        // extcall cost is charged after `fuel()` is read), so they see no
+        // change. 0 keeps the legacy "everything" meaning so no deployed
+        // contract that passes 0 is starved.
+        let start_fuel: u64 = if requested_fuel != 0
+            && protorune::post_audit_fork_active(height as u64)
+        {
+            std::cmp::min(requested_fuel, remaining_fuel)
+        } else {
+            remaining_fuel
+        };
         trace_context.fuel = start_fuel;
         let event: TraceEvent = T::event(trace_context);
         subcontext.trace.clock(event);
@@ -841,7 +861,11 @@ impl AlkanesHostFunctionsImpl {
             Ok((response, gas_used)) => {
                 let serialized = CallResponse::from(response.clone().into()).serialize();
                 {
-                    caller.set_fuel(overflow_error(start_fuel.checked_sub(gas_used))?)?;
+                    // gas_used includes the callee's storage fee, charged
+                    // after it ran: it must still fit the callee's allotment
+                    // (pre-fork allotment == remaining, so this is unchanged).
+                    overflow_error(start_fuel.checked_sub(gas_used))?;
+                    caller.set_fuel(overflow_error(remaining_fuel.checked_sub(gas_used))?)?;
                     let mut return_context: TraceResponse = response.clone().into();
                     return_context.fuel_used = gas_used;
 
@@ -883,8 +907,9 @@ impl AlkanesHostFunctionsImpl {
                 let result = (serialized.len() as i32).checked_neg().unwrap_or(-1);
 
                 {
-                    // Deduct all fuel allocated to the child call
-                    let _ = caller.set_fuel(0);
+                    // Deduct all fuel allocated to the child call. Pre-fork
+                    // that is everything (start_fuel == remaining_fuel).
+                    let _ = caller.set_fuel(remaining_fuel - start_fuel);
 
                     let mut context_guard = caller.data_mut().context.lock().unwrap();
                     context_guard

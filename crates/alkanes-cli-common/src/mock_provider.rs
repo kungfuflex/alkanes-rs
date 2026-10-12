@@ -65,6 +65,9 @@ pub struct MockProvider {
     /// non-dust pass) and the BTC-only alkane-carrier exclusion — both read
     /// `alkane_balances` through `get_protorunes_by_outpoint`.
     pub qubitcoin_mode: bool,
+    /// Outpoints (`txid:vout`) for which `get_protorunes_by_outpoint` returns
+    /// an error — models a failed / unavailable indexer probe.
+    pub failing_outpoints: Arc<Mutex<std::collections::HashSet<String>>>,
     /// Session-scoped pending-tx store. Provided so integration tests
     /// can wire chained-broadcast scenarios without spinning up an
     /// `Arc<dyn PendingTxStore>` of their own. `Some` by default so
@@ -94,6 +97,7 @@ impl MockProvider {
             internal_key,
             alkane_balances: Arc::new(Mutex::new(HashMap::new())),
             qubitcoin_mode: true,
+            failing_outpoints: Arc::new(Mutex::new(std::collections::HashSet::new())),
             pending_tx_store: crate::pending_tx_store::MemoryPendingTxStore::new(),
         }
     }
@@ -687,6 +691,9 @@ impl MetashrewRpcProvider for MockProvider {
         };
         use std::collections::BTreeMap;
         let key = format!("{}:{}", txid, vout);
+        if self.failing_outpoints.lock().unwrap().contains(&key) {
+            return Err(AlkanesError::Network(format!("mock: protorunesbyoutpoint failed for {}", key)));
+        }
         let ab = self.alkane_balances.lock().unwrap();
         let entries = ab.get(&key).cloned().unwrap_or_default();
         drop(ab);

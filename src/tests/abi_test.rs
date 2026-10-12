@@ -179,7 +179,7 @@ fn test_meta_call() -> Result<()> {
 
     // Create a properly formatted message context parcel
     let parcel = MessageContextParcel {
-        block: test_block,
+        block: std::sync::Arc::new(test_block),
         height: block_height as u64,
         calldata: vec![2, 1],
         ..Default::default()

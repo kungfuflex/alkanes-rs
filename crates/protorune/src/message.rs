@@ -6,6 +6,7 @@ use metashrew_support::index_pointer::KeyValuePointer;
 use protorune_support::balance_sheet::{BalanceSheet, ProtoruneRuneId};
 use protorune_support::rune_transfer::RuneTransfer;
 use protorune_support::utils::consensus_encode;
+use std::sync::Arc;
 use std::u128;
 
 pub trait MessageContext {
@@ -27,7 +28,10 @@ pub struct MessageContextParcel {
     pub atomic: AtomicPointer,
     pub runes: Vec<RuneTransfer>,
     pub transaction: Transaction,
-    pub block: Block,
+    /// Shared, read-only. One `Arc` per indexed block (see [`shared_block`]):
+    /// every message used to carry its own deep copy of the whole block, which
+    /// made a block's indexing cost grow with (messages x block size).
+    pub block: Arc<Block>,
     pub height: u64,
     pub pointer: u32,
     pub refund_pointer: u32,
@@ -55,7 +59,7 @@ impl Default for MessageContextParcel {
             atomic: AtomicPointer::default(),
             runes: Vec::<RuneTransfer>::default(),
             transaction: block.txdata[0].clone(),
-            block: block.clone(),
+            block: Arc::new(block.clone()),
             height: 0,
             pointer: 0,
             vout: 0,
@@ -66,4 +70,39 @@ impl Default for MessageContextParcel {
             sheets: Box::new(BalanceSheet::default()),
         }
     }
+}
+
+thread_local! {
+    static SHARED_BLOCK: std::cell::RefCell<Option<Arc<Block>>> = std::cell::RefCell::new(None);
+}
+
+/// Set for the duration of `Protorune::index_block`: the block being indexed,
+/// shared by every message parcel built for it. Cleared on drop.
+pub struct SharedBlockGuard(());
+
+impl SharedBlockGuard {
+    pub fn set(block: Arc<Block>) -> Self {
+        SHARED_BLOCK.with(|c| *c.borrow_mut() = Some(block));
+        SharedBlockGuard(())
+    }
+}
+
+impl Drop for SharedBlockGuard {
+    fn drop(&mut self) {
+        SHARED_BLOCK.with(|c| *c.borrow_mut() = None);
+    }
+}
+
+/// The shared `Arc` for `block` when it IS the block currently being indexed
+/// (pointer identity, never block-hash equality: distinct blocks can share a
+/// header in tests); otherwise a fresh `Arc` of a copy, as before.
+pub fn shared_block(block: &Block) -> Arc<Block> {
+    SHARED_BLOCK.with(|c| {
+        if let Some(shared) = c.borrow().as_ref() {
+            if std::ptr::eq(Arc::as_ptr(shared), block as *const Block) {
+                return shared.clone();
+            }
+        }
+        Arc::new(block.clone())
+    })
 }

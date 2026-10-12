@@ -28,6 +28,10 @@ pub mod diesel_gas_paths;
 #[cfg(test)]
 pub mod diesel_mainnet_smoke;
 #[cfg(test)]
+pub mod fork_972000;
+#[cfg(test)]
+pub mod vm_cache;
+#[cfg(test)]
 pub mod diesel_shadow;
 #[cfg(test)]
 pub mod diesel_sidebyside;
@@ -49,6 +53,8 @@ pub mod genesis_upgrade;
 pub mod memory_security_tests;
 #[cfg(test)]
 pub mod merkle_distributor;
+#[cfg(test)]
+pub mod mint_gate;
 #[cfg(test)]
 pub mod networks;
 #[cfg(test)]

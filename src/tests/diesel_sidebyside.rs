@@ -129,7 +129,7 @@ fn parcel_for_tx(
         atomic: AtomicPointer::default(),
         runes: vec![],
         transaction: tx.clone(),
-        block: block.clone(),
+        block: std::sync::Arc::new(block.clone()),
         height: height as u64,
         pointer: 0,
         refund_pointer: 0,

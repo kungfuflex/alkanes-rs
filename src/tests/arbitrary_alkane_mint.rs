@@ -96,8 +96,27 @@ fn test_transfer_overflow() -> Result<()> {
 
     println!("Last sheet: {:?}", sheet);
 
-    assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 0 }), 0);
-    assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 1 }), 0);
+    if protorune::post_audit_fork_active(block_height as u64) {
+        // Post-audit ("Input Balance Aggregation Overflow Can Strand Co-Spent
+        // Alkane Assets"): the overflowing input set is not executed but is
+        // settled to the default output with saturating aggregation instead of
+        // being stranded on the spent inputs.
+        assert_eq!(
+            sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 1 }),
+            u128::MAX
+        );
+        // nothing left stranded on either spent input
+        for spent in [
+            alkane_helpers::get_last_outpoint_sheet(&test_block)?,
+            alkane_helpers::get_sheet_for_outpoint(&test_block2, test_block2.txdata.len() - 2, 0)?,
+        ] {
+            assert_eq!(spent.get_cached(&ProtoruneRuneId { block: 2, tx: 0 }), 0);
+            assert_eq!(spent.get_cached(&ProtoruneRuneId { block: 2, tx: 1 }), 0);
+        }
+    } else {
+        assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 0 }), 0);
+        assert_eq!(sheet.get_cached(&ProtoruneRuneId { block: 2, tx: 1 }), 0);
+    }
 
     Ok(())
 }
