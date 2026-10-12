@@ -263,7 +263,7 @@ jobs:
           }
           EOF
           cat "$RUNNER_TEMP/pkg/${VERSION}.json"
-          tar -tzf "$RUNNER_TEMP/pkg/$TARBALL" | head -40
+          tar -tzf "$RUNNER_TEMP/pkg/$TARBALL" | sed -n 1,40p  # sed, not head: head exits early and pipefail turns the SIGPIPE into a failure
 
       - name: Upload tarball
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
