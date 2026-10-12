@@ -27,7 +27,9 @@ pub mod determinism;
 pub mod diesel_gas_paths;
 #[cfg(test)]
 pub mod diesel_mainnet_smoke;
+#[cfg(test)]
 pub mod fork_972000;
+#[cfg(test)]
 pub mod vm_cache;
 #[cfg(test)]
 pub mod diesel_shadow;
