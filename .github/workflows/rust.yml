@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: ["main"]
 
+# Read-only token; no secrets are used by this workflow.
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -18,19 +22,25 @@ jobs:
           - name: "WASM Tests"
             command: "cargo test --target wasm32-unknown-unknown --features test-utils"
           - name: "Protorunes WASM Tests"
-            command: "cargo test -p protorune --features test-utils"
+            # --test-threads=1: protorune's tests share metashrew's global KV
+            # singleton; in parallel they race on it and the binary SIGSEGVs.
+            command: "cargo test -p protorune --features test-utils -- --test-threads=1"
           - name: "Protorune Unit Tests"
-            command: "cargo test -p protorune --target x86_64-unknown-linux-gnu"
+            command: "cargo test -p protorune --target x86_64-unknown-linux-gnu -- --test-threads=1"
       fail-fast: false # Allows all tests to run even if one fails
 
     name: ${{ matrix.test-config.name }}
     steps:
-      - uses: actions/checkout@v4
+      # Third-party actions are pinned by commit SHA (tag in the comment).
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - name: Install protoc
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master, 2026-10-09
         with:
+          toolchain: stable
           targets: wasm32-unknown-unknown
       # `--locked` is load-bearing, do not drop it.
       #
