@@ -72,6 +72,9 @@ const MAINNET_TOTAL_SUPPLY: u128 = 70_873_008_905_224;
 const MAINNET_CLAIMABLE_FEES: u128 = 125_695_008_831;
 
 const MAINNET_SUBMINER_GATE: &[u8] = include_bytes!("static/mainnet_4_1001_subminer_gate.wasm");
+/// Mainnet 4:866 cFIRE-SIGIL bytecode (getbytecode), sha256
+/// e523ad4dc0d7d4135eb67460212a8c35b0ace22bad68022a80afd377c4bffdfc.
+const MAINNET_CFIRE_SIGIL: &[u8] = include_bytes!("static/mainnet_4_866_cfire_sigil.wasm");
 const MAINNET_SUBMINER_TREASURY: &[u8] =
     include_bytes!("static/mainnet_2_96782_subminer_treasury.wasm");
 const CENSUS: &str = include_str!("static/mainnet_diesel_census_970826_970969.csv");
@@ -190,8 +193,7 @@ fn deploy(height: u32, binary: &[u8], cellpack: Cellpack) -> Result<OutPoint> {
 struct Env {
     /// DIESEL's own auth token (DSIGIL, 2:69805) units.
     dsigil: OutPoint,
-    /// The cFIRE-SIGIL stand-in at 4:866 (an auth token; the real 4:866 is
-    /// only consulted by governance, never on the mint path).
+    /// The real cFIRE-SIGIL at 4:866: the outpoint holding its 5 units.
     sigil: OutPoint,
 }
 
@@ -200,7 +202,7 @@ struct Env {
 ///           this first active block)
 ///   971_901 DSIGIL auth token CREATEd at 2:69805 (its mainnet id) and set as
 ///           DIESEL's `/auth`; `/upgrade_initialized` = 1 (mainnet state)
-///   971_902 cFIRE-SIGIL at 4:866
+///   971_902 the real cFIRE-SIGIL bytecode at 4:866, Initialize { units: 5 }
 ///   971_903 SUBMINER treasury at 2:96782 (sequence pinned so CREATE lands
 ///           there), initialize(asset 2:0, payee 4:866)
 ///   971_904 SUBMINER-GATE at 4:1001, initialize(2:0, 2:96782, 4:866, 192)
@@ -247,16 +249,17 @@ fn setup() -> Result<Env> {
     storage(DIESEL, "/auth").set(Arc::new(auth_bytes));
     storage(DIESEL, "/upgrade_initialized").set_value::<u8>(0x01);
 
-    let mut sigil_inputs = vec![0u128];
-    sigil_inputs.extend(string_to_u128_list("cFIRE-SIGIL".into()));
-    sigil_inputs.extend(string_to_u128_list("CFS".into()));
-    sigil_inputs.push(5);
+    // The REAL cFIRE-SIGIL (mainnet 4:866 bytecode, sha256 e523ad4d…, equal to
+    // fire's build-info/4-866.cfire-sigil.json target_sha256), initialized as
+    // on mainnet: Initialize { units } mints the capability to the deployer.
+    // Its Authenticate (opcode 1) answers [0x01] only for exactly one incoming
+    // transfer of itself with value >= 1, handing the unit back.
     let sigil = deploy(
         h0 + 2,
-        &alkanes_std_auth_token_build::get_bytes(),
+        MAINNET_CFIRE_SIGIL,
         Cellpack {
             target: AlkaneId { block: 3, tx: SIGIL.tx },
-            inputs: sigil_inputs,
+            inputs: vec![0, 5],
         },
     )?;
 
@@ -903,5 +906,75 @@ fn fork_972000_profile_v3_heaviest_block() -> Result<()> {
     let max = shape_at(970912);
     let (_, ms) = replay(FORK, max)?;
     console(format!("PROFILE v3 {} mints: {:.0} ms ({:.2} ms/mint)", max.mints, ms, ms / max.mints as f64));
+    Ok(())
+}
+
+/// Units of `token` held by contract `holder` (the runtime's own balance).
+fn contract_holds(holder: AlkaneId, token: AlkaneId) -> u128 {
+    IndexPointer::default()
+        .keyword("/alkanes/")
+        .select(&token.into())
+        .keyword("/balances/")
+        .select(&holder.into())
+        .get_value::<u128>()
+}
+
+/// The cFIRE-SIGIL must never be minted or stranded by being used. The auth
+/// token fixed in cf90dc04 minted a stray unit on every `authenticate`; the
+/// real 4:866 (fire `cfire-sigil`, mainnet bytecode e523ad4d…) returns exactly
+/// the unit it was handed. Every sigil-gated path in v3 is exercised here with
+/// the REAL bytecode, and after each one the 5 units must all be back on the
+/// holder's outpoint and none may sit in any contract.
+#[wasm_bindgen_test]
+fn fork_972000_cfire_sigil_paths_conserve_supply() -> Result<()> {
+    let env = setup()?;
+    run_v3(FORK, Shape { height: 0, mints: 3, coinbase_sats: 313_000_000 }, "3 mints (treasury gets deposits)")?;
+    let sigil_rune = ProtoruneRuneId { block: SIGIL.block, tx: SIGIL.tx };
+    let use_sigil = |h: u32, target: AlkaneId, inputs: Vec<u128>, input: OutPoint, what: &str| -> Result<(Block, OutPoint)> {
+        let mut block = create_block_with_coinbase_tx(h);
+        let tx = alkane_helpers::create_multiple_cellpack_with_witness_and_in(
+            Witness::new(),
+            vec![Cellpack { target, inputs }],
+            input,
+            false,
+        );
+        block.txdata.push(tx.clone());
+        index_block(&block, h)?;
+        assert_return_context(&OutPoint { txid: tx.compute_txid(), vout: 3 }, |_| Ok(()))
+            .map_err(|e| anyhow::anyhow!("{} did not succeed: {:?}", what, e))?;
+        let out = OutPoint { txid: tx.compute_txid(), vout: 0 };
+        let on_holder = get_sheet_for_outpoint(&block, 1, 0)?.get(&sigil_rune);
+        let stuck: Vec<(AlkaneId, u128)> = [DIESEL, GATE, TREASURY, SIGIL]
+            .iter()
+            .map(|c| (*c, contract_holds(*c, SIGIL)))
+            .filter(|(_, v)| *v != 0)
+            .collect();
+        console(format!("{}: holder has {} cFIRE-SIGIL; contracts holding any: {:?}", what, on_holder, stuck));
+        assert_eq!(on_holder, 5, "{}: all 5 units back on the holder (no mint, no loss)", what);
+        assert!(stuck.is_empty(), "{}: cFIRE-SIGIL stranded in {:?}", what, stuck);
+        Ok((block, out))
+    };
+    let s = env.sigil;
+    let (_, s) = use_sigil(FORK + 1, DIESEL, vec![80, 0, 0], s, "DIESEL set_mint_gate(0:0)")?;
+    let (_, s) = use_sigil(FORK + 2, DIESEL, vec![80, GATE.block, GATE.tx], s, "DIESEL set_mint_gate(4:1001)")?;
+    let (_, s) = use_sigil(FORK + 3, GATE, vec![2, 500], s, "SUBMINER-GATE set-split(500)")?;
+    assert_eq!(read_u128(GATE, "/caller-bp"), 500, "the gate accepted the real sigil");
+    let deposited = read_u128(TREASURY, "/deposited");
+    assert!(deposited > 0);
+    let (block, s) = use_sigil(FORK + 4, TREASURY, vec![2], s, "treasury collect")?;
+    assert!(get_sheet_for_outpoint(&block, 1, 0)?.get(&DIESEL_RUNE) > 0, "treasury paid out to the sigil holder");
+    let fees = ledger().fees;
+    // The input outpoint already carries the treasury payout; collect_fees
+    // forwards it and adds the claimable fees on top.
+    let carried = get_sheet_for_outpoint(&block, 1, 0)?.get(&DIESEL_RUNE);
+    let (block, s) = use_sigil(FORK + 5, DIESEL, vec![78], s, "DIESEL collect_fees")?;
+    assert_eq!(get_sheet_for_outpoint(&block, 1, 0)?.get(&DIESEL_RUNE), carried + fees);
+    assert_eq!(ledger().fees, 0);
+    // Repeated use: still exactly 5.
+    let mut s = s;
+    for i in 0..3u32 {
+        let (_, next) = use_sigil(FORK + 6 + i, DIESEL, vec![80, GATE.block, GATE.tx], s, "repeat set_mint_gate")?;
+        s = next;
+    }
     Ok(())
 }
