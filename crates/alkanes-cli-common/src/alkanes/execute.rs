@@ -2701,8 +2701,17 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         // every to_addresses list there contains alkanes_change_address.
         let droppable_change_index = pin_pointed_change(droppable_change_index, runestone_pointer);
         let runestone_script = self.construct_runestone_script(&final_protostones, outputs.len(), runestone_pointer, params.skip_diesel_mint)?;
+        // Every `pN` is encoded as a shadow vout `outputs + 1 + N`, so the runestone is only valid
+        // for the output count it was encoded against. `build_psbt_and_fee` may drop the sub-dust
+        // change placeholder, which shrinks that count by one; encode the runestone for that count
+        // too and let it swap in only if the drop happens. Without this every `pN` lands one vout
+        // high (mainnet fcabd7b5…47ad: the edict meant for p1 fed p2, the swap pointed at the mint).
+        let runestone_if_change_dropped = match droppable_change_index {
+            Some(_) => Some(self.construct_runestone_script(&final_protostones, outputs.len() - 1, runestone_pointer, params.skip_diesel_mint)?),
+            None => None,
+        };
         let prefetched_for_build = build_effective_txouts_map(params, &utxo_selection.txouts)?;
-        let (psbt, fee, estimated_vsize) = self.build_psbt_and_fee(final_funding_outpoints.clone(), outputs, Some(runestone_script), params.fee_rate, None, None, prefetched_for_build.as_ref(), droppable_change_index).await?;
+        let (psbt, fee, estimated_vsize) = self.build_psbt_and_fee(final_funding_outpoints.clone(), outputs, Some(runestone_script), params.fee_rate, None, None, prefetched_for_build.as_ref(), droppable_change_index, runestone_if_change_dropped).await?;
 
         // Validate the transaction before returning
         self.validate_transaction(&psbt, &final_funding_outpoints, fee, params, prefetched_for_build.as_ref()).await?;
@@ -4634,15 +4643,22 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         // (Bitcoin Core dust policy) rather than being written as an
         // unbroadcastable sub-dust output. `None` keeps the legacy behavior.
         droppable_change_index: Option<usize>,
+        // The same runestone encoded for one physical output fewer. REQUIRED whenever
+        // `droppable_change_index` is set and the runestone references a protostone (`pN`): its
+        // shadow vouts are `outputs + 1 + N`, so dropping the placeholder invalidates them. It
+        // replaces the runestone only if the placeholder is actually dropped.
+        runestone_if_change_dropped: Option<ScriptBuf>,
     ) -> Result<(Psbt, u64, usize)> {
         use bitcoin::transaction::Version;
 
+        let mut runestone_index: Option<usize> = None;
         if let Some(script) = runestone_script {
             if !script.is_empty() {
                  outputs.push(TxOut {
                     value: bitcoin::Amount::ZERO,
                     script_pubkey: script,
                 });
+                runestone_index = Some(outputs.len() - 1);
             }
         }
 
@@ -4746,7 +4762,9 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         // Removing an output shifts every index above it, so this only fires
         // when the caller nominated the placeholder AND it is still the last
         // non-OP_RETURN output — no protostone pointer or edict can target it,
-        // and only the trailing OP_RETURN moves.
+        // and only the trailing OP_RETURN moves. That move is NOT harmless: the
+        // output count is an input to every `pN` shadow vout, so the runestone
+        // is swapped for `runestone_if_change_dropped`, encoded for the new count.
         let mut change_dropped_to_fee: u64 = 0;
         if change_value < DUST_THRESHOLD_SATS {
             let last_spendable = outputs.iter().rposition(|o| !o.script_pubkey.is_op_return());
@@ -4757,6 +4775,11 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                 if idx == last && is_empty_placeholder {
                     outputs.remove(idx);
                     change_dropped_to_fee = change_value;
+                    if let (Some(ri), Some(script)) = (runestone_index, runestone_if_change_dropped) {
+                        // The runestone was pushed after the placeholder, so it moved down one.
+                        let ri = if ri > idx { ri - 1 } else { ri };
+                        outputs[ri].script_pubkey = script;
+                    }
                     log::info!(
                         "Dropping BTC change output at index {idx}: {change_value} sats is below \
                          the {DUST_THRESHOLD_SATS}-sat dust limit — residual goes to fee"
@@ -5032,7 +5055,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         };
         
         let prefetched_for_reveal = build_effective_txouts_map(params, &selected_txouts)?;
-        let (mut psbt, fee, estimated_vsize) = self.build_psbt_and_fee(selected_utxos, outputs, Some(runestone_script), params.fee_rate, Some(envelope), Some(commit_txout), prefetched_for_reveal.as_ref(), None).await?;
+        let (mut psbt, fee, estimated_vsize) = self.build_psbt_and_fee(selected_utxos, outputs, Some(runestone_script), params.fee_rate, Some(envelope), Some(commit_txout), prefetched_for_reveal.as_ref(), None, None).await?;
 
         let reveal_script = envelope.build_reveal_script();
         let (spend_info, _) = self.create_taproot_spend_info_for_envelope(envelope, commit_internal_key).await?;
@@ -7921,6 +7944,7 @@ mod tests {
                 None,
                 None,
                 None, // no droppable change placeholder in this shape
+                None,
             )
             .await
             .expect("build_psbt_and_fee should succeed");
@@ -8413,7 +8437,7 @@ mod dust_change_tests {
 
         let (psbt, fee, _vsize) = executor
             .build_psbt_and_fee(
-                vec![outpoint], outputs, Some(runestone), Some(1.0), None, None, None, droppable,
+                vec![outpoint], outputs, Some(runestone), Some(1.0), None, None, None, droppable, None,
             )
             .await
             .expect("build should succeed");
@@ -8529,7 +8553,7 @@ mod dust_change_tests {
         let (psbt, _fee, _vsize) = executor
             .build_psbt_and_fee(
                 vec![outpoint], outputs, Some(ScriptBuf::from(vec![0x6a, 0x01, 0xff])),
-                Some(1.0), None, None, None, Some(1),
+                Some(1.0), None, None, None, Some(1), None,
             )
             .await
             .unwrap();
@@ -9214,5 +9238,141 @@ mod d0b_excluded_utxos_invariant_tests {
         ];
         let sel = select(&mut mock, reqs, &addr, &[], &[]).await.expect("pending output funds the alkane-branch ask");
         assert!(sel.outpoints.contains(&incoming) && sel.outpoints.contains(&carrier));
+    }
+}
+
+#[cfg(test)]
+mod shadow_vout_change_drop_tests {
+    //! `pN` is encoded as the shadow vout `outputs + 1 + N`, so a runestone is only correct for
+    //! the output count it was encoded against. `build_psbt_and_fee` drops a sub-dust change
+    //! placeholder AFTER the runestone was encoded; before this fix nothing re-encoded it and
+    //! every `pN` landed one vout high (mainnet fcabd7b59827d6e81800db2954489773f13f21ddb73e9ff4695bd559fb9f47ad:
+    //! 4 outputs, edict encoded 7 / pointer 8 where p1 / p2 are 6 / 7 — the swap reverted).
+    //!
+    //! End-to-end through `build_single_transaction`, the path `alkanesExecuteWithStrings`
+    //! takes. Keys are generated per run; the input value is PROBED so the change lands in the
+    //! sub-dust band for this exact shape rather than hardcoding a fee estimate.
+    use super::*;
+    use crate::alkanes::parsing::{parse_input_requirements, parse_protostones};
+    use crate::mock_provider::MockProvider;
+    use bitcoin::key::Secp256k1;
+    use bitcoin::{Amount, Network};
+    use protorune_support::protostone::Protostone;
+
+    /// p0 edicts to p1 and points its leftovers at p1; p1 is a message. The shifter shape.
+    const STONES: &str = "[2:0:100:p1]:p1:v0,[4,65522,13,2,2,0,32,0,100,1,999]:v1:v0";
+
+    struct Wallet {
+        taproot: Address,
+        segwit: Address,
+    }
+
+    fn wallet(mock: &mut MockProvider, coins: &[u64]) -> Wallet {
+        let secp = Secp256k1::new();
+        let (sk, pk) = secp.generate_keypair(&mut rand::thread_rng());
+        mock.set_keypair(sk, bitcoin::PublicKey::new(pk));
+        let taproot = Address::p2tr(&secp, pk.x_only_public_key().0, None, Network::Regtest);
+        let (_sk2, pk2) = secp.generate_keypair(&mut rand::thread_rng());
+        let segwit = Address::p2wpkh(&bitcoin::CompressedPublicKey(pk2), Network::Regtest);
+        for value in coins {
+            let mut id = [0u8; 32];
+            rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut id);
+            mock.utxos.lock().unwrap().push((
+                OutPoint::new(bitcoin::Txid::from_byte_array(id), 0),
+                TxOut { value: Amount::from_sat(*value), script_pubkey: taproot.script_pubkey() },
+            ));
+        }
+        Wallet { taproot, segwit }
+    }
+
+    fn params(w: &Wallet) -> EnhancedExecuteParams {
+        EnhancedExecuteParams {
+            fee_rate: Some(2.0),
+            to_addresses: vec![w.taproot.to_string(), w.taproot.to_string()],
+            from_addresses: Some(vec![w.taproot.to_string()]),
+            change_address: Some(w.segwit.to_string()),
+            alkanes_change_address: Some(w.taproot.to_string()),
+            input_requirements: parse_input_requirements("").unwrap(),
+            protostones: parse_protostones(STONES).unwrap(),
+            envelope_data: None,
+            raw_output: false,
+            trace_enabled: false,
+            mine_enabled: false,
+            auto_confirm: false,
+            ordinals_strategy: OrdinalsStrategy::Burn,
+            mempool_indexer: false,
+            split_transactions: false,
+            split_at: None,
+            known_pending_tx_hexes: vec![],
+            prefetched_utxos: vec![],
+            excluded_utxos: vec![],
+            skip_diesel_mint: true,
+            max_indexed_height: None,
+            utxo_source: UtxoDataSource::Metashrew,
+        }
+    }
+
+    async fn try_build(coins: &[u64]) -> Result<(Transaction, Vec<Protostone>)> {
+        let mut mock = MockProvider::new(Network::Regtest);
+        let w = wallet(&mut mock, coins);
+        let p = params(&w);
+        let mut executor = EnhancedAlkanesExecutor::new(&mut mock);
+        let state = executor.build_single_transaction(&p).await?;
+        let ExecutionState::ReadyToSign(ready) = state else { panic!("expected ReadyToSign") };
+        let tx = ready.psbt.unsigned_tx.clone();
+        let Some(ordinals::Artifact::Runestone(rs)) = ordinals::Runestone::decipher(&tx) else {
+            panic!("tx must carry a valid (non-cenotaph) runestone");
+        };
+        let stones = Protostone::decipher(&rs.protocol.unwrap_or_default()).expect("protostones decode");
+        Ok((tx, stones))
+    }
+
+    async fn build(coins: &[u64]) -> (Transaction, Vec<Protostone>) {
+        try_build(coins).await.expect("build succeeds")
+    }
+
+    /// Every `pN` the spec asked for, checked against the tx actually built.
+    fn assert_shadow_vouts_match(tx: &Transaction, stones: &[Protostone]) {
+        let p1 = tx.output.len() as u32 + 1 + 1;
+        assert_eq!(stones.len(), 2, "two protostones, no appended mint");
+        assert_eq!(stones[0].edicts.len(), 1);
+        assert_eq!(stones[0].edicts[0].output, p1 as u128, "p0's edict must target p1 = outputs + 2 ({} outputs)", tx.output.len());
+        assert_eq!(stones[0].pointer, Some(p1), "p0's pointer must be p1 = outputs + 2 ({} outputs)", tx.output.len());
+        assert_eq!(stones[1].pointer, Some(1), "vN targets never move");
+        assert_eq!(stones[1].refund, Some(0));
+    }
+
+    #[tokio::test]
+    async fn healthy_change_keeps_the_output_and_the_original_encoding() {
+        let (tx, stones) = build(&[400_000]).await;
+        assert_eq!(tx.output.len(), 4, "[v0, v1, change, OP_RETURN]");
+        assert_shadow_vouts_match(&tx, &stones);
+    }
+
+    #[tokio::test]
+    async fn sub_dust_change_dropped_re_encodes_every_pn_for_the_final_output_count() {
+        // The incident's shape: a wallet of small coins. Selection is checked against a
+        // pre-selection estimate that exceeds the fee actually paid once real inputs are known,
+        // so a wallet funded at exactly that estimate, in several coins, ends with sub-dust change.
+        // Read the estimate off the builder's own refusal instead of hardcoding it.
+        let needed = match try_build(&[1_000]).await {
+            Err(AlkanesError::InsufficientBitcoin { needed, .. }) => needed,
+            other => panic!("expected InsufficientBitcoin from a 1000-sat wallet, got {:?}", other.map(|(tx, _)| tx.output.len())),
+        };
+        let mut dropped = None;
+        for n in 2..=8u64 {
+            let coin = needed.div_ceil(n);
+            let (tx, stones) = build(&vec![coin; n as usize]).await;
+            if tx.output.len() == 3 {
+                dropped = Some((n, tx, stones));
+                break;
+            }
+        }
+        let (n, tx, stones) = dropped.expect("some coin count must land the change in the sub-dust band");
+        eprintln!("change dropped with {n} coins funding {needed} sats");
+        assert!(tx.output.iter().all(|o| o.script_pubkey.is_op_return() || o.value.to_sat() >= 546));
+        // Before the fix: edict and pointer encoded for 4 outputs (6) on this 3-output tx,
+        // where p1 is 5 — the edict fed nothing and the leftovers went past the last protostone.
+        assert_shadow_vouts_match(&tx, &stones);
     }
 }
