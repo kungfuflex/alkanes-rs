@@ -1,18 +1,19 @@
 use anyhow::Result;
 use dotenvy::dotenv;
-use tracing::info;
-use tracing_subscriber::{fmt, EnvFilter};
 use tokio::sync::oneshot;
+use tracing::info;
+use tracing_subscriber::{EnvFilter, fmt};
 
+mod canonical_commit;
 mod config;
-mod db;
-mod progress;
 mod coordinator;
-mod pipeline;
-mod poller;
-mod provider;
+mod db;
 mod helpers;
 mod inferred_transfers;
+mod pipeline;
+mod poller;
+mod progress;
+mod provider;
 mod transform_integration;
 use crate::db::blocks::ensure_processed_blocks_table;
 
@@ -35,14 +36,24 @@ async fn main() -> Result<()> {
 
     // Ensure ProcessedBlocks exists (defensive)
     ensure_processed_blocks_table(&pool).await?;
-    
+
     // Apply trace transform schema
     info!("Applying trace transform schema...");
     let mut transform_service = transform_integration::TraceTransformService::new(pool.clone());
     transform_service.apply_schema().await?;
     // Load existing pools from database
     transform_service.load_existing_pools().await?;
-    info!("Trace transform schema applied and {} pools loaded", transform_service.known_pools.len());
+    info!(
+        "Trace transform schema applied and {} pools loaded",
+        transform_service.known_pools.len()
+    );
+
+    // Canonical publication is the only Marketplace visibility boundary. Legacy progress without
+    // a matching commitment is refused so deployments cannot silently bless partial history.
+    progress::ensure_position_table(&pool).await?;
+    progress::migrate_from_kv_store(&pool).await?;
+    canonical_commit::ensure_schema(&pool).await?;
+    canonical_commit::verify_bootstrap_state(&pool).await?;
 
     // Provider
     let provider = provider::build_provider(
@@ -54,11 +65,6 @@ async fn main() -> Result<()> {
     .await?;
 
     // Pipeline and poller
-    // Bootstrap position table used for progress tracking
-    progress::ensure_position_table(&pool).await?;
-    // Migrate from old kv_store if needed
-    progress::migrate_from_kv_store(&pool).await?;
-
     let pipeline = pipeline::Pipeline::new(
         pool.clone(),
         cfg.factory_block_id.clone(),
@@ -99,7 +105,12 @@ async fn main() -> Result<()> {
         cfg.network_provider.clone(),
     )
     .await?;
-    let coordinator = coordinator::CatchUpCoordinator::new(coord_provider, pipeline, progress_store, cfg.start_height);
+    let coordinator = coordinator::CatchUpCoordinator::new(
+        coord_provider,
+        pipeline,
+        progress_store,
+        cfg.start_height,
+    );
     let coordinator_fut = async move {
         // Wait for initial pools refresh + height init before starting catch-up
         let _ = poller_init_rx.await;

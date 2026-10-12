@@ -1,8 +1,25 @@
 use crate::extractor::TraceExtractor;
-use crate::types::{AlkaneId, TraceEvent, Result};
-use crate::trackers::balance::{ValueTransferExtractor, BalanceChange};
+use crate::trackers::balance::{BalanceChange, ValueTransferExtractor};
+use crate::types::{AlkaneId, Result, TraceEvent};
+use anyhow::{bail, Context};
 use sqlx::PgPool;
 use std::collections::HashMap;
+
+fn parse_outpoint<'a>(outpoint: &'a str, label: &str) -> Result<(&'a str, i32)> {
+    let (txid, vout_text) = outpoint
+        .split_once(':')
+        .with_context(|| format!("{label} must have txid:vout form"))?;
+    if txid.is_empty() || vout_text.contains(':') {
+        bail!("{label} must have exactly one non-empty txid:vout pair");
+    }
+    let vout: i32 = vout_text
+        .parse()
+        .with_context(|| format!("{label} vout is not an i32"))?;
+    if vout < 0 {
+        bail!("{label} vout cannot be negative");
+    }
+    Ok((txid, vout))
+}
 
 /// Optimized balance tracker that writes directly to proper indexed tables
 /// instead of using the generic key-value backend
@@ -14,62 +31,69 @@ impl OptimizedBalanceTracker {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
-    
+
     /// Process balance changes and update all tables
     pub async fn process_balance_changes(&self, changes: Vec<BalanceChange>) -> Result<()> {
         if changes.is_empty() {
             return Ok(());
         }
-        
+
         let mut tx = self.pool.begin().await?;
-        
+
         // Group changes by (address, alkane_id) for aggregation, keeping the latest change for metadata
         let mut aggregates: HashMap<(String, AlkaneId), (u128, i32, String)> = HashMap::new();
-        
+
         for change in &changes {
             // Insert/update UTXO-level balance
             self.upsert_utxo_balance(&mut tx, change).await?;
-            
+
             // Accumulate for aggregate update, keeping track of latest block/tx
             let key = (change.address.clone(), change.alkane_id.clone());
             let entry = aggregates.entry(key).or_insert((0, 0, String::new()));
-            entry.0 += change.amount;
+            entry.0 = entry
+                .0
+                .checked_add(change.amount)
+                .context("balance delta overflow while aggregating one transaction")?;
             // Keep the latest block height and tx
             if change.block_height >= entry.1 {
                 entry.1 = change.block_height;
                 entry.2 = change.tx_hash.clone();
             }
         }
-        
+
         // Update aggregate balances
         for ((address, alkane_id), (amount_delta, block_height, tx_hash)) in aggregates {
-            self.update_aggregate_balance(&mut tx, &address, &alkane_id, amount_delta, block_height, &tx_hash).await?;
-            self.update_holder(&mut tx, &address, &alkane_id, amount_delta).await?;
+            self.update_aggregate_balance(
+                &mut tx,
+                &address,
+                &alkane_id,
+                amount_delta,
+                block_height,
+                &tx_hash,
+            )
+            .await?;
+            self.update_holder(&mut tx, &address, &alkane_id, amount_delta)
+                .await?;
         }
-        
+
         tx.commit().await?;
-        
+
         Ok(())
     }
-    
+
     /// Insert or update UTXO balance
     async fn upsert_utxo_balance(
         &self,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         change: &BalanceChange,
     ) -> Result<()> {
-        let parts: Vec<&str> = change.outpoint.split(':').collect();
-        let txid = parts.get(0).unwrap_or(&"");
-        let vout: i32 = parts.get(1).and_then(|v| v.parse().ok()).unwrap_or(0);
-        
+        let (txid, vout) = parse_outpoint(&change.outpoint, "balance outpoint")?;
+
         sqlx::query(
             r#"INSERT INTO "TraceBalanceUtxo"
                (outpoint_txid, outpoint_vout, address, alkane_block, alkane_tx, amount, block_height, spent)
                VALUES ($1, $2, $3, $4, $5, $6::numeric, $7, $8)
-               ON CONFLICT (outpoint_txid, outpoint_vout, alkane_block, alkane_tx)
-               DO UPDATE SET
-                   amount = EXCLUDED.amount,
-                   spent = EXCLUDED.spent"#
+               "#
         )
         .bind(txid)
         .bind(vout)
@@ -81,10 +105,10 @@ impl OptimizedBalanceTracker {
         .bind(false) // not spent when created
         .execute(&mut **tx)
         .await?;
-        
+
         Ok(())
     }
-    
+
     /// Update aggregate balance (writes to TraceAlkaneBalance for API compatibility)
     async fn update_aggregate_balance(
         &self,
@@ -98,18 +122,26 @@ impl OptimizedBalanceTracker {
         // Get current balance from TraceAlkaneBalance (used by API)
         let current: Option<String> = sqlx::query_scalar(
             r#"SELECT balance::TEXT FROM "TraceAlkaneBalance"
-               WHERE address = $1 AND alkane_block = $2 AND alkane_tx = $3"#
+               WHERE address = $1 AND alkane_block = $2 AND alkane_tx = $3"#,
         )
         .bind(address)
         .bind(alkane_id.block)
         .bind(alkane_id.tx)
         .fetch_optional(&mut **tx)
         .await?;
-        
-        let new_total = current
-            .and_then(|s| s.parse::<u128>().ok())
-            .unwrap_or(0) + amount_delta;
-        
+
+        let current_total = current
+            .map(|value| {
+                value
+                    .parse::<u128>()
+                    .with_context(|| format!("invalid existing TraceAlkaneBalance value {value:?}"))
+            })
+            .transpose()?
+            .unwrap_or(0);
+        let new_total = current_total
+            .checked_add(amount_delta)
+            .context("TraceAlkaneBalance overflow")?;
+
         sqlx::query(
             r#"INSERT INTO "TraceAlkaneBalance"
                (address, alkane_block, alkane_tx, balance, last_updated_block, last_updated_tx, last_updated_timestamp)
@@ -129,10 +161,10 @@ impl OptimizedBalanceTracker {
         .bind(tx_hash)
         .execute(&mut **tx)
         .await?;
-        
+
         Ok(())
     }
-    
+
     /// Update holder enumeration
     async fn update_holder(
         &self,
@@ -144,19 +176,27 @@ impl OptimizedBalanceTracker {
         // Get current holder amount
         let current: Option<String> = sqlx::query_scalar(
             r#"SELECT total_amount::TEXT FROM "TraceHolder"
-               WHERE alkane_block = $1 AND alkane_tx = $2 AND address = $3"#
+               WHERE alkane_block = $1 AND alkane_tx = $2 AND address = $3"#,
         )
         .bind(alkane_id.block)
         .bind(alkane_id.tx)
         .bind(address)
         .fetch_optional(&mut **tx)
         .await?;
-        
+
         let was_zero = current.is_none();
-        let new_total = current
-            .and_then(|s| s.parse::<u128>().ok())
-            .unwrap_or(0) + amount_delta;
-        
+        let current_total = current
+            .map(|value| {
+                value
+                    .parse::<u128>()
+                    .with_context(|| format!("invalid existing TraceHolder value {value:?}"))
+            })
+            .transpose()?
+            .unwrap_or(0);
+        let new_total = current_total
+            .checked_add(amount_delta)
+            .context("TraceHolder balance overflow")?;
+
         sqlx::query(
             r#"INSERT INTO "TraceHolder"
                (alkane_block, alkane_tx, address, total_amount, updated_at)
@@ -164,7 +204,7 @@ impl OptimizedBalanceTracker {
                ON CONFLICT (alkane_block, alkane_tx, address)
                DO UPDATE SET
                    total_amount = EXCLUDED.total_amount,
-                   updated_at = NOW()"#
+                   updated_at = NOW()"#,
         )
         .bind(alkane_id.block)
         .bind(alkane_id.tx)
@@ -172,7 +212,7 @@ impl OptimizedBalanceTracker {
         .bind(new_total.to_string())
         .execute(&mut **tx)
         .await?;
-        
+
         // Update holder count if this is a new holder
         if was_zero && new_total > 0 {
             sqlx::query(
@@ -182,43 +222,42 @@ impl OptimizedBalanceTracker {
                    ON CONFLICT (alkane_block, alkane_tx)
                    DO UPDATE SET
                        count = "TraceHolderCount".count + 1,
-                       updated_at = NOW()"#
+                       updated_at = NOW()"#,
             )
             .bind(alkane_id.block)
             .bind(alkane_id.tx)
             .execute(&mut **tx)
             .await?;
         }
-        
+
         Ok(())
     }
-    
+
     /// Mark UTXOs as spent
-    pub async fn mark_utxos_spent(&self, outpoints: Vec<String>, _block_height: i32) -> Result<()> {
+    pub async fn mark_utxos_spent(&self, outpoints: Vec<String>, block_height: i32) -> Result<()> {
         if outpoints.is_empty() {
             return Ok(());
         }
-        
+
         let mut tx = self.pool.begin().await?;
-        
+
         for outpoint in outpoints {
-            let parts: Vec<&str> = outpoint.split(':').collect();
-            let txid = parts.get(0).unwrap_or(&"");
-            let vout: i32 = parts.get(1).and_then(|v| v.parse().ok()).unwrap_or(0);
-            
+            let (txid, vout) = parse_outpoint(&outpoint, "spent outpoint")?;
+
             sqlx::query(
                 r#"UPDATE "TraceBalanceUtxo"
-                   SET spent = true
-                   WHERE outpoint_txid = $1 AND outpoint_vout = $2"#
+                   SET spent = true, spent_at_height = $3
+                   WHERE outpoint_txid = $1 AND outpoint_vout = $2"#,
             )
             .bind(txid)
             .bind(vout)
+            .bind(block_height)
             .execute(&mut *tx)
             .await?;
         }
-        
+
         tx.commit().await?;
-        
+
         Ok(())
     }
 }
@@ -236,14 +275,14 @@ impl OptimizedBalanceProcessor {
             tracker: OptimizedBalanceTracker::new(pool),
         }
     }
-    
+
     pub fn with_context(pool: PgPool, context: crate::types::TransactionContext) -> Self {
         Self {
             extractor: ValueTransferExtractor::with_context(context),
             tracker: OptimizedBalanceTracker::new(pool),
         }
     }
-    
+
     /// Process a trace event and update balances
     pub async fn process_trace(&mut self, trace: &TraceEvent) -> Result<()> {
         if let Some(changes) = self.extractor.extract(trace)? {
@@ -256,22 +295,29 @@ impl OptimizedBalanceProcessor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{TransactionContext, VoutInfo};
-    use serde_json::json;
-    
+
+    #[test]
+    fn outpoint_parser_rejects_ambiguous_or_negative_values() {
+        assert!(parse_outpoint("txid", "outpoint").is_err());
+        assert!(parse_outpoint(":0", "outpoint").is_err());
+        assert!(parse_outpoint("txid:-1", "outpoint").is_err());
+        assert!(parse_outpoint("txid:0:1", "outpoint").is_err());
+        assert_eq!(parse_outpoint("txid:7", "outpoint").unwrap(), ("txid", 7));
+    }
+
     #[tokio::test]
     #[ignore] // Requires database
     async fn test_optimized_balance_tracker() {
         let database_url = std::env::var("DATABASE_URL")
             .unwrap_or_else(|_| "postgres://localhost/alkanes_test".to_string());
-        
+
         let pool = PgPool::connect(&database_url).await.unwrap();
-        
+
         // Apply schema
         crate::schema::apply_schema(&pool).await.unwrap();
-        
+
         let tracker = OptimizedBalanceTracker::new(pool.clone());
-        
+
         let changes = vec![
             BalanceChange {
                 outpoint: "abc123:0".to_string(),
@@ -279,6 +325,7 @@ mod tests {
                 alkane_id: AlkaneId::new(4, 10),
                 amount: 1000,
                 block_height: 100,
+                tx_hash: "abc123".to_string(),
             },
             BalanceChange {
                 outpoint: "abc123:1".to_string(),
@@ -286,15 +333,16 @@ mod tests {
                 alkane_id: AlkaneId::new(4, 10),
                 amount: 500,
                 block_height: 100,
+                tx_hash: "abc123".to_string(),
             },
         ];
-        
+
         tracker.process_balance_changes(changes).await.unwrap();
-        
+
         // Verify aggregate balance
         let balance: String = sqlx::query_scalar(
             r#"SELECT total_amount::TEXT FROM "TraceBalanceAggregate"
-               WHERE address = $1 AND alkane_block = $2 AND alkane_tx = $3"#
+               WHERE address = $1 AND alkane_block = $2 AND alkane_tx = $3"#,
         )
         .bind("bc1qtest")
         .bind(4)
@@ -302,22 +350,22 @@ mod tests {
         .fetch_one(&pool)
         .await
         .unwrap();
-        
+
         assert_eq!(balance.parse::<u128>().unwrap(), 1500);
-        
+
         // Verify holder count
         let count: i64 = sqlx::query_scalar(
             r#"SELECT count FROM "TraceHolderCount"
-               WHERE alkane_block = $1 AND alkane_tx = $2"#
+               WHERE alkane_block = $1 AND alkane_tx = $2"#,
         )
         .bind(4)
         .bind(10i64)
         .fetch_one(&pool)
         .await
         .unwrap();
-        
+
         assert_eq!(count, 1);
-        
+
         // Clean up
         crate::schema::drop_schema(&pool).await.unwrap();
     }
