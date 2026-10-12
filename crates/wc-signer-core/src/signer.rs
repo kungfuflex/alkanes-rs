@@ -79,6 +79,9 @@ fn random_request_id() -> String {
     s
 }
 
+/// How long `dial_with_wake` keeps redialing after the wake POST.
+const WAKE_RETRY_BUDGET: Duration = Duration::from_secs(30);
+
 /// The high-level signer driver. Holds the persisted session + transport
 /// + storage handles. Cheap to clone — all the heavy fields are `Arc`.
 pub struct WalletConnectSigner<T: WalletTransport + 'static, S: SessionStorage + 'static> {
@@ -341,6 +344,12 @@ impl<T: WalletTransport + 'static, S: SessionStorage + 'static> WalletConnectSig
     /// `peer_not_found`, POST `/v1/pair-wake` then retry with a
     /// backoff up to 30s. Mirrors the TS `dialWalletWithWake` helper.
     async fn dial_with_wake(&self) -> Result<Box<dyn WalletPairStream>, WcError> {
+        self.dial_with_wake_within(WAKE_RETRY_BUDGET).await
+    }
+
+    /// `dial_with_wake` with the retry budget as an argument, so a test
+    /// can shorten it.
+    async fn dial_with_wake_within(&self, budget: Duration) -> Result<Box<dyn WalletPairStream>, WcError> {
         let bridge = &self.session.bridge_url;
         let cli = &self.session.cli_peer_name;
         let wallet = &self.session.wallet_peer_name;
@@ -357,8 +366,9 @@ impl<T: WalletTransport + 'static, S: SessionStorage + 'static> WalletConnectSig
         // Wake.
         let _ = self.transport.pair_wake(bridge, wallet).await; // best-effort
 
-        // Retry with backoff up to 30s.
-        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        // Retry with backoff up to the budget. `web_time::Instant` because
+        // `std::time::Instant::now()` panics on wasm32-unknown-unknown.
+        let deadline = web_time::Instant::now() + budget;
         let mut attempt: u32 = 0;
         loop {
             attempt += 1;
@@ -368,8 +378,8 @@ impl<T: WalletTransport + 'static, S: SessionStorage + 'static> WalletConnectSig
             match self.transport.dial(bridge, cli, wallet).await {
                 Ok(s) => return Ok(s),
                 Err(e) if e.is_peer_not_found() => {
-                    if std::time::Instant::now() >= deadline {
-                        return Err(WcError::Timeout(Duration::from_secs(30)));
+                    if web_time::Instant::now() >= deadline {
+                        return Err(WcError::Timeout(budget));
                     }
                     continue;
                 }
@@ -451,5 +461,94 @@ async fn tokio_timeout<F: std::future::Future>(
     match select(f, sleep).await {
         Either::Left((v, _)) => Ok(v),
         Either::Right((_, _)) => Err(WcError::Timeout(d)),
+    }
+}
+
+#[cfg(test)]
+mod wake_tests {
+    //! `dial_with_wake` against a phone that never comes up: every dial
+    //! returns `peer_not_found`. The retry loop must end with
+    //! `WcError::Timeout` once its budget is spent. On wasm32 this runs
+    //! under `wasm-bindgen-test-runner`, where a `std::time::Instant`
+    //! would trap instead.
+    use super::*;
+    use crate::storage::StorageError;
+    use crate::transport::TransportError;
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    #[derive(Default)]
+    struct PhoneAsleep {
+        dials: AtomicU32,
+        wakes: AtomicU32,
+    }
+
+    #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+    #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+    impl WalletTransport for PhoneAsleep {
+        async fn dial(&self, _: &str, _: &str, _: &str) -> Result<Box<dyn WalletPairStream>, TransportError> {
+            self.dials.fetch_add(1, Ordering::SeqCst);
+            Err(TransportError::Dial("peer_not_found".into()))
+        }
+        async fn listen(&self, _: &str, _: &str) -> Result<Box<dyn WalletPairStream>, TransportError> {
+            Err(TransportError::Listen("not in this test".into()))
+        }
+        async fn pair_wake(&self, _: &str, _: &str) -> Result<bool, TransportError> {
+            self.wakes.fetch_add(1, Ordering::SeqCst);
+            Ok(true)
+        }
+    }
+
+    struct NoStorage;
+
+    #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+    #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+    impl SessionStorage for NoStorage {
+        async fn save(&self, _: &PersistedSession) -> Result<(), StorageError> { Ok(()) }
+        async fn load(&self) -> Result<Option<PersistedSession>, StorageError> { Ok(None) }
+        async fn delete(&self) -> Result<(), StorageError> { Ok(()) }
+    }
+
+    fn signer(transport: Arc<PhoneAsleep>) -> WalletConnectSigner<PhoneAsleep, NoStorage> {
+        let session = PersistedSession {
+            cli_peer_name:    "cli".into(),
+            wallet_peer_name: "wallet".into(),
+            bridge_url:       "wss://bridge.invalid/v1/pair".into(),
+            origin:           "test".into(),
+            pairing_code:     "AAAAAA".into(),
+            sym_key_b64:      String::new(),
+            own_priv_b64:     String::new(),
+            own_pub_b64:      String::new(),
+            peer_pub_b64:     String::new(),
+            accounts:         Vec::new(),
+            paired_at:        String::new(),
+            last_used_at:     String::new(),
+        };
+        WalletConnectSigner { transport, storage: Arc::new(NoStorage), session, sym_key: [0u8; KEY_LEN] }
+    }
+
+    /// The budget is shorter than the first backoff (750 ms), so the loop
+    /// redials once, finds the deadline passed and returns the timeout.
+    async fn a_phone_that_never_wakes_times_out() {
+        let transport = Arc::new(PhoneAsleep::default());
+        let budget = Duration::from_millis(100);
+        match signer(transport.clone()).dial_with_wake_within(budget).await {
+            Err(WcError::Timeout(d)) => assert_eq!(d, budget),
+            Err(e) => panic!("expected the timeout, got {e}"),
+            Ok(_) => panic!("a dial succeeded"),
+        }
+        assert_eq!(transport.dials.load(Ordering::SeqCst), 2, "the first dial and one redial");
+        assert_eq!(transport.wakes.load(Ordering::SeqCst), 1);
+    }
+
+    #[cfg(all(not(target_arch = "wasm32"), feature = "native-time"))]
+    #[tokio::test]
+    async fn native_a_phone_that_never_wakes_times_out() {
+        a_phone_that_never_wakes_times_out().await;
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    #[wasm_bindgen_test::wasm_bindgen_test]
+    async fn wasm_a_phone_that_never_wakes_times_out() {
+        a_phone_that_never_wakes_times_out().await;
     }
 }
