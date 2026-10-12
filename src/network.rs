@@ -6,6 +6,7 @@ use crate::precompiled::fr_btc_build_v1_3_1;
 #[allow(unused_imports)]
 use crate::precompiled::{
     alkanes_std_diesel_v3_mainnet_build, alkanes_std_diesel_v3_regtest_build,
+    alkanes_std_diesel_v3_testnet_build,
     alkanes_std_genesis_alkane_dogecoin_build, alkanes_std_genesis_alkane_fractal_build,
     alkanes_std_genesis_alkane_luckycoin_build, alkanes_std_genesis_alkane_mainnet_build,
     alkanes_std_genesis_alkane_regtest_build,
@@ -172,9 +173,17 @@ pub fn diesel_v3_bytes() -> Vec<u8> {
     alkanes_std_diesel_v3_mainnet_build::get_bytes()
 }
 
+/// testnet4: DIESEL v3 built with `V3_ACTIVATION_HEIGHT = 0` to match
+/// `genesis::DIESEL_V3_BLOCK_HEIGHT` below.
+#[cfg(all(feature = "testnet", not(feature = "mainnet")))]
+pub fn diesel_v3_bytes() -> Vec<u8> {
+    alkanes_std_diesel_v3_testnet_build::get_bytes()
+}
+
 //use if regtest
 #[cfg(all(
     not(feature = "mainnet"),
+    not(feature = "testnet"),
     not(feature = "dogecoin"),
     not(feature = "bellscoin"),
     not(feature = "fractal"),
@@ -222,6 +231,7 @@ pub fn precompiled_alkane_wasm_for_height(id: &AlkaneId, height: u32) -> Option<
 //use if regtest
 #[cfg(all(
     not(feature = "mainnet"),
+    not(feature = "testnet"),
     not(feature = "dogecoin"),
     not(feature = "bellscoin"),
     not(feature = "fractal"),
@@ -256,6 +266,26 @@ pub mod genesis {
     /// v2.2.1-alpha.3 fork: activates fr_btc v1.3.0. Genesis-coincident on
     /// non-mainnet chains, so the static frBTC version map resolves to v1.3.0
     /// from genesis here.
+    pub const FRBTC_V130_FORK_HEIGHT: u32 = 0;
+    pub const FRBTC_V131_FORK_HEIGHT: u32 = 0;
+}
+
+/// testnet4 (`--features testnet`): the latest consensus rules from block 0.
+/// Unlike regtest, nothing is held back for the test-suite — DIESEL v3 (and
+/// with it the 4:1001 mint gate and cFIRE-SIGIL 4:866 governance) is live at
+/// genesis, as are every protorune/fuel/frBTC fork (all 0 off mainnet).
+/// Pre-v3 `2:0` binaries are never executed: `genesis_alkane_wasm_for_height`
+/// resolves v3 at every height, so `setup_diesel` initializes v3 directly.
+#[cfg(all(feature = "testnet", not(feature = "mainnet")))]
+pub mod genesis {
+    pub const GENESIS_BLOCK: u64 = 0;
+    pub const GENESIS_OUTPOINT: &str =
+        "3977b30a97c9b9d609afb4b7cc138e17b21d1e0c5e360d25debf1441de933bf4";
+    pub const GENESIS_OUTPOINT_BLOCK_HEIGHT: u64 = 0;
+    pub const GENESIS_UPGRADE_BLOCK_HEIGHT: u32 = 0;
+    pub const GENESIS_UPGRADE_EOA_BLOCK_HEIGHT: u32 = 0;
+    pub const DIESEL_V3_BLOCK_HEIGHT: u32 = 0;
+    pub const V220_FORK_HEIGHT: u32 = 0;
     pub const FRBTC_V130_FORK_HEIGHT: u32 = 0;
     pub const FRBTC_V131_FORK_HEIGHT: u32 = 0;
 }

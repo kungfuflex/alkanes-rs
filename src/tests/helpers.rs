@@ -35,6 +35,7 @@ use crate::tests::std::alkanes_std_test_build;
 
 #[cfg(all(
     not(feature = "mainnet"),
+    not(feature = "testnet"),
     not(feature = "dogecoin"),
     not(feature = "bellscoin"),
     not(feature = "fractal"),
