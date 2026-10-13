@@ -2702,7 +2702,49 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         let droppable_change_index = pin_pointed_change(droppable_change_index, runestone_pointer);
         let runestone_script = self.construct_runestone_script(&final_protostones, outputs.len(), runestone_pointer, params.skip_diesel_mint)?;
         let prefetched_for_build = build_effective_txouts_map(params, &utxo_selection.txouts)?;
-        let (psbt, fee, estimated_vsize) = self.build_psbt_and_fee(final_funding_outpoints.clone(), outputs, Some(runestone_script), params.fee_rate, None, None, prefetched_for_build.as_ref(), droppable_change_index).await?;
+        let (mut psbt, mut fee, mut estimated_vsize) = self.build_psbt_and_fee(final_funding_outpoints.clone(), outputs.clone(), Some(runestone_script), params.fee_rate, None, None, prefetched_for_build.as_ref(), droppable_change_index).await?;
+
+        // Every `pN` above was encoded as shadow vout `outputs.len() + 2 + N`,
+        // counting the BTC change placeholder. When `build_psbt_and_fee` drops
+        // that placeholder as sub-dust, the final tx has one output fewer and
+        // each `pN` would name protostone N + 1. Re-encode once against the
+        // final count and build again from the same outputs: the fee is
+        // re-estimated for the new OP_RETURN, and the same dust rule drops the
+        // placeholder so the residual goes to the fee. `vN` targets, the
+        // Runestone pointer and the DIESEL mint stone do not depend on the
+        // count, so they encode exactly as before.
+        let spendable_outputs = |tx: &Transaction| tx.output.iter().filter(|o| !o.script_pubkey.is_op_return()).count();
+        let mut encoded_output_count = outputs.len();
+        if spendable_outputs(&psbt.unsigned_tx) != encoded_output_count {
+            encoded_output_count = spendable_outputs(&psbt.unsigned_tx);
+            let runestone_script = self.construct_runestone_script(&final_protostones, encoded_output_count, runestone_pointer, params.skip_diesel_mint)?;
+            (psbt, fee, estimated_vsize) = self.build_psbt_and_fee(final_funding_outpoints.clone(), outputs, Some(runestone_script), params.fee_rate, None, None, prefetched_for_build.as_ref(), droppable_change_index).await?;
+        }
+        // At most one re-encode. Each `pN` value only decreases by 1, so the
+        // second OP_RETURN is never longer than the first. It is one byte
+        // shorter in two cases: a `pN` value goes from 128 to 127 (one LEB128
+        // byte fewer; needs `outputs.len() + N == 126`), or the last
+        // byte of the protostone stream is a `pN` value whose decrement drops
+        // the bit length of the stream's trailing partial 15-byte chunk
+        // across a multiple of 7 (`split_bytes` in protorune-support; for
+        // p = 4 -> 3 the chunk must be 6 or 13 bytes long). Edicts may only
+        // target a later protostone (`validate_protostones`), so that last
+        // byte is the refund of a last stone that has no message and no
+        // edicts, with `skip_diesel_mint` or a caller-supplied `[2,0,77]`
+        // keeping it last. A shorter OP_RETURN lowers the fee by about
+        // `fee_rate` sats, so a first-pass change in `[546 - fee_rate, 545]`
+        // comes back at 546 or more and the placeholder is kept. That build's
+        // `pN` targets are stale: refuse rather than return a tx that misroutes
+        // alkanes. A returned error, not a debug_assert, because release
+        // builds sign.
+        if spendable_outputs(&psbt.unsigned_tx) != encoded_output_count {
+            return Err(AlkanesError::Validation(format!(
+                "protostone pN targets were encoded for {encoded_output_count} outputs before OP_RETURN, \
+                 but the built transaction has {}: refusing to build a transaction whose pN targets \
+                 name the wrong protostone. Adjust the fee rate or add a BTC UTXO and retry.",
+                spendable_outputs(&psbt.unsigned_tx)
+            )));
+        }
 
         // Validate the transaction before returning
         self.validate_transaction(&psbt, &final_funding_outpoints, fee, params, prefetched_for_build.as_ref()).await?;
@@ -4745,8 +4787,18 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         //
         // Removing an output shifts every index above it, so this only fires
         // when the caller nominated the placeholder AND it is still the last
-        // non-OP_RETURN output — no protostone pointer or edict can target it,
-        // and only the trailing OP_RETURN moves.
+        // non-OP_RETURN output: physical `vN` targets BELOW the placeholder
+        // keep their index. A `vN` that names the placeholder itself is not
+        // safe: `validate_protostones` bounds `vN` by the output count with
+        // the placeholder included, so such a target is accepted, and once
+        // the placeholder is dropped it names the OP_RETURN (pre-existing;
+        // `pin_pointed_change` protects only the Runestone pointer). Protostone
+        // `pN` targets do NOT keep their meaning either: they are encoded as
+        // shadow vouts `num_outputs + 2 + N` (`num_outputs` before the
+        // OP_RETURN), so a runestone encoded with the placeholder counted
+        // names protostone N + 1 once it is gone. A caller that passes an
+        // index here must re-encode against the final output count
+        // (`build_single_transaction` does, at most once).
         let mut change_dropped_to_fee: u64 = 0;
         if change_value < DUST_THRESHOLD_SATS {
             let last_spendable = outputs.iter().rposition(|o| !o.script_pubkey.is_op_return());
@@ -8543,6 +8595,391 @@ mod dust_change_tests {
             psbt.unsigned_tx.output[2].value.to_sat(), DUST_LIMIT,
             "the appended alkanes-change output keeps its index and value",
         );
+    }
+
+    // `pN` targets after the sub-dust change output is dropped.
+
+    /// Mainnet tx 5d6e83fb...2203 (block 970778), exactly as mined. Four 546-sat
+    /// P2TR alkane carriers; outputs `[546, 546, OP_RETURN]`. Its BTC change was
+    /// below dust and dropped AFTER the runestone had been encoded with the change
+    /// placeholder still counted, so its `p1` edict names protostone 2.
+    const MINED_DROPPED_CHANGE_TX_HEX: &str = concat!(
+        "020000000001049b206367a9e19f1b083e2418d0269f8cfe06df630e2f2bf47e256bccb3c533d80000000000fdffffff",
+        "c7a05cf051cf6ff7d4bfa5d5427f944133bea0a7ff8000caf66c3ed47d76f87d0100000000fdffffffcbb70014f92c79",
+        "89546f5d53939ab37ab40e4f6641a34910d0c3cce6b85a9a2b0000000000fdffffffb57d13a9f4426aecc73bf2cafeb3",
+        "64190b3fbacf6ea4cde3f067feaf9c5654560000000000fdffffff032202000000000000225120475c097fdebbc6900e",
+        "42d6fc8603d2f6030f43a77bfe02b9547a32ecb2df342e2202000000000000225120475c097fdebbc6900e42d6fc8603",
+        "d2f6030f43a77bfe02b9547a32ecb2df342e0000000000000000fd36016a5d4d31011600ff7f8192ec82d08b808084e0",
+        "b780c8f2baee03ff7f8682e8d895a09780d18882bf8b9ea0cdbc01ff7ffcdbdee4febbf7e9baf3a38d90caeac7d201ff",
+        "7fc6f1daf68fbaecd2ca99e39c8d90a0ed01ff7fd182f2a4fff6ebfbf9efe78fbbdaa7edb101ff7fa9af8b8d908ae6fb",
+        "d29fa2858894b0c08101ff7f8289a2c4bf9cb5cd81a28dbcadf4a3cf9601ff7fbfa1af9f8890a0c490c1828698a094c0",
+        "8101ff7f86f1a7969db5b4c9a39d96d6f8f2eff505ff7fd1808694c890a2c8a0c1f7dfbd97ebcd9701ff7fe5d58f8c90",
+        "caeac4e799c29fd9f4b4d1a501ff7fc6b9aaace9d5bfeb81a29584a890a1c49001ff7fa08183defff6bdecb6ddaaae9d",
+        "a0d4c1d501ff7f929de7848890b0c0818592c48892a88251ff7f80838aa48891a4d0c0c1c68be0e096805dff7f80a289",
+        "84c85601408d1e6241a6c40567d58ef0d7912a97d1a48a802e09ec0ab60afc1d5cbd0d7ec532c3b51763147a055d2333",
+        "3eddc76404c007b00215dbe41d2bd3ae4017141f2701404be58b94dcb068e60185b4080886687d4c4d3d50e00aba4674",
+        "257fef35227e715d902756a41db3eec119ba13845718f108da1f24673073b165e87fe3a0a8022501400cfcadd25856d9",
+        "1aa5012db26a3104be2a3b8bbe54a5166c13ccfc81d0563d2b78cf6252cfe4b487776cd4c68a5083b9e96f64a424ef01",
+        "c27bda5298f8de13990140ce5a010ffdb020e8dc7987b3267f8b84997982819a7876eefec04509b0b9bd60b85ee7b37d",
+        "84f20bf21d335b9f08f0940b53767bdce9bb044b1a7a1f4e60a98200000000",
+    );
+    const MINED_DROPPED_CHANGE_TXID: &str = "5d6e83fbff607975062d51e38b39fc301cef6be71117f004e2427b33b4442203";
+
+    /// frUSD.
+    const FRUSD: (u64, u64) = (4, 1776);
+
+    fn decoded_stones(tx: &Transaction) -> Vec<crate::alkanes::protostone::Protostone> {
+        crate::runestone_enhanced::format_runestone(tx).expect("tx carries a protostone runestone")
+    }
+
+    /// Cellpack values of a decoded protostone message. The decoder returns the
+    /// message zero-padded to whole u128 chunks, so trailing zero varints are
+    /// padding.
+    fn cellpack_values(message: &[u8]) -> Vec<u128> {
+        let mut values = crate::runestone_enhanced::decode_protostone_message(message).expect("message is a varint list");
+        while values.last() == Some(&0) {
+            values.pop();
+        }
+        values
+    }
+
+    /// Shadow vout the indexer gives protostone `i` of `tx`.
+    fn shadow_vout(tx: &Transaction, i: usize) -> u128 {
+        (tx.output.len() + 1 + i) as u128
+    }
+
+    /// The mined tx, with the frUSD amount and the burn cellpack its builder was
+    /// given, both read back from its own runestone.
+    fn mined_burn() -> (Transaction, u128, Vec<u128>) {
+        let tx: Transaction = bitcoin::consensus::deserialize(
+            &hex::decode(MINED_DROPPED_CHANGE_TX_HEX).expect("fixture is hex"),
+        )
+        .expect("fixture is a transaction");
+        assert_eq!(tx.compute_txid().to_string(), MINED_DROPPED_CHANGE_TXID);
+        let stones = decoded_stones(&tx);
+        let edict = &stones[0].edicts[0];
+        assert_eq!((edict.id.block, edict.id.tx), (FRUSD.0 as u128, FRUSD.1 as u128), "stone 0 shifts frUSD");
+        (tx, edict.amount, cellpack_values(&stones[1].message))
+    }
+
+    #[test]
+    fn mined_tx_p1_edict_names_the_diesel_mint_stone_after_its_change_was_dropped() {
+        let (tx, amount, burn) = mined_burn();
+        assert_eq!(
+            tx.output.iter().map(|o| o.value.to_sat()).collect::<Vec<_>>(),
+            vec![546, 546, 0],
+            "no BTC change output: it was below dust and dropped",
+        );
+        assert!(tx.output[2].script_pubkey.is_op_return());
+        let stones = decoded_stones(&tx);
+        assert_eq!(stones.len(), 3, "shifter, burn, appended DIESEL mint");
+        assert!(cellpack_values(&stones[0].message).is_empty(), "stone 0 is the edict-only shifter");
+        assert!(amount > 0);
+        assert_eq!(burn[0], 4, "stone 1 calls a block-4 contract");
+        assert_eq!((stones[1].pointer, stones[1].refund), (Some(1), Some(0)), "burn stone is `:v1:v0`");
+        assert_eq!(cellpack_values(&stones[2].message), vec![2, 0, 77]);
+        assert_eq!((stones[2].pointer, stones[2].refund), (Some(0), Some(0)));
+
+        // The fingerprint: `p1` was encoded as 3 + 2 + 1 = 6, which with three
+        // final outputs is stone 2's shadow vout, not stone 1's.
+        let edict_output = stones[0].edicts[0].output;
+        assert_eq!(edict_output, 6);
+        assert_eq!(edict_output, shadow_vout(&tx, 2), "frUSD went to the DIESEL mint stone");
+        assert_ne!(edict_output, shadow_vout(&tx, 1), "frUSD never reached the burn stone");
+    }
+
+    /// `build_single_transaction` on the mined tx's shape: one fixed P2TR key,
+    /// four 546-sat carriers (the first holds `amount` frUSD), optionally one
+    /// clean BTC UTXO, `to_addresses = [p2tr:0, p2tr:0]`, 1.1 sat/vB, DIESEL
+    /// mint appended. Returns the unsigned tx and the fee the build reports.
+    async fn build_burn_shape(stones: &str, amount: u128, clean_btc: Option<u64>) -> (Transaction, u64) {
+        use crate::alkanes::parsing::{parse_input_requirements, parse_protostones};
+        let mut mock = MockProvider::new(bitcoin::Network::Regtest);
+        let secp = Secp256k1::new();
+        let sk = bitcoin::secp256k1::SecretKey::from_slice(&[0x5d; 32]).unwrap();
+        let pk = bitcoin::secp256k1::PublicKey::from_secret_key(&secp, &sk);
+        let addr = Address::p2tr(&secp, pk.x_only_public_key().0, None, bitcoin::Network::Regtest);
+        mock.set_keypair(sk, bitcoin::PublicKey::new(pk));
+        mock.qubitcoin_mode = false;
+        let script = addr.script_pubkey();
+
+        // The first carrier holds the frUSD the shifter moves. The other three
+        // carry arbitrary alkanes so that selection spends all four, as the
+        // mined tx did; their balances are not read from chain data.
+        let carriers: [(u8, (u64, u64, u64)); 4] = [
+            (0xf0, (FRUSD.0, FRUSD.1, amount as u64)),
+            (0xf1, (2, 0, 5_000)),
+            (0xf2, (32, 0, 5_000)),
+            (0xf3, (2, 16, 5_000)),
+        ];
+        for (n, balance) in carriers {
+            mock.utxos.lock().unwrap().push((
+                OutPoint::new(txid_n(n), 0),
+                TxOut { value: Amount::from_sat(546), script_pubkey: script.clone() },
+            ));
+            mock.alkane_balances.lock().unwrap().insert(format!("{}:0", txid_n(n)), vec![balance]);
+        }
+        // The carriers alone cover outputs and fee, so a clean BTC UTXO is
+        // only spent when the caller requires it.
+        let mut prefetched_utxos = vec![];
+        if let Some(sats) = clean_btc {
+            mock.utxos.lock().unwrap().push((
+                OutPoint::new(txid_n(0xf4), 0),
+                TxOut { value: Amount::from_sat(sats), script_pubkey: script.clone() },
+            ));
+            prefetched_utxos.push(crate::alkanes::types::PrefetchedUtxo {
+                outpoint: format!("{}:0", txid_n(0xf4)),
+                value: sats,
+                script_pubkey_hex: hex::encode(script.as_bytes()),
+                alkanes: Some(vec![]),
+                required: true,
+            });
+        }
+
+        let reqs = carriers
+            .iter()
+            .map(|(_, (block, tx, sats))| format!("{block}:{tx}:{sats}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        let params = EnhancedExecuteParams {
+            fee_rate: Some(1.1),
+            to_addresses: vec!["p2tr:0".to_string(), "p2tr:0".to_string()],
+            from_addresses: Some(vec![addr.to_string()]),
+            change_address: None,
+            alkanes_change_address: None,
+            input_requirements: parse_input_requirements(&reqs).unwrap(),
+            protostones: parse_protostones(stones).unwrap(),
+            envelope_data: None,
+            raw_output: false,
+            trace_enabled: false,
+            mine_enabled: false,
+            auto_confirm: false,
+            ordinals_strategy: OrdinalsStrategy::Burn,
+            mempool_indexer: false,
+            split_transactions: false,
+            split_at: None,
+            known_pending_tx_hexes: vec![],
+            prefetched_utxos,
+            excluded_utxos: vec![],
+            skip_diesel_mint: false,
+            max_indexed_height: None,
+            utxo_source: UtxoDataSource::Metashrew,
+        };
+        let mut executor = EnhancedAlkanesExecutor::new(&mut mock);
+        let state = executor.build_single_transaction(&params).await.expect("build succeeds");
+        let ExecutionState::ReadyToSign(ready) = state else { panic!("expected ReadyToSign") };
+        let inputs: u64 = ready.psbt.inputs.iter().map(|i| i.witness_utxo.as_ref().unwrap().value.to_sat()).sum();
+        let outputs: u64 = ready.psbt.unsigned_tx.output.iter().map(|o| o.value.to_sat()).sum();
+        assert_eq!(ready.fee, inputs - outputs, "reported fee must equal the fee actually paid");
+        (ready.psbt.unsigned_tx, ready.fee)
+    }
+
+    fn burn_stones(amount: u128, burn: &[u128], shifter_targets: &str) -> String {
+        let burn = burn.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(",");
+        format!("[{}:{}:{amount}:p1]:{shifter_targets},[{burn}]:v1:v0", FRUSD.0, FRUSD.1)
+    }
+
+    /// Effective fee rate once signed: each P2TR key-path input carries a
+    /// 64-byte signature.
+    fn effective_rate(tx: &Transaction, fee: u64) -> f64 {
+        let mut signed = tx.clone();
+        for input in &mut signed.input {
+            input.witness.push([0u8; 64]);
+        }
+        fee as f64 / signed.vsize() as f64
+    }
+
+    #[tokio::test]
+    async fn dropped_change_p1_edict_is_reencoded_against_the_final_output_count() {
+        let (mined, amount, burn) = mined_burn();
+        let (tx, fee) = build_burn_shape(&burn_stones(amount, &burn, "v0"), amount, None).await;
+
+        assert_eq!(tx.input.len(), 4, "the four carriers fund the tx");
+        assert_eq!(tx.output.len(), 3, "sub-dust change dropped: [v0, v1, OP_RETURN]");
+        assert!(tx.output[2].script_pubkey.is_op_return());
+
+        // Bound to the mined bytes: the fixed OP_RETURN is the mined one with
+        // exactly one byte changed, the packed edict output 6 -> 5.
+        let mined_op_return = mined.output[2].script_pubkey.as_bytes();
+        let fixed_op_return = tx.output[2].script_pubkey.as_bytes();
+        assert_eq!(fixed_op_return.len(), mined_op_return.len());
+        let differing: Vec<(usize, u8, u8)> = mined_op_return
+            .iter()
+            .zip(fixed_op_return)
+            .enumerate()
+            .filter(|(_, (m, f))| m != f)
+            .map(|(i, (m, f))| (i, *m, *f))
+            .collect();
+        assert_eq!(differing.len(), 1, "exactly one byte differs from the mined OP_RETURN: {differing:?}");
+        assert_eq!((differing[0].1, differing[0].2), (0x86, 0x85), "mined 0x86, fixed 0x85: edict output 6 -> 5");
+
+        let stones = decoded_stones(&tx);
+        assert_eq!(stones.len(), 3, "shifter, burn, appended DIESEL mint");
+        let edict = &stones[0].edicts[0];
+        assert_eq!((edict.id.block, edict.id.tx, edict.amount), (FRUSD.0 as u128, FRUSD.1 as u128, amount));
+        assert_eq!(edict.output, (tx.output.len() + 1 + 1) as u128, "p1 must be stone 1's shadow vout");
+        assert_eq!(edict.output, 5);
+        assert_eq!(cellpack_values(&stones[1].message), burn, "burn cellpack as given");
+        assert_eq!((stones[1].pointer, stones[1].refund), (Some(1), Some(0)));
+        assert_eq!(cellpack_values(&stones[2].message), vec![2, 0, 77]);
+        assert_eq!((stones[2].pointer, stones[2].refund), (Some(0), Some(0)));
+
+        let rate = effective_rate(&tx, fee);
+        assert!(rate >= 1.1, "effective rate {rate} below 1.1 sat/vB");
+    }
+
+    /// Unsigned txid the builder produced for the kept-change case before the
+    /// dropped-change re-encode existed.
+    const KEPT_CHANGE_TXID: &str = "de77ae9196e6727af9a5da149d437bdb8cf2b70a4f9a336066ce06ba9d527867";
+
+    #[tokio::test]
+    async fn kept_change_p1_edict_and_bytes_are_unchanged() {
+        let (_mined, amount, burn) = mined_burn();
+        let (tx, fee) = build_burn_shape(&burn_stones(amount, &burn, "v0"), amount, Some(10_000)).await;
+
+        assert_eq!(tx.input.len(), 5, "four carriers plus the clean BTC UTXO");
+        assert_eq!(tx.output.len(), 4, "[v0, v1, change, OP_RETURN]");
+        assert!(tx.output[2].value.to_sat() >= DUST_LIMIT, "change kept");
+        let stones = decoded_stones(&tx);
+        assert_eq!(stones[0].edicts[0].output, (tx.output.len() + 1 + 1) as u128);
+        assert_eq!(stones[0].edicts[0].output, 6);
+        let rate = effective_rate(&tx, fee);
+        assert!(rate >= 1.1, "effective rate {rate} below 1.1 sat/vB");
+        assert_eq!(tx.compute_txid().to_string(), KEPT_CHANGE_TXID, "a tx that keeps its change must be byte-identical");
+    }
+
+    #[tokio::test]
+    async fn dropped_change_p_pointer_and_refund_are_reencoded() {
+        let (_mined, amount, burn) = mined_burn();
+        let (tx, _fee) = build_burn_shape(&burn_stones(amount, &burn, "p1:p1"), amount, None).await;
+
+        assert_eq!(tx.output.len(), 3, "sub-dust change dropped");
+        let stones = decoded_stones(&tx);
+        let p1 = (tx.output.len() + 1 + 1) as u32;
+        assert_eq!(p1, 5);
+        assert_eq!(stones[0].edicts[0].output, p1 as u128);
+        assert_eq!(stones[0].pointer, Some(p1), "pointer p1 re-resolved");
+        assert_eq!(stones[0].refund, Some(p1), "refund p1 re-resolved");
+        assert_eq!((stones[1].pointer, stones[1].refund), (Some(1), Some(0)), "vN targets untouched");
+        assert_eq!((stones[2].pointer, stones[2].refund), (Some(0), Some(0)), "DIESEL mint untouched");
+    }
+
+    /// One fixed P2TR key, one 546-sat carrier holding 1000 of alkane 32:0,
+    /// one clean BTC UTXO of `btc_sats`, `to_addresses = [p2tr:0]`, no DIESEL
+    /// mint appended. Returns the build result as is.
+    async fn build_refusal_shape(stones: &str, btc_sats: u64, fee_rate: f32) -> Result<ExecutionState> {
+        use crate::alkanes::parsing::{parse_input_requirements, parse_protostones};
+        let mut mock = MockProvider::new(bitcoin::Network::Regtest);
+        let secp = Secp256k1::new();
+        let sk = bitcoin::secp256k1::SecretKey::from_slice(&[0x5d; 32]).unwrap();
+        let pk = bitcoin::secp256k1::PublicKey::from_secret_key(&secp, &sk);
+        let addr = Address::p2tr(&secp, pk.x_only_public_key().0, None, bitcoin::Network::Regtest);
+        mock.set_keypair(sk, bitcoin::PublicKey::new(pk));
+        mock.qubitcoin_mode = false;
+        let script = addr.script_pubkey();
+        mock.utxos.lock().unwrap().push((
+            OutPoint::new(txid_n(0xe0), 0),
+            TxOut { value: Amount::from_sat(546), script_pubkey: script.clone() },
+        ));
+        mock.alkane_balances.lock().unwrap().insert(format!("{}:0", txid_n(0xe0)), vec![(32, 0, 1000)]);
+        mock.utxos.lock().unwrap().push((
+            OutPoint::new(txid_n(0xe1), 0),
+            TxOut { value: Amount::from_sat(btc_sats), script_pubkey: script },
+        ));
+        let params = EnhancedExecuteParams {
+            fee_rate: Some(fee_rate),
+            to_addresses: vec!["p2tr:0".to_string()],
+            from_addresses: Some(vec![addr.to_string()]),
+            change_address: None,
+            alkanes_change_address: None,
+            input_requirements: parse_input_requirements("32:0:1000").unwrap(),
+            protostones: parse_protostones(stones).unwrap(),
+            envelope_data: None,
+            raw_output: false,
+            trace_enabled: false,
+            mine_enabled: false,
+            auto_confirm: false,
+            ordinals_strategy: OrdinalsStrategy::Burn,
+            mempool_indexer: false,
+            split_transactions: false,
+            split_at: None,
+            known_pending_tx_hexes: vec![],
+            prefetched_utxos: vec![],
+            excluded_utxos: vec![],
+            skip_diesel_mint: true,
+            max_indexed_height: None,
+            utxo_source: UtxoDataSource::Metashrew,
+        };
+        let mut executor = EnhancedAlkanesExecutor::new(&mut mock);
+        executor.build_single_transaction(&params).await
+    }
+
+    /// The refusal after the re-encode (`build_single_transaction`). Edicts may
+    /// only target a LATER protostone (`validate_protostones`), so a `pN` edict
+    /// output is never the last byte of the protostone stream. What can end
+    /// the stream is the refund (written after the pointer) of a last stone
+    /// with no message and no edicts. Here that stone is `p0`, and
+    /// `skip_diesel_mint` keeps it last.
+    ///
+    /// Numbers (measured with this layout):
+    /// - stone 0: cellpack `[4, 1776, 99, 2^120 + 0..=9, 1]` (185 message
+    ///   bytes), `:v0:v0`; stone 1: `p0`, so pointer and refund are both p0;
+    ///   the protostone stream is 246 bytes, so its trailing chunk is 6 bytes
+    ///   and its top byte is the refund;
+    /// - inputs: one 546-sat carrier holding 1000 of 32:0 and one 6156-sat
+    ///   BTC UTXO; `to_addresses = [p2tr:0]`; 10 sat/vB;
+    /// - first pass, encoded for 2 outputs: p0 = 4, OP_RETURN script 333
+    ///   bytes, vsize 556, fee 5616, change 6156 - 5616 = 540 < 546, so the
+    ///   placeholder is dropped;
+    /// - second pass, encoded for 1 output: p0 = 3, the trailing chunk goes
+    ///   from 43 to 42 bits (7 to 6 LEB128 bytes), OP_RETURN script 332 bytes,
+    ///   vsize 555, fee 5606, change 550 >= 546, so the placeholder is kept and
+    ///   the tx has 2 outputs before OP_RETURN while its `pN` were encoded for 1.
+    #[tokio::test]
+    async fn reencode_that_lifts_the_change_to_dust_is_refused() {
+        use crate::alkanes::parsing::parse_protostones;
+        let mut cellpack = vec!["4".to_string(), "1776".to_string(), "99".to_string()];
+        cellpack.extend((0..10u128).map(|i| ((1u128 << 120) + i).to_string()));
+        cellpack.push("1".to_string());
+        let stones = format!("[{}]:v0:v0,p0", cellpack.join(","));
+
+        // Precondition: p0 4 -> 3 shortens the OP_RETURN by one byte.
+        let specs = parse_protostones(&stones).unwrap();
+        let mut mock = MockProvider::new(bitcoin::Network::Regtest);
+        let executor = EnhancedAlkanesExecutor::new(&mut mock);
+        let encoded_for_two = executor.construct_runestone_script(&specs, 2, 0, true).unwrap();
+        let encoded_for_one = executor.construct_runestone_script(&specs, 1, 0, true).unwrap();
+        assert_eq!((encoded_for_two.len(), encoded_for_one.len()), (333, 332));
+        drop(executor);
+
+        // Control: same inputs, enough BTC to keep the change on the first
+        // pass, so this build is the first pass: its vsize and fee.
+        let kept = build_refusal_shape(&stones, 100_000, 10.0).await.expect("kept-change build succeeds");
+        let ExecutionState::ReadyToSign(kept) = kept else { panic!("expected ReadyToSign") };
+        assert_eq!(kept.psbt.unsigned_tx.input.len(), 2, "carrier plus the BTC UTXO");
+        assert_eq!((kept.estimated_vsize, kept.fee), (556, 5616));
+
+        match build_refusal_shape(&stones, 6156, 10.0).await {
+            Err(AlkanesError::Validation(msg)) => assert!(
+                msg.contains("encoded for 1 outputs before OP_RETURN, but the built transaction has 2"),
+                "unexpected refusal message: {msg}",
+            ),
+            Err(e) => panic!("expected the pN refusal, got: {e}"),
+            Ok(state) => {
+                let ExecutionState::ReadyToSign(ready) = state else { panic!("expected the pN refusal") };
+                let tx = &ready.psbt.unsigned_tx;
+                let decoded = decoded_stones(tx);
+                panic!(
+                    "expected the pN refusal, got a tx with output values {:?} (fee {}) whose stone 1 \
+                     pointer/refund are {:?}/{:?}, while p0 in this tx is shadow vout {}",
+                    tx.output.iter().map(|o| o.value.to_sat()).collect::<Vec<_>>(),
+                    ready.fee,
+                    decoded[1].pointer,
+                    decoded[1].refund,
+                    shadow_vout(tx, 0),
+                );
+            }
+        }
     }
 }
 
