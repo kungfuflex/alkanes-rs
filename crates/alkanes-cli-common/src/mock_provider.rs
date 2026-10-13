@@ -996,7 +996,7 @@ impl AlkanesProvider for MockProvider {
         todo!()
     }
     async fn inspect(&self, _target: &str, _config: crate::alkanes::AlkanesInspectConfig) -> Result<crate::alkanes::AlkanesInspectResult> {
-        todo!()
+        Err(AlkanesError::NotImplemented("inspect".to_string()))
     }
     async fn get_balance(&self, _address: Option<&str>) -> Result<Vec<crate::alkanes::AlkaneBalance>> {
         todo!()
