@@ -10535,6 +10535,8 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "url",
+ "wasm-bindgen-test",
+ "web-time",
  "x25519-dalek",
 ]
 

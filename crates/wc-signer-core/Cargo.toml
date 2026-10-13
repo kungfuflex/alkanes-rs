@@ -43,6 +43,10 @@ url              = { version = "2.5.0" }
 # disable default features and the cfg(target_arch = "wasm32") shim
 # below uses gloo-timers instead.
 tokio            = { workspace = true, features = ["time"], optional = true }
+# Monotonic clock for the `dial_with_wake` retry deadline.
+# `std::time::Instant::now()` panics on wasm32-unknown-unknown;
+# web-time reads `performance.now()` there and re-exports std on native.
+web-time         = { version = "1" }
 
 # wasm32 timeout primitive — used by the signer driver's `sleep_compat`
 # on `cfg(target_arch = "wasm32")`. Native consumers shim with
@@ -55,3 +59,9 @@ futures          = { workspace = true }
 [target.'cfg(target_arch = "wasm32")'.dependencies.getrandom]
 version  = "0.2"
 features = ["js"]
+
+[dev-dependencies]
+tokio            = { workspace = true, features = ["macros", "rt", "time"] }
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test = { workspace = true }
