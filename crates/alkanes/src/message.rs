@@ -4,7 +4,7 @@ use crate::utils::{
     balance_pointer, credit_balances, debit_balances, pipe_storagemap_to, record_touched_storage,
 };
 use crate::vm::{
-    fuel::{is_gasless_alkane, FuelTank, VirtualFuelBytes, GASLESS_ALKANE_FUEL},
+    fuel::{FuelTank, VirtualFuelBytes},
     runtime::AlkanesRuntimeContext,
     utils::{prepare_context, run_after_special, run_special_cellpacks},
 };
@@ -103,14 +103,7 @@ pub fn handle_message(
         FuelTank::refuel_block();
         FuelTank::fuel_transaction(txsize, parcel.txindex, parcel.height as u32);
     }
-    // Gasless check: system contracts in GASLESS_ALKANES (e.g. frBTC at
-    // [32,0]) are exempt from tx-level fuel metering. Their heavy internal
-    // work (bitcoin tx parsing, txid computation) would otherwise eat the
-    // entire regtest tx budget of ~3.5M and starve subsequent protostones
-    // in the same tx (wrap → swap → burn chains).
-    let gasless = is_gasless_alkane(&myself);
-    let tx_fuel = FuelTank::start_fuel();
-    let fuel = if gasless { GASLESS_ALKANE_FUEL } else { tx_fuel };
+    let fuel = FuelTank::start_fuel();
     // NOTE: we  want to keep unwrap for cases where we lock a mutex guard,
     // it's better if it panics, so then metashrew will retry that block again
     // whereas if we do .map_err(|e| anyhow!("Mutex lock poisoned: {}", e))?
@@ -125,13 +118,7 @@ pub fn handle_message(
     }));
     run_after_special(context.clone(), binary, fuel)
         .and_then(|(response, gas_used)| {
-            // Gasless alkanes don't charge their fuel against the tx budget —
-            // the next protostone in the same tx still sees the full
-            // remaining tx_fuel. Block-level metering is handled separately
-            // in FuelTank::consume_fuel / refuel_block.
-            if !gasless {
-                FuelTank::consume_fuel(gas_used)?;
-            }
+            FuelTank::consume_fuel(gas_used)?;
             pipe_storagemap_to(
                 &response.storage,
                 &mut atomic.derive(
