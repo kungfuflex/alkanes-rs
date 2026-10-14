@@ -2,9 +2,13 @@ name: Rust
 
 on:
   push:
-    branches: ["main"]
+    # `develop` is the branch that SHIPS — publish-npm.yml publishes the
+    # @alkanes/ts-sdk from it — and until now it was also the branch nothing
+    # tested. main, which this workflow did cover, publishes nothing. Testing
+    # only the branch that doesn't ship is the wrong way round.
+    branches: ["main", "develop"]
   pull_request:
-    branches: ["main"]
+    branches: ["main", "develop"]
 
 env:
   CARGO_TERM_COLOR: always
@@ -21,6 +25,15 @@ jobs:
             command: "cargo test -p protorune --features test-utils"
           - name: "Protorune Unit Tests"
             command: "cargo test -p protorune --target x86_64-unknown-linux-gnu"
+          # alkanes-cli-common was in NO matrix leg, despite being compiled
+          # INTO the published WASM (provider, coin selection, execute) — the
+          # crate every wallet consumer's transactions are built by. Nothing
+          # here ran a line of it: not its 284 tests, not even a type-check of
+          # its test cfg. That is why a `TweakedKeypair::to_keypair` compile
+          # error sat on main (bitcoin 0.32 renamed it `to_inner`) with three
+          # green checks above it.
+          - name: "Alkanes CLI Common Tests"
+            command: "cargo test -p alkanes-cli-common --lib --target x86_64-unknown-linux-gnu"
       fail-fast: false # Allows all tests to run even if one fails
 
     name: ${{ matrix.test-config.name }}
