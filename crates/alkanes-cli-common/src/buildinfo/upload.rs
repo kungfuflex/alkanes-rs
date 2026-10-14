@@ -66,12 +66,15 @@ pub struct VerifyRequest {
     /// `bare` | `rev` — how the git-dep source-id must be spelled.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub git_source_form: Option<String>,
-    /// Extra build-env exports (`KEY=VALUE`).
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub build_env: Vec<String>,
-    /// A source typo that must be re-introduced to reproduce byte-exactly, if any.
+    /// Extra build-env exports, NEWLINE-separated `KEY=VALUE` lines. The verifier's
+    /// `VerifyRequest.build_env` is `Option<String>` (it is handed to the builder as
+    /// one `BUILD_ENV` env var), so a JSON array here is rejected with a 422.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub typo_fix: Option<String>,
+    pub build_env: Option<String>,
+    /// Normalize a `https:/` (single-slash) typo in the repo's Cargo.toml. The
+    /// verifier's field is `Option<bool>`; a string here is rejected with a 422.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub typo_fix: Option<bool>,
     /// The full BuildInfo, forward-compatible (see `AttestRequest::manifest`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub manifest: Option<Value>,
@@ -163,13 +166,37 @@ impl VerifyRequest {
             freeze_commit: bi.registry.archive_commit.clone(),
             git_url: git.map(|g| g.url.clone()),
             git_source_form: git.map(|g| g.source_form.clone()),
-            build_env: bi.environment.build_env.clone(),
+            build_env: Some(bi.environment.build_env.join("\n")).filter(|s| !s.is_empty()),
             typo_fix: bi
                 .notes
                 .iter()
-                .find(|n| n.to_lowercase().contains("typo"))
-                .cloned(),
+                .any(|n| n.to_lowercase().contains("typo"))
+                .then_some(true),
             manifest: serde_json::to_value(bi).ok(),
         }
+    }
+}
+
+#[cfg(test)]
+mod verify_request_wire_tests {
+    use super::*;
+
+    /// The wire shape must match the alkane-verifier's `VerifyRequest`
+    /// (`build_env: Option<String>`, `typo_fix: Option<bool>`).
+    #[test]
+    fn build_env_and_typo_fix_serialize_as_verifier_expects() {
+        let req = VerifyRequest {
+            alkane: "4:1".into(),
+            repo_url: "inline://x".into(),
+            commit: None, package: None, subdir: None, rustc: None, alkanes_rev: None,
+            clang_version: None, home_dir: None, freeze_commit: None, git_url: None,
+            git_source_form: None,
+            build_env: Some(["A=1", "B=2"].join("\n")),
+            typo_fix: Some(true),
+            manifest: None,
+        };
+        let v = serde_json::to_value(&req).unwrap();
+        assert_eq!(v["build_env"], serde_json::json!("A=1\nB=2"));
+        assert_eq!(v["typo_fix"], serde_json::json!(true));
     }
 }
