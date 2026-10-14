@@ -20,3 +20,8 @@ pub mod ord_runes_parity;
 pub mod test_cenotaphs;
 pub mod test_many_outputs_bug;
 pub mod view_functions;
+// Regression pins for the lazy (height, txindex) resolution in the outpoint
+// views: the first-rune-id wire convention, the skipped block scan for
+// balance-bearing outpoints (intentional divergence from the old eager
+// code), and the unchanged empty-sheet scan/error paths.
+pub mod view_txindex_lazy;
