@@ -76,7 +76,7 @@ members = [
 ]
 
 [workspace.package]
-version = "3.0.0-rc.1"
+version = "3.0.0-rc.2"
 edition = "2021"
 description = "ALKANES metaprotocol indexer"
 license = "MIT"
@@ -95,7 +95,6 @@ alkanes-support = { path = "./crates/alkanes-support" }
 alkanes-runtime = { path = "./crates/alkanes-runtime" }
 alkanes-macros = { path = "./crates/alkanes-macros" }
 alkanes-std-factory-support = { path = "./crates/alkanes-std-factory-support" }
-ruint = "1.12.3"
 wasm-bindgen = "=0.2.100"
 byteorder = "1.5"
 wasm-bindgen-test = "=0.3.50"
@@ -106,7 +105,7 @@ hex = "0.4.3"
 prost = "0.12.6"
 prost-types = "0.12.6"
 prost-build = "0.12.6"
-bytes = "1.6.1"
+bytes = "1.11.1"
 wasm-bindgen-futures = "=0.4.50"
 web-sys = { version = "0.3.72", features = ["Response", "Window"] }
 js-sys = "0.3.72"
@@ -237,7 +236,6 @@ ordinals = { workspace = true }
 protorune = { workspace = true }
 protorune-support = { workspace = true }
 alkanes-support = { workspace = true }
-ruint = { workspace = true }
 wasm-bindgen = { workspace = true }
 byteorder = { workspace = true }
 wasm-bindgen-test = { workspace = true }

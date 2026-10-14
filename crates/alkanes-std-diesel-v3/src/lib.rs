@@ -69,7 +69,7 @@ pub const GATE_FALLBACK_RESERVE: u64 = 500_000;
 /// lost (see `settle_unissued`).
 #[cfg(feature = "mainnet")]
 pub const V3_ACTIVATION_HEIGHT: u64 = 972_000;
-#[cfg(not(feature = "mainnet"))]
+#[cfg(not(any(feature = "mainnet", feature = "testnet")))]
 pub const V3_ACTIVATION_HEIGHT: u64 = 2_000_000;
 
 /// cFIRE-SIGIL: the bearer capability that governs the mint gate (opcode 80).
@@ -839,3 +839,11 @@ mod cap_tests {
         assert_eq!(clamp_to_cap(u128::MAX, 1, u128::MAX), u128::MAX - 1);
     }
 }
+
+/// testnet4 (`--features testnet`): the latest consensus rules from genesis,
+/// DIESEL v3 included. MUST equal the indexer's testnet
+/// `genesis::DIESEL_V3_BLOCK_HEIGHT` (0). Declared at the end of the file so
+/// that no existing line moves: panic locations (file:line) are compiled into
+/// the wasm, and the mainnet/regtest builds must stay byte-identical.
+#[cfg(all(feature = "testnet", not(feature = "mainnet")))]
+pub const V3_ACTIVATION_HEIGHT: u64 = 0;
