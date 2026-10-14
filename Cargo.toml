@@ -76,7 +76,7 @@ members = [
 ]
 
 [workspace.package]
-version = "3.0.0-rc.2"
+version = "3.0.0-rc.3"
 edition = "2021"
 description = "ALKANES metaprotocol indexer"
 license = "MIT"
