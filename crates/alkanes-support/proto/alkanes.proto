@@ -349,3 +349,23 @@ message SimulateBlockResponse {
   bytes used_block = 5;
   string error = 6;
 }
+
+// ---------------------------------------------------------------------------
+// getalias — read-only view of the factory alias stored at /alkanes/<id>.
+//
+// A clone created with a [5, n] or [6, n] cellpack target (at the top level
+// of a protostone or inside an extcall) stores no code of its own: the
+// indexer writes the 32-byte encoded AlkaneId of its factory (2:n or 4:n) at
+// /alkanes/<new id>, and binary resolution follows that alias. getalias
+// returns that one stored hop. `alias` is unset (an empty response, zero
+// bytes on the wire) when the alkane has no alias: it holds its own code,
+// it is a precompiled built-in, or nothing is deployed at that id.
+// ---------------------------------------------------------------------------
+
+message AlkaneAliasRequest {
+  AlkaneId id = 1;
+}
+
+message AlkaneAliasResponse {
+  AlkaneId alias = 1;
+}

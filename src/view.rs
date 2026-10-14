@@ -1795,6 +1795,44 @@ pub fn getbytecode(input: &Vec<u8>, height: u32) -> Result<Vec<u8>> {
     }
 }
 
+/// The factory alias stored for `id`, if any.
+///
+/// A clone (`[5, n]` / `[6, n]` cellpack target, top level or via extcall;
+/// see `vm::utils::run_special_cellpacks`) is written as the 32-byte encoded
+/// `AlkaneId` of its factory at `/alkanes/<id>`, and `get_alkane_binary`
+/// follows it. This returns that one stored hop, using the same rules as
+/// binary resolution: a precompiled built-in at `height` never resolves
+/// through storage, and only a 32-byte payload is an alias. A chain of
+/// aliases is not followed; call again on the result to walk it.
+///
+/// Read-only: no writes, and nothing on the indexing path calls it.
+pub fn stored_alias(id: &AlkaneId, height: u32) -> Result<Option<AlkaneId>> {
+    if crate::network::precompiled_alkane_wasm_for_height(id, height).is_some() {
+        return Ok(None);
+    }
+    let payload = IndexPointer::from_keyword("/alkanes/")
+        .select(&id.clone().into())
+        .get();
+    if payload.len() != 32 {
+        return Ok(None);
+    }
+    Ok(Some(payload.as_ref().clone().try_into()?))
+}
+
+/// `getalias` view: `AlkaneAliasRequest { id }` -> `AlkaneAliasResponse`,
+/// with `alias` unset (zero bytes) when `id` has no stored alias.
+pub fn getalias(input: &Vec<u8>, height: u32) -> Result<Vec<u8>> {
+    let request = alkanes_support::proto::alkanes::AlkaneAliasRequest::decode(&**input)?;
+    let id: AlkaneId = request
+        .id
+        .ok_or_else(|| anyhow!("getalias: request has no id"))?
+        .into();
+    let response = alkanes_support::proto::alkanes::AlkaneAliasResponse {
+        alias: stored_alias(&id, height)?.map(Into::into),
+    };
+    Ok(response.encode_to_vec())
+}
+
 pub fn getblock(input: &Vec<u8>) -> Result<Vec<u8>> {
     use crate::etl;
     use alkanes_support::proto::alkanes::{BlockRequest, BlockResponse};
