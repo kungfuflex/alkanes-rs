@@ -15,6 +15,8 @@ use alkanes_cli_common::commands::*;
 pub mod utils;
 pub mod keystore;
 pub mod pretty_print;
+#[cfg(feature = "attest-upload")]
+pub mod attest_upload;
 use alkanes_cli_common::alkanes::AlkanesInspectConfig;
 use utils::*;
 use keystore::{KeystoreManager, KeystoreCreateParams};

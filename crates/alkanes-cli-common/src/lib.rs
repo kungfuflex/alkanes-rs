@@ -89,6 +89,8 @@ pub mod byte_view;
 pub mod proto;
 pub mod subfrost;
 pub mod ordinals;
+#[cfg(feature = "std")]
+pub mod buildinfo;
 
 // New-protocol WalletConnect signer for SUBFROST mobile vc=419+.
 // Gated on the wc-signer feature so non-WC consumers don't pay the
