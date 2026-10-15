@@ -367,6 +367,18 @@ pub fn getbytecode() -> i32 {
     export_bytes(view::getbytecode(&consume_to_end(&mut data).unwrap(), height).unwrap_or_default())
 }
 
+/// `getalias`: height (u32 LE) + `AlkaneAliasRequest`. Returns an
+/// `AlkaneAliasResponse` holding the factory alias stored for the id, or zero
+/// bytes when it has none. Read-only.
+#[cfg(not(test))]
+#[no_mangle]
+pub fn getalias() -> i32 {
+    configure_network();
+    let mut data: Cursor<Vec<u8>> = Cursor::new(input());
+    let height = consume_sized_int::<u32>(&mut data).unwrap();
+    export_bytes(view::getalias(&consume_to_end(&mut data).unwrap(), height).unwrap_or_default())
+}
+
 #[cfg(not(test))]
 #[no_mangle]
 pub fn protorunesbyoutpoint() -> i32 {
