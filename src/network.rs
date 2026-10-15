@@ -279,8 +279,31 @@ pub mod genesis {
 #[cfg(all(feature = "testnet", not(feature = "mainnet")))]
 pub mod genesis {
     pub const GENESIS_BLOCK: u64 = 0;
+    /// The genesis credits (frSIGIL 32:1 from `setup_frsigil`, the DIESEL
+    /// premine from `setup_diesel`) land on `GENESIS_OUTPOINT:0`. On testnet4
+    /// this is a real, unspent output owned by the testnet4 holder wallet
+    /// (hotpurse, `tb1pmfhla68athhlvce3jynmn9fyptdsfhy3kgq9xpsxcyqt385kagrs3gdwhc`):
+    /// vout 0 of a reverted deploy reveal confirmed at testnet4 height
+    /// 156_445, which carries no alkanes of its own. The regtest placeholder
+    /// txid used before does not exist on testnet4, which left 32:1 (and so
+    /// frBTC 32:0's owner-only `set_signer`) unspendable.
+    ///
+    /// The credit is written at block 0, long before the tx exists. That is
+    /// safe: indexing the creating tx only ever APPENDS to an output's balance
+    /// sheet (`PersistentRecord::save` skips empty/zero entries and never
+    /// clears), and this tx routes no alkanes to vout 0. Spending it later is
+    /// an ordinary protostone spend.
     pub const GENESIS_OUTPOINT: &str =
-        "3977b30a97c9b9d609afb4b7cc138e17b21d1e0c5e360d25debf1441de933bf4";
+        "37ecd12eb97440010ac78045fe5f86951f50dbede8e54c60828d2abd4c1187fd";
+    /// Kept at 0 on purpose (NOT the real height 156_445). `genesis()` appends
+    /// the txid to `HEIGHT_TO_TRANSACTION_IDS[GENESIS_OUTPOINT_BLOCK_HEIGHT]`
+    /// at block 0. Using 156_445 would put it AHEAD of that block's own txids
+    /// when the block is indexed and shift the view-reported txindex of every
+    /// tx in it by one. At 0 it only sits next to the testnet4 genesis
+    /// coinbase, as before. Once block 156_445 is indexed, `index_outpoints`
+    /// overwrites `OUTPOINT_TO_HEIGHT` with the real height, so outpoint views
+    /// report the true height/txindex. Nothing consensus-relevant reads either
+    /// table for this outpoint.
     pub const GENESIS_OUTPOINT_BLOCK_HEIGHT: u64 = 0;
     pub const GENESIS_UPGRADE_BLOCK_HEIGHT: u32 = 0;
     pub const GENESIS_UPGRADE_EOA_BLOCK_HEIGHT: u32 = 0;
