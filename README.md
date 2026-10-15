@@ -16,6 +16,14 @@ Public SUBFROST RPC endpoints: mainnet `https://mainnet.subfrost.io/v4/jsonrpc`,
 
 Protocol fees are accepted in terms of Bitcoin and compute is metered with the wasmi fuel implementation, for protection against DoS.
 
+## Security audits
+
+| Report | Scope | Assessor | Findings | Status |
+|---|---|---|---|---|
+| [SFSEC-2026-001](https://cdn.subfrost.io/audits/SFSEC-2026-001-alkanes-metashrew-20261015.pdf) (published 2026-10-15) | alkanes-rs v2.2.1-rc.4, metashrew v9.0.5-rc.13 to rc.15 | Halborn | 25 (2 High, 19 Medium, 4 Low) | All resolved: alkanes-rs v3.0.0-rc.1 and later; consensus fixes activate at mainnet block 972,000 |
+
+The report is bilingual (English and 简体中文). For each finding it reproduces Halborn's original text, then the fix: commits, code, activation and tests. A SHA-256 checksum is published next to the PDF (`.pdf.sha256`). To report a vulnerability, see [SECURITY.md](SECURITY.md).
+
 ## Software Topology
 
 This repository is a pure Rust implementation, built entirely for a WASM target and even tested within the WASM test runner `wasm-bindgen-test-runner`.
