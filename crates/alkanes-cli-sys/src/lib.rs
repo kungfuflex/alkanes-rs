@@ -1738,7 +1738,8 @@ impl SystemWallet for SystemAlkanes {
                    auto_confirm: yes,
                    use_rebar: false,
                    rebar_tier: 1,
-                   lock_alkanes: false,
+                   // Alkane carriers are always excluded (SFS-05); kept true for clarity.
+                   lock_alkanes: true,
                    ordinals_strategy: alkanes_cli_common::alkanes::types::OrdinalsStrategy::default(),
                    mempool_indexer: false,
                };
@@ -1769,7 +1770,8 @@ impl SystemWallet for SystemAlkanes {
                    auto_confirm: yes,
                    use_rebar: false,
                    rebar_tier: 1,
-                   lock_alkanes: false,
+                   // Alkane carriers are always excluded (SFS-05); kept true for clarity.
+                   lock_alkanes: true,
                    ordinals_strategy: alkanes_cli_common::alkanes::types::OrdinalsStrategy::default(),
                    mempool_indexer: false,
                };
@@ -1811,6 +1813,20 @@ impl SystemWallet for SystemAlkanes {
                let tx_bytes = hex::decode(&hex_string).map_err(|e| AlkanesError::InvalidParameters(format!("Invalid hex: {}", e)))?;
                let unsigned_tx = bitcoin::Transaction::consensus_decode(&mut &tx_bytes[..])
                    .map_err(|e| AlkanesError::InvalidParameters(format!("Invalid transaction: {}", e)))?;
+
+               // Pre-sign carrier check (SFS-05): a transaction with no
+               // protostones is a plain BTC send; refuse to sign it if any
+               // input carries alkanes or has an unknown alkane status
+               // (they would settle to the first output). Truncation/split
+               // below only drops inputs, so checking the original covers it.
+               if !alkanes_cli_common::alkanes::carrier::tx_has_protostones(&unsigned_tx) {
+                   alkanes_cli_common::alkanes::carrier::assert_plain_send_inputs_clean(
+                       &provider,
+                       alkanes_cli_common::traits::DeezelProvider::is_qubitcoin_mode(&provider),
+                       &unsigned_tx,
+                   )
+                   .await?;
+               }
                
                const SAFETY_MARGIN: f64 = 0.975; // 2.5% safety margin (accounts for varint variations)
                
