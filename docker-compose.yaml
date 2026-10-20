@@ -132,7 +132,7 @@ services:
       LUA_SCRIPT_PATH: /data/lua-scripts
       RUST_LOG: info
     ports:
-      - "18888:18888"
+      - "127.0.0.1:18888:18888"  # loopback only: the gateway has no auth; front it with an authenticating proxy
     restart: unless-stopped
 
   postgres:
