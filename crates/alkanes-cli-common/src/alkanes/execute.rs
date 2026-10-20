@@ -87,6 +87,26 @@ const MAX_HEADROOM_INPUTS: usize = 4;
 /// to collect; it never raises the bar for the "Insufficient funds" error. A
 /// wallet that could previously fund a transaction still can — it just gets
 /// change above dust whenever another UTXO is available to make that true.
+///
+/// ## The fee buffer (support ticket, "need 2373 sats, have 2184")
+///
+/// The pre-selection fee estimate E carries a 50% safety buffer, and that
+/// buffer used to sit INSIDE the hard `InputRequirement::Bitcoin` amount, so
+/// a dust-only wallet whose real transaction costs less than E was refused for
+/// sats it never needed (four 546-sat UTXOs, real fee 546, refused against
+/// outputs + 1.5 E). The buffer is soft for the same reason the headroom is:
+/// the real fee is computed afterwards from the real inputs and enforced again
+/// before any PSBT is returned, so the buffer only ever protected an estimate
+/// that is about to be replaced. It is now `fee_buffer`: selection keeps
+/// collecting up to `bitcoin_needed + fee_buffer`, but only from
+/// verified-clean UTXOs (caller- or espo-asserted, or indexer-probed and
+/// confirmed; on the alkane pass, probed lazily when discovery did not reach
+/// them). So every wallet that reached the old bar using only verified-clean
+/// (caller/espo-asserted or indexer-probed and confirmed), needed-alkane or
+/// required inputs selects the same inputs. Only `bitcoin_needed` (outputs +
+/// E) decides "Insufficient funds", and no unverified UTXO and no alkane
+/// carrier is spent to reach the buffer. Unlike the dust headroom it is
+/// uncapped and never counted against `MAX_HEADROOM_INPUTS`.
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct BtcHeadroom {
     /// Flat extra sats to aim for: DUST_LIMIT so the change output clears the
@@ -96,6 +116,9 @@ pub(crate) struct BtcHeadroom {
     /// target grows by this much per selected input, so the estimate stays
     /// honest no matter how many UTXOs selection ends up walking.
     per_input_fee: u64,
+    /// The safety buffer on the fee estimate (`fee_with_buffer - estimated_fee`),
+    /// preferred but not required; see "The fee buffer" above. 0 = none.
+    fee_buffer: u64,
 }
 
 impl BtcHeadroom {
@@ -108,18 +131,24 @@ impl BtcHeadroom {
 
     pub(crate) fn new(soft_extra: u64, fee_rate_sat_vb: f32) -> Self {
         let per_input_fee = (fee_rate_sat_vb.max(0.0) as f64 * MARGINAL_INPUT_VBYTES as f64).ceil() as u64;
-        Self { soft_extra, per_input_fee }
+        Self { soft_extra, per_input_fee, fee_buffer: 0 }
+    }
+
+    /// Adds the soft fee buffer (see "The fee buffer" in the type doc).
+    pub(crate) fn with_fee_buffer(self, fee_buffer: u64) -> Self {
+        Self { fee_buffer, ..self }
     }
 
     /// The amount selection aims for once `selected_inputs` inputs are in hand.
     fn target(&self, bitcoin_needed: u64, selected_inputs: usize) -> u64 {
         bitcoin_needed
+            .saturating_add(self.fee_buffer)
             .saturating_add(self.soft_extra)
             .saturating_add(self.per_input_fee.saturating_mul(selected_inputs as u64))
     }
 
     fn is_active(&self) -> bool {
-        self.soft_extra > 0 || self.per_input_fee > 0
+        self.soft_extra > 0 || self.per_input_fee > 0 || self.fee_buffer > 0
     }
 }
 
@@ -2414,10 +2443,14 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         log::info!("Fee estimation: {} vbytes × {:.1} sat/vB = {} sats (with 50% buffer: {} sats)",
                    estimated_vsize, fee_rate_sat_vb, estimated_fee, fee_with_buffer);
         
-        // Include fee in Bitcoin requirements for UTXO selection
-        let bitcoin_requirement = total_bitcoin_needed + fee_with_buffer;
-        log::info!("Total Bitcoin requirement: {} sats (outputs) + {} sats (fee) = {} sats",
-                   total_bitcoin_needed, fee_with_buffer, bitcoin_requirement);
+        // Include fee in Bitcoin requirements for UTXO selection. Only the
+        // UNBUFFERED estimate is a hard requirement: the 50% buffer is handed
+        // to selection as a soft preference (`BtcHeadroom::with_fee_buffer`
+        // below), because the real fee is recomputed from the real inputs and
+        // enforced again before any PSBT is returned.
+        let bitcoin_requirement = total_bitcoin_needed + estimated_fee;
+        log::info!("Total Bitcoin requirement: {} sats (outputs) + {} sats (fee) = {} sats hard, {} sats preferred (with 50% fee buffer)",
+                   total_bitcoin_needed, estimated_fee, bitcoin_requirement, total_bitcoin_needed + fee_with_buffer);
         
         final_requirements.push(InputRequirement::Bitcoin { amount: bitcoin_requirement });
 
@@ -2428,9 +2461,12 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         // uncharged input comes out of the BTC change. Selection stopping the
         // instant `collected >= needed` is what drops the residual into the
         // 1..=545 band `validate_transaction` rejects, while the wallet still
-        // holds unselected BTC. Reserve one DUST_LIMIT of change headroom and
-        // charge the real per-input fee as inputs accumulate.
-        let headroom = BtcHeadroom::new(DUST_LIMIT, fee_rate_sat_vb);
+        // holds unselected BTC. Prefer the 50% fee buffer on top of the hard
+        // bar (uncapped, verified/asserted-clean UTXOs only), reserve one
+        // DUST_LIMIT of change headroom and charge the real per-input fee as
+        // inputs accumulate. None of it can raise the "Insufficient funds" bar.
+        let headroom = BtcHeadroom::new(DUST_LIMIT, fee_rate_sat_vb)
+            .with_fee_buffer(fee_with_buffer.saturating_sub(estimated_fee));
         let mut utxo_selection = self.select_utxos_with_headroom(&final_requirements, &params.from_addresses, &params.known_pending_tx_hexes, params.max_indexed_height, &params.prefetched_utxos, &params.excluded_utxos, params.utxo_source, headroom).await?;
 
         // Check selected UTXOs for ordinal inscriptions based on strategy
@@ -2746,6 +2782,51 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             )));
         }
 
+        // The real fee is the bar now. Selection only guaranteed outputs + the
+        // UNBUFFERED estimate (the 50% buffer is soft, see `BtcHeadroom`), so a
+        // wallet that met the estimate can still be short of the fee this tx
+        // actually pays. Report that as the same typed shortfall selection
+        // uses, measured against the real fee, instead of letting it surface
+        // as `validate_transaction`'s untyped "Insufficient funds" string.
+        //
+        // Why `fee` is the honest bar here (D2): when inputs < outputs + fee,
+        // `build_psbt_and_fee` saturates the change to 0, so a droppable
+        // placeholder is removed with 0 sats and `change_dropped_to_fee` adds
+        // nothing; the reported fee is never reduced to fit the inputs. The one
+        // exception is the `MAX_FEE_SATS` cap, which lowers the fee below the
+        // rate-implied fee; `needed` then reflects the capped fee the tx
+        // actually pays. Same sums as
+        // `validate_transaction`: every funding input (the PSBT's
+        // `witness_utxo`s, which `build_psbt_and_fee` fills from the same
+        // prefetched / provider sources) against the non-OP_RETURN outputs.
+        // `build_psbt_and_fee` sets a `witness_utxo` on every input, so
+        // `built_inputs` is always `Some` today. If one were ever missing, this
+        // check is skipped (with a warning, not a panic: this runs in wasm)
+        // and `validate_transaction` below decides on its own sums.
+        let built_inputs: Option<u64> = psbt
+            .inputs
+            .iter()
+            .map(|i| i.witness_utxo.as_ref().map(|u| u.value.to_sat()))
+            .sum();
+        if built_inputs.is_none() {
+            log::warn!(
+                "Real-fee check skipped: a PSBT input has no witness_utxo; validate_transaction decides"
+            );
+        }
+        let built_outputs: u64 = psbt
+            .unsigned_tx
+            .output
+            .iter()
+            .filter(|o| !o.script_pubkey.is_op_return())
+            .map(|o| o.value.to_sat())
+            .sum();
+        if let Some(inputs) = built_inputs {
+            let needed = built_outputs.saturating_add(fee);
+            if inputs < needed {
+                return Err(AlkanesError::InsufficientBitcoin { needed, collected: inputs });
+            }
+        }
+
         // Validate the transaction before returning
         self.validate_transaction(&psbt, &final_funding_outpoints, fee, params, prefetched_for_build.as_ref()).await?;
 
@@ -2916,6 +2997,59 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             requirements, from_addresses, known_pending_tx_hexes, max_indexed_height,
             prefetched_utxos, excluded_utxos, utxo_source, BtcHeadroom::none(),
         ).await
+    }
+
+    /// Is `outpoint` an alkane carrier, and is that answer AUTHORITATIVE?
+    /// Returns `(is_carrier, verified)`. Shared by the BTC-only pass and the
+    /// alkane pass's fee-buffer zone of `select_utxos_with_headroom`, so both
+    /// mean the same thing by "verified clean". `prefetched_hits` /
+    /// `rpc_hits` count which source answered (neither in qubitcoin mode).
+    async fn probe_fee_input_carrier(
+        &self,
+        outpoint: &OutPoint,
+        utxo: &UtxoInfo,
+        prefetched_alkanes: Option<&alloc::collections::BTreeMap<OutPoint, Vec<(ProtoruneRuneId, u128)>>>,
+        prefetched_hits: &mut usize,
+        rpc_hits: &mut usize,
+    ) -> (bool, bool) {
+        if self.provider.is_qubitcoin_mode() {
+            // No alkanes indexer in qubitcoin mode and no alkanes to
+            // burn — treat as authoritative so behavior is unchanged.
+            return (false, true);
+        }
+        if let Some(balances) = prefetched_alkanes.and_then(|m| m.get(outpoint)) {
+            // Same short-circuit shape as the primary-discovery branch:
+            // caller- or espo-asserted balances skip the RPC. An empty Vec
+            // means "asserted clean — not a carrier."
+            *prefetched_hits += 1;
+            return (balances.iter().any(|(_, amt)| *amt > 0), true);
+        }
+        *rpc_hits += 1;
+        let txid_str = outpoint.txid.to_string();
+        match self
+            .provider
+            .get_protorunes_by_outpoint(&txid_str, outpoint.vout, None, 1)
+            .await
+        {
+            // An UNCONFIRMED candidate (injected from a pending tx) always probes
+            // empty: the indexer has not seen its tx. That is not authoritative
+            // (#308 review lane A 7), so it may fund a genuine need (the hard
+            // bar) but never the soft fee buffer or the dust headroom. A caller
+            // assertion (the branch above) still counts.
+            Ok(response) => (
+                response
+                    .balance_sheet
+                    .cached
+                    .balances
+                    .values()
+                    .any(|amt| *amt > 0),
+                utxo.confirmations > 0,
+            ),
+            // Unverifiable — keep the pre-existing behavior (select when the
+            // hard bar needs it), but mark it so neither the fee buffer nor
+            // the dust headroom will reach for it.
+            Err(_) => (false, false),
+        }
     }
 
     /// `select_utxos` plus a soft over-collection target — see [`BtcHeadroom`].
@@ -3348,20 +3482,37 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
 
         let mut bitcoin_collected = 0u64;
         // Inputs pulled purely to lift change out of the dust band, i.e. taken
-        // once `bitcoin_needed` was already satisfied. Capped at
-        // MAX_HEADROOM_INPUTS so a wallet of sub-marginal UTXOs can't sweep
-        // itself into one enormous transaction chasing a target it can never
-        // reach (each such candidate raises the target by more than it adds).
+        // once `bitcoin_needed` AND the soft fee buffer were already satisfied.
+        // Capped at MAX_HEADROOM_INPUTS so a wallet of sub-marginal UTXOs can't
+        // sweep itself into one enormous transaction chasing a target it can
+        // never reach (each such candidate raises the target by more than it
+        // adds). Inputs taken inside the fee buffer are not counted: they are
+        // the inputs the old buffered hard bar would have taken anyway.
         let mut headroom_inputs: usize = 0;
-        // The transaction cannot be built at all below this — a UTXO taken to
-        // satisfy it is a necessity, not a preference.
+        // The transaction cannot be built at all below this (outputs + the
+        // UNBUFFERED fee estimate) — a UTXO taken to satisfy it is a
+        // necessity, not a preference. This is also the only bar the final
+        // "Insufficient funds" check uses.
         macro_rules! needs_more_btc {
             () => {{
                 bitcoin_collected < bitcoin_needed
             }};
         }
-        // Hard requirement OR the soft dust headroom on top of it. The headroom
-        // is abandoned the moment the cap is hit or candidates run out.
+        // The hard bar plus the soft fee buffer (`headroom.fee_buffer`, see
+        // `BtcHeadroom`): the amount the old buffered hard bar asked for. Uncapped
+        // and not counted as headroom, so every wallet that reached the old
+        // bar using only verified-clean (caller/espo-asserted or
+        // indexer-probed and confirmed), needed-alkane or required inputs
+        // selects exactly the inputs it used to. Same validity rule as
+        // `wants_more_btc!()`: never for unverified candidates or carriers.
+        macro_rules! prefers_more_btc {
+            () => {{
+                bitcoin_collected < bitcoin_needed.saturating_add(headroom.fee_buffer)
+            }};
+        }
+        // Hard requirement, fee buffer, OR the soft dust headroom on top of
+        // them. The headroom is abandoned the moment the cap is hit or
+        // candidates run out.
         //
         // ONLY valid for candidates whose alkane status is POSITIVELY KNOWN to
         // be clean. For anything unverified use `needs_more_btc!()` — see the
@@ -3369,10 +3520,10 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         // the tokens on it (mainnet 2026-05-03, tx 8bee7472…), so "we could not
         // determine whether this UTXO carries alkanes" may be accepted when the
         // transaction is otherwise unbuildable, but must NEVER be accepted to
-        // make the change output prettier.
+        // fill a fee buffer or make the change output prettier.
         macro_rules! wants_more_btc {
             () => {{
-                if needs_more_btc!() {
+                if prefers_more_btc!() {
                     true
                 } else {
                     headroom.is_active()
@@ -3382,11 +3533,12 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             }};
         }
         // Book a UTXO's value as BTC funding. Attributes the input to the
-        // headroom only when the hard requirement was ALREADY met before it —
-        // the input that crosses `bitcoin_needed` is required, not headroom.
+        // headroom only when the hard requirement and the fee buffer were
+        // ALREADY met before it — the input that crosses either bar is
+        // required (or buffer), not headroom.
         macro_rules! take_btc_input {
             ($amount:expr) => {{
-                if bitcoin_collected >= bitcoin_needed {
+                if bitcoin_collected >= bitcoin_needed.saturating_add(headroom.fee_buffer) {
                     headroom_inputs += 1;
                 }
                 bitcoin_collected += $amount;
@@ -3426,6 +3578,16 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
 
             // Create a map of (txid:vout) -> balance data for quick lookup
             let mut utxo_balances: alloc::collections::BTreeMap<String, serde_json::Value> = alloc::collections::BTreeMap::new();
+            // Outpoints the discovery fanout below positively VERIFIED clean:
+            // `protorunesbyoutpoint` answered `Ok` with no positive balance AND
+            // the UTXO is confirmed (an unconfirmed one always probes empty:
+            // same rule as `probe_fee_input_carrier`). Empty answers are never
+            // inserted into `utxo_balances`, so the selection loop's "no balance
+            // data" branch reads this set to tell them from a blind spot.
+            // Prefetched rows are not recorded here; that branch reads
+            // `prefetched_alkanes` directly.
+            let mut probed_clean: alloc::collections::BTreeSet<OutPoint> =
+                alloc::collections::BTreeSet::new();
 
             if using_espo_source {
                 if let Some(prefetched) = prefetched_alkanes.as_ref() {
@@ -3545,7 +3707,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                     let mut prefetched_count: usize = 0;
                     let mut rpc_count: usize = 0;
 
-                    for (outpoint, _utxo) in &candidates {
+                    for (outpoint, utxo) in &candidates {
                         probed.insert(*outpoint);
                         // Short-circuit: if the caller has asserted balances
                         // for this outpoint via `prefetched_utxos[i].alkanes`,
@@ -3617,6 +3779,10 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                                         key,
                                         serde_json::json!({ "balances": balances_array }),
                                     );
+                                } else if utxo.confirmations > 0 {
+                                    // Verified clean: lets it fill the fee
+                                    // buffer in the selection loop below.
+                                    probed_clean.insert(*outpoint);
                                 }
                             }
                             Err(e) => {
@@ -3872,6 +4038,9 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                 spendable_utxos.push((outpoint, utxo_info));
             }
 
+            // Counters for the lazy fee-buffer probe in the no-data branch below.
+            let mut buffer_probe_prefetched: usize = 0;
+            let mut buffer_probe_rpc: usize = 0;
             // Now process UTXOs using the pre-fetched balance data
             for (outpoint, utxo) in spendable_utxos {
                 let key = format!("{}:{}", outpoint.txid, outpoint.vout);
@@ -3966,21 +4135,84 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                     // alkanes → take; unneeded alkanes → skip; balances.is_empty()
                     // → positively asserted clean); this one is a blind spot.
                     //
-                    // So it stays on the HARD requirement: acceptable when the
+                    // So a blind spot stays on the HARD requirement: acceptable when the
                     // transaction is otherwise unbuildable, never to pad the
-                    // change output. Using the soft headroom here would let a
-                    // cosmetic dust fix pull up to MAX_HEADROOM_INPUTS UTXOs of
+                    // change output or fill the soft fee buffer. Using the soft
+                    // targets here would let a cosmetic fix pull UTXOs of
                     // unknown alkane status into the tx as fee inputs — the exact
                     // token-burn the surrounding code exists to prevent.
                     // (Caught in review by casuwu.)
                     // A required outpoint is the one exception: the caller named it, so its
                     // unknown status is the caller's explicit choice, not a blind spot.
-                    if needs_more_btc!() || is_required {
+                    //
+                    // Caller- or espo-ASSERTED clean UTXOs land here too, and so
+                    // do UTXOs the discovery fanout PROBED clean: rows with empty
+                    // balances are never inserted into `utxo_balances` (neither
+                    // from `prefetched_alkanes` nor from the RPC fanout), so a
+                    // `prefetched_utxos` row with `alkanes: Some([])`, an espo row
+                    // with no balances, or an `Ok`-empty probe of a confirmed UTXO
+                    // (`probed_clean`) reaches this branch, not the
+                    // `balances.is_empty()` one above. That is information, not a
+                    // blind spot, so it may fill the fee buffer
+                    // (`prefers_more_btc!()`), exactly what the old buffered hard
+                    // bar took it for.
+                    //
+                    // A candidate that is neither (never probed: discovery covers
+                    // only dust unless a requirement is still unmet; or probed
+                    // unconfirmed / with an error) is probed LAZILY, only inside
+                    // the buffer zone (hard bar met, buffer not), with the same
+                    // `probe_fee_input_carrier` the BTC-only pass uses. It fills
+                    // the buffer only when that answer is verified AND clean; an
+                    // unverified UTXO or a carrier is never spent for the buffer.
+                    // So every wallet that reached the old bar using only
+                    // verified-clean, needed-alkane or required inputs selects
+                    // the same inputs. None of this ever funds the dust headroom
+                    // here (unchanged).
+                    let asserted_clean = prefetched_alkanes
+                        .as_ref()
+                        .and_then(|m| m.get(&outpoint))
+                        .is_some_and(|b| b.iter().all(|(_, a)| *a == 0));
+                    let known_clean = asserted_clean || probed_clean.contains(&outpoint);
+                    let take = if needs_more_btc!() || is_required || (known_clean && prefers_more_btc!()) {
+                        true
+                    } else if prefers_more_btc!() {
+                        // Costs one RPC per candidate walked inside the buffer
+                        // zone that is neither asserted nor in `probed_clean`,
+                        // including one that discovery already found
+                        // unconfirmed or failed to probe (it can only come back
+                        // unverified again, or retry the failure).
+                        let (is_carrier, verified) = self
+                            .probe_fee_input_carrier(
+                                &outpoint,
+                                &utxo,
+                                prefetched_alkanes.as_ref(),
+                                &mut buffer_probe_prefetched,
+                                &mut buffer_probe_rpc,
+                            )
+                            .await;
+                        if !verified || is_carrier {
+                            log::debug!(
+                                "Not filling the fee buffer with {}:{} ({})",
+                                outpoint.txid, outpoint.vout,
+                                if is_carrier { "alkane carrier" } else { "unverified alkane status" }
+                            );
+                        }
+                        verified && !is_carrier
+                    } else {
+                        false
+                    };
+                    if take {
                         take_btc_input!(utxo.amount);
                         selected_outpoints.push(outpoint);
                         log::debug!("Selected UTXO {}:{} for Bitcoin only (no balance data)", outpoint.txid, outpoint.vout);
                     }
                 }
+            }
+            if buffer_probe_prefetched + buffer_probe_rpc > 0 {
+                log::info!(
+                    "Fee-buffer probe: {} prefetched, {} via RPC",
+                    buffer_probe_prefetched, buffer_probe_rpc
+                );
             }
             
             // Validate we have enough alkanes
@@ -4044,50 +4276,27 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                 // or a fall-through default. An unverifiable candidate may still
                 // be spent when the transaction is otherwise unbuildable (the
                 // pre-existing behavior), but must never be pulled in purely for
-                // dust headroom — see the guard below the carrier check.
-                let (is_carrier, verified) = if self.provider.is_qubitcoin_mode() {
-                    // No alkanes indexer in qubitcoin mode and no alkanes to
-                    // burn — treat as authoritative so behavior is unchanged.
-                    (false, true)
-                } else if let Some(balances) =
-                    prefetched_alkanes.as_ref().and_then(|m| m.get(&outpoint))
-                {
-                    // Same short-circuit shape as the primary-discovery branch:
-                    // caller-asserted balances skip the RPC. An empty Vec means
-                    // "asserted clean — not a carrier."
-                    prefetched_count += 1;
-                    (balances.iter().any(|(_, amt)| *amt > 0), true)
-                } else {
-                    rpc_count += 1;
-                    let txid_str = outpoint.txid.to_string();
-                    match self
-                        .provider
-                        .get_protorunes_by_outpoint(&txid_str, outpoint.vout, None, 1)
-                        .await
-                    {
-                        // An UNCONFIRMED candidate (injected from a pending tx) always probes
-                        // empty: the indexer has not seen its tx. That is not authoritative
-                        // (#308 review lane A 7), so it may fund a genuine need but never the
-                        // dust headroom. A caller assertion (the branch above) still counts.
-                        Ok(response) => (
-                            response
-                                .balance_sheet
-                                .cached
-                                .balances
-                                .values()
-                                .any(|amt| *amt > 0),
-                            utxo.confirmations > 0,
-                        ),
-                        // Unverifiable — keep the pre-existing behavior (select),
-                        // but mark it so the dust headroom won't reach for it.
-                        Err(_) => (false, false),
-                    }
-                };
+                // the soft fee buffer or the dust headroom — see the guard below
+                // the carrier check. The probe itself is
+                // `probe_fee_input_carrier`, shared with the alkane pass's
+                // fee-buffer zone.
+                let (is_carrier, verified) = self
+                    .probe_fee_input_carrier(
+                        &outpoint,
+                        &utxo,
+                        prefetched_alkanes.as_ref(),
+                        &mut prefetched_count,
+                        &mut rpc_count,
+                    )
+                    .await;
                 if !verified && !needs_more_btc!() {
-                    // Would only be taken for headroom, and we cannot prove it
-                    // is not carrying someone's tokens. Leave it alone.
+                    // The hard bar (outputs + the unbuffered fee estimate) is
+                    // met, so it would only be taken for the fee buffer or the
+                    // dust headroom, and we cannot prove it is not carrying
+                    // someone's tokens. Leave it alone; the real fee is checked
+                    // against the built tx before any PSBT is returned.
                     log::debug!(
-                        "Not extending dust headroom onto unverified UTXO {}:{}",
+                        "Not extending the fee buffer or dust headroom onto unverified UTXO {}:{}",
                         outpoint.txid, outpoint.vout
                     );
                     continue;
@@ -4115,10 +4324,13 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             );
         }
 
-        // Hard requirement — deliberately NOT the headroom target. Over-
-        // collecting is best-effort; a wallet that could fund the transaction
-        // before this change still funds it, it just gets non-dust change when
-        // another UTXO was available to provide it.
+        // Hard requirement — deliberately NOT the headroom target and NOT the
+        // soft fee buffer: `bitcoin_needed` is outputs + the UNBUFFERED fee
+        // estimate. Over-collecting is best-effort; a wallet that could fund
+        // the transaction before this change still funds it, it just gets
+        // non-dust change when another UTXO was available to provide it. The
+        // real fee of the built tx is enforced later, in
+        // `build_single_transaction`, with the same typed error.
         if bitcoin_collected < bitcoin_needed {
             // Typed, so callers can read the shortfall instead of regexing the
             // message and can tell the user the exact amount that WOULD fund
@@ -8979,6 +9191,643 @@ mod dust_change_tests {
                     shadow_vout(tx, 0),
                 );
             }
+        }
+    }
+
+    // ── soft fee buffer: the 50% buffer is a preference, not a bar ───────
+    //
+    // `build_single_transaction` sizes a pre-selection fee estimate E at
+    // `(num_alkane_reqs + 1).max(2)` inputs with a 150-byte runestone, and
+    // used to hand selection `outputs + ceil(1.5 E)` as a HARD requirement.
+    // The real fee is computed afterwards from the real inputs and enforced
+    // again before any PSBT is returned, so the buffer only ever refused
+    // wallets that could pay (support ticket: a dust-only unwrap at 1 sat/vB
+    // failed "need 2373 sats, have 2184" while the real tx needs 2184).
+
+    /// frBTC.
+    const FRBTC: (u64, u64) = (32, 0);
+    /// The ticket wallet's two frBTC carriers: (txid byte, frBTC units).
+    const MEASURED_CARRIERS: [(u8, u128); 2] = [(0x51, 15_984), (0x52, 9_990)];
+    /// The ticket wallet's two clean 546-sat UTXOs.
+    const MEASURED_CLEAN: [u8; 2] = [0x53, 0x54];
+    const MEASURED_UNWRAP: u128 = 25_974;
+    const MEASURED_STONES: &str = "[32:0:25974:p1]:v0:v0,[32,0,78,2,25974]:v1:v0";
+
+    /// The support-ticket unwrap: one fixed P2TR key holding four 546-sat
+    /// UTXOs, two carrying frBTC (15,984 and 9,990) and two clean, every one
+    /// asserted by the caller through `prefetched_utxos` the way the app
+    /// passes them (`alkanes: Some(..)`, an empty vec for the clean ones).
+    /// `to_addresses = [addr, addr, signer]`, requirement `32:0:25974`.
+    async fn build_measured_unwrap(fee_rate: f32) -> Result<ExecutionState> {
+        use crate::alkanes::parsing::{parse_input_requirements, parse_protostones};
+        use crate::alkanes::types::{PrefetchedAlkane, PrefetchedUtxo};
+        let mut mock = MockProvider::new(bitcoin::Network::Regtest);
+        let secp = Secp256k1::new();
+        let sk = bitcoin::secp256k1::SecretKey::from_slice(&[0x5f; 32]).unwrap();
+        let pk = bitcoin::secp256k1::PublicKey::from_secret_key(&secp, &sk);
+        let addr = Address::p2tr(&secp, pk.x_only_public_key().0, None, bitcoin::Network::Regtest);
+        let signer_sk = bitcoin::secp256k1::SecretKey::from_slice(&[0x60; 32]).unwrap();
+        let signer_pk = bitcoin::secp256k1::PublicKey::from_secret_key(&secp, &signer_sk);
+        let signer = Address::p2tr(&secp, signer_pk.x_only_public_key().0, None, bitcoin::Network::Regtest);
+        mock.set_keypair(sk, bitcoin::PublicKey::new(pk));
+        mock.qubitcoin_mode = false;
+        let script = addr.script_pubkey();
+
+        let rows: Vec<(u8, Vec<PrefetchedAlkane>)> = MEASURED_CARRIERS
+            .iter()
+            .map(|(n, units)| {
+                (*n, vec![PrefetchedAlkane { block: FRBTC.0 as u128, tx: FRBTC.1 as u128, amount: units.to_string() }])
+            })
+            .chain(MEASURED_CLEAN.iter().map(|n| (*n, vec![])))
+            .collect();
+        let mut prefetched_utxos = vec![];
+        for (n, alkanes) in rows {
+            let op = OutPoint::new(txid_n(n), 0);
+            mock.utxos.lock().unwrap().push((op, TxOut { value: Amount::from_sat(546), script_pubkey: script.clone() }));
+            prefetched_utxos.push(PrefetchedUtxo {
+                outpoint: op.to_string(),
+                value: 546,
+                script_pubkey_hex: hex::encode(script.as_bytes()),
+                alkanes: Some(alkanes),
+                required: false,
+            });
+        }
+
+        let params = EnhancedExecuteParams {
+            fee_rate: Some(fee_rate),
+            to_addresses: vec![addr.to_string(), addr.to_string(), signer.to_string()],
+            from_addresses: Some(vec![addr.to_string()]),
+            change_address: None,
+            alkanes_change_address: None,
+            input_requirements: parse_input_requirements(&format!("{}:{}:{MEASURED_UNWRAP}", FRBTC.0, FRBTC.1)).unwrap(),
+            protostones: parse_protostones(MEASURED_STONES).unwrap(),
+            envelope_data: None,
+            raw_output: false,
+            trace_enabled: false,
+            mine_enabled: false,
+            auto_confirm: false,
+            ordinals_strategy: OrdinalsStrategy::Burn,
+            mempool_indexer: false,
+            split_transactions: false,
+            split_at: None,
+            known_pending_tx_hexes: vec![],
+            prefetched_utxos,
+            excluded_utxos: vec![],
+            skip_diesel_mint: false,
+            max_indexed_height: None,
+            utxo_source: UtxoDataSource::Metashrew,
+        };
+        let mut executor = EnhancedAlkanesExecutor::new(&mut mock);
+        executor.build_single_transaction(&params).await
+    }
+
+    /// The tx the ticket wallet can afford: all four UTXOs in, `[546, 546,
+    /// 546, OP_RETURN]` out (the sub-dust change is dropped into the fee), and
+    /// the `p1` edict re-encoded for THREE spendable outputs (3 + 2 + 1 = 6).
+    fn assert_measured_unwrap_shape(ready: &ReadyToSignTx, fee_rate: f64) {
+        let tx = &ready.psbt.unsigned_tx;
+        assert_eq!(tx.input.len(), 4, "all four 546-sat UTXOs fund the tx");
+        for (n, _) in MEASURED_CARRIERS {
+            assert!(
+                tx.input.iter().any(|i| i.previous_output == OutPoint::new(txid_n(n), 0)),
+                "frBTC carrier {n:#x} must be spent",
+            );
+        }
+        assert_eq!(
+            tx.output.iter().map(|o| o.value.to_sat()).collect::<Vec<_>>(),
+            vec![546, 546, 546, 0],
+            "change dropped: [addr, addr, signer, OP_RETURN]",
+        );
+        assert!(tx.output[3].script_pubkey.is_op_return());
+        let inputs: u64 = ready.psbt.inputs.iter().map(|i| i.witness_utxo.as_ref().unwrap().value.to_sat()).sum();
+        assert_eq!(inputs, 4 * 546);
+        assert_eq!(ready.fee, inputs - 3 * 546, "reported fee must equal the fee actually paid");
+        assert_eq!(ready.fee, 546);
+        let rate = effective_rate(tx, ready.fee);
+        assert!(rate >= fee_rate, "effective rate {rate} below {fee_rate} sat/vB");
+
+        let stones = decoded_stones(tx);
+        let edict = &stones[0].edicts[0];
+        assert_eq!(
+            (edict.id.block, edict.id.tx, edict.amount),
+            (FRBTC.0 as u128, FRBTC.1 as u128, MEASURED_UNWRAP),
+        );
+        assert_eq!(edict.output, 6, "p1 encoded for three spendable outputs: 3 + 2 + 1");
+        assert_eq!(edict.output, shadow_vout(tx, 1), "p1 must be stone 1's shadow vout");
+        assert_eq!((stones[0].pointer, stones[0].refund), (Some(0), Some(0)), "stone 0 is `:v0:v0`");
+        assert_eq!(cellpack_values(&stones[1].message), vec![32, 0, 78, 2, 25_974]);
+        assert_eq!((stones[1].pointer, stones[1].refund), (Some(1), Some(0)), "stone 1 is `:v1:v0`");
+    }
+
+    /// T1. The ticket case at 1 sat/vB. E = 490 vB x 1 = 490, so the old hard
+    /// bar was 1,638 + ceil(1.5 x 490) = 2,373 > 2,184 and the build failed
+    /// `InsufficientBitcoin { needed: 2373, collected: 2184 }`. The real tx
+    /// fits: fee sized from the 4-input temp tx (~476 vB with the change
+    /// placeholder and 65-byte dummy witnesses) is ~481, leaving ~65 sats of
+    /// change, which is dropped, so the fee is 546.
+    ///
+    /// The slack is thin: the hard bar (1,638 + 490 = 2,128) clears the
+    /// wallet by 56 sats and the real fee by ~65. A change to
+    /// `estimate_transaction_vsize`, its 150-byte runestone constant or the
+    /// fee formula in `build_psbt_and_fee` can flip this test; re-derive the
+    /// numbers before "fixing" it.
+    #[tokio::test]
+    async fn dust_only_unwrap_builds_at_1_sat_vb() {
+        let state = build_measured_unwrap(1.0)
+            .await
+            .unwrap_or_else(|e| panic!("expected ReadyToSign at 1 sat/vB, got {e:?} ({e})"));
+        let ExecutionState::ReadyToSign(ready) = state else { panic!("expected ReadyToSign") };
+        assert_measured_unwrap_shape(&ready, 1.0);
+    }
+
+    /// T2. At 2 sat/vB the wallet is genuinely short (1,638 + ~866 > 2,184),
+    /// and the typed error reports the UNBUFFERED bar: 1,638 + E = 1,638 +
+    /// 980 = 2,618 (it was 1,638 + 1,470 = 3,108).
+    #[tokio::test]
+    async fn dust_only_unwrap_is_still_short_at_2_sat_vb() {
+        match build_measured_unwrap(2.0).await {
+            Err(AlkanesError::InsufficientBitcoin { needed, collected }) => {
+                assert_eq!(collected, 4 * 546, "every UTXO was collected");
+                assert_eq!(needed, 1_638 + 980, "needed must be outputs + the unbuffered estimate");
+                assert!(needed > collected);
+            }
+            Err(e) => panic!("expected InsufficientBitcoin, got {e:?} ({e})"),
+            Ok(_) => panic!("2 sat/vB must not build from 2,184 sats"),
+        }
+    }
+
+    /// T3. Control: 0.5 sat/vB built before the change and still builds the
+    /// same tx (old bar 2,006 and new bar 1,883 are both under 2,184).
+    #[tokio::test]
+    async fn dust_only_unwrap_control_at_half_sat_vb() {
+        let state = build_measured_unwrap(0.5)
+            .await
+            .unwrap_or_else(|e| panic!("expected ReadyToSign at 0.5 sat/vB, got {e:?} ({e})"));
+        let ExecutionState::ReadyToSign(ready) = state else { panic!("expected ReadyToSign") };
+        assert_measured_unwrap_shape(&ready, 0.5);
+    }
+
+    const SHORTFALL_STONES: &str = "[32:0:1000:p1]:v0:v0,[4,1776,99]:v0:v0";
+
+    /// One fixed P2TR key: a 546-sat carrier of 1000 frBTC plus four clean
+    /// 101-sat UTXOs (950 sats in all), `to_addresses = [p2tr:0]`, a `p1`
+    /// edict, no DIESEL mint, 1 sat/vB.
+    async fn build_shortfall_shape() -> Result<ExecutionState> {
+        use crate::alkanes::parsing::{parse_input_requirements, parse_protostones};
+        let mut mock = MockProvider::new(bitcoin::Network::Regtest);
+        let secp = Secp256k1::new();
+        let sk = bitcoin::secp256k1::SecretKey::from_slice(&[0x5f; 32]).unwrap();
+        let pk = bitcoin::secp256k1::PublicKey::from_secret_key(&secp, &sk);
+        let addr = Address::p2tr(&secp, pk.x_only_public_key().0, None, bitcoin::Network::Regtest);
+        mock.set_keypair(sk, bitcoin::PublicKey::new(pk));
+        mock.qubitcoin_mode = false;
+        let script = addr.script_pubkey();
+        mock.utxos.lock().unwrap().push((
+            OutPoint::new(txid_n(0x61), 0),
+            TxOut { value: Amount::from_sat(546), script_pubkey: script.clone() },
+        ));
+        mock.alkane_balances.lock().unwrap().insert(format!("{}:0", txid_n(0x61)), vec![(32, 0, 1000)]);
+        for n in 0x62..0x66u8 {
+            mock.utxos.lock().unwrap().push((
+                OutPoint::new(txid_n(n), 0),
+                TxOut { value: Amount::from_sat(101), script_pubkey: script.clone() },
+            ));
+        }
+        let params = EnhancedExecuteParams {
+            fee_rate: Some(1.0),
+            to_addresses: vec!["p2tr:0".to_string()],
+            from_addresses: Some(vec![addr.to_string()]),
+            change_address: None,
+            alkanes_change_address: None,
+            input_requirements: parse_input_requirements("32:0:1000").unwrap(),
+            protostones: parse_protostones(SHORTFALL_STONES).unwrap(),
+            envelope_data: None,
+            raw_output: false,
+            trace_enabled: false,
+            mine_enabled: false,
+            auto_confirm: false,
+            ordinals_strategy: OrdinalsStrategy::Burn,
+            mempool_indexer: false,
+            split_transactions: false,
+            split_at: None,
+            known_pending_tx_hexes: vec![],
+            prefetched_utxos: vec![],
+            excluded_utxos: vec![],
+            skip_diesel_mint: true,
+            max_indexed_height: None,
+            utxo_source: UtxoDataSource::Metashrew,
+        };
+        let mut executor = EnhancedAlkanesExecutor::new(&mut mock);
+        executor.build_single_transaction(&params).await
+    }
+
+    /// T5. Meeting the estimate is not meeting the fee. Here E = 404 (2
+    /// inputs, 3 outputs, runestone), so the hard bar is 546 + 404 = 950 and
+    /// the preferred bar 546 + 606 = 1,152. The wallet holds exactly 950, so
+    /// selection passes, but the real tx has 5 inputs and its fee does not
+    /// fit: the change saturates to 0, the placeholder is dropped, the `p1`
+    /// edict forces the re-encode and second build, and that build is still
+    /// short. The error must be the typed shortfall against the REAL fee
+    /// (`needed = outputs + fee`), never a PSBT.
+    ///
+    /// The re-encode second build runs by construction, not by assertion:
+    /// the placeholder is dropped, so `spendable_outputs` differs from the
+    /// encoded output count. The OP_RETURN length is the same for 1 and 2
+    /// encoded outputs (asserted below), so `needed` would be the same had
+    /// the error come from the first build; this test does not tell the two
+    /// builds apart.
+    ///
+    /// The expected fee is recomputed here from the second build's temp tx:
+    /// 5 inputs with 65-byte dummy witnesses, `[546, placeholder 0,
+    /// OP_RETURN encoded for 1 output]`, `ceil(ceil(vsize) x 1.01)`.
+    #[tokio::test]
+    async fn real_fee_is_still_enforced_when_only_the_estimate_is_met() {
+        use crate::alkanes::parsing::parse_protostones;
+        let mut mock = MockProvider::new(bitcoin::Network::Regtest);
+        let secp = Secp256k1::new();
+        let sk = bitcoin::secp256k1::SecretKey::from_slice(&[0x5f; 32]).unwrap();
+        let pk = bitcoin::secp256k1::PublicKey::from_secret_key(&secp, &sk);
+        let script = Address::p2tr(&secp, pk.x_only_public_key().0, None, bitcoin::Network::Regtest).script_pubkey();
+        let executor = EnhancedAlkanesExecutor::new(&mut mock);
+        let specs = parse_protostones(SHORTFALL_STONES).unwrap();
+        let op_return = executor.construct_runestone_script(&specs, 1, 0, true).unwrap();
+        assert_eq!(
+            op_return.len(),
+            executor.construct_runestone_script(&specs, 2, 0, true).unwrap().len(),
+            "precondition: p1 6 -> 5 keeps the OP_RETURN length, so both passes size the same fee",
+        );
+        drop(executor);
+        let temp = Transaction {
+            version: bitcoin::transaction::Version::TWO,
+            lock_time: bitcoin::absolute::LockTime::ZERO,
+            input: (0..5u8)
+                .map(|n| bitcoin::TxIn {
+                    previous_output: OutPoint::new(txid_n(0x61 + n), 0),
+                    script_sig: ScriptBuf::new(),
+                    sequence: bitcoin::Sequence::ENABLE_RBF_NO_LOCKTIME,
+                    witness: bitcoin::Witness::from_slice(&[[0u8; 65]]),
+                })
+                .collect(),
+            output: vec![
+                TxOut { value: Amount::from_sat(546), script_pubkey: script.clone() },
+                TxOut { value: Amount::ZERO, script_pubkey: script },
+                TxOut { value: Amount::ZERO, script_pubkey: op_return },
+            ],
+        };
+        let real_fee = ((temp.vsize() as f64).ceil() * 1.01).ceil() as u64;
+        assert!(546 + real_fee > 950, "precondition: the real fee does not fit in 950 ({real_fee})");
+
+        match build_shortfall_shape().await {
+            Err(AlkanesError::InsufficientBitcoin { needed, collected }) => {
+                assert_eq!(collected, 950, "every input was spent");
+                assert_eq!(needed, 546 + real_fee, "needed must be outputs + the REAL fee of the built tx");
+                assert!(needed > collected);
+            }
+            Err(e) => panic!("expected InsufficientBitcoin against the real fee, got {e:?} ({e})"),
+            Ok(_) => panic!("a tx that cannot pay its real fee must never be returned"),
+        }
+    }
+
+    /// T6. `fee_buffer` arithmetic: it is part of the soft target, absent
+    /// from `none()`, and on its own makes the headroom active.
+    #[test]
+    fn fee_buffer_is_part_of_the_soft_target() {
+        let h = BtcHeadroom::new(DUST_LIMIT, 5.0).with_fee_buffer(245);
+        assert_eq!(h.fee_buffer, 245);
+        // 10_000 + 245 buffer + 546 dust + 290 per input.
+        assert_eq!(h.target(10_000, 0), 10_791);
+        assert_eq!(h.target(10_000, 2), 11_371);
+        assert_eq!(BtcHeadroom::none().fee_buffer, 0);
+        assert_eq!(BtcHeadroom::new(DUST_LIMIT, 5.0).fee_buffer, 0, "new() adds no buffer");
+        assert!(BtcHeadroom::new(0, 0.0).with_fee_buffer(1).is_active());
+        assert!(!BtcHeadroom::new(0, 0.0).with_fee_buffer(0).is_active());
+        assert_eq!(
+            BtcHeadroom::new(DUST_LIMIT, 1e9).with_fee_buffer(u64::MAX).target(u64::MAX, 4096),
+            u64::MAX,
+            "saturating, not panicking",
+        );
+    }
+
+    /// A random P2TR wallet for direct selection tests, with the alkane
+    /// probes live (`qubitcoin_mode = false`).
+    fn selection_wallet() -> (MockProvider, Address, ScriptBuf) {
+        let mut mock = MockProvider::new(bitcoin::Network::Regtest);
+        let secp = Secp256k1::new();
+        let (sk, pk) = secp.generate_keypair(&mut rand::thread_rng());
+        let addr = Address::p2tr(&secp, pk.x_only_public_key().0, None, bitcoin::Network::Regtest);
+        mock.set_keypair(sk, bitcoin::PublicKey::new(pk));
+        mock.qubitcoin_mode = false;
+        let script = addr.script_pubkey();
+        (mock, addr, script)
+    }
+
+    fn push_utxo(mock: &MockProvider, n: u8, sats: u64, script: &ScriptBuf) -> OutPoint {
+        let op = OutPoint::new(txid_n(n), 0);
+        mock.utxos.lock().unwrap().push((op, TxOut { value: Amount::from_sat(sats), script_pubkey: script.clone() }));
+        op
+    }
+
+    /// (a) the old shape, `Bitcoin { N + B }` with no fee buffer, against (b)
+    /// the new shape, `Bitcoin { N }` with `with_fee_buffer(B)`, on the same
+    /// wallet and the same dust headroom. Returns both selections.
+    async fn select_old_and_new(
+        mock: &mut MockProvider,
+        addr: &Address,
+        alkanes: Option<InputRequirement>,
+        prefetched: &[crate::alkanes::types::PrefetchedUtxo],
+        needed: u64,
+        buffer: u64,
+        fee_rate: f32,
+    ) -> (Vec<OutPoint>, Vec<OutPoint>) {
+        let from = Some(vec![addr.to_string()]);
+        let reqs = |btc: u64| alkanes.iter().cloned().chain([InputRequirement::Bitcoin { amount: btc }]).collect::<Vec<_>>();
+        let mut executor = EnhancedAlkanesExecutor::new(mock);
+        let old = executor
+            .select_utxos_with_headroom(
+                &reqs(needed + buffer), &from, &[], None, prefetched, &[], UtxoDataSource::Metashrew,
+                BtcHeadroom::new(DUST_LIMIT, fee_rate),
+            )
+            .await
+            .expect("old shape funds");
+        let new = executor
+            .select_utxos_with_headroom(
+                &reqs(needed), &from, &[], None, prefetched, &[], UtxoDataSource::Metashrew,
+                BtcHeadroom::new(DUST_LIMIT, fee_rate).with_fee_buffer(buffer),
+            )
+            .await
+            .expect("new shape funds");
+        (old.outpoints, new.outpoints)
+    }
+
+    /// T4, clean-BTC pass. 30 sub-marginal 600-sat UTXOs at 20 sat/vB (each
+    /// costs 1,160 sats to spend), so the dust headroom can never be met and
+    /// the MAX_HEADROOM_INPUTS cap decides where selection stops. Moving the
+    /// buffer from the hard bar into `fee_buffer` must select the same
+    /// inputs in the same order, in particular the inputs taken inside the
+    /// buffer must not be counted against the cap.
+    #[tokio::test]
+    async fn fee_buffer_selects_like_the_old_buffered_bar_on_the_btc_pass() {
+        let (mut mock, addr, script) = selection_wallet();
+        for i in 0..30u8 {
+            push_utxo(&mock, 0x10 + i, 600, &script);
+        }
+        let (old, new) = select_old_and_new(&mut mock, &addr, None, &[], 1_800, 1_200, 20.0).await;
+        // 3,000 = five inputs, then the cap: 5 + 4.
+        assert_eq!(old.len(), 5 + MAX_HEADROOM_INPUTS, "precondition: the cap binds in the old shape");
+        assert_eq!(new, old, "same inputs, same order");
+    }
+
+    /// T4, alkane pass. One frBTC carrier plus six clean 2,000-sat UTXOs, all
+    /// asserted by the caller (`alkanes: Some([])` for the clean ones), so
+    /// the clean ones land in the "no balance data" branch. The fee buffer
+    /// must be filled from them exactly as the old buffered hard bar was.
+    #[tokio::test]
+    async fn fee_buffer_selects_like_the_old_buffered_bar_on_the_alkane_pass() {
+        use crate::alkanes::types::{PrefetchedAlkane, PrefetchedUtxo};
+        let (mut mock, addr, script) = selection_wallet();
+        let row = |op: OutPoint, sats: u64, alkanes: Vec<PrefetchedAlkane>| PrefetchedUtxo {
+            outpoint: op.to_string(),
+            value: sats,
+            script_pubkey_hex: hex::encode(script.as_bytes()),
+            alkanes: Some(alkanes),
+            required: false,
+        };
+        let carrier = push_utxo(&mock, 0xd0, 546, &script);
+        let mut prefetched = vec![row(carrier, 546, vec![PrefetchedAlkane { block: 32, tx: 0, amount: "1000".to_string() }])];
+        for i in 1..7u8 {
+            let op = push_utxo(&mock, 0xd0 + i, 2_000, &script);
+            prefetched.push(row(op, 2_000, vec![]));
+        }
+        let alkanes = Some(InputRequirement::Alkanes { block: 32, tx: 0, amount: 1_000 });
+        let (old, new) = select_old_and_new(&mut mock, &addr, alkanes, &prefetched, 3_000, 2_500, 5.0).await;
+        // 546 + 3 x 2,000 = 6,546 >= 5,500; the third clean UTXO is the buffer.
+        assert_eq!(old.len(), 4, "precondition: the carrier and three clean UTXOs");
+        assert!(old.contains(&carrier));
+        assert_eq!(new, old, "same inputs, same order");
+    }
+
+    /// T4, unverified clause. An injected pending output (0 confirmations)
+    /// probes clean only because its tx is not indexed, so it may fund the
+    /// HARD bar but never the fee buffer: not selected when the confirmed
+    /// UTXO already reaches `bitcoin_needed`, selected (one, no more) when it
+    /// does not.
+    #[tokio::test]
+    async fn fee_buffer_never_reaches_for_unverified_utxos() {
+        for (needed, expected_pending) in [(4_000u64, 0usize), (6_000, 1)] {
+            let (mut mock, addr, script) = selection_wallet();
+            let confirmed = push_utxo(&mock, 0x91, 5_000, &script);
+            let pending = bitcoin::Transaction {
+                version: bitcoin::transaction::Version::TWO,
+                lock_time: bitcoin::absolute::LockTime::ZERO,
+                input: vec![bitcoin::TxIn {
+                    previous_output: OutPoint::new(txid_n(0x92), 0),
+                    script_sig: ScriptBuf::new(),
+                    sequence: bitcoin::Sequence::ENABLE_RBF_NO_LOCKTIME,
+                    witness: bitcoin::Witness::new(),
+                }],
+                output: (0..4).map(|_| TxOut { value: Amount::from_sat(2_000), script_pubkey: script.clone() }).collect(),
+            };
+            let pending_txid = pending.compute_txid();
+            let pending_hex = bitcoin::consensus::encode::serialize_hex(&pending);
+            let mut executor = EnhancedAlkanesExecutor::new(&mut mock);
+            let result = executor
+                .select_utxos_with_headroom(
+                    &[InputRequirement::Bitcoin { amount: needed }],
+                    &Some(vec![addr.to_string()]), &[pending_hex], None, &[], &[],
+                    UtxoDataSource::Metashrew,
+                    BtcHeadroom::new(0, 0.0).with_fee_buffer(3_000),
+                )
+                .await
+                .unwrap_or_else(|e| panic!("needed {needed}: must fund, got {e:?}"));
+            let from_pending = result.outpoints.iter().filter(|op| op.txid == pending_txid).count();
+            assert!(result.outpoints.contains(&confirmed));
+            assert_eq!(
+                from_pending, expected_pending,
+                "needed {needed}: took {from_pending} unconfirmed outputs (buffer bar {})",
+                needed + 3_000,
+            );
+        }
+    }
+
+    /// Boundaries of the two bars on the clean-BTC pass, hard N = 3,000 and
+    /// buffer B = 600, at 20 sat/vB so the dust headroom is unreachable and
+    /// only the cap stops it.
+    async fn select_boundary(values: &[u64]) -> Result<UtxoSelectionResult> {
+        let (mut mock, addr, script) = selection_wallet();
+        for (i, v) in values.iter().enumerate() {
+            push_utxo(&mock, 0x30 + i as u8, *v, &script);
+        }
+        let mut executor = EnhancedAlkanesExecutor::new(&mut mock);
+        executor
+            .select_utxos_with_headroom(
+                &[InputRequirement::Bitcoin { amount: 3_000 }],
+                &Some(vec![addr.to_string()]), &[], None, &[], &[],
+                UtxoDataSource::Metashrew,
+                BtcHeadroom::new(DUST_LIMIT, 20.0).with_fee_buffer(600),
+            )
+            .await
+    }
+
+    #[tokio::test]
+    async fn fee_buffer_boundary_collected_equals_the_hard_bar() {
+        let result = select_boundary(&[3_000]).await.expect("exactly the hard bar funds");
+        assert_eq!(result.outpoints.len(), 1);
+    }
+
+    /// One sat short of the preferred bar still funds. And an input taken at
+    /// `collected == N + B - 1` is a buffer input, not headroom: with eight
+    /// more 600-sat UTXOs behind it, 3,000 + 599 + 600 crosses the buffer and
+    /// then exactly MAX_HEADROOM_INPUTS more are taken (3 + 4 = 7). Counting
+    /// from the hard bar instead would stop at 5.
+    #[tokio::test]
+    async fn fee_buffer_boundary_one_below_the_preferred_bar() {
+        let result = select_boundary(&[3_000, 599]).await.expect("N + B - 1 funds");
+        assert_eq!(result.outpoints.len(), 2, "the whole wallet, short of the buffer, still funds");
+
+        let mut values = vec![3_000, 599];
+        values.extend([600u64; 8]);
+        let result = select_boundary(&values).await.expect("funds");
+        assert_eq!(result.outpoints.len(), 3 + MAX_HEADROOM_INPUTS, "no input below N + B counts as headroom");
+    }
+
+    #[tokio::test]
+    async fn fee_buffer_boundary_one_below_the_hard_bar() {
+        match select_boundary(&[2_999]).await {
+            Err(AlkanesError::InsufficientBitcoin { needed, collected }) => {
+                assert_eq!((needed, collected), (3_000, 2_999), "needed is the UNBUFFERED bar");
+            }
+            Err(e) => panic!("expected InsufficientBitcoin, got {e:?}"),
+            Ok(_) => panic!("one sat below the hard bar must not fund"),
+        }
+    }
+
+    // ── Round 2: the fee buffer on the alkane pass without caller assertions ──
+    //
+    // No `prefetched_utxos` here (the CLI shape), so every clean UTXO reaches
+    // the "no balance data" branch and only the indexer probe says it is clean.
+
+    /// Registers `op` as a carrier of `(block, tx, amount)` in the mock indexer.
+    fn mark_carrier(mock: &MockProvider, op: OutPoint, block: u64, tx: u64, amount: u64) {
+        mock.alkane_balances
+            .lock()
+            .unwrap()
+            .insert(format!("{}:{}", op.txid, op.vout), vec![(block, tx, amount)]);
+    }
+
+    fn frbtc_1000() -> Option<InputRequirement> {
+        Some(InputRequirement::Alkanes { block: 32, tx: 0, amount: 1_000 })
+    }
+
+    /// R1. Clean dust (600 sats, confirmed) is probed `Ok`-and-empty by the
+    /// pass-0 discovery fanout. That answer is as authoritative as the BTC
+    /// pass's `verified`, so these UTXOs must fill the buffer exactly as the
+    /// old buffered hard bar did. N = 1,500, B = 1,200: old = carrier + 4
+    /// cleans (2,946 >= 2,700); the round-1 code stopped at 2 cleans (1,746).
+    #[tokio::test]
+    async fn alkane_pass_buffer_takes_probed_clean_dust() {
+        let (mut mock, addr, script) = selection_wallet();
+        let carrier = push_utxo(&mock, 0xa0, 546, &script);
+        mark_carrier(&mock, carrier, 32, 0, 1_000);
+        for i in 1..7u8 {
+            push_utxo(&mock, 0xa0 + i, 600, &script);
+        }
+        let (old, new) = select_old_and_new(&mut mock, &addr, frbtc_1000(), &[], 1_500, 1_200, 5.0).await;
+        assert_eq!(old.len(), 5, "precondition: the carrier and four clean dust UTXOs");
+        assert!(old.contains(&carrier));
+        assert_eq!(new, old, "same inputs, same order");
+    }
+
+    /// R2. Clean 2,000-sat UTXOs are never probed during discovery (pass 0
+    /// covers <= 1,000 sats and pass 1 is skipped once the carrier covers
+    /// the requirement), so the buffer zone must probe them lazily.
+    /// N = 3,000, B = 2,500: old = carrier + 3 cleans; round 1 stopped at 2.
+    #[tokio::test]
+    async fn alkane_pass_buffer_probes_unprobed_clean_utxos_lazily() {
+        let (mut mock, addr, script) = selection_wallet();
+        let carrier = push_utxo(&mock, 0xb0, 546, &script);
+        mark_carrier(&mock, carrier, 32, 0, 1_000);
+        for i in 1..7u8 {
+            push_utxo(&mock, 0xb0 + i, 2_000, &script);
+        }
+        let (old, new) = select_old_and_new(&mut mock, &addr, frbtc_1000(), &[], 3_000, 2_500, 5.0).await;
+        assert_eq!(old.len(), 4, "precondition: the carrier and three clean UTXOs");
+        assert!(old.contains(&carrier));
+        assert_eq!(new, old, "same inputs, same order");
+    }
+
+    /// R3. A 2,000-sat UTXO carrying ANOTHER alkane (2:0) is never probed
+    /// during discovery, so it reaches the "no balance data" branch. The
+    /// old code (buffered hard bar, here the `Bitcoin { N + B }` shape)
+    /// spent it as a plain fee input inside the buffer zone, burning its
+    /// 2:0. The new code probes it lazily, sees the carrier, skips it, and
+    /// fills the buffer from the clean UTXO behind it instead.
+    #[tokio::test]
+    async fn alkane_pass_buffer_never_spends_a_foreign_carrier() {
+        let (mut mock, addr, script) = selection_wallet();
+        let carrier = push_utxo(&mock, 0xc0, 546, &script);
+        mark_carrier(&mock, carrier, 32, 0, 1_000);
+        let clean_a = push_utxo(&mock, 0xc1, 2_000, &script);
+        let foreign = push_utxo(&mock, 0xc2, 2_000, &script);
+        mark_carrier(&mock, foreign, 2, 0, 500);
+        let clean_b = push_utxo(&mock, 0xc3, 2_000, &script);
+        // N = 2,000 (met by carrier + clean_a = 2,546), B = 2,500.
+        let (old, new) = select_old_and_new(&mut mock, &addr, frbtc_1000(), &[], 2_000, 2_500, 5.0).await;
+        assert!(
+            old.contains(&foreign),
+            "precondition: the foreign carrier reaches the no-data branch inside the buffer zone \
+             and the old buffered hard bar spends it as fee",
+        );
+        assert!(!new.contains(&foreign), "a carrier must never fill the fee buffer: {new:?}");
+        assert_eq!(new, vec![carrier, clean_a, clean_b], "the buffer is filled from the clean UTXO instead");
+    }
+
+    /// R4. Unconfirmed outputs (a `known_pending_tx_hexes` tx, 0
+    /// confirmations) probe empty only because the indexer has not seen
+    /// them: the 900-sat ones answered `Ok`-empty during discovery, the
+    /// 2,000-sat ones are probed lazily; neither answer is authoritative.
+    /// They may fund the HARD bar, never the fee buffer: none taken when
+    /// the confirmed carrier + clean UTXO (2,546) reach N = 2,000; exactly
+    /// one taken when N = 3,000, and no more for the buffer bar of 5,500.
+    #[tokio::test]
+    async fn alkane_pass_buffer_never_reaches_for_unconfirmed_utxos() {
+        for (needed, expected_pending) in [(2_000u64, 0usize), (3_000, 1)] {
+            let (mut mock, addr, script) = selection_wallet();
+            let carrier = push_utxo(&mock, 0xe0, 546, &script);
+            mark_carrier(&mock, carrier, 32, 0, 1_000);
+            let clean = push_utxo(&mock, 0xe1, 2_000, &script);
+            let pending = bitcoin::Transaction {
+                version: bitcoin::transaction::Version::TWO,
+                lock_time: bitcoin::absolute::LockTime::ZERO,
+                input: vec![bitcoin::TxIn {
+                    previous_output: OutPoint::new(txid_n(0xe2), 0),
+                    script_sig: ScriptBuf::new(),
+                    sequence: bitcoin::Sequence::ENABLE_RBF_NO_LOCKTIME,
+                    witness: bitcoin::Witness::new(),
+                }],
+                output: [900u64, 2_000, 900, 2_000]
+                    .iter()
+                    .map(|v| TxOut { value: Amount::from_sat(*v), script_pubkey: script.clone() })
+                    .collect(),
+            };
+            let pending_txid = pending.compute_txid();
+            let pending_hex = bitcoin::consensus::encode::serialize_hex(&pending);
+            let mut executor = EnhancedAlkanesExecutor::new(&mut mock);
+            let result = executor
+                .select_utxos_with_headroom(
+                    &[frbtc_1000().unwrap(), InputRequirement::Bitcoin { amount: needed }],
+                    &Some(vec![addr.to_string()]), &[pending_hex], None, &[], &[],
+                    UtxoDataSource::Metashrew,
+                    BtcHeadroom::new(DUST_LIMIT, 5.0).with_fee_buffer(2_500),
+                )
+                .await
+                .unwrap_or_else(|e| panic!("needed {needed}: must fund, got {e:?}"));
+            let from_pending = result.outpoints.iter().filter(|op| op.txid == pending_txid).count();
+            assert!(result.outpoints.contains(&carrier) && result.outpoints.contains(&clean));
+            assert_eq!(
+                from_pending, expected_pending,
+                "needed {needed}: took {from_pending} unconfirmed outputs (buffer bar {})",
+                needed + 2_500,
+            );
         }
     }
 }

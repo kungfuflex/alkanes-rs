@@ -193,10 +193,25 @@ pub enum AlkanesError {
 impl AlkanesError {
     /// Sats the wallet was short, or `None` if this is not a funding failure.
     ///
+    /// ## Which bar the shortfall is measured against
+    ///
+    /// `needed` is one of two bars. Before selection it is the selection bar:
+    /// outputs plus the UNBUFFERED pre-selection fee estimate (the 50% buffer
+    /// on that estimate is a soft preference, filled only from verified-clean
+    /// UTXOs and never part of `needed`). After
+    /// selection, when the inputs met that bar but not the fee the built
+    /// transaction actually pays, it is outputs plus that REAL fee
+    /// (`build_single_transaction`, just before `validate_transaction`). In
+    /// both cases `collected` is what the selected inputs hold. For the
+    /// real-fee bar the shortfall is a lower bound, not the exact figure the
+    /// next section describes: a retry with the spend lowered by it can
+    /// re-select fewer inputs and land short again, by a smaller amount.
+    ///
     /// ## This number is directly actionable
     ///
     /// Reducing the spend amount by the shortfall makes the transaction fund —
-    /// exactly, not approximately. The amount a caller spends is an output
+    /// exactly, not approximately, against the selection bar (the retry may
+    /// then be judged by the real-fee bar, see above). The amount a caller spends is an output
     /// value (`B:amount:vN`), so dropping it by `S` drops
     /// `total_bitcoin_needed` by `S` one-for-one, while the output COUNT is
     /// unchanged so the vsize and therefore the fee stay put. The new
