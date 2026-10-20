@@ -85,6 +85,11 @@ pub struct MockProvider {
     /// path of `apply_mempool_adjustment`. Empty by default, so the mempool
     /// stays empty as it always did.
     pub mempool_txs: Arc<Mutex<Vec<JsonValue>>>,
+    /// Ord inscriptions per outpoint (`txid:vout`): (inscription id, sat
+    /// offset). Served by `get_output`, `get_inscription` and
+    /// `get_ord_address_info` (an address reports the ids on the mock UTXOs it
+    /// owns). Empty by default, so the wallet holds no ordinals.
+    pub ord_inscriptions: Arc<Mutex<HashMap<String, Vec<(crate::vendored_ord::InscriptionId, u64)>>>>,
 }
 
 impl Default for MockProvider {
@@ -112,6 +117,7 @@ impl MockProvider {
             pending_tx_store: crate::pending_tx_store::MemoryPendingTxStore::new(),
             frozen_store: crate::frozen_store::MemoryFrozenStore::new(),
             mempool_txs: Arc::new(Mutex::new(vec![])),
+            ord_inscriptions: Arc::new(Mutex::new(HashMap::new())),
         }
     }
     
@@ -1102,20 +1108,74 @@ use crate::traits::EspoProvider;
 
 #[async_trait(?Send)]
 impl OrdProvider for MockProvider {
-    async fn get_inscription(&self, _inscription_id: &str) -> Result<OrdInscription> {
-        todo!()
+    async fn get_inscription(&self, inscription_id: &str) -> Result<OrdInscription> {
+        // Only the id and the satpoint are meaningful; the rest is filler.
+        let inscriptions = self.ord_inscriptions.lock().unwrap();
+        for (outpoint, entries) in inscriptions.iter() {
+            for (id, offset) in entries {
+                if id.to_string() != inscription_id {
+                    continue;
+                }
+                let outpoint = OutPoint::from_str(outpoint)
+                    .map_err(|e| AlkanesError::Parse(format!("bad mock outpoint {outpoint}: {e}")))?;
+                return Ok(OrdInscription {
+                    address: None,
+                    charms: vec![],
+                    child_count: 0,
+                    children: vec![],
+                    content_length: None,
+                    content_type: None,
+                    effective_content_type: None,
+                    fee: 0,
+                    height: 0,
+                    id: *id,
+                    next: None,
+                    number: 0,
+                    parents: vec![],
+                    previous: None,
+                    rune: None,
+                    sat: None,
+                    satpoint: ordinals::SatPoint { outpoint, offset: *offset },
+                    timestamp: 0,
+                    value: None,
+                    metaprotocol: None,
+                });
+            }
+        }
+        Err(AlkanesError::Other(format!("No mock inscription {inscription_id}")))
     }
     async fn get_inscriptions_in_block(&self, _block_hash: &str) -> Result<OrdInscriptions> {
         todo!()
     }
-    async fn get_ord_address_info(&self, _address: &str) -> Result<OrdAddressInfo> {
-        todo!()
+    async fn get_ord_address_info(&self, address: &str) -> Result<OrdAddressInfo> {
+        // The inscriptions on the mock UTXOs this address owns.
+        let inscriptions = self.ord_inscriptions.lock().unwrap();
+        let mut ids = Vec::new();
+        for (outpoint, tx_out) in self.utxos.lock().unwrap().iter() {
+            let owned = Address::from_script(&tx_out.script_pubkey, self.network)
+                .map(|a| a.to_string() == address)
+                .unwrap_or(false);
+            if !owned {
+                continue;
+            }
+            if let Some(entries) = inscriptions.get(&format!("{}:{}", outpoint.txid, outpoint.vout)) {
+                ids.extend(entries.iter().map(|(id, _)| *id));
+            }
+        }
+        Ok(OrdAddressInfo {
+            outputs: vec![],
+            inscriptions: if ids.is_empty() { None } else { Some(ids) },
+            sat_balance: 0,
+            runes_balances: None,
+        })
     }
     async fn get_block_info(&self, _query: &str) -> Result<OrdBlock> {
         todo!()
     }
     async fn get_ord_block_count(&self) -> Result<u64> {
-        todo!()
+        // Above the `block_height: Some(100)` `get_utxos` reports, so ord is
+        // caught up with every mock UTXO.
+        Ok(800_000)
     }
     async fn get_ord_blocks(&self) -> Result<OrdBlocks> {
         todo!()
@@ -1130,7 +1190,7 @@ impl OrdProvider for MockProvider {
         todo!()
     }
     async fn get_output(&self, output: &str) -> Result<OrdOutput> {
-        // Return a minimal output with no inscriptions
+        // Return a minimal output carrying the configured inscriptions
         let parts: Vec<&str> = output.split(':').collect();
         let (txid_str, vout) = if parts.len() == 2 {
             (parts[0], parts[1].parse::<u32>().unwrap_or(0))
@@ -1143,7 +1203,14 @@ impl OrdProvider for MockProvider {
             address: None,
             confirmations: 100,
             indexed: true,
-            inscriptions: Some(vec![]),
+            inscriptions: Some(
+                self.ord_inscriptions
+                    .lock()
+                    .unwrap()
+                    .get(&format!("{txid}:{vout}"))
+                    .map(|entries| entries.iter().map(|(id, _)| *id).collect())
+                    .unwrap_or_default(),
+            ),
             outpoint: OutPoint::new(txid, vout),
             runes: None,
             sat_ranges: None,

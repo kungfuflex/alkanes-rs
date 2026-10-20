@@ -755,7 +755,7 @@ impl ConcreteProvider {
     }
 
     /// A helper function to select coins for a transaction.
-    fn select_coins(&self, utxos: Vec<UtxoInfo>, target_amount: Amount) -> Result<(Vec<UtxoInfo>, Amount)> {
+    fn select_coins(utxos: Vec<UtxoInfo>, target_amount: Amount) -> Result<(Vec<UtxoInfo>, Amount)> {
         let mut selected_utxos = Vec::new();
         let mut total_input_amount = Amount::ZERO;
 
@@ -788,7 +788,7 @@ impl ConcreteProvider {
     ///   * Signature: 64 bytes (Schnorr)
     /// - Total weight per input: 164 + 65 = 229 WU
     /// - vSize per input: 229 / 4 = 57.25 vbytes (rounds to 58)
-    fn estimate_tx_vsize(&self, tx: &Transaction, num_inputs: usize) -> u64 {
+    fn estimate_tx_vsize(tx: &Transaction, num_inputs: usize) -> u64 {
         // Transaction overhead (version, locktime, counts)
         let base_vsize = 10;
         
@@ -1472,584 +1472,590 @@ impl ConcreteProvider {
     /// delegates here and keeps its single-transaction contract; `send`
     /// uses the richer form, so neither duplicates the selection logic.
     pub(crate) async fn prepare_send(&self, params: SendParams) -> Result<PreparedSend> {
-        log::info!("[WalletProvider] Calling create_transaction with params: {:?}", params);
-        // 1. Determine which addresses to use for sourcing UTXOs
-        let (address_strings, all_addresses) = if let Some(from_addresses) = &params.from {
-            (from_addresses.clone(), from_addresses.iter().map(|s| AddressInfo {
-                address: s.clone(),
-                index: 0, // Not relevant here
-                derivation_path: "".to_string(), // Not relevant here
-                script_type: "".to_string(), // Not relevant here
-                used: false, // Not relevant here
-            }).collect())
-        } else {
-            // Fallback to discovering addresses if --from is not provided
-            let discovered_addresses = self.get_addresses(100).await?; // A reasonable number for a simple wallet
-            (discovered_addresses.iter().map(|a| a.address.clone()).collect(), discovered_addresses)
-        };
+        prepare_send_with(self, params).await
+    }
+}
 
-        // 2. Get UTXOs for the specified addresses
-        let mut utxos = self.get_utxos(false, Some(address_strings.clone())).await?;
+/// The body of [`ConcreteProvider::prepare_send`], generic over the
+/// provider so the real builder can run against `MockProvider` in tests.
+pub(crate) async fn prepare_send_with<P: DeezelProvider>(provider: &P, params: SendParams) -> Result<PreparedSend> {
+    log::info!("[WalletProvider] Calling create_transaction with params: {:?}", params);
+    // 1. Determine which addresses to use for sourcing UTXOs
+    let (address_strings, all_addresses) = if let Some(from_addresses) = &params.from {
+        (from_addresses.clone(), from_addresses.iter().map(|s| AddressInfo {
+            address: s.clone(),
+            index: 0, // Not relevant here
+            derivation_path: "".to_string(), // Not relevant here
+            script_type: "".to_string(), // Not relevant here
+            used: false, // Not relevant here
+        }).collect())
+    } else {
+        // Fallback to discovering addresses if --from is not provided
+        let discovered_addresses = provider.get_addresses(100).await?; // A reasonable number for a simple wallet
+        (discovered_addresses.iter().map(|a| a.address.clone()).collect(), discovered_addresses)
+    };
 
-        // 2b. Ordinals awareness. Ord is a SECOND indexer with its own tip —
-        // metashrew being caught up says nothing about what ord knows, so the
-        // two are tracked separately (see `check_ordinals_eligibility`).
-        //
-        // Cost discipline: one `ord_address` call per address answers "does
-        // this wallet hold inscriptions at all". Only addresses that DO get
-        // the per-outpoint fan-out, so a wallet that has never touched an
-        // ordinal pays one call per address and nothing more.
-        let mut has_ord_evidence = false;
-        let mut ord_reachable = true;
-        let mut inscribed_addresses: Vec<String> = Vec::new();
-        for addr in &address_strings {
-            match self.get_ord_address_info(addr).await {
-                Ok(info) => {
-                    let count = info.inscriptions.as_ref().map(|v| v.len()).unwrap_or(0);
-                    // Runes count as evidence too. Keying the fan-out on
-                    // inscriptions alone left an address that holds ONLY
-                    // runes unexamined, so `has_runes` was never set and its
-                    // UTXOs looked clean.
-                    let rune_count =
-                        info.runes_balances.as_ref().map(|v| v.len()).unwrap_or(0);
-                    if count > 0 || rune_count > 0 {
-                        has_ord_evidence = true;
-                        inscribed_addresses.push(addr.clone());
-                        log::info!(
-                            "ord: {} holds {} inscription(s) and {} rune balance(s) — per-outpoint check required",
-                            addr, count, rune_count
-                        );
-                    }
-                }
-                Err(e) => {
-                    // Unknown is NOT clean. Recorded so the gate can refuse
-                    // for a wallet known to hold ordinals.
-                    ord_reachable = false;
-                    log::warn!(
-                        "ord: could not read address {}: {} — its outpoints are UNKNOWN, not clean",
-                        addr, e
+    // 2. Get UTXOs for the specified addresses
+    let mut utxos = provider.get_utxos(false, Some(address_strings.clone())).await?;
+
+    // 2b. Ordinals awareness. Ord is a SECOND indexer with its own tip —
+    // metashrew being caught up says nothing about what ord knows, so the
+    // two are tracked separately (see `check_ordinals_eligibility`).
+    //
+    // Cost discipline: one `ord_address` call per address answers "does
+    // this wallet hold inscriptions at all". Only addresses that DO get
+    // the per-outpoint fan-out, so a wallet that has never touched an
+    // ordinal pays one call per address and nothing more.
+    let mut has_ord_evidence = false;
+    let mut ord_reachable = true;
+    let mut inscribed_addresses: Vec<String> = Vec::new();
+    for addr in &address_strings {
+        match provider.get_ord_address_info(addr).await {
+            Ok(info) => {
+                let count = info.inscriptions.as_ref().map(|v| v.len()).unwrap_or(0);
+                // Runes count as evidence too. Keying the fan-out on
+                // inscriptions alone left an address that holds ONLY
+                // runes unexamined, so `has_runes` was never set and its
+                // UTXOs looked clean.
+                let rune_count =
+                    info.runes_balances.as_ref().map(|v| v.len()).unwrap_or(0);
+                if count > 0 || rune_count > 0 {
+                    has_ord_evidence = true;
+                    inscribed_addresses.push(addr.clone());
+                    log::info!(
+                        "ord: {} holds {} inscription(s) and {} rune balance(s) — per-outpoint check required",
+                        addr, count, rune_count
                     );
                 }
             }
+            Err(e) => {
+                // Unknown is NOT clean. Recorded so the gate can refuse
+                // for a wallet known to hold ordinals.
+                ord_reachable = false;
+                log::warn!(
+                    "ord: could not read address {}: {} — its outpoints are UNKNOWN, not clean",
+                    addr, e
+                );
+            }
         }
+    }
 
-        // Raw per-outpoint rune balances, captured from the same `get_output`
-        // call that sets the flags rather than re-fetching. `Pile.amount` is
-        // in base units, which is what an edict needs.
-        let mut rune_balances: BTreeMap<OutPoint, Vec<(crate::vendored_ord::SpacedRune, u128)>> =
-            BTreeMap::new();
-        if !inscribed_addresses.is_empty() {
-            for (outpoint, info) in utxos.iter_mut() {
-                if !inscribed_addresses.iter().any(|a| a == &info.address) {
-                    continue;
-                }
-                let outpoint_str = format!("{}:{}", info.txid, info.vout);
-                match self.get_output(&outpoint_str).await {
-                    Ok(output) => {
-                        info.has_inscriptions =
-                            output.inscriptions.as_ref().map(|v| !v.is_empty()).unwrap_or(false);
-                        info.has_runes =
-                            output.runes.as_ref().map(|m| !m.is_empty()).unwrap_or(false);
-                        if let Some(runes) = output.runes.as_ref() {
-                            if !runes.is_empty() {
-                                rune_balances.insert(
-                                    *outpoint,
-                                    runes.iter().map(|(k, v)| (*k, v.amount)).collect(),
-                                );
-                            }
-                        }
-                        if info.has_inscriptions || info.has_runes {
-                            log::info!(
-                                "ord: {} carries inscriptions={} runes={} — will not be spent as plain BTC",
-                                outpoint_str, info.has_inscriptions, info.has_runes
+    // Raw per-outpoint rune balances, captured from the same `get_output`
+    // call that sets the flags rather than re-fetching. `Pile.amount` is
+    // in base units, which is what an edict needs.
+    let mut rune_balances: BTreeMap<OutPoint, Vec<(crate::vendored_ord::SpacedRune, u128)>> =
+        BTreeMap::new();
+    if !inscribed_addresses.is_empty() {
+        for (outpoint, info) in utxos.iter_mut() {
+            if !inscribed_addresses.iter().any(|a| a == &info.address) {
+                continue;
+            }
+            let outpoint_str = format!("{}:{}", info.txid, info.vout);
+            match provider.get_output(&outpoint_str).await {
+                Ok(output) => {
+                    info.has_inscriptions =
+                        output.inscriptions.as_ref().map(|v| !v.is_empty()).unwrap_or(false);
+                    info.has_runes =
+                        output.runes.as_ref().map(|m| !m.is_empty()).unwrap_or(false);
+                    if let Some(runes) = output.runes.as_ref() {
+                        if !runes.is_empty() {
+                            rune_balances.insert(
+                                *outpoint,
+                                runes.iter().map(|(k, v)| (*k, v.amount)).collect(),
                             );
                         }
                     }
-                    Err(e) => {
-                        ord_reachable = false;
-                        log::warn!("ord: could not read {}: {} — treating as UNKNOWN", outpoint_str, e);
+                    if info.has_inscriptions || info.has_runes {
+                        log::info!(
+                            "ord: {} carries inscriptions={} runes={} — will not be spent as plain BTC",
+                            outpoint_str, info.has_inscriptions, info.has_runes
+                        );
                     }
                 }
-            }
-        }
-
-        // Ord's own tip, not metashrew's. None when ord did not answer.
-        let ord_indexed_height = if ord_reachable {
-            match self.get_ord_block_count().await {
-                Ok(h) => Some(h),
                 Err(e) => {
-                    log::warn!("ord: blockcount unavailable: {} — heights unknown", e);
-                    None
-                }
-            }
-        } else {
-            None
-        };
-        let utxos = utxos;
-
-        // 3. Exclude alkane carriers (SFS-05). Always on: a plain BTC send has
-        //    no protostone, so alkanes on any input would settle to the first
-        //    output (the recipient) from block 972,000, and were erased
-        //    before. Every candidate's sheet is resolved with the executor's
-        //    shared logic; a UTXO whose status cannot be determined is
-        //    excluded (fail closed). `params.lock_alkanes` is now implied.
-        //
-        //    Runs over EVERY candidate, before step 4 sorts them, so a split
-        //    candidate (inscribed or rune-bearing) is verified alkane-free too
-        //    before the split may spend it, and an unknown-status UTXO is
-        //    neither a clean coin nor a split candidate.
-        let carrier_filter = crate::alkanes::carrier::exclude_alkane_carriers(
-            self,
-            crate::traits::DeezelProvider::is_qubitcoin_mode(self),
-            utxos,
-            None,
-        )
-        .await;
-
-        // 4. Sort candidates into what can be spent as-is and what must be
-        // split first.
-        //
-        // This runs BEFORE coin selection, which is the whole point: the
-        // previous ordering checked ordinals only after `select_coins` had
-        // already picked, so it could abort a send but never avoid an
-        // inscribed UTXO.
-        //
-        // Under `preserve`, an inscribed or rune-bearing UTXO is not a dead
-        // end — it is a SPLIT CANDIDATE, spendable once its precious sats
-        // have been lifted onto an output of their own. That only applies to
-        // reasons meaning "this carries something we can protect".
-        // `OrdBehind` means "ord has not indexed this, so we do not know
-        // what it carries", which is never safe to split, and alkane-bearing
-        // UTXOs stay out entirely.
-        let preserve = params.ordinals_strategy == OrdinalsStrategy::Preserve;
-        let mut ordinals_skipped = 0usize;
-        let mut clean_utxos: Vec<UtxoInfo> = Vec::new();
-        let mut split_candidates: Vec<UtxoInfo> = Vec::new();
-        for (_, info) in carrier_filter.clean.iter().cloned() {
-            if info.has_alkanes {
-                log::info!("Filtering out UTXO {}:{} carrying alkanes", info.txid, info.vout);
-                continue;
-            }
-            match crate::alkanes::execute::check_ordinals_eligibility(
-                &info,
-                ord_indexed_height,
-                has_ord_evidence,
-            ) {
-                Ok(()) => clean_utxos.push(info),
-                Err(reason) => {
-                    use crate::alkanes::execute::UtxoSkipReason;
-                    // Both are protectable now, by different mechanisms: an
-                    // inscription rides a sat and is saved by cutting the
-                    // UTXO at an offset; a rune balance has no sat position
-                    // and is saved by edicting it onto its own output.
-                    let protectable = matches!(
-                        reason,
-                        UtxoSkipReason::Inscribed | UtxoSkipReason::CarriesRunes
-                    );
-                    if preserve && protectable {
-                        log::info!(
-                            "UTXO {}:{} — {:?}; holding as a split candidate",
-                            info.txid, info.vout, reason
-                        );
-                        split_candidates.push(info);
-                    } else {
-                        ordinals_skipped += 1;
-                        log::info!(
-                            "Filtering out UTXO {}:{} — {:?}",
-                            info.txid, info.vout, reason
-                        );
-                    }
+                    ord_reachable = false;
+                    log::warn!("ord: could not read {}: {} — treating as UNKNOWN", outpoint_str, e);
                 }
             }
         }
-        if ordinals_skipped > 0 {
-            log::info!(
-                "ord: withheld {} UTXO(s) from coin selection (ord tip: {:?})",
-                ordinals_skipped, ord_indexed_height
-            );
-        }
+    }
 
-        if clean_utxos.is_empty() && split_candidates.is_empty() {
-            let mut err = carrier_filter.insufficient_error(params.amount.max(1), 0);
-            if ordinals_skipped > 0 {
-                if let AlkanesError::Wallet(msg) = &mut err {
-                    msg.push_str(&format!(
-                        "; {} UTXO(s) were withheld by the ordinals check (inscribed, \
-                         rune-bearing, or above ord's indexed tip ({:?})). Nothing was signed.",
-                        ordinals_skipped, ord_indexed_height
-                    ));
-                }
+    // Ord's own tip, not metashrew's. None when ord did not answer.
+    let ord_indexed_height = if ord_reachable {
+        match provider.get_ord_block_count().await {
+            Ok(h) => Some(h),
+            Err(e) => {
+                log::warn!("ord: blockcount unavailable: {} — heights unknown", e);
+                None
             }
-            return Err(err);
         }
+    } else {
+        None
+    };
+    let utxos = utxos;
 
-        log::info!(
-            "Found {} clean UTXO(s) for coin selection and {} split candidate(s)",
-            clean_utxos.len(),
-            split_candidates.len()
-        );
+    // 3. Exclude alkane carriers (SFS-05). Always on: a plain BTC send has
+    //    no protostone, so alkanes on any input would settle to the first
+    //    output (the recipient) from block 972,000, and were erased
+    //    before. Every candidate's sheet is resolved with the executor's
+    //    shared logic; a UTXO whose status cannot be determined is
+    //    excluded (fail closed). `params.lock_alkanes` is now implied.
+    //
+    //    Runs over EVERY candidate, before step 4 sorts them, so a split
+    //    candidate (inscribed or rune-bearing) is verified alkane-free too
+    //    before the split may spend it, and an unknown-status UTXO is
+    //    neither a clean coin nor a split candidate.
+    let carrier_filter = crate::alkanes::carrier::exclude_alkane_carriers(
+        provider,
+        crate::traits::DeezelProvider::is_qubitcoin_mode(provider),
+        utxos,
+        None,
+    )
+    .await;
 
-        // 5. Perform coin selection
-        let fee_rate = params.fee_rate.unwrap_or(1.0); // Default to 1 sat/vbyte
-
-        // Clean UTXOs are preferred: splitting costs an extra transaction and
-        // its fee, so candidates are drawn on only when the clean set cannot
-        // fund the send on its own.
-        let (selected_utxos, total_input_amount) = if params.send_all {
-            // --send-all sweeps the wallet, so candidates are included and
-            // their inscriptions protected by the split rather than swept
-            // away with everything else.
-            let mut all = clean_utxos;
-            all.extend(split_candidates.iter().cloned());
-            log::info!("--send-all mode: selecting all {} UTXO(s)", all.len());
-            let total: u64 = all.iter().map(|u| u.amount).sum();
-            (all, Amount::from_sat(total))
-        } else {
-            let target_amount = Amount::from_sat(params.amount);
-            // Sats `select_coins` can actually draw on (it skips frozen).
-            let spendable_total =
-                |set: &[UtxoInfo]| -> u64 { set.iter().filter(|u| !u.frozen).map(|u| u.amount).sum() };
-            match self.select_coins(clean_utxos.clone(), target_amount) {
-                Ok(picked) => picked,
-                Err(_) => {
-                    if split_candidates.is_empty() {
-                        return Err(carrier_filter
-                            .insufficient_error(params.amount, spendable_total(&clean_utxos)));
-                    }
+    // 4. Sort candidates into what can be spent as-is and what must be
+    // split first.
+    //
+    // This runs BEFORE coin selection, which is the whole point: the
+    // previous ordering checked ordinals only after `select_coins` had
+    // already picked, so it could abort a send but never avoid an
+    // inscribed UTXO.
+    //
+    // Under `preserve`, an inscribed or rune-bearing UTXO is not a dead
+    // end — it is a SPLIT CANDIDATE, spendable once its precious sats
+    // have been lifted onto an output of their own. That only applies to
+    // reasons meaning "this carries something we can protect".
+    // `OrdBehind` means "ord has not indexed this, so we do not know
+    // what it carries", which is never safe to split, and alkane-bearing
+    // UTXOs stay out entirely.
+    let preserve = params.ordinals_strategy == OrdinalsStrategy::Preserve;
+    let mut ordinals_skipped = 0usize;
+    let mut clean_utxos: Vec<UtxoInfo> = Vec::new();
+    let mut split_candidates: Vec<UtxoInfo> = Vec::new();
+    for (_, info) in carrier_filter.clean.iter().cloned() {
+        if info.has_alkanes {
+            log::info!("Filtering out UTXO {}:{} carrying alkanes", info.txid, info.vout);
+            continue;
+        }
+        match crate::alkanes::execute::check_ordinals_eligibility(
+            &info,
+            ord_indexed_height,
+            has_ord_evidence,
+        ) {
+            Ok(()) => clean_utxos.push(info),
+            Err(reason) => {
+                use crate::alkanes::execute::UtxoSkipReason;
+                // Both are protectable now, by different mechanisms: an
+                // inscription rides a sat and is saved by cutting the
+                // UTXO at an offset; a rune balance has no sat position
+                // and is saved by edicting it onto its own output.
+                let protectable = matches!(
+                    reason,
+                    UtxoSkipReason::Inscribed | UtxoSkipReason::CarriesRunes
+                );
+                if preserve && protectable {
                     log::info!(
-                        "Clean UTXOs cannot cover {} sats; drawing on {} split candidate(s)",
-                        target_amount.to_sat(),
-                        split_candidates.len()
+                        "UTXO {}:{} — {:?}; holding as a split candidate",
+                        info.txid, info.vout, reason
                     );
-                    let mut with_candidates = clean_utxos;
-                    with_candidates.extend(split_candidates.iter().cloned());
-                    let have = spendable_total(&with_candidates);
-                    self.select_coins(with_candidates, target_amount).map_err(|_| {
-                        carrier_filter.insufficient_error(params.amount, have)
-                    })?
+                    split_candidates.push(info);
+                } else {
+                    ordinals_skipped += 1;
+                    log::info!(
+                        "Filtering out UTXO {}:{} — {:?}",
+                        info.txid, info.vout, reason
+                    );
                 }
             }
-        };
+        }
+    }
+    if ordinals_skipped > 0 {
+        log::info!(
+            "ord: withheld {} UTXO(s) from coin selection (ord tip: {:?})",
+            ordinals_skipped, ord_indexed_height
+        );
+    }
 
-        // 5a. Lift inscribed sats off any selected UTXO that carries them,
-        // onto an output of their own, before the remainder is spent as
-        // ordinary funding.
-        let mut split_psbt: Option<bitcoin::psbt::Psbt> = None;
-        let mut split_clean_outpoints: std::collections::BTreeSet<OutPoint> =
-            std::collections::BTreeSet::new();
-        let mut selected_utxos = selected_utxos;
-        let mut total_input_amount = total_input_amount;
-
-        if params.ordinals_strategy != OrdinalsStrategy::Burn {
-            let ordinals_handler = OrdinalsHandler::new(self);
-            let network = self.get_network();
-
-            // (OutPoint, TxOut) view of the selection, for the inscription
-            // check and for the split builder.
-            let mut funding_utxos: Vec<(OutPoint, TxOut)> = Vec::new();
-            for utxo in &selected_utxos {
-                let outpoint = OutPoint {
-                    txid: bitcoin::Txid::from_str(&utxo.txid)?,
-                    vout: utxo.vout,
-                };
-                let script_pubkey = match utxo.script_pubkey.clone() {
-                    Some(sp) => sp,
-                    None => Address::from_str(&utxo.address)?
-                        .require_network(network)?
-                        .script_pubkey(),
-                };
-                funding_utxos.push((
-                    outpoint,
-                    TxOut { value: Amount::from_sat(utxo.amount), script_pubkey },
+    if clean_utxos.is_empty() && split_candidates.is_empty() {
+        let mut err = carrier_filter.insufficient_error(params.amount.max(1), 0);
+        if ordinals_skipped > 0 {
+            if let AlkanesError::Wallet(msg) = &mut err {
+                msg.push_str(&format!(
+                    "; {} UTXO(s) were withheld by the ordinals check (inscribed, \
+                     rune-bearing, or above ord's indexed tip ({:?})). Nothing was signed.",
+                    ordinals_skipped, ord_indexed_height
                 ));
             }
+        }
+        return Err(err);
+    }
 
-            let check_result = ordinals_handler.check_utxos_for_inscriptions(
-                &funding_utxos,
-                params.ordinals_strategy.clone(),
-                fee_rate,
-                params.mempool_indexer,
-            ).await?;
+    log::info!(
+        "Found {} clean UTXO(s) for coin selection and {} split candidate(s)",
+        clean_utxos.len(),
+        split_candidates.len()
+    );
 
-            let plans = check_result.unwrap_or_default();
+    // 5. Perform coin selection
+    let fee_rate = params.fee_rate.unwrap_or(1.0); // Default to 1 sat/vbyte
 
-            // Rune-bearing members of the selection. These produce no
-            // `SplitPlan` — `check_utxos_for_inscriptions` only inspects
-            // inscriptions — so the split has to be driven by their presence
-            // too, or they would be gathered and then silently spent as
-            // ordinary BTC.
-            let mut rune_inputs: Vec<crate::ordinals::RuneInput> = Vec::new();
-            let mut unresolvable: std::collections::HashSet<OutPoint> =
-                std::collections::HashSet::new();
-            if preserve {
-                let mut rune_ids: BTreeMap<crate::vendored_ord::SpacedRune, ordinals::RuneId> =
-                    BTreeMap::new();
-                for (outpoint, txout) in &funding_utxos {
-                    let Some(balances) = rune_balances.get(outpoint) else { continue };
-                    let mut resolved: Vec<(ordinals::RuneId, u128)> = Vec::new();
-                    for (spaced, amount) in balances {
-                        let id = match rune_ids.get(spaced) {
-                            Some(id) => Some(*id),
-                            None => {
-                                // One lookup per distinct rune, cached: ord
-                                // keys balances by name, an edict needs the id.
-                                match self.get_rune(&spaced.to_string()).await {
-                                    Ok(info) => match info.id.parse::<ordinals::RuneId>() {
-                                        Ok(id) => { rune_ids.insert(*spaced, id); Some(id) }
-                                        Err(e) => {
-                                            log::warn!("ord: rune {} has unparseable id {:?}: {}", spaced, info.id, e);
-                                            None
-                                        }
-                                    },
-                                    Err(e) => {
-                                        log::warn!("ord: could not resolve rune {}: {}", spaced, e);
-                                        None
-                                    }
-                                }
-                            }
-                        };
-                        match id {
-                            Some(id) => resolved.push((id, *amount)),
-                            // A balance we cannot name cannot be edicted. The
-                            // only safe answer is to leave the UTXO out of the
-                            // transaction entirely — never to spend it and
-                            // hope.
-                            None => { unresolvable.insert(*outpoint); }
-                        }
-                    }
-                    if !resolved.is_empty() && !unresolvable.contains(outpoint) {
-                        rune_inputs.push(crate::ordinals::RuneInput {
-                            outpoint: *outpoint,
-                            txout: txout.clone(),
-                            balances: resolved,
-                        });
-                    }
+    // Clean UTXOs are preferred: splitting costs an extra transaction and
+    // its fee, so candidates are drawn on only when the clean set cannot
+    // fund the send on its own.
+    let (selected_utxos, total_input_amount) = if params.send_all {
+        // --send-all sweeps the wallet, so candidates are included and
+        // their inscriptions protected by the split rather than swept
+        // away with everything else.
+        let mut all = clean_utxos;
+        all.extend(split_candidates.iter().cloned());
+        log::info!("--send-all mode: selecting all {} UTXO(s)", all.len());
+        let total: u64 = all.iter().map(|u| u.amount).sum();
+        (all, Amount::from_sat(total))
+    } else {
+        let target_amount = Amount::from_sat(params.amount);
+        // Sats `select_coins` can actually draw on (it skips frozen).
+        let spendable_total =
+            |set: &[UtxoInfo]| -> u64 { set.iter().filter(|u| !u.frozen).map(|u| u.amount).sum() };
+        match ConcreteProvider::select_coins(clean_utxos.clone(), target_amount) {
+            Ok(picked) => picked,
+            Err(_) => {
+                if split_candidates.is_empty() {
+                    return Err(carrier_filter
+                        .insufficient_error(params.amount, spendable_total(&clean_utxos)));
                 }
-                if !unresolvable.is_empty() {
-                    log::warn!(
-                        "Dropping {} UTXO(s) whose rune balances could not be resolved to ids; they will not be spent",
-                        unresolvable.len()
-                    );
-                }
-            }
-
-            {
-                if !plans.is_empty() || !rune_inputs.is_empty() {
-                    let inscribed: std::collections::HashSet<OutPoint> =
-                        plans.iter().map(|p| p.outpoint).collect();
-                    let rune_spent: std::collections::HashSet<OutPoint> =
-                        rune_inputs.iter().map(|r| r.outpoint).collect();
-
-                    // Extras the split may consume for its fee and for dust
-                    // top-ups: selected UTXOs that are NOT themselves being
-                    // split. The builder spends these unconditionally, so
-                    // they must be ones we already judged clean.
-                    let extras: Vec<(OutPoint, TxOut)> = funding_utxos
-                        .iter()
-                        .filter(|(op, _)| {
-                            !inscribed.contains(op)
-                                && !rune_spent.contains(op)
-                                && !unresolvable.contains(op)
-                        })
-                        .cloned()
-                        .collect();
-
-                    let change_address = Address::from_str(&all_addresses[0].address)?
-                        .require_network(network)?;
-                    let cfg = crate::ordinals::SplitConfig {
-                        safe_address: &change_address,
-                        alkane_change_address: &change_address,
-                        fee_rate,
-                        // Plain BTC send: never append a DIESEL mint.
-                        skip_diesel_mint: true,
-                    };
-
-                    // No alkane routing from this path: every UTXO reaching
-                    // here passed the carrier filter in step 3 (verified to
-                    // carry no alkanes), so the split's outputs carry none
-                    // either. Checked again before returning (step 8) and
-                    // before signing (`send`).
-                    let split = crate::ordinals::build_split_psbt(
-                        self,
-                        &plans,
-                        &funding_utxos,
-                        &extras,
-                        &cfg,
-                        &std::collections::BTreeMap::new(),
-                        &rune_inputs,
-                    ).await?;
-
-                    log::info!(
-                        "🔀 Splitting {} inscribed + {} rune-bearing UTXO(s): {} extra(s) consumed, split fee {} sats",
-                        plans.len(),
-                        rune_inputs.len(),
-                        split.consumed_extras.len(),
-                        split.fee
-                    );
-
-                    // Rebuild the selection: drop everything the split spends
-                    // and fund from the clean outputs it produced instead.
-                    let consumed: std::collections::HashSet<OutPoint> =
-                        split.consumed_extras.iter().copied().collect();
-                    let mut rebuilt: Vec<UtxoInfo> = Vec::new();
-                    for utxo in &selected_utxos {
-                        let op = OutPoint {
-                            txid: bitcoin::Txid::from_str(&utxo.txid)?,
-                            vout: utxo.vout,
-                        };
-                        // Rune inputs are spent BY the split, and the rune
-                        // output it produces is deliberately not funding —
-                        // spending it would move the runes straight back out.
-                        if inscribed.contains(&op)
-                            || consumed.contains(&op)
-                            || rune_spent.contains(&op)
-                            || unresolvable.contains(&op)
-                        {
-                            continue;
-                        }
-                        rebuilt.push(utxo.clone());
-                    }
-                    for (op, txout) in &split.clean_utxos {
-                        rebuilt.push(UtxoInfo {
-                            txid: op.txid.to_string(),
-                            vout: op.vout,
-                            amount: txout.value.to_sat(),
-                            address: change_address.to_string(),
-                            script_pubkey: Some(txout.script_pubkey.clone()),
-                            // Zero confirmations by definition: this output
-                            // does not exist until the split is broadcast.
-                            confirmations: 0,
-                            frozen: false,
-                            freeze_reason: None,
-                            block_height: None,
-                            has_inscriptions: false,
-                            has_runes: false,
-                            has_alkanes: false,
-                            is_coinbase: false,
-                        });
-                    }
-
-                    total_input_amount =
-                        Amount::from_sat(rebuilt.iter().map(|u| u.amount).sum::<u64>());
-                    selected_utxos = rebuilt;
-                    split_clean_outpoints = split.clean_utxos.iter().map(|(op, _)| *op).collect();
-                    split_psbt = Some(split.psbt);
-                }
+                log::info!(
+                    "Clean UTXOs cannot cover {} sats; drawing on {} split candidate(s)",
+                    target_amount.to_sat(),
+                    split_candidates.len()
+                );
+                let mut with_candidates = clean_utxos;
+                with_candidates.extend(split_candidates.iter().cloned());
+                let have = spendable_total(&with_candidates);
+                ConcreteProvider::select_coins(with_candidates, target_amount).map_err(|_| {
+                    carrier_filter.insufficient_error(params.amount, have)
+                })?
             }
         }
+    };
 
-        // 6. Build the transaction skeleton
-        let mut tx = Transaction {
-            version: bitcoin::transaction::Version(2),
-            lock_time: bitcoin::absolute::LockTime::ZERO,
-            input: Vec::new(),
-            output: Vec::new(),
-        };
+    // 5a. Lift inscribed sats off any selected UTXO that carries them,
+    // onto an output of their own, before the remainder is spent as
+    // ordinary funding.
+    let mut split_psbt: Option<bitcoin::psbt::Psbt> = None;
+    let mut split_clean_outpoints: std::collections::BTreeSet<OutPoint> =
+        std::collections::BTreeSet::new();
+    let mut selected_utxos = selected_utxos;
+    let mut total_input_amount = total_input_amount;
 
-        // Add inputs from selected UTXOs
+    if params.ordinals_strategy != OrdinalsStrategy::Burn {
+        let ordinals_handler = OrdinalsHandler::new(provider);
+        let network = provider.get_network();
+
+        // (OutPoint, TxOut) view of the selection, for the inscription
+        // check and for the split builder.
+        let mut funding_utxos: Vec<(OutPoint, TxOut)> = Vec::new();
         for utxo in &selected_utxos {
-            tx.input.push(TxIn {
-                previous_output: OutPoint {
-                    txid: bitcoin::Txid::from_str(&utxo.txid)?,
-                    vout: utxo.vout,
-                },
-                script_sig: ScriptBuf::new(), // Empty for SegWit
-                sequence: Sequence::ENABLE_RBF_NO_LOCKTIME,
-                witness: Witness::new(), // Empty for now, will be added during signing
-            });
-        }
-
-        // Add the recipient's output
-        let network = self.get_network();
-        let recipient_address = Address::from_str(&params.address)?.require_network(network)?;
-        
-        // 6. Calculate fee and output amount
-        if params.send_all {
-            // For --send-all: calculate fee first, then output = input - fee (no change)
-            // Add a placeholder output to estimate size
-            tx.output.push(TxOut {
-                value: Amount::ZERO,
-                script_pubkey: recipient_address.script_pubkey(),
-            });
-            
-            let estimated_vsize = self.estimate_tx_vsize(&tx, selected_utxos.len());
-            let fee = Amount::from_sat((estimated_vsize as f32 * fee_rate).ceil() as u64);
-            
-            // Calculate output amount: total_input - fee
-            let output_amount = total_input_amount.checked_sub(fee)
-                .ok_or_else(|| AlkanesError::Wallet("Insufficient funds for fee".to_string()))?;
-            
-            // Update the output with the correct amount
-            tx.output[0].value = output_amount;
-            
-            log::info!("--send-all: input={} sats, fee={} sats, output={} sats", 
-                      total_input_amount.to_sat(), fee.to_sat(), output_amount.to_sat());
-        } else {
-            // Normal mode: use specified amount + change if needed
-            let target_amount = Amount::from_sat(params.amount);
-            tx.output.push(TxOut {
-                value: target_amount,
-                script_pubkey: recipient_address.script_pubkey(),
-            });
-
-            // Calculate fee and add change output if necessary
-            let change_address = Address::from_str(&all_addresses[0].address)?.require_network(network)?;
-            let change_script = change_address.script_pubkey();
-            let placeholder_change = TxOut { value: Amount::ZERO, script_pubkey: change_script.clone() };
-            tx.output.push(placeholder_change);
-
-            let estimated_vsize = self.estimate_tx_vsize(&tx, selected_utxos.len());
-            let fee = Amount::from_sat((estimated_vsize as f32 * fee_rate).ceil() as u64);
-
-            // Now that we have a good fee estimate, remove the placeholder and calculate the real change.
-            tx.output.pop();
-            let change_amount = total_input_amount.checked_sub(target_amount).and_then(|a| a.checked_sub(fee));
-
-            if let Some(change) = change_amount {
-                if change > bitcoin::Amount::from_sat(546) { // Dust limit
-                    tx.output.push(TxOut {
-                        value: change,
-                        script_pubkey: change_script,
-                    });
-                }
-                // If change is dust, it's not added, effectively becoming part of the fee.
-            }
-        }
-
-        // 7. Record each input's prevout, in input order.
-        //
-        // These are handed to the signer rather than re-fetched. An input
-        // may be an output of the split transaction, which has not been
-        // broadcast at signing time, so no node can answer a prevout lookup
-        // for it — and `sign_transaction`'s fallback for a prevout it cannot
-        // find is to assume 546 sats, which would silently produce an
-        // invalid taproot signature.
-        let mut prevouts: Vec<TxOut> = Vec::with_capacity(selected_utxos.len());
-        for utxo in &selected_utxos {
+            let outpoint = OutPoint {
+                txid: bitcoin::Txid::from_str(&utxo.txid)?,
+                vout: utxo.vout,
+            };
             let script_pubkey = match utxo.script_pubkey.clone() {
                 Some(sp) => sp,
                 None => Address::from_str(&utxo.address)?
                     .require_network(network)?
                     .script_pubkey(),
             };
-            prevouts.push(TxOut {
-                value: Amount::from_sat(utxo.amount),
-                script_pubkey,
-            });
+            funding_utxos.push((
+                outpoint,
+                TxOut { value: Amount::from_sat(utxo.amount), script_pubkey },
+            ));
         }
 
-        // 8. Builder-side carrier invariant: every split input must be one
-        //    the filter verified clean, and every main input either that or
-        //    one of the split's clean outputs (no carrier, no unknown status).
-        crate::alkanes::carrier::check_plain_send_package(
-            split_psbt.as_ref().map(|p| &p.unsigned_tx),
-            &tx,
-            &carrier_filter.clean_outpoints,
-            &split_clean_outpoints,
-        )?;
+        let check_result = ordinals_handler.check_utxos_for_inscriptions(
+            &funding_utxos,
+            params.ordinals_strategy.clone(),
+            fee_rate,
+            params.mempool_indexer,
+        ).await?;
 
-        Ok(PreparedSend { split_psbt, tx, prevouts, split_clean_outpoints })
+        let plans = check_result.unwrap_or_default();
+
+        // Rune-bearing members of the selection. These produce no
+        // `SplitPlan` — `check_utxos_for_inscriptions` only inspects
+        // inscriptions — so the split has to be driven by their presence
+        // too, or they would be gathered and then silently spent as
+        // ordinary BTC.
+        let mut rune_inputs: Vec<crate::ordinals::RuneInput> = Vec::new();
+        let mut unresolvable: std::collections::HashSet<OutPoint> =
+            std::collections::HashSet::new();
+        if preserve {
+            let mut rune_ids: BTreeMap<crate::vendored_ord::SpacedRune, ordinals::RuneId> =
+                BTreeMap::new();
+            for (outpoint, txout) in &funding_utxos {
+                let Some(balances) = rune_balances.get(outpoint) else { continue };
+                let mut resolved: Vec<(ordinals::RuneId, u128)> = Vec::new();
+                for (spaced, amount) in balances {
+                    let id = match rune_ids.get(spaced) {
+                        Some(id) => Some(*id),
+                        None => {
+                            // One lookup per distinct rune, cached: ord
+                            // keys balances by name, an edict needs the id.
+                            match provider.get_rune(&spaced.to_string()).await {
+                                Ok(info) => match info.id.parse::<ordinals::RuneId>() {
+                                    Ok(id) => { rune_ids.insert(*spaced, id); Some(id) }
+                                    Err(e) => {
+                                        log::warn!("ord: rune {} has unparseable id {:?}: {}", spaced, info.id, e);
+                                        None
+                                    }
+                                },
+                                Err(e) => {
+                                    log::warn!("ord: could not resolve rune {}: {}", spaced, e);
+                                    None
+                                }
+                            }
+                        }
+                    };
+                    match id {
+                        Some(id) => resolved.push((id, *amount)),
+                        // A balance we cannot name cannot be edicted. The
+                        // only safe answer is to leave the UTXO out of the
+                        // transaction entirely — never to spend it and
+                        // hope.
+                        None => { unresolvable.insert(*outpoint); }
+                    }
+                }
+                if !resolved.is_empty() && !unresolvable.contains(outpoint) {
+                    rune_inputs.push(crate::ordinals::RuneInput {
+                        outpoint: *outpoint,
+                        txout: txout.clone(),
+                        balances: resolved,
+                    });
+                }
+            }
+            if !unresolvable.is_empty() {
+                log::warn!(
+                    "Dropping {} UTXO(s) whose rune balances could not be resolved to ids; they will not be spent",
+                    unresolvable.len()
+                );
+            }
+        }
+
+        {
+            if !plans.is_empty() || !rune_inputs.is_empty() {
+                let inscribed: std::collections::HashSet<OutPoint> =
+                    plans.iter().map(|p| p.outpoint).collect();
+                let rune_spent: std::collections::HashSet<OutPoint> =
+                    rune_inputs.iter().map(|r| r.outpoint).collect();
+
+                // Extras the split may consume for its fee and for dust
+                // top-ups: selected UTXOs that are NOT themselves being
+                // split. The builder spends these unconditionally, so
+                // they must be ones we already judged clean.
+                let extras: Vec<(OutPoint, TxOut)> = funding_utxos
+                    .iter()
+                    .filter(|(op, _)| {
+                        !inscribed.contains(op)
+                            && !rune_spent.contains(op)
+                            && !unresolvable.contains(op)
+                    })
+                    .cloned()
+                    .collect();
+
+                let change_address = Address::from_str(&all_addresses[0].address)?
+                    .require_network(network)?;
+                let cfg = crate::ordinals::SplitConfig {
+                    safe_address: &change_address,
+                    alkane_change_address: &change_address,
+                    fee_rate,
+                    // Plain BTC send: never append a DIESEL mint.
+                    skip_diesel_mint: true,
+                };
+
+                // No alkane routing from this path: every UTXO reaching
+                // here passed the carrier filter in step 3 (verified to
+                // carry no alkanes), so the split's outputs carry none
+                // either. Checked again before returning (step 8) and
+                // before signing (`send`).
+                let split = crate::ordinals::build_split_psbt(
+                    provider,
+                    &plans,
+                    &funding_utxos,
+                    &extras,
+                    &cfg,
+                    &std::collections::BTreeMap::new(),
+                    &rune_inputs,
+                ).await?;
+
+                log::info!(
+                    "🔀 Splitting {} inscribed + {} rune-bearing UTXO(s): {} extra(s) consumed, split fee {} sats",
+                    plans.len(),
+                    rune_inputs.len(),
+                    split.consumed_extras.len(),
+                    split.fee
+                );
+
+                // Rebuild the selection: drop everything the split spends
+                // and fund from the clean outputs it produced instead.
+                let consumed: std::collections::HashSet<OutPoint> =
+                    split.consumed_extras.iter().copied().collect();
+                let mut rebuilt: Vec<UtxoInfo> = Vec::new();
+                for utxo in &selected_utxos {
+                    let op = OutPoint {
+                        txid: bitcoin::Txid::from_str(&utxo.txid)?,
+                        vout: utxo.vout,
+                    };
+                    // Rune inputs are spent BY the split, and the rune
+                    // output it produces is deliberately not funding —
+                    // spending it would move the runes straight back out.
+                    if inscribed.contains(&op)
+                        || consumed.contains(&op)
+                        || rune_spent.contains(&op)
+                        || unresolvable.contains(&op)
+                    {
+                        continue;
+                    }
+                    rebuilt.push(utxo.clone());
+                }
+                for (op, txout) in &split.clean_utxos {
+                    rebuilt.push(UtxoInfo {
+                        txid: op.txid.to_string(),
+                        vout: op.vout,
+                        amount: txout.value.to_sat(),
+                        address: change_address.to_string(),
+                        script_pubkey: Some(txout.script_pubkey.clone()),
+                        // Zero confirmations by definition: this output
+                        // does not exist until the split is broadcast.
+                        confirmations: 0,
+                        frozen: false,
+                        freeze_reason: None,
+                        block_height: None,
+                        has_inscriptions: false,
+                        has_runes: false,
+                        has_alkanes: false,
+                        is_coinbase: false,
+                    });
+                }
+
+                total_input_amount =
+                    Amount::from_sat(rebuilt.iter().map(|u| u.amount).sum::<u64>());
+                selected_utxos = rebuilt;
+                split_clean_outpoints = split.clean_utxos.iter().map(|(op, _)| *op).collect();
+                split_psbt = Some(split.psbt);
+            }
+        }
     }
+
+    // 6. Build the transaction skeleton
+    let mut tx = Transaction {
+        version: bitcoin::transaction::Version(2),
+        lock_time: bitcoin::absolute::LockTime::ZERO,
+        input: Vec::new(),
+        output: Vec::new(),
+    };
+
+    // Add inputs from selected UTXOs
+    for utxo in &selected_utxos {
+        tx.input.push(TxIn {
+            previous_output: OutPoint {
+                txid: bitcoin::Txid::from_str(&utxo.txid)?,
+                vout: utxo.vout,
+            },
+            script_sig: ScriptBuf::new(), // Empty for SegWit
+            sequence: Sequence::ENABLE_RBF_NO_LOCKTIME,
+            witness: Witness::new(), // Empty for now, will be added during signing
+        });
+    }
+
+    // Add the recipient's output
+    let network = provider.get_network();
+    let recipient_address = Address::from_str(&params.address)?.require_network(network)?;
+    
+    // 6. Calculate fee and output amount
+    if params.send_all {
+        // For --send-all: calculate fee first, then output = input - fee (no change)
+        // Add a placeholder output to estimate size
+        tx.output.push(TxOut {
+            value: Amount::ZERO,
+            script_pubkey: recipient_address.script_pubkey(),
+        });
+        
+        let estimated_vsize = ConcreteProvider::estimate_tx_vsize(&tx, selected_utxos.len());
+        let fee = Amount::from_sat((estimated_vsize as f32 * fee_rate).ceil() as u64);
+        
+        // Calculate output amount: total_input - fee
+        let output_amount = total_input_amount.checked_sub(fee)
+            .ok_or_else(|| AlkanesError::Wallet("Insufficient funds for fee".to_string()))?;
+        
+        // Update the output with the correct amount
+        tx.output[0].value = output_amount;
+        
+        log::info!("--send-all: input={} sats, fee={} sats, output={} sats", 
+                  total_input_amount.to_sat(), fee.to_sat(), output_amount.to_sat());
+    } else {
+        // Normal mode: use specified amount + change if needed
+        let target_amount = Amount::from_sat(params.amount);
+        tx.output.push(TxOut {
+            value: target_amount,
+            script_pubkey: recipient_address.script_pubkey(),
+        });
+
+        // Calculate fee and add change output if necessary
+        let change_address = Address::from_str(&all_addresses[0].address)?.require_network(network)?;
+        let change_script = change_address.script_pubkey();
+        let placeholder_change = TxOut { value: Amount::ZERO, script_pubkey: change_script.clone() };
+        tx.output.push(placeholder_change);
+
+        let estimated_vsize = ConcreteProvider::estimate_tx_vsize(&tx, selected_utxos.len());
+        let fee = Amount::from_sat((estimated_vsize as f32 * fee_rate).ceil() as u64);
+
+        // Now that we have a good fee estimate, remove the placeholder and calculate the real change.
+        tx.output.pop();
+        let change_amount = total_input_amount.checked_sub(target_amount).and_then(|a| a.checked_sub(fee));
+
+        if let Some(change) = change_amount {
+            if change > bitcoin::Amount::from_sat(546) { // Dust limit
+                tx.output.push(TxOut {
+                    value: change,
+                    script_pubkey: change_script,
+                });
+            }
+            // If change is dust, it's not added, effectively becoming part of the fee.
+        }
+    }
+
+    // 7. Record each input's prevout, in input order.
+    //
+    // These are handed to the signer rather than re-fetched. An input
+    // may be an output of the split transaction, which has not been
+    // broadcast at signing time, so no node can answer a prevout lookup
+    // for it — and `sign_transaction`'s fallback for a prevout it cannot
+    // find is to assume 546 sats, which would silently produce an
+    // invalid taproot signature.
+    let mut prevouts: Vec<TxOut> = Vec::with_capacity(selected_utxos.len());
+    for utxo in &selected_utxos {
+        let script_pubkey = match utxo.script_pubkey.clone() {
+            Some(sp) => sp,
+            None => Address::from_str(&utxo.address)?
+                .require_network(network)?
+                .script_pubkey(),
+        };
+        prevouts.push(TxOut {
+            value: Amount::from_sat(utxo.amount),
+            script_pubkey,
+        });
+    }
+
+    // 8. Builder-side carrier invariant: every split input must be one
+    //    the filter verified clean, and every main input either that or
+    //    one of the split's clean outputs (no carrier, no unknown status).
+    crate::alkanes::carrier::check_plain_send_package(
+        split_psbt.as_ref().map(|p| &p.unsigned_tx),
+        &tx,
+        &carrier_filter.clean_outpoints,
+        &split_clean_outpoints,
+    )?;
+
+    Ok(PreparedSend { split_psbt, tx, prevouts, split_clean_outpoints })
 }
 
 #[async_trait(?Send)]
@@ -6916,5 +6922,205 @@ impl EspoProvider for ConcreteProvider {
         let target = self.rpc_config.get_espo_rpc_target();
         log::info!("[EspoProvider] Calling pizzafun.get_alkane_ids_from_series_ids for {} ids at {}", series_ids.len(), target.url);
         self.call(&target.url, "pizzafun.get_alkane_ids_from_series_ids", json!({"series_ids": series_ids}), 1).await
+    }
+}
+
+#[cfg(test)]
+mod prepare_send_tests {
+    //! `prepare_send_with` (the body of `ConcreteProvider::prepare_send`)
+    //! driven against `MockProvider`, plus the plain-send builders on one
+    //! probe-only wallet state.
+    use super::*;
+    use crate::mock_provider::MockProvider;
+    use crate::vendored_ord::InscriptionId;
+    use bitcoin::hashes::Hash as _;
+    use std::collections::BTreeSet;
+
+    fn txid_n(n: u8) -> bitcoin::Txid {
+        bitcoin::Txid::from_byte_array([n; 32])
+    }
+
+    fn op(n: u8) -> OutPoint {
+        OutPoint::new(txid_n(n), 0)
+    }
+
+    /// Standard-mode mock wallet whose own address holds UTXO `n:0` worth
+    /// `sats` for each `(n, sats)`, in that order. `carriers` hold 2:0 x1000,
+    /// `failing` error on probe, `inscribed` carry one inscription at offset 0.
+    /// No sheet is asserted, so every coin is clean only by probe.
+    async fn wallet(
+        coins: &[(u8, u64)],
+        carriers: &[u8],
+        failing: &[u8],
+        inscribed: &[u8],
+    ) -> (MockProvider, String) {
+        let mut p = MockProvider::new(Network::Regtest);
+        p.qubitcoin_mode = false;
+        let addr = WalletProvider::get_address(&p).await.unwrap();
+        let spk = Address::from_str(&addr).unwrap().assume_checked().script_pubkey();
+        for (n, sats) in coins {
+            p.utxos
+                .lock()
+                .unwrap()
+                .push((op(*n), TxOut { value: Amount::from_sat(*sats), script_pubkey: spk.clone() }));
+        }
+        for n in carriers {
+            p.alkane_balances.lock().unwrap().insert(format!("{}:0", txid_n(*n)), vec![(2, 0, 1000)]);
+        }
+        for n in failing {
+            p.failing_outpoints.lock().unwrap().insert(format!("{}:0", txid_n(*n)));
+        }
+        for n in inscribed {
+            p.ord_inscriptions
+                .lock()
+                .unwrap()
+                .insert(format!("{}:0", txid_n(*n)), vec![(InscriptionId { txid: txid_n(*n), index: 0 }, 0)]);
+        }
+        (p, addr)
+    }
+
+    fn params(addr: &str, amount: u64, send_all: bool) -> SendParams {
+        SendParams {
+            address: addr.into(),
+            amount,
+            fee_rate: Some(1.0),
+            send_all,
+            from: Some(vec![addr.into()]),
+            change_address: None,
+            auto_confirm: true,
+            use_rebar: false,
+            rebar_tier: 1,
+            lock_alkanes: false,
+            ordinals_strategy: OrdinalsStrategy::Preserve,
+            mempool_indexer: false,
+        }
+    }
+
+    fn inputs(tx: &Transaction) -> BTreeSet<OutPoint> {
+        tx.input.iter().map(|i| i.previous_output).collect()
+    }
+
+    /// Every outpoint either transaction of `sent` spends.
+    fn spent_by(sent: &PreparedSend) -> BTreeSet<OutPoint> {
+        let mut all = inputs(&sent.tx);
+        if let Some(split) = &sent.split_psbt {
+            all.extend(inputs(&split.unsigned_tx));
+        }
+        all
+    }
+
+    #[tokio::test]
+    async fn prepare_send_only_carrier_can_fund_refuses() {
+        let (p, addr) = wallet(&[(1, 50_000), (2, 1_000)], &[1], &[], &[]).await;
+        let err = prepare_send_with(&p, params(&addr, 10_000, false)).await.err().unwrap().to_string();
+        assert!(err.contains("Insufficient spendable BTC"), "{err}");
+        assert!(err.contains("1 UTXO(s) carrying alkanes were excluded"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn prepare_send_preserve_split_never_spends_carriers() {
+        // 1 is a plain carrier, 2 an inscribed carrier, 3 inscribed and
+        // clean, 4 plain and clean. 4 alone cannot fund 12k, so 3 is split.
+        let (p, addr) =
+            wallet(&[(1, 50_000), (2, 30_000), (3, 10_000), (4, 5_000)], &[1, 2], &[], &[2, 3]).await;
+        let sent = prepare_send_with(&p, params(&addr, 12_000, false)).await.unwrap();
+        let split = sent.split_psbt.as_ref().expect("the inscribed coin is split").unsigned_tx.clone();
+        // The inscribed carrier is not a split candidate: the split spends
+        // the inscribed clean coin plus the clean extra, nothing else.
+        assert_eq!(inputs(&split), [op(3), op(4)].into_iter().collect());
+        assert!(!inputs(&split).contains(&op(2)));
+        // The main tx funds only from the split's clean outputs.
+        assert!(sent.tx.input.iter().all(|i| sent.split_clean_outpoints.contains(&i.previous_output)));
+        let spent = spent_by(&sent);
+        assert!(!spent.contains(&op(1)) && !spent.contains(&op(2)), "{spent:?}");
+        assert_eq!(sent.tx.output[0].value.to_sat(), 12_000);
+    }
+
+    #[tokio::test]
+    async fn prepare_send_all_never_spends_carriers() {
+        let (p, addr) =
+            wallet(&[(1, 50_000), (2, 30_000), (3, 10_000), (4, 5_000)], &[1, 2], &[], &[2, 3]).await;
+        let sent = prepare_send_with(&p, params(&addr, 0, true)).await.unwrap();
+        assert_eq!(inputs(&sent.split_psbt.as_ref().unwrap().unsigned_tx), [op(3), op(4)].into_iter().collect());
+        let spent = spent_by(&sent);
+        assert!(!spent.contains(&op(1)) && !spent.contains(&op(2)), "{spent:?}");
+        assert_eq!(sent.tx.output.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn prepare_send_excludes_unverified_everywhere() {
+        // 1 (plain) and 2 (inscribed) fail their probe; 3 and 4 as above.
+        let (p, addr) =
+            wallet(&[(1, 100_000), (2, 30_000), (3, 10_000), (4, 5_000)], &[], &[1, 2], &[2, 3]).await;
+        // Not a clean coin, not a split candidate.
+        let sent = prepare_send_with(&p, params(&addr, 12_000, false)).await.unwrap();
+        assert_eq!(inputs(&sent.split_psbt.as_ref().unwrap().unsigned_tx), [op(3), op(4)].into_iter().collect());
+        let spent = spent_by(&sent);
+        assert!(!spent.contains(&op(1)) && !spent.contains(&op(2)), "{spent:?}");
+        // Not swept by send-all.
+        let sent = prepare_send_with(&p, params(&addr, 0, true)).await.unwrap();
+        let spent = spent_by(&sent);
+        assert!(!spent.contains(&op(1)) && !spent.contains(&op(2)), "{spent:?}");
+        // Named in the shortfall even though 1 alone would cover it.
+        let err = prepare_send_with(&p, params(&addr, 50_000, false)).await.err().unwrap().to_string();
+        assert!(
+            err.contains("2 UTXO(s) were excluded because their alkane balance could not be verified"),
+            "{err}"
+        );
+    }
+
+    // ── test 1: a plain send whose only clean coins are probe-verified ──
+
+    #[tokio::test]
+    async fn plain_send_builders_spend_only_probe_clean_coins() {
+        // 1 fails its probe, 2 is a carrier (both larger than anything
+        // clean, and first in every order the builders use), 3 and 4 are
+        // clean by probe alone.
+        let (p, addr) = wallet(&[(1, 80_000), (2, 90_000), (3, 20_000), (4, 15_000)], &[2], &[1], &[]).await;
+        let clean: BTreeSet<OutPoint> = [op(3), op(4)].into_iter().collect();
+        let fee_for = |n_in: usize, n_out: usize| (10 + 68 * n_in + 31 * n_out) as u64;
+        let both_counts = |err: &str| {
+            err.contains("1 UTXO(s) carrying alkanes were excluded")
+                && err.contains("1 UTXO(s) were excluded because their alkane balance could not be verified")
+        };
+
+        // Shared browser builder.
+        for send_all in [false, true] {
+            let psbt = crate::alkanes::carrier::build_plain_send_psbt(
+                &p, &params(&addr, 30_000, send_all), vec![addr.clone()], &addr, fee_for,
+            )
+            .await
+            .unwrap();
+            assert_eq!(inputs(&psbt.unsigned_tx), clean, "send_all={send_all}");
+        }
+        let err = crate::alkanes::carrier::build_plain_send_psbt(
+            &p, &params(&addr, 50_000, false), vec![addr.clone()], &addr, fee_for,
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+        assert!(both_counts(&err), "{err}");
+
+        // TransactionConstructor.
+        let pay = |amount: u64| crate::transaction::SendTransactionParams {
+            outputs: vec![crate::transaction::TransactionOutput { amount, script_pubkey: ScriptBuf::new() }],
+            fee_rate: Some(1.0),
+            from_addresses: Some(vec![addr.clone()]),
+            change_address: None,
+        };
+        let ctor = crate::transaction::TransactionConstructor::new(p.clone());
+        let tx = ctor.create_send_transaction(pay(30_000)).await.unwrap();
+        assert_eq!(inputs(&tx), clean);
+        let err = ctor.create_send_transaction(pay(50_000)).await.unwrap_err().to_string();
+        assert!(both_counts(&err), "{err}");
+
+        // The CLI builder.
+        for send_all in [false, true] {
+            let sent = prepare_send_with(&p, params(&addr, 30_000, send_all)).await.unwrap();
+            assert!(sent.split_psbt.is_none());
+            assert_eq!(inputs(&sent.tx), clean, "send_all={send_all}");
+        }
+        let err = prepare_send_with(&p, params(&addr, 50_000, false)).await.err().unwrap().to_string();
+        assert!(both_counts(&err), "{err}");
     }
 }
