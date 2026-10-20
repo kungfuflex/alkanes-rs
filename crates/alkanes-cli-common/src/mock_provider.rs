@@ -90,6 +90,13 @@ pub struct MockProvider {
     /// `get_ord_address_info` (an address reports the ids on the mock UTXOs it
     /// owns). Empty by default, so the wallet holds no ordinals.
     pub ord_inscriptions: Arc<Mutex<HashMap<String, Vec<(crate::vendored_ord::InscriptionId, u64)>>>>,
+    /// Per-outpoint (`txid:vout`) `(confirmations, block_height)` reported by
+    /// `get_utxos` instead of the default `(10, Some(100))`, models a mempool
+    /// UTXO or one mined above metashrew's tip. Empty by default.
+    pub utxo_status: Arc<Mutex<HashMap<String, (u32, Option<u64>)>>>,
+    /// Answer of `get_metashrew_height`; `None` makes it fail. Defaults to
+    /// `Some(800001)`.
+    pub metashrew_height: Arc<Mutex<Option<u64>>>,
 }
 
 impl Default for MockProvider {
@@ -118,6 +125,8 @@ impl MockProvider {
             frozen_store: crate::frozen_store::MemoryFrozenStore::new(),
             mempool_txs: Arc::new(Mutex::new(vec![])),
             ord_inscriptions: Arc::new(Mutex::new(HashMap::new())),
+            utxo_status: Arc::new(Mutex::new(HashMap::new())),
+            metashrew_height: Arc::new(Mutex::new(Some(800001))),
         }
     }
     
@@ -281,10 +290,13 @@ impl WalletProvider for MockProvider {
     
     async fn get_utxos(&self, _include_frozen: bool, addresses: Option<Vec<String>>) -> Result<Vec<(OutPoint, UtxoInfo)>> {
         let utxos = self.utxos.lock().unwrap();
+        let status = self.utxo_status.lock().unwrap();
         let mut utxo_infos: Vec<(OutPoint, UtxoInfo)> = utxos.iter().map(|(outpoint, tx_out)| {
             let address = Address::from_script(&tx_out.script_pubkey, self.network)
                 .map(|addr| addr.to_string())
                 .unwrap_or_else(|_| "unknown_script".to_string()); // Handle unrecognized scripts
+            let (confirmations, block_height) =
+                status.get(&outpoint.to_string()).copied().unwrap_or((10, Some(100)));
 
             let info = UtxoInfo {
                 txid: outpoint.txid.to_string(),
@@ -292,10 +304,10 @@ impl WalletProvider for MockProvider {
                 amount: tx_out.value.to_sat(),
                 address,
                 script_pubkey: Some(tx_out.script_pubkey.clone()),
-                confirmations: 10,
+                confirmations,
                 frozen: false,
                 freeze_reason: None,
-                block_height: Some(100),
+                block_height,
                 has_inscriptions: false,
                 has_runes: false,
                 has_alkanes: false,
@@ -659,7 +671,10 @@ impl BitcoinRpcProvider for MockProvider {
 #[async_trait(?Send)]
 impl MetashrewRpcProvider for MockProvider {
     async fn get_metashrew_height(&self) -> Result<u64> {
-        Ok(800001)
+        self.metashrew_height
+            .lock()
+            .unwrap()
+            .ok_or_else(|| AlkanesError::Network("mock: metashrew height unavailable".to_string()))
     }
 
     async fn get_state_root(&self, _height: JsonValue) -> Result<String> {

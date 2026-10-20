@@ -18,7 +18,7 @@
 //!   then a `protorunesbyoutpoint` probe. A failed probe is `Unknown`, never
 //!   clean.
 //! * [`exclude_alkane_carriers`] - partition a candidate set into verified
-//!   clean UTXOs, carriers and unknowns.
+//!   clean UTXOs, carriers, unknowns and UTXOs the indexer has not seen yet.
 //! * [`check_input_alkane_sheets`] - the pre-sign invariant over a built
 //!   transaction's inputs (alkanes calls and plain sends).
 //! * [`assert_plain_send_inputs_clean`] - re-probe a built plain send's inputs
@@ -119,6 +119,10 @@ pub struct CarrierFilter {
     pub carriers: Vec<OutPoint>,
     /// Candidates whose alkane status could not be determined (excluded).
     pub unknown: Vec<OutPoint>,
+    /// Candidates that probed clean but whose transaction the indexer has
+    /// not indexed yet (unconfirmed, or above metashrew's indexed height),
+    /// so the empty answer proves nothing (excluded).
+    pub unindexed: Vec<OutPoint>,
 }
 
 impl CarrierFilter {
@@ -129,9 +133,10 @@ impl CarrierFilter {
     }
 
     /// The error a plain BTC send returns when the verified-clean UTXOs
-    /// cannot fund it. Says how many carriers / unknowns were excluded so the
-    /// user can tell "you are broke" from "your BTC sits on alkane carriers"
-    /// from "the indexer is down".
+    /// cannot fund it. Says how many carriers / unknowns / unindexed were
+    /// excluded so the user can tell "you are broke" from "your BTC sits on
+    /// alkane carriers" from "the indexer is down" from "the indexer is
+    /// behind".
     pub fn insufficient_error(&self, needed: u64, have: u64) -> AlkanesError {
         let mut msg = format!(
             "Insufficient spendable BTC: need {} sats, have {} sats in UTXOs verified to carry no alkanes",
@@ -151,14 +156,40 @@ impl CarrierFilter {
                 self.unknown.len()
             ));
         }
+        if !self.unindexed.is_empty() {
+            msg.push_str(&format!(
+                "; {} UTXO(s) were excluded because the alkanes indexer has not indexed them yet \
+                 (unconfirmed, or above the indexed height); retry after the next block is indexed",
+                self.unindexed.len()
+            ));
+        }
         AlkanesError::Wallet(msg)
     }
 }
 
-/// Partition `candidates` into verified-clean UTXOs, alkane carriers and
-/// UTXOs of unknown status. Carriers and unknowns are excluded (fail closed).
-/// Clean entries come back with `has_alkanes = false`; every candidate is
-/// resolved (a plain send may need all of them, e.g. send-all).
+/// Partition `candidates` into verified-clean UTXOs, alkane carriers,
+/// UTXOs of unknown status and unindexed UTXOs. All but the clean ones are
+/// excluded (fail closed). Clean entries come back with `has_alkanes =
+/// false`; every candidate is resolved (a plain send may need all of them,
+/// e.g. send-all).
+///
+/// An empty probe only proves "clean" for a transaction the indexer has
+/// seen: a probe-clean candidate with a `block_height` above metashrew's
+/// indexed height, or with no `block_height` and 0 confirmations, is
+/// `unindexed` (the executor's `probe_fee_input_carrier` does not count an
+/// unconfirmed probe as verified either). A known `block_height` decides on
+/// its own, whatever `confirmations` says: providers derive `confirmations`
+/// from a bitcoin tip read that falls back to 0 when it fails, while
+/// `block_height` comes from the UTXO's own status. Metashrew's height is
+/// read at most once, and only when a probe-clean candidate has a
+/// `block_height`; if the read fails, every such candidate is `unindexed`.
+/// Asserted and qubitcoin answers do not depend on the indexer having seen
+/// the transaction and are unchanged.
+///
+/// The pre-sign re-probes ([`assert_plain_send_inputs_clean`] and the
+/// package / PSBT variants) do not apply this rule: they see only a
+/// transaction, not its inputs' `UtxoInfo`. They re-check carriers and
+/// unknowns; the unindexed rule lives here, in selection.
 pub async fn exclude_alkane_carriers<P: MetashrewRpcProvider + ?Sized>(
     provider: &P,
     qubitcoin_mode: bool,
@@ -166,21 +197,32 @@ pub async fn exclude_alkane_carriers<P: MetashrewRpcProvider + ?Sized>(
     asserted: Option<&AssertedSheets>,
 ) -> CarrierFilter {
     let mut out = CarrierFilter::default();
+    let mut indexed_height: Option<core::result::Result<u64, String>> = None;
     for (outpoint, mut info) in candidates {
-        match resolve_alkane_sheet(provider, qubitcoin_mode, &outpoint, asserted).await.0 {
-            AlkaneSheetStatus::Clean => {
+        match resolve_alkane_sheet(provider, qubitcoin_mode, &outpoint, asserted).await {
+            (AlkaneSheetStatus::Clean, source) => {
+                if source == SheetSource::Probe {
+                    if let Some(why) = probe_not_indexed(provider, &info, &mut indexed_height).await {
+                        log::info!(
+                            "Excluding UTXO {}:{} from BTC funding: the alkanes indexer has not indexed it yet ({})",
+                            outpoint.txid, outpoint.vout, why
+                        );
+                        out.unindexed.push(outpoint);
+                        continue;
+                    }
+                }
                 info.has_alkanes = false;
                 out.clean_outpoints.insert(outpoint);
                 out.clean.push((outpoint, info));
             }
-            AlkaneSheetStatus::Carrier(sheet) => {
+            (AlkaneSheetStatus::Carrier(sheet), _) => {
                 log::info!(
                     "Excluding alkane carrier {}:{} ({} alkane id(s)) from BTC funding",
                     outpoint.txid, outpoint.vout, sheet.len()
                 );
                 out.carriers.push(outpoint);
             }
-            AlkaneSheetStatus::Unknown(e) => {
+            (AlkaneSheetStatus::Unknown(e), _) => {
                 log::warn!(
                     "Excluding UTXO {}:{} from BTC funding: alkane balance could not be verified ({})",
                     outpoint.txid, outpoint.vout, e
@@ -189,13 +231,50 @@ pub async fn exclude_alkane_carriers<P: MetashrewRpcProvider + ?Sized>(
             }
         }
     }
-    if !out.carriers.is_empty() || !out.unknown.is_empty() {
+    if !out.carriers.is_empty() || !out.unknown.is_empty() || !out.unindexed.is_empty() {
         log::info!(
-            "Alkane carrier filter: {} clean, {} carrier(s) excluded, {} unknown excluded",
-            out.clean.len(), out.carriers.len(), out.unknown.len()
+            "Alkane carrier filter: {} clean, {} carrier(s) excluded, {} unknown excluded, {} unindexed excluded",
+            out.clean.len(), out.carriers.len(), out.unknown.len(), out.unindexed.len()
         );
     }
     out
+}
+
+/// Why an empty probe of `info` proves nothing, if it does not: a
+/// `block_height` above metashrew's indexed height (a tx at height h is
+/// indexed iff h <= that height), or no `block_height` and 0 confirmations.
+/// `confirmations` is only consulted without a `block_height`, because it is
+/// derived from a bitcoin tip read that falls back to 0 on failure; a known
+/// height is compared whatever `confirmations` says. `indexed_height` caches
+/// the one read per [`exclude_alkane_carriers`] call; a failed read counts
+/// every candidate with a `block_height` as unindexed.
+async fn probe_not_indexed<P: MetashrewRpcProvider + ?Sized>(
+    provider: &P,
+    info: &UtxoInfo,
+    indexed_height: &mut Option<core::result::Result<u64, String>>,
+) -> Option<String> {
+    let Some(height) = info.block_height else {
+        return (info.confirmations == 0).then(|| "unconfirmed".to_string());
+    };
+    let tip = match indexed_height {
+        Some(tip) => tip,
+        None => {
+            let read = provider.get_metashrew_height().await.map_err(|e| format!("{e}"));
+            if let Err(e) = &read {
+                log::warn!(
+                    "Alkane carrier filter: metashrew indexed height unavailable ({}); excluding \
+                     every probe-clean UTXO with a block height",
+                    e
+                );
+            }
+            indexed_height.insert(read)
+        }
+    };
+    match tip {
+        Ok(tip) if height <= *tip => None,
+        Ok(tip) => Some(format!("block {height} is above the indexed height {tip}")),
+        Err(e) => Some(format!("indexed height unavailable: {e}")),
+    }
 }
 
 /// What kind of transaction [`check_input_alkane_sheets`] is guarding; only
@@ -484,14 +563,7 @@ pub async fn build_plain_send_psbt<P: crate::traits::DeezelProvider + ?Sized>(
         output: outputs,
     };
     let inputs: Vec<OutPoint> = unsigned_tx.input.iter().map(|i| i.previous_output).collect();
-    check_input_alkane_sheets(
-        SpendKind::PlainBtcSend,
-        &inputs,
-        &BTreeMap::new(),
-        &filter.clean_outpoints,
-        &BTreeMap::new(),
-        &[],
-    )?;
+    check_inputs_verified_clean(&inputs, &filter.clean_outpoints)?;
 
     let mut psbt = bitcoin::psbt::Psbt::from_unsigned_tx(unsigned_tx)?;
     for (i, (_, info)) in sel.inputs.iter().enumerate() {
@@ -583,24 +655,24 @@ pub fn check_plain_send_package(
     if let Some(split) = split {
         refuse_split_protostones(split)?;
         let inputs: Vec<OutPoint> = split.input.iter().map(|i| i.previous_output).collect();
-        check_input_alkane_sheets(
-            SpendKind::PlainBtcSend,
-            &inputs,
-            &BTreeMap::new(),
-            clean_outpoints,
-            &BTreeMap::new(),
-            &[],
-        )?;
+        check_inputs_verified_clean(&inputs, clean_outpoints)?;
     }
     let rest = main_inputs_off_split(split, main, split_clean_outpoints)?;
-    check_input_alkane_sheets(
-        SpendKind::PlainBtcSend,
-        &rest,
-        &BTreeMap::new(),
-        clean_outpoints,
-        &BTreeMap::new(),
-        &[],
-    )
+    check_inputs_verified_clean(&rest, clean_outpoints)
+}
+
+/// Builder-side invariant: every input is one [`exclude_alkane_carriers`]
+/// verified clean. An input outside `clean_outpoints` is a known carrier, an
+/// unknown or unindexed UTXO, or a builder bug, so the refusal does not use
+/// the pre-sign re-probe's "indexer probe failed" wording.
+fn check_inputs_verified_clean(inputs: &[OutPoint], clean_outpoints: &BTreeSet<OutPoint>) -> Result<()> {
+    match inputs.iter().find(|op| !clean_outpoints.contains(op)) {
+        Some(op) => Err(AlkanesError::Wallet(format!(
+            "Refusing to sign: input {}:{} of this plain BTC send was not verified to carry no alkanes",
+            op.txid, op.vout
+        ))),
+        None => Ok(()),
+    }
 }
 
 /// Pre-sign check for a plain BTC send with an optional split transaction:
@@ -680,6 +752,21 @@ mod tests {
 
     fn fee(n_in: usize, n_out: usize) -> u64 {
         (11 + 58 * n_in + 43 * n_out) as u64
+    }
+
+    /// The builder-side invariant's refusal.
+    const NOT_VERIFIED: &str = "of this plain BTC send was not verified to carry no alkanes";
+
+    /// The `insufficient_error` clause for unindexed UTXOs, without the count.
+    const UNINDEXED: &str = "UTXO(s) were excluded because the alkanes indexer has not indexed them yet \
+                             (unconfirmed, or above the indexed height); retry after the next block is indexed";
+
+    /// `utxo(n, sats)` with the given confirmations and block height.
+    fn utxo_at(n: u8, sats: u64, confirmations: u32, block_height: Option<u64>) -> (OutPoint, UtxoInfo) {
+        let (op, mut info) = utxo(n, sats);
+        info.confirmations = confirmations;
+        info.block_height = block_height;
+        (op, info)
     }
 
     fn plain_tx(inputs: &[u8]) -> Transaction {
@@ -946,7 +1033,7 @@ mod tests {
         let err = check_plain_send_package(Some(&split), &main, &ops(&[op(2), op(3)]), &ops(&[s0]))
             .unwrap_err()
             .to_string();
-        assert!(err.contains(&format!("{}:0", txid_n(1))) && err.contains("unknown alkane balance"), "{err}");
+        assert!(err.contains(&format!("{}:0", txid_n(1))) && err.contains(NOT_VERIFIED), "{err}");
     }
 
     #[tokio::test]
@@ -1033,7 +1120,7 @@ mod tests {
         let err = check_plain_send_package(Some(&split), &main_tx(&[s0, op(9)]), &clean, &ops(&[s0]))
             .unwrap_err()
             .to_string();
-        assert!(err.contains(&format!("{}:0", txid_n(9))) && err.contains("unknown alkane balance"), "{err}");
+        assert!(err.contains(&format!("{}:0", txid_n(9))) && err.contains(NOT_VERIFIED), "{err}");
         // Without a split, a "split clean output" is just an unverified input.
         check_plain_send_package(None, &main_tx(&[op(2)]), &clean, &BTreeSet::new()).unwrap();
         assert!(check_plain_send_package(None, &main_tx(&[s0]), &clean, &ops(&[s0])).is_err());
@@ -1080,5 +1167,145 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("carries protostones"), "{err}");
+    }
+
+    // ── a probe-clean answer counts only once the indexer has the tx ────
+
+    #[tokio::test]
+    async fn filter_excludes_unindexed_probe_clean_coins() {
+        // Metashrew has indexed up to block 100. 1 is unconfirmed, 2 is mined
+        // at 101, 3 at exactly 100, 4 confirmed with no height reported. 5
+        // (a carrier) and 6 (failing probe) are unconfirmed too: their own
+        // bucket wins.
+        let p = mock(&[5], &[6]);
+        *p.metashrew_height.lock().unwrap() = Some(100);
+        let f = exclude_alkane_carriers(
+            &p,
+            false,
+            vec![
+                utxo_at(1, 10_000, 0, None),
+                utxo_at(2, 10_000, 3, Some(101)),
+                utxo_at(3, 10_000, 3, Some(100)),
+                utxo_at(4, 10_000, 3, None),
+                utxo_at(5, 10_000, 0, None),
+                utxo_at(6, 10_000, 0, None),
+            ],
+            None,
+        )
+        .await;
+        let clean: Vec<OutPoint> = f.clean.iter().map(|(op, _)| *op).collect();
+        assert_eq!(clean, vec![OutPoint::new(txid_n(3), 0), OutPoint::new(txid_n(4), 0)]);
+        assert_eq!(f.unindexed, vec![OutPoint::new(txid_n(1), 0), OutPoint::new(txid_n(2), 0)]);
+        assert_eq!(f.carriers, vec![OutPoint::new(txid_n(5), 0)]);
+        assert_eq!(f.unknown, vec![OutPoint::new(txid_n(6), 0)]);
+        assert!(!f.clean_outpoints.contains(&OutPoint::new(txid_n(1), 0)));
+        let err = select_plain_send_inputs(&f, 25_000, false, fee).unwrap_err().to_string();
+        assert!(err.contains(&format!("; 2 {UNINDEXED}")), "{err}");
+    }
+
+    #[tokio::test]
+    async fn known_block_height_decides_whatever_confirmations_says() {
+        // A failed bitcoin tip read reports 0 confirmations for every coin,
+        // so a coin with a block height is judged by that height alone: 1 at
+        // the indexed height 100 is clean, 2 at 101 is not. Only 3, with no
+        // height, counts as unconfirmed.
+        let p = mock(&[], &[]);
+        *p.metashrew_height.lock().unwrap() = Some(100);
+        let f = exclude_alkane_carriers(
+            &p,
+            false,
+            vec![utxo_at(1, 30_000, 0, Some(100)), utxo_at(2, 10_000, 0, Some(101)), utxo_at(3, 10_000, 0, None)],
+            None,
+        )
+        .await;
+        assert_eq!(f.clean.iter().map(|(op, _)| *op).collect::<Vec<_>>(), vec![OutPoint::new(txid_n(1), 0)]);
+        assert_eq!(f.unindexed, vec![OutPoint::new(txid_n(2), 0), OutPoint::new(txid_n(3), 0)]);
+        let sel = select_plain_send_inputs(&f, 20_000, false, fee).unwrap();
+        assert_eq!(sel.inputs.iter().map(|(op, _)| *op).collect::<Vec<_>>(), vec![OutPoint::new(txid_n(1), 0)]);
+        let mut height = None;
+        let why = |n: u8, c: u32, h: Option<u64>| utxo_at(n, 10_000, c, h).1;
+        assert_eq!(probe_not_indexed(&p, &why(1, 0, Some(100)), &mut height).await, None);
+        assert_eq!(
+            probe_not_indexed(&p, &why(2, 0, Some(101)), &mut height).await.as_deref(),
+            Some("block 101 is above the indexed height 100")
+        );
+        assert_eq!(probe_not_indexed(&p, &why(3, 0, None), &mut height).await.as_deref(), Some("unconfirmed"));
+    }
+
+    #[tokio::test]
+    async fn filter_fails_closed_when_indexed_height_unknown() {
+        let p = mock(&[], &[]);
+        *p.metashrew_height.lock().unwrap() = None;
+        let f = exclude_alkane_carriers(
+            &p,
+            false,
+            vec![utxo(1, 10_000), utxo_at(2, 10_000, 3, None), utxo_at(3, 10_000, 0, None)],
+            None,
+        )
+        .await;
+        // 1 has a height that cannot be compared; 2 has none, so the read
+        // does not decide it; 3 is unconfirmed either way.
+        let clean: Vec<OutPoint> = f.clean.iter().map(|(op, _)| *op).collect();
+        assert_eq!(clean, vec![OutPoint::new(txid_n(2), 0)]);
+        assert_eq!(f.unindexed, vec![OutPoint::new(txid_n(1), 0), OutPoint::new(txid_n(3), 0)]);
+        let err = f.insufficient_error(15_000, f.clean_total()).to_string();
+        assert!(err.contains(&format!("; 2 {UNINDEXED}")), "{err}");
+    }
+
+    #[tokio::test]
+    async fn asserted_and_qubitcoin_answers_ignore_indexing() {
+        // An assertion does not come from metashrew's view of the tx, so an
+        // asserted-clean unconfirmed coin stays spendable, and an asserted
+        // carrier stays a carrier.
+        let p = mock(&[], &[]);
+        *p.metashrew_height.lock().unwrap() = None;
+        let mut asserted = AssertedSheets::new();
+        asserted.insert(OutPoint::new(txid_n(1), 0), vec![]);
+        asserted.insert(OutPoint::new(txid_n(2), 0), vec![(ProtoruneRuneId { block: 2, tx: 0 }, 5)]);
+        let f = exclude_alkane_carriers(
+            &p,
+            false,
+            vec![utxo_at(1, 30_000, 0, None), utxo_at(2, 30_000, 0, None), utxo_at(3, 30_000, 3, Some(900_000))],
+            Some(&asserted),
+        )
+        .await;
+        assert_eq!(f.clean.iter().map(|(op, _)| *op).collect::<Vec<_>>(), vec![OutPoint::new(txid_n(1), 0)]);
+        assert_eq!(f.carriers, vec![OutPoint::new(txid_n(2), 0)]);
+        assert_eq!(f.unindexed, vec![OutPoint::new(txid_n(3), 0)]);
+        let sel = select_plain_send_inputs(&f, 20_000, false, fee).unwrap();
+        assert_eq!(sel.inputs[0].0, OutPoint::new(txid_n(1), 0));
+        // Qubitcoin mode: no per-outpoint index, nothing to wait for.
+        let f = exclude_alkane_carriers(
+            &p,
+            true,
+            vec![utxo_at(1, 30_000, 0, None), utxo_at(3, 30_000, 3, Some(900_000))],
+            None,
+        )
+        .await;
+        assert_eq!(f.clean.len(), 2);
+        assert!(f.unindexed.is_empty());
+    }
+
+    #[test]
+    fn insufficient_error_names_every_excluded_bucket() {
+        let f = CarrierFilter {
+            carriers: vec![OutPoint::new(txid_n(1), 0)],
+            unknown: vec![OutPoint::new(txid_n(2), 0), OutPoint::new(txid_n(3), 0)],
+            unindexed: vec![OutPoint::new(txid_n(4), 0)],
+            ..Default::default()
+        };
+        assert_eq!(
+            f.insufficient_error(1_000, 0).to_string(),
+            "Wallet error: Insufficient spendable BTC: need 1000 sats, have 0 sats in UTXOs verified to carry no alkanes\
+             ; 1 UTXO(s) carrying alkanes were excluded (a plain BTC send would transfer \
+             their alkanes to the recipient; move them with an alkanes transfer first)\
+             ; 2 UTXO(s) were excluded because their alkane balance could not be verified \
+             (indexer probe failed); retry once the alkanes indexer is reachable\
+             ; 1 UTXO(s) were excluded because the alkanes indexer has not indexed them yet \
+             (unconfirmed, or above the indexed height); retry after the next block is indexed"
+        );
+        // Without unindexed UTXOs the message is the stage 1 text.
+        let f = CarrierFilter { unindexed: vec![], ..f };
+        assert!(!f.insufficient_error(1_000, 0).to_string().contains("not indexed"));
     }
 }

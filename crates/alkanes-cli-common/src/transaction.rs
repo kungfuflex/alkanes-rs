@@ -224,7 +224,8 @@ impl<P: DeezelProvider> TransactionConstructor<P> {
     /// Only UTXOs verified to carry no alkanes are eligible (SFS-05): the
     /// candidate set goes through the executor's shared carrier filter, which
     /// excludes carriers and fails closed on UTXOs whose alkane status cannot
-    /// be determined. Largest-first among the clean ones.
+    /// be determined or that metashrew has not indexed yet. Largest-first
+    /// among the clean ones.
     pub(crate) async fn select_utxos(&self, params: &SendTransactionParams) -> Result<Vec<(OutPoint, UtxoInfo)>> {
         let available_utxos = self.provider.get_utxos(false, params.from_addresses.clone()).await?;
 

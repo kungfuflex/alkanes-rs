@@ -8801,15 +8801,16 @@ mod dust_change_tests {
         }
     }
 
-    /// `probe_fee_input_carrier` and the plain-send resolver
-    /// `carrier::resolve_alkane_sheet` classify every coin of the probe-only
-    /// wallet alike: Clean = (false, true), Carrier = (true, true), Unknown =
-    /// (false, false). One documented difference: the unconfirmed coin is
-    /// `Clean` for a plain send but `(false, false)` for the executor, whose
-    /// fee buffer also reads confirmations.
+    /// `probe_fee_input_carrier` and the plain-send filter
+    /// `carrier::exclude_alkane_carriers` classify every coin of the
+    /// probe-only wallet alike: clean = (false, true), carrier = (true, true),
+    /// unknown = (false, false). That includes the unconfirmed coin: it probes
+    /// clean, but metashrew has not indexed it, so the plain-send filter puts
+    /// it in `unindexed` and the executor does not count it as verified
+    /// either, (false, false).
     #[tokio::test]
-    async fn plain_send_resolver_and_fee_input_probe_agree_on_every_coin() {
-        use crate::alkanes::carrier::{resolve_alkane_sheet, AlkaneSheetStatus};
+    async fn plain_send_filter_and_fee_input_probe_agree_on_every_coin() {
+        use crate::alkanes::carrier::exclude_alkane_carriers;
         let mut w = probe_only_wallet();
         let addr = w.addr.to_string();
         let mut coins = WalletProvider::get_utxos(&w.mock, false, Some(vec![addr.clone()])).await.unwrap();
@@ -8818,28 +8819,35 @@ mod dust_change_tests {
         assert_eq!(report.added, 1);
         assert_eq!(coins.len(), 6);
 
-        let mut sheets = Vec::new();
-        for (op, _) in &coins {
-            sheets.push(resolve_alkane_sheet(&w.mock, false, op, None).await.0);
-        }
+        let filter = exclude_alkane_carriers(&w.mock, false, coins.clone(), None).await;
         let executor = EnhancedAlkanesExecutor::new(&mut w.mock);
         let (mut asserted_hits, mut rpc_hits) = (0usize, 0usize);
-        for ((op, utxo), sheet) in coins.iter().zip(sheets) {
+        for (op, utxo) in &coins {
             let probed = executor
                 .probe_fee_input_carrier(op, utxo, None, &mut asserted_hits, &mut rpc_hits)
                 .await;
-            let (class, parity) = match sheet {
-                AlkaneSheetStatus::Clean => ("clean", (false, true)),
-                AlkaneSheetStatus::Carrier(_) => ("carrier", (true, true)),
-                AlkaneSheetStatus::Unknown(_) => ("unknown", (false, false)),
-            };
-            let want = if *op == w.carrier { "carrier" } else if *op == w.failing { "unknown" } else { "clean" };
-            assert_eq!(class, want, "{op}");
-            if *op == w.unconfirmed {
-                assert_eq!(probed, (false, false), "unconfirmed {op}: never verified for the executor");
+            let (class, parity) = if filter.clean_outpoints.contains(op) {
+                ("clean", (false, true))
+            } else if filter.carriers.contains(op) {
+                ("carrier", (true, true))
+            } else if filter.unknown.contains(op) {
+                ("unknown", (false, false))
+            } else if filter.unindexed.contains(op) {
+                ("unindexed", (false, false))
             } else {
-                assert_eq!(probed, parity, "{op}");
-            }
+                panic!("{op} is in no bucket");
+            };
+            let want = if *op == w.carrier {
+                "carrier"
+            } else if *op == w.failing {
+                "unknown"
+            } else if *op == w.unconfirmed {
+                "unindexed"
+            } else {
+                "clean"
+            };
+            assert_eq!(class, want, "{op}");
+            assert_eq!(probed, parity, "{op}");
         }
     }
 

@@ -1599,7 +1599,9 @@ pub(crate) async fn prepare_send_with<P: DeezelProvider>(provider: &P, params: S
     //    output (the recipient) from block 972,000, and were erased
     //    before. Every candidate's sheet is resolved with the executor's
     //    shared logic; a UTXO whose status cannot be determined is
-    //    excluded (fail closed). `params.lock_alkanes` is now implied.
+    //    excluded (fail closed), and so is one that probed clean before
+    //    metashrew indexed it (unconfirmed, or above its indexed height).
+    //    `params.lock_alkanes` is now implied.
     //
     //    Runs over EVERY candidate, before step 4 sorts them, so a split
     //    candidate (inscribed or rune-bearing) is verified alkane-free too
@@ -7122,5 +7124,162 @@ mod prepare_send_tests {
         }
         let err = prepare_send_with(&p, params(&addr, 50_000, false)).await.err().unwrap().to_string();
         assert!(both_counts(&err), "{err}");
+    }
+
+    // ── a probe-clean coin the indexer has not seen yet is not clean ────
+
+    /// The unindexed clause of `insufficient_error`, without the count.
+    const UNINDEXED: &str = "UTXO(s) were excluded because the alkanes indexer has not indexed them yet";
+
+    /// Report `(confirmations, block_height)` for coin `n:0` from `get_utxos`.
+    fn set_status(p: &MockProvider, n: u8, confirmations: u32, block_height: Option<u64>) {
+        p.utxo_status.lock().unwrap().insert(format!("{}:0", txid_n(n)), (confirmations, block_height));
+    }
+
+    /// What each plain-send builder spends for a non-send-all `amount`, or its
+    /// error: `build_plain_send_psbt`, `TransactionConstructor`,
+    /// `prepare_send_with` (both transactions).
+    async fn spend_with_each_builder(
+        p: &MockProvider,
+        addr: &str,
+        amount: u64,
+    ) -> Vec<(&'static str, core::result::Result<BTreeSet<OutPoint>, String>)> {
+        let fee_for = |n_in: usize, n_out: usize| (10 + 68 * n_in + 31 * n_out) as u64;
+        let psbt = crate::alkanes::carrier::build_plain_send_psbt(
+            p, &params(addr, amount, false), vec![addr.into()], addr, fee_for,
+        )
+        .await
+        .map(|psbt| inputs(&psbt.unsigned_tx));
+        let ctor = crate::transaction::TransactionConstructor::new(p.clone());
+        let tx = ctor
+            .create_send_transaction(crate::transaction::SendTransactionParams {
+                outputs: vec![crate::transaction::TransactionOutput { amount, script_pubkey: ScriptBuf::new() }],
+                fee_rate: Some(1.0),
+                from_addresses: Some(vec![addr.into()]),
+                change_address: None,
+            })
+            .await
+            .map(|tx| inputs(&tx));
+        let sent = prepare_send_with(p, params(addr, amount, false)).await.map(|sent| spent_by(&sent));
+        vec![
+            ("build_plain_send_psbt", psbt.map_err(|e| e.to_string())),
+            ("TransactionConstructor", tx.map_err(|e| e.to_string())),
+            ("prepare_send_with", sent.map_err(|e| e.to_string())),
+        ]
+    }
+
+    /// Every builder spends exactly `want` for `ok_amount`, and refuses
+    /// `short_amount` naming `unindexed` unindexed UTXOs.
+    async fn assert_each_builder(
+        p: &MockProvider,
+        addr: &str,
+        ok_amount: u64,
+        want: &[u8],
+        short_amount: u64,
+        unindexed: usize,
+    ) {
+        let want: BTreeSet<OutPoint> = want.iter().map(|n| op(*n)).collect();
+        for (builder, got) in spend_with_each_builder(p, addr, ok_amount).await {
+            assert_eq!(got.as_ref(), Ok(&want), "{builder}");
+        }
+        for (builder, got) in spend_with_each_builder(p, addr, short_amount).await {
+            let err = got.expect_err(builder);
+            assert!(err.contains(&format!("; {unindexed} {UNINDEXED}")), "{builder}: {err}");
+        }
+    }
+
+    #[tokio::test]
+    async fn plain_send_builders_skip_unconfirmed_coins() {
+        // 1 is the largest coin and probes clean, but it is an unconfirmed
+        // output (e.g. of the wallet's own pending alkanes tx), so metashrew
+        // has not indexed it and the empty answer proves nothing.
+        let (p, addr) = wallet(&[(1, 80_000), (3, 20_000), (4, 15_000)], &[], &[], &[]).await;
+        set_status(&p, 1, 0, None);
+        assert_each_builder(&p, &addr, 30_000, &[3, 4], 50_000, 1).await;
+        // Not swept by send-all either.
+        let fee_for = |n_in: usize, n_out: usize| (10 + 68 * n_in + 31 * n_out) as u64;
+        let psbt = crate::alkanes::carrier::build_plain_send_psbt(
+            &p, &params(&addr, 0, true), vec![addr.clone()], &addr, fee_for,
+        )
+        .await
+        .unwrap();
+        assert_eq!(inputs(&psbt.unsigned_tx), [op(3), op(4)].into_iter().collect());
+        let sent = prepare_send_with(&p, params(&addr, 0, true)).await.unwrap();
+        assert_eq!(spent_by(&sent), [op(3), op(4)].into_iter().collect());
+    }
+
+    #[tokio::test]
+    async fn plain_send_builders_skip_coins_above_the_indexed_height() {
+        // Metashrew has indexed up to block 100. 1 was mined at 101, 2 (the
+        // mock default) and 3 at exactly 100, which is indexed.
+        let (p, addr) = wallet(&[(1, 80_000), (2, 20_000), (3, 15_000)], &[], &[], &[]).await;
+        *p.metashrew_height.lock().unwrap() = Some(100);
+        set_status(&p, 1, 1, Some(101));
+        set_status(&p, 3, 1, Some(100));
+        assert_each_builder(&p, &addr, 30_000, &[2, 3], 50_000, 1).await;
+    }
+
+    #[tokio::test]
+    async fn plain_send_builders_judge_a_known_height_whatever_confirmations_says() {
+        // Every coin reports 0 confirmations, as when the bitcoin tip read
+        // fails. 1 and 2 still report heights: 1 at the indexed height 100 is
+        // spent, 2 at 101 is not. 3 has no height and is unconfirmed.
+        let (p, addr) = wallet(&[(1, 40_000), (2, 80_000), (3, 60_000)], &[], &[], &[]).await;
+        *p.metashrew_height.lock().unwrap() = Some(100);
+        set_status(&p, 1, 0, Some(100));
+        set_status(&p, 2, 0, Some(101));
+        set_status(&p, 3, 0, None);
+        assert_each_builder(&p, &addr, 30_000, &[1], 50_000, 2).await;
+    }
+
+    #[tokio::test]
+    async fn plain_send_builders_fail_closed_when_indexed_height_unknown() {
+        // The height read fails: 1 and 2 report a block height that cannot be
+        // compared, so they are excluded; 3 reports none and stays spendable.
+        let (p, addr) = wallet(&[(1, 80_000), (2, 20_000), (3, 40_000)], &[], &[], &[]).await;
+        *p.metashrew_height.lock().unwrap() = None;
+        set_status(&p, 3, 5, None);
+        assert_each_builder(&p, &addr, 30_000, &[3], 50_000, 2).await;
+    }
+
+    #[tokio::test]
+    async fn plain_send_builders_ignore_indexing_in_qubitcoin_mode() {
+        let (mut p, addr) = wallet(&[(1, 20_000), (2, 20_000)], &[], &[], &[]).await;
+        p.qubitcoin_mode = true;
+        *p.metashrew_height.lock().unwrap() = None;
+        set_status(&p, 1, 0, None);
+        set_status(&p, 2, 1, Some(900_000));
+        let want: BTreeSet<OutPoint> = [op(1), op(2)].into_iter().collect();
+        for (builder, got) in spend_with_each_builder(&p, &addr, 30_000).await {
+            assert_eq!(got.as_ref(), Ok(&want), "{builder}");
+        }
+    }
+
+    #[tokio::test]
+    async fn prepare_send_split_still_spends_its_own_unconfirmed_outputs() {
+        // The preserve-split wallet plus 5, an unconfirmed coin that alone
+        // would fund the send without a split. 5 is excluded; the split's
+        // clean outputs (0 confirmations by construction) are added after the
+        // filter and still fund the main tx, and the pre-sign package check
+        // accepts the result.
+        let (p, addr) = wallet(
+            &[(1, 50_000), (2, 30_000), (3, 10_000), (4, 5_000), (5, 100_000)],
+            &[1, 2],
+            &[],
+            &[2, 3],
+        )
+        .await;
+        set_status(&p, 5, 0, None);
+        let sent = prepare_send_with(&p, params(&addr, 12_000, false)).await.unwrap();
+        let split = sent.split_psbt.as_ref().expect("the inscribed coin is split").unsigned_tx.clone();
+        assert_eq!(inputs(&split), [op(3), op(4)].into_iter().collect());
+        assert!(!sent.split_clean_outpoints.is_empty());
+        assert!(sent.tx.input.iter().all(|i| sent.split_clean_outpoints.contains(&i.previous_output)));
+        assert!(!spent_by(&sent).contains(&op(5)));
+        crate::alkanes::carrier::assert_plain_send_package_clean(
+            &p, false, Some(&split), &sent.tx, &sent.split_clean_outpoints,
+        )
+        .await
+        .unwrap();
     }
 }
