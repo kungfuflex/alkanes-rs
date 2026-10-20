@@ -4242,7 +4242,8 @@ impl WebProvider {
                 auto_confirm: params.get("auto_confirm").and_then(|v| v.as_bool()).unwrap_or(true),
                 use_rebar: params.get("use_rebar").and_then(|v| v.as_bool()).unwrap_or(false),
                 rebar_tier: params.get("rebar_tier").and_then(|v| v.as_u64()).unwrap_or(0) as u8,
-                lock_alkanes: params.get("lock_alkanes").and_then(|v| v.as_bool()).unwrap_or(false),
+                // Deprecated, ignored: carriers are always excluded (SFS-05).
+                lock_alkanes: params.get("lock_alkanes").and_then(|v| v.as_bool()).unwrap_or(true),
                 ordinals_strategy,
                 mempool_indexer: params.get("mempool_indexer").and_then(|v| v.as_bool()).unwrap_or(false),
             };
@@ -7862,6 +7863,14 @@ impl WalletProvider for WebProvider {
         self.logger.info(&format!("[WalletProvider] Calling send with params: {:?}", params));
         let use_rebar = params.use_rebar;
         let psbt_str = self.create_transaction(params).await?;
+        // Pre-sign carrier check (SFS-05): re-probe every input of the plain
+        // send; refuse if any carries alkanes or has an unknown status.
+        alkanes_cli_common::alkanes::carrier::assert_plain_send_psbt_clean(
+            self,
+            <Self as DeezelProvider>::is_qubitcoin_mode(self),
+            &psbt_str,
+        )
+        .await?;
         let signed_tx_hex = self.sign_transaction(psbt_str).await?;
 
         // Only use Rebar Shield if explicitly requested
@@ -8128,14 +8137,7 @@ impl WalletProvider for WebProvider {
     
     async fn create_transaction(&self, params: SendParams) -> Result<String> {
         self.logger.info(&format!("[WalletProvider] Calling create_transaction with params: {:?}", params));
-        use bitcoin::psbt::Psbt;
-        use bitcoin::address::Address;
-        use bitcoin::{Amount, TxOut, TxIn, Witness, Sequence};
-        use core::str::FromStr;
         use base64::{engine::general_purpose::STANDARD, Engine as _};
-
-        let recipient = Address::from_str(&params.address)?.assume_checked();
-        let amount = Amount::from_sat(params.amount);
 
         // Use from addresses if provided, otherwise use default p2wpkh address
         let from_addresses = if let Some(from) = params.from.as_ref() {
@@ -8147,72 +8149,23 @@ impl WalletProvider for WebProvider {
         } else {
             vec![<Self as WalletProvider>::get_address(self).await?]
         };
-
-        let utxos = self.get_utxos(false, Some(from_addresses.clone())).await?;
-        if utxos.is_empty() {
-            return Err(AlkanesError::Wallet("No UTXOs available".to_string()));
-        }
-
-        let mut inputs = vec![];
-        let mut total_input = 0u64;
-        let mut input_utxo_infos = vec![];
-
-        for (outpoint, utxo_info) in &utxos {
-            inputs.push(TxIn {
-                previous_output: *outpoint,
-                script_sig: ScriptBuf::new(),
-                sequence: Sequence::MAX,
-                witness: Witness::new(),
-            });
-            total_input += utxo_info.amount;
-            input_utxo_infos.push(utxo_info.clone());
-        }
-
-        let mut outputs = vec![];
-        outputs.push(TxOut {
-            value: amount,
-            script_pubkey: recipient.script_pubkey(),
-        });
-
-        let fee_rate = params.fee_rate.unwrap_or(1.0) as u64;
-        // Better vsize estimate: p2wpkh inputs ~68 vbytes each, outputs ~31 vbytes each, header ~10.5 vbytes
-        let estimated_vsize = 10 + (inputs.len() as u64 * 68) + (2 * 31); // 2 outputs (recipient + change)
-        let fee = fee_rate * estimated_vsize;
-
-        if total_input < amount.to_sat() + fee {
-            return Err(AlkanesError::Wallet(format!(
-                "Insufficient funds: have {} sats, need {} sats (amount: {}, fee: {})",
-                total_input, amount.to_sat() + fee, amount.to_sat(), fee
-            )));
-        }
-
-        let change_address = <Self as WalletProvider>::get_address(self).await?;
-        let change_address = Address::from_str(&change_address)?.assume_checked();
-        let change_amount = total_input - amount.to_sat() - fee;
-        if change_amount > 546 { // Only add change if above dust threshold
-            outputs.push(TxOut {
-                value: Amount::from_sat(change_amount),
-                script_pubkey: change_address.script_pubkey(),
-            });
-        }
-
-        let unsigned_tx = Transaction {
-            version: bitcoin::transaction::Version(2),
-            lock_time: bitcoin::locktime::absolute::LockTime::ZERO,
-            input: inputs,
-            output: outputs,
+        let change_address = match params.change_address.as_ref() {
+            Some(c) if !c.is_empty() => c.clone(),
+            _ => <Self as WalletProvider>::get_address(self).await?,
         };
 
-        let mut psbt = Psbt::from_unsigned_tx(unsigned_tx)?;
-
-        // Populate witness_utxo for each input (required for signing)
-        for (i, utxo_info) in input_utxo_infos.iter().enumerate() {
-            let from_addr = Address::from_str(&utxo_info.address)?.assume_checked();
-            psbt.inputs[i].witness_utxo = Some(TxOut {
-                value: Amount::from_sat(utxo_info.amount),
-                script_pubkey: from_addr.script_pubkey(),
-            });
-        }
+        // SFS-05: only UTXOs verified to carry no alkanes fund a plain send;
+        // carriers and unknown-status UTXOs are excluded (fail closed).
+        // p2wpkh inputs ~68 vbytes each, outputs ~31 vbytes each, header ~10.
+        let fee_rate = params.fee_rate.unwrap_or(1.0).max(0.0);
+        let psbt = alkanes_cli_common::alkanes::carrier::build_plain_send_psbt(
+            self,
+            &params,
+            from_addresses,
+            &change_address,
+            |n_in, n_out| ((10 + 68 * n_in + 31 * n_out) as f32 * fee_rate).ceil() as u64,
+        )
+        .await?;
 
         Ok(STANDARD.encode(&psbt.serialize()))
     }

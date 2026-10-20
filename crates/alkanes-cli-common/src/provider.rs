@@ -1545,8 +1545,21 @@ impl WalletProvider for ConcreteProvider {
         let use_rebar = params.use_rebar;
         let rebar_tier = params.rebar_tier;
 
-        // 1. Create the transaction
+        // 1. Create the transaction (excludes alkane carriers, fails closed)
         let tx_hex = self.create_transaction(params).await?;
+
+        // 1a. Pre-sign carrier check (SFS-05): independently re-probe every
+        //     input of the plain send and refuse if any carries alkanes or
+        //     has an unknown alkane status.
+        {
+            let tx: Transaction = bitcoin::consensus::deserialize(&hex::decode(&tx_hex)?)?;
+            crate::alkanes::carrier::assert_plain_send_inputs_clean(
+                self,
+                crate::traits::DeezelProvider::is_qubitcoin_mode(self),
+                &tx,
+            )
+            .await?;
+        }
 
         // In address-only mode, just return the unsigned transaction hex
         if matches!(self.wallet_state, WalletState::AddressOnly { .. }) {
@@ -1859,59 +1872,35 @@ impl WalletProvider for ConcreteProvider {
         // 2. Get UTXOs for the specified addresses
         let utxos = self.get_utxos(false, Some(address_strings.clone())).await?;
 
-        // 3. If lock_alkanes is enabled, check each UTXO for alkanes using protorunesbyoutpoint
-        let mut utxos_with_alkanes_check = Vec::new();
-        if params.lock_alkanes {
-            log::info!("--lock-alkanes enabled: checking {} UTXOs for alkanes via protorunesbyoutpoint", utxos.len());
-            let mut failed_checks = 0;
-            let mut alkanes_found = 0;
-            
-            for (outpoint, mut info) in utxos {
-                // Query protorunesbyoutpoint to check if this UTXO has alkanes
-                match self.get_protorunes_by_outpoint(&info.txid, info.vout, None, 1).await {
-                    Ok(response) => {
-                        // If the response has any balances, this UTXO has alkanes
-                        let has_alkanes = !response.balance_sheet.balances().is_empty();
-                        if has_alkanes {
-                            alkanes_found += 1;
-                            log::info!("✓ UTXO {}:{} HAS {} alkane balance(s) - WILL BE LOCKED", 
-                                info.txid, info.vout, response.balance_sheet.balances().len());
-                        } else {
-                            log::debug!("✓ UTXO {}:{} has no alkanes - can be spent", info.txid, info.vout);
-                        }
-                        info.has_alkanes = has_alkanes;
-                    }
-                    Err(e) => {
-                        failed_checks += 1;
-                        // CONSERVATIVE: If we can't verify, assume it HAS alkanes to be safe
-                        log::warn!("⚠ Failed to check alkanes for UTXO {}:{}: {}. ASSUMING HAS ALKANES (will be locked).", 
-                            info.txid, info.vout, e);
-                        info.has_alkanes = true;
-                    }
-                }
-                utxos_with_alkanes_check.push((outpoint, info));
-            }
-            
-            log::info!("Alkanes check complete: {} UTXOs have alkanes (will be locked), {} checks failed (locked for safety)", 
-                alkanes_found, failed_checks);
-        } else {
-            utxos_with_alkanes_check = utxos;
-        }
-
-        // 4. Filter out UTXOs with inscriptions/runes/alkanes
-        let clean_utxos: Vec<UtxoInfo> = utxos_with_alkanes_check.into_iter()
+        // 3. Exclude alkane carriers (SFS-05). Always on: a plain BTC send has
+        //    no protostone, so alkanes on any input would settle to the first
+        //    output (the recipient) from block 972,000, and were erased
+        //    before. Every candidate's sheet is resolved with the executor's
+        //    shared logic; a UTXO whose status cannot be determined is
+        //    excluded (fail closed). `params.lock_alkanes` is now implied.
+        //    Inscription/rune flags are still honoured.
+        let utxos: Vec<(OutPoint, UtxoInfo)> = utxos
+            .into_iter()
             .filter(|(_, info)| {
-                let is_clean = !info.has_inscriptions && !info.has_runes && !info.has_alkanes;
+                let is_clean = !info.has_inscriptions && !info.has_runes;
                 if !is_clean {
-                    log::info!("Filtering out UTXO {}:{} with inscriptions/runes/alkanes", info.txid, info.vout);
+                    log::info!("Filtering out UTXO {}:{} with inscriptions/runes", info.txid, info.vout);
                 }
                 is_clean
             })
-            .map(|(_, info)| info)
             .collect();
+        let carrier_filter = crate::alkanes::carrier::exclude_alkane_carriers(
+            self,
+            crate::traits::DeezelProvider::is_qubitcoin_mode(self),
+            utxos,
+            None,
+        )
+        .await;
+        let clean_utxos: Vec<UtxoInfo> =
+            carrier_filter.clean.iter().map(|(_, info)| info.clone()).collect();
 
         if clean_utxos.is_empty() {
-            return Err(AlkanesError::Wallet("No clean UTXOs available (all have inscriptions/runes/alkanes)".to_string()));
+            return Err(carrier_filter.insufficient_error(params.amount.max(1), 0));
         }
 
         log::info!("Found {} clean UTXOs for coin selection", clean_utxos.len());
@@ -1927,7 +1916,9 @@ impl WalletProvider for ConcreteProvider {
         } else {
             // Normal coin selection to meet target amount
             let target_amount = Amount::from_sat(params.amount);
-            self.select_coins(clean_utxos, target_amount)?
+            self.select_coins(clean_utxos, target_amount).map_err(|_| {
+                carrier_filter.insufficient_error(params.amount, carrier_filter.clean_total())
+            })?
         };
 
         // 5a. Check selected UTXOs for ordinal inscriptions using the ordinals handler
@@ -2061,7 +2052,19 @@ impl WalletProvider for ConcreteProvider {
             }
         }
 
-        // 7. Serialize the unsigned transaction to hex
+        // 7. Builder-side carrier invariant: every input must be one the
+        //    filter verified clean (no carrier, no unknown status).
+        let inputs: Vec<OutPoint> = tx.input.iter().map(|i| i.previous_output).collect();
+        crate::alkanes::carrier::check_input_alkane_sheets(
+            crate::alkanes::carrier::SpendKind::PlainBtcSend,
+            &inputs,
+            &alloc::collections::BTreeMap::new(),
+            &carrier_filter.clean_outpoints,
+            &alloc::collections::BTreeMap::new(),
+            &[],
+        )?;
+
+        // 8. Serialize the unsigned transaction to hex
         Ok(bitcoin::consensus::encode::serialize_hex(&tx))
     }
 
