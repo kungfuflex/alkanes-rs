@@ -1,0 +1,119 @@
+# Google Cloud Build: build and publish @alkanes/ts-sdk.
+#
+# Runs from a Cloud Build trigger on pushes to `develop`, or by hand:
+#
+#   gcloud builds submit --no-source \
+#     --config ts-sdk/cloudbuild.publish.yaml \
+#     --service-account projects/<project>/serviceAccounts/<build-sa> \
+#     --substitutions _REF=<commit sha>
+#
+# Steps mirror the former GitHub Actions publish job: build the WASM from
+# crates/alkanes-web-sys, vendor prod_wasms, build the TypeScript SDK, stamp the
+# version `<base>-<sha7>.<n>` and publish to the npm registry behind
+# https://pkg.alkanes.build.
+#
+# Every publish is a distinct, never-overwritten version (#286): `<n>` is one
+# more than the highest build number already in the registry, so rebuilding the
+# same commit yields a new version instead of new bytes under an old tag.
+
+substitutions:
+  _REPO_URL: https://github.com/kungfuflex/alkanes-rs.git
+  # Commit to build. Empty = the commit that fired the trigger ($COMMIT_SHA).
+  _REF: ''
+  _REGISTRY: https://us-central1-npm.pkg.dev/pkg-alkanes-build/npm-packages/
+  # Non-empty = build and pack only, do not publish.
+  _DRY_RUN: ''
+  _NODE_VERSION: 20.18.1
+  _WASM_PACK_VERSION: 0.13.1
+
+steps:
+  - id: build
+    name: rust:1.86.0-bookworm
+    script: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+      export DEBIAN_FRONTEND=noninteractive
+      apt-get update -qq
+      apt-get install -y -qq --no-install-recommends protobuf-compiler clang xz-utils jq >/dev/null
+      protoc --version
+
+      TOOLS=/workspace/tools
+      mkdir -p "$TOOLS/bin"
+      curl -fsSL "https://nodejs.org/dist/v${_NODE_VERSION}/node-v${_NODE_VERSION}-linux-x64.tar.xz" \
+        | tar -xJ -C "$TOOLS" --strip-components=1
+      curl -fsSL "https://github.com/rustwasm/wasm-pack/releases/download/v${_WASM_PACK_VERSION}/wasm-pack-v${_WASM_PACK_VERSION}-x86_64-unknown-linux-musl.tar.gz" \
+        | tar -xz -C "$TOOLS/bin" --strip-components=1 --wildcards '*/wasm-pack'
+      export PATH="$TOOLS/bin:$PATH"
+      node --version; npm --version; wasm-pack --version
+
+      REF="${_REF:-${COMMIT_SHA:-}}"
+      if [ -z "$REF" ]; then echo "no commit to build (set _REF)"; exit 1; fi
+      git init -q /workspace/src
+      cd /workspace/src
+      git fetch -q --depth 1 "$_REPO_URL" "$REF"
+      git checkout -q FETCH_HEAD
+      FULL_SHA=$(git rev-parse HEAD)
+      SHORT_SHA7=$(git rev-parse --short=7 HEAD)
+      echo "building ${FULL_SHA}"
+
+      rustup show active-toolchain
+      rustup target add wasm32-unknown-unknown
+
+      cd ts-sdk
+      BASE_VERSION=$(node -p "require('./package.json').version")
+      LAST=$(npm view @alkanes/ts-sdk versions --json --registry "$_REGISTRY" 2>/dev/null \
+        | jq -r 'if type=="array" then .[] else . end' \
+        | sed -nE 's/^.*-[0-9a-f]{7}\.([0-9]+)$/\1/p' | sort -n | tail -1)
+      N=$(( ${LAST:-0} + 1 ))
+      VERSION="${BASE_VERSION}-${SHORT_SHA7}.${N}"
+      echo "version: ${VERSION}"
+      npm version "$VERSION" --no-git-tag-version
+
+      npm ci
+      npm run build
+      rm -f wasm/.gitignore wasm/.npmignore
+      ls -lh wasm/alkanes_web_sys_bg.wasm dist/ | head -40
+
+      mkdir -p /workspace/out
+      npm pack --ignore-scripts --pack-destination /workspace/out --json > /workspace/out/pack.json
+      TARBALL=/workspace/out/$(jq -r '.[0].filename' /workspace/out/pack.json)
+      INTEGRITY=$(jq -r '.[0].integrity' /workspace/out/pack.json)
+      jq -n --arg v "$VERSION" --arg c "$FULL_SHA" --arg t "$(basename "$TARBALL")" \
+        --arg i "$INTEGRITY" --arg s "$(sha256sum "$TARBALL" | cut -d' ' -f1)" \
+        '{package:"@alkanes/ts-sdk",version:$v,commit:$c,tarball:$t,integrity:$i,sha256:$s}' \
+        > /workspace/out/manifest.json
+      cat /workspace/out/manifest.json
+
+  - id: publish
+    name: rust:1.86.0-bookworm
+    script: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+      export PATH="/workspace/tools/bin:$PATH"
+      M=/workspace/out/manifest.json
+      VERSION=$(node -p "require('$M').version")
+      TARBALL="/workspace/out/$(node -p "require('$M').tarball")"
+      if [ -n "${_DRY_RUN:-}" ]; then echo "dry run: not publishing ${VERSION}"; exit 0; fi
+
+      TOKEN=$(curl -fsS -H 'Metadata-Flavor: Google' \
+        http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token \
+        | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>process.stdout.write(JSON.parse(d).access_token))')
+      HOSTPATH="${_REGISTRY#https:}"
+      NPMRC=$(mktemp)
+      printf '%s:_authToken=%s\n%s:always-auth=true\n' "$HOSTPATH" "$TOKEN" "$HOSTPATH" > "$NPMRC"
+
+      npm publish "$TARBALL" --ignore-scripts --access public --registry "$_REGISTRY" --userconfig "$NPMRC"
+      npm dist-tag add "@alkanes/ts-sdk@${VERSION}" latest-dev --registry "$_REGISTRY" --userconfig "$NPMRC"
+      rm -f "$NPMRC"
+      echo "published @alkanes/ts-sdk@${VERSION}"
+      echo "tarball: https://pkg.alkanes.build/dist/@alkanes/ts-sdk?v=${VERSION}"
+      cat "$M"
+
+options:
+  machineType: E2_HIGHCPU_32
+  diskSizeGb: 200
+  logging: CLOUD_LOGGING_ONLY
+  automapSubstitutions: true
+  substitutionOption: ALLOW_LOOSE
+
+timeout: 7200s

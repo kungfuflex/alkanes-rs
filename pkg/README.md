@@ -20,9 +20,10 @@ fixes this on both sides:
 - **Proxy side:** a request that pins a concrete version
   (`/dist/<pkg>?v=<version>`) is served `Cache-Control: immutable`; a request that
   resolves a moving dist-tag gets `max-age=60, must-revalidate`.
-- **Publish side:** `.github/workflows/publish-npm.yml` publishes build-unique
-  version tags (`<base>-<sha>.<run>`) and emits a content-addressed (sha256) build
-  manifest, so consumers pin bytes, not a moving tag.
+- **Publish side:** `ts-sdk/cloudbuild.publish.yaml` (Google Cloud Build, on
+  pushes to `develop`) publishes build-unique version tags (`<base>-<sha>.<n>`)
+  and logs a content-addressed build manifest (sha512 integrity + sha256), so
+  consumers pin bytes, not a moving tag.
 
 ## Routes (drop-in parity with the old proxy)
 
