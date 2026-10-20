@@ -2,8 +2,8 @@ name: Rust
 
 on:
   push:
-    # `develop` is the branch that SHIPS — publish-npm.yml publishes the
-    # @alkanes/ts-sdk from it — and until now it was also the branch nothing
+    # `develop` is the branch that SHIPS — the Cloud Build publish
+    # (ts-sdk/cloudbuild.publish.yaml) ships @alkanes/ts-sdk from it — and until now it was also the branch nothing
     # tested. main, which this workflow did cover, publishes nothing. Testing
     # only the branch that doesn't ship is the wrong way round.
     branches: ["main", "develop"]
