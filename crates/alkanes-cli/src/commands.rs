@@ -2570,8 +2570,9 @@ pub enum WalletCommands {
         /// The addresses to send from
         #[arg(long, num_args = 1..)]
         from: Option<Vec<String>>,
-        /// Skip UTXOs that have alkanes on them
-        #[arg(long)]
+        /// Deprecated, no effect: UTXOs carrying alkanes (or whose alkane
+        /// balance cannot be verified) are always excluded from BTC sends.
+        #[arg(long, hide = true)]
         lock_alkanes: bool,
         /// The change address
         #[arg(long)]

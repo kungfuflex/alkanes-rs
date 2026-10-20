@@ -9,6 +9,7 @@ pub mod wat;
 // See LICENSE file in the project root for full license information.
 
 pub mod analyze;
+pub mod carrier;
 pub mod execute;
 pub mod parsing;
 pub mod types;

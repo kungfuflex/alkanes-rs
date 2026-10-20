@@ -1457,6 +1457,10 @@ pub(crate) struct PreparedSend {
     /// the sighash, so a guessed value yields a silently invalid signature.
     /// These go straight into the main PSBT's `witness_utxo`.
     pub prevouts: Vec<TxOut>,
+    /// The split's clean (funding) outputs, the only outputs of
+    /// `split_psbt` that `tx` may spend. Not every vout: the inscription and
+    /// rune outputs are deliberately not funding. Empty without a split.
+    pub split_clean_outpoints: std::collections::BTreeSet<OutPoint>,
 }
 
 impl ConcreteProvider {
@@ -1583,44 +1587,24 @@ impl ConcreteProvider {
         };
         let utxos = utxos;
 
-        // 3. If lock_alkanes is enabled, check each UTXO for alkanes using protorunesbyoutpoint
-        let mut utxos_with_alkanes_check = Vec::new();
-        if params.lock_alkanes {
-            log::info!("--lock-alkanes enabled: checking {} UTXOs for alkanes via protorunesbyoutpoint", utxos.len());
-            let mut failed_checks = 0;
-            let mut alkanes_found = 0;
-            
-            for (outpoint, mut info) in utxos {
-                // Query protorunesbyoutpoint to check if this UTXO has alkanes
-                match self.get_protorunes_by_outpoint(&info.txid, info.vout, None, 1).await {
-                    Ok(response) => {
-                        // If the response has any balances, this UTXO has alkanes
-                        let has_alkanes = !response.balance_sheet.balances().is_empty();
-                        if has_alkanes {
-                            alkanes_found += 1;
-                            log::info!("✓ UTXO {}:{} HAS {} alkane balance(s) - WILL BE LOCKED", 
-                                info.txid, info.vout, response.balance_sheet.balances().len());
-                        } else {
-                            log::debug!("✓ UTXO {}:{} has no alkanes - can be spent", info.txid, info.vout);
-                        }
-                        info.has_alkanes = has_alkanes;
-                    }
-                    Err(e) => {
-                        failed_checks += 1;
-                        // CONSERVATIVE: If we can't verify, assume it HAS alkanes to be safe
-                        log::warn!("⚠ Failed to check alkanes for UTXO {}:{}: {}. ASSUMING HAS ALKANES (will be locked).", 
-                            info.txid, info.vout, e);
-                        info.has_alkanes = true;
-                    }
-                }
-                utxos_with_alkanes_check.push((outpoint, info));
-            }
-            
-            log::info!("Alkanes check complete: {} UTXOs have alkanes (will be locked), {} checks failed (locked for safety)", 
-                alkanes_found, failed_checks);
-        } else {
-            utxos_with_alkanes_check = utxos;
-        }
+        // 3. Exclude alkane carriers (SFS-05). Always on: a plain BTC send has
+        //    no protostone, so alkanes on any input would settle to the first
+        //    output (the recipient) from block 972,000, and were erased
+        //    before. Every candidate's sheet is resolved with the executor's
+        //    shared logic; a UTXO whose status cannot be determined is
+        //    excluded (fail closed). `params.lock_alkanes` is now implied.
+        //
+        //    Runs over EVERY candidate, before step 4 sorts them, so a split
+        //    candidate (inscribed or rune-bearing) is verified alkane-free too
+        //    before the split may spend it, and an unknown-status UTXO is
+        //    neither a clean coin nor a split candidate.
+        let carrier_filter = crate::alkanes::carrier::exclude_alkane_carriers(
+            self,
+            crate::traits::DeezelProvider::is_qubitcoin_mode(self),
+            utxos,
+            None,
+        )
+        .await;
 
         // 4. Sort candidates into what can be spent as-is and what must be
         // split first.
@@ -1641,7 +1625,7 @@ impl ConcreteProvider {
         let mut ordinals_skipped = 0usize;
         let mut clean_utxos: Vec<UtxoInfo> = Vec::new();
         let mut split_candidates: Vec<UtxoInfo> = Vec::new();
-        for (_, info) in utxos_with_alkanes_check.into_iter() {
+        for (_, info) in carrier_filter.clean.iter().cloned() {
             if info.has_alkanes {
                 log::info!("Filtering out UTXO {}:{} carrying alkanes", info.txid, info.vout);
                 continue;
@@ -1686,11 +1670,17 @@ impl ConcreteProvider {
         }
 
         if clean_utxos.is_empty() && split_candidates.is_empty() {
-            return Err(AlkanesError::Wallet(format!(
-                "No spendable UTXOs available: every candidate carries alkanes, or sits \
-                 above ord's indexed tip ({:?}). Nothing was signed.",
-                ord_indexed_height
-            )));
+            let mut err = carrier_filter.insufficient_error(params.amount.max(1), 0);
+            if ordinals_skipped > 0 {
+                if let AlkanesError::Wallet(msg) = &mut err {
+                    msg.push_str(&format!(
+                        "; {} UTXO(s) were withheld by the ordinals check (inscribed, \
+                         rune-bearing, or above ord's indexed tip ({:?})). Nothing was signed.",
+                        ordinals_skipped, ord_indexed_height
+                    ));
+                }
+            }
+            return Err(err);
         }
 
         log::info!(
@@ -1716,11 +1706,15 @@ impl ConcreteProvider {
             (all, Amount::from_sat(total))
         } else {
             let target_amount = Amount::from_sat(params.amount);
+            // Sats `select_coins` can actually draw on (it skips frozen).
+            let spendable_total =
+                |set: &[UtxoInfo]| -> u64 { set.iter().filter(|u| !u.frozen).map(|u| u.amount).sum() };
             match self.select_coins(clean_utxos.clone(), target_amount) {
                 Ok(picked) => picked,
-                Err(clean_err) => {
+                Err(_) => {
                     if split_candidates.is_empty() {
-                        return Err(clean_err);
+                        return Err(carrier_filter
+                            .insufficient_error(params.amount, spendable_total(&clean_utxos)));
                     }
                     log::info!(
                         "Clean UTXOs cannot cover {} sats; drawing on {} split candidate(s)",
@@ -1729,7 +1723,10 @@ impl ConcreteProvider {
                     );
                     let mut with_candidates = clean_utxos;
                     with_candidates.extend(split_candidates.iter().cloned());
-                    self.select_coins(with_candidates, target_amount)?
+                    let have = spendable_total(&with_candidates);
+                    self.select_coins(with_candidates, target_amount).map_err(|_| {
+                        carrier_filter.insufficient_error(params.amount, have)
+                    })?
                 }
             }
         };
@@ -1738,6 +1735,8 @@ impl ConcreteProvider {
         // onto an output of their own, before the remainder is spent as
         // ordinary funding.
         let mut split_psbt: Option<bitcoin::psbt::Psbt> = None;
+        let mut split_clean_outpoints: std::collections::BTreeSet<OutPoint> =
+            std::collections::BTreeSet::new();
         let mut selected_utxos = selected_utxos;
         let mut total_input_amount = total_input_amount;
 
@@ -1865,11 +1864,11 @@ impl ConcreteProvider {
                         skip_diesel_mint: true,
                     };
 
-                    // No alkane routing from this path: any UTXO flagged
-                    // `has_alkanes` was dropped in step 4. Note that flag is
-                    // only ever SET under `--lock-alkanes`, so this is a
-                    // property of what we detect, not a guarantee about what
-                    // the wallet holds.
+                    // No alkane routing from this path: every UTXO reaching
+                    // here passed the carrier filter in step 3 (verified to
+                    // carry no alkanes), so the split's outputs carry none
+                    // either. Checked again before returning (step 8) and
+                    // before signing (`send`).
                     let split = crate::ordinals::build_split_psbt(
                         self,
                         &plans,
@@ -1933,6 +1932,7 @@ impl ConcreteProvider {
                     total_input_amount =
                         Amount::from_sat(rebuilt.iter().map(|u| u.amount).sum::<u64>());
                     selected_utxos = rebuilt;
+                    split_clean_outpoints = split.clean_utxos.iter().map(|(op, _)| *op).collect();
                     split_psbt = Some(split.psbt);
                 }
             }
@@ -2038,7 +2038,17 @@ impl ConcreteProvider {
             });
         }
 
-        Ok(PreparedSend { split_psbt, tx, prevouts })
+        // 8. Builder-side carrier invariant: every split input must be one
+        //    the filter verified clean, and every main input either that or
+        //    one of the split's clean outputs (no carrier, no unknown status).
+        crate::alkanes::carrier::check_plain_send_package(
+            split_psbt.as_ref().map(|p| &p.unsigned_tx),
+            &tx,
+            &carrier_filter.clean_outpoints,
+            &split_clean_outpoints,
+        )?;
+
+        Ok(PreparedSend { split_psbt, tx, prevouts, split_clean_outpoints })
     }
 }
 
@@ -2190,6 +2200,20 @@ impl WalletProvider for ConcreteProvider {
         //    main one, which a single hex string cannot express.
         let prepared = self.prepare_send(params).await?;
         let needs_split = prepared.split_psbt.is_some();
+
+        // 1a. Pre-sign carrier check (SFS-05): independently re-probe every
+        //     input of the split and of the main transaction (except the
+        //     main inputs that spend the split's clean outputs, which do not
+        //     exist on-chain yet) and refuse if any carries alkanes or has an
+        //     unknown alkane status. Runs in address-only mode too.
+        crate::alkanes::carrier::assert_plain_send_package_clean(
+            self,
+            crate::traits::DeezelProvider::is_qubitcoin_mode(self),
+            prepared.split_psbt.as_ref().map(|p| &p.unsigned_tx),
+            &prepared.tx,
+            &prepared.split_clean_outpoints,
+        )
+        .await?;
 
         // Address-only mode has no keys. Handing back the unsigned main
         // transaction is fine on its own, but when a split is required that

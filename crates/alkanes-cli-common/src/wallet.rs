@@ -326,6 +326,7 @@ pub struct SendParams {
     pub auto_confirm: bool,
     pub use_rebar: bool,
     pub rebar_tier: u8,
+    /// Deprecated, ignored: alkane carriers are always excluded (SFS-05).
     pub lock_alkanes: bool,
     /// Strategy for handling UTXOs that contain ordinal inscriptions
     /// - 'exclude': Fail if inscribed UTXOs must be spent

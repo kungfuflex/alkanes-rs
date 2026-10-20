@@ -3004,6 +3004,13 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
     /// alkane pass's fee-buffer zone of `select_utxos_with_headroom`, so both
     /// mean the same thing by "verified clean". `prefetched_hits` /
     /// `rpc_hits` count which source answered (neither in qubitcoin mode).
+    ///
+    /// The sheet itself comes from [`super::carrier::resolve_alkane_sheet`],
+    /// the rule every plain BTC send applies too: qubitcoin mode, then a
+    /// caller- or espo-asserted sheet (an empty Vec means "asserted clean"),
+    /// then a lazy protorunesbyoutpoint probe. Only the confirmations rule
+    /// below is executor-specific, because the shared resolver does not see
+    /// `UtxoInfo`.
     async fn probe_fee_input_carrier(
         &self,
         outpoint: &OutPoint,
@@ -3012,43 +3019,33 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         prefetched_hits: &mut usize,
         rpc_hits: &mut usize,
     ) -> (bool, bool) {
-        if self.provider.is_qubitcoin_mode() {
+        use super::carrier::{AlkaneSheetStatus, SheetSource};
+        let (status, source) = super::carrier::resolve_alkane_sheet(
+            &*self.provider,
+            self.provider.is_qubitcoin_mode(),
+            outpoint,
+            prefetched_alkanes,
+        )
+        .await;
+        match source {
+            SheetSource::Asserted => *prefetched_hits += 1,
+            SheetSource::Probe => *rpc_hits += 1,
             // No alkanes indexer in qubitcoin mode and no alkanes to
-            // burn — treat as authoritative so behavior is unchanged.
-            return (false, true);
+            // burn: answered as authoritative clean, no counter.
+            SheetSource::Qubitcoin => {}
         }
-        if let Some(balances) = prefetched_alkanes.and_then(|m| m.get(outpoint)) {
-            // Same short-circuit shape as the primary-discovery branch:
-            // caller- or espo-asserted balances skip the RPC. An empty Vec
-            // means "asserted clean — not a carrier."
-            *prefetched_hits += 1;
-            return (balances.iter().any(|(_, amt)| *amt > 0), true);
-        }
-        *rpc_hits += 1;
-        let txid_str = outpoint.txid.to_string();
-        match self
-            .provider
-            .get_protorunes_by_outpoint(&txid_str, outpoint.vout, None, 1)
-            .await
-        {
+        match status {
             // An UNCONFIRMED candidate (injected from a pending tx) always probes
             // empty: the indexer has not seen its tx. That is not authoritative
             // (#308 review lane A 7), so it may fund a genuine need (the hard
             // bar) but never the soft fee buffer or the dust headroom. A caller
-            // assertion (the branch above) still counts.
-            Ok(response) => (
-                response
-                    .balance_sheet
-                    .cached
-                    .balances
-                    .values()
-                    .any(|amt| *amt > 0),
-                utxo.confirmations > 0,
-            ),
-            // Unverifiable — keep the pre-existing behavior (select when the
-            // hard bar needs it), but mark it so neither the fee buffer nor
-            // the dust headroom will reach for it.
-            Err(_) => (false, false),
+            // assertion (and qubitcoin mode) still counts.
+            AlkaneSheetStatus::Clean => (false, source != SheetSource::Probe || utxo.confirmations > 0),
+            AlkaneSheetStatus::Carrier(_) => (true, source != SheetSource::Probe || utxo.confirmations > 0),
+            // Unverifiable (probe failed): keep the pre-existing behavior
+            // (select when the hard bar needs it), but mark it so neither the
+            // fee buffer nor the dust headroom will reach for it.
+            AlkaneSheetStatus::Unknown(_) => (false, false),
         }
     }
 
@@ -3748,6 +3745,11 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
 
                         rpc_count += 1;
                         let txid_str = outpoint.txid.to_string();
+                        // Same classification as `carrier::resolve_alkane_sheet`
+                        // (Ok with no non-zero amount = clean, Err = unknown),
+                        // kept inline because it also fills `utxo_balances`;
+                        // `probe_fee_input_carrier` goes through the shared
+                        // resolver. Change both together.
                         match self.provider
                             .get_protorunes_by_outpoint(&txid_str, outpoint.vout, None, 1)
                             .await
