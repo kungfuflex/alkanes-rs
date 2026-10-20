@@ -97,6 +97,11 @@ pub struct MockProvider {
     /// Answer of `get_metashrew_height`; `None` makes it fail. Defaults to
     /// `Some(800001)`.
     pub metashrew_height: Arc<Mutex<Option<u64>>>,
+    /// When set, `broadcast_transaction` records each new output in
+    /// `utxo_status` as `(0, None)`, so a broadcast tx's outputs read as
+    /// unconfirmed, as they are on a real node. Defaults to `false` (they read
+    /// as confirmed, which every existing test relies on).
+    pub unconfirmed_broadcasts: bool,
 }
 
 impl Default for MockProvider {
@@ -127,6 +132,7 @@ impl MockProvider {
             ord_inscriptions: Arc::new(Mutex::new(HashMap::new())),
             utxo_status: Arc::new(Mutex::new(HashMap::new())),
             metashrew_height: Arc::new(Mutex::new(Some(800001))),
+            unconfirmed_broadcasts: false,
         }
     }
     
@@ -373,6 +379,9 @@ impl WalletProvider for MockProvider {
         let mut utxos = self.utxos.lock().unwrap();
         for (i, tx_out) in tx.output.iter().enumerate() {
             utxos.push((OutPoint::new(txid, i as u32), tx_out.clone()));
+            if self.unconfirmed_broadcasts {
+                self.utxo_status.lock().unwrap().insert(OutPoint::new(txid, i as u32).to_string(), (0, None));
+            }
         }
 
         self.broadcasted_txs.lock().unwrap().insert(txid.to_string(), tx_hex.clone());

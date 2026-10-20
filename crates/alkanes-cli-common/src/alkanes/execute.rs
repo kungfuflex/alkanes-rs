@@ -509,6 +509,99 @@ pub fn require_split_carrier(
     Ok(())
 }
 
+/// Outputs of a split parent (Tx A) that protorune routes no alkane to, so Tx B may
+/// spend them as asserted clean (ALK-18 develop port, 2026-10-20).
+///
+/// When Tx B is built, Tx A is unconfirmed and unindexed: an empty
+/// `protorunesbyoutpoint` answer for its change is absence of information, not
+/// an all-clear. But the executor built Tx A in this same call, so its routing
+/// is known (protorune `crates/protorune/src/lib.rs`):
+///   - input alkanes go to the first protostone of the alkanes tag (:1157-1167);
+///     without one they reach no output;
+///   - each protostone's leftovers go to its `pointer`, or `default_output` (the
+///     first non-OP_RETURN output) when it has none (:167-174, :1181-1184); a
+///     failed or malformed message refunds to its `refund`, or `default_output`
+///     (protostone.rs:103-125);
+///   - an edict pays its `output`; `output == tx.output.len()` spreads over every
+///     non-OP_RETURN output (:209-250);
+///   - only outputs below `tx.output.len()` are saved (`save_balances`), so a
+///     target at or above it (another protostone's shadow vout) reaches an
+///     output only through that protostone's own pointer or refund.
+/// An output named by none of these carries no alkane. Returned: every output
+/// that pays `btc_change_script`, is not OP_RETURN, is not the carrier
+/// (`SPLIT_CARRIER_VOUT`) and is not named. Whatever this cannot prove (no
+/// decodable runestone, no alkanes protostone, an edict to every output)
+/// returns nothing, and Tx B funds from verified coins only.
+///
+/// This proves ALKANES only. Tx A's Runestone pointer deliberately targets the
+/// user's change (`select_runestone_pointer`), so the change may carry runes,
+/// and inscriptions are not looked at. It is not a general proof for pending
+/// outputs either: it holds for a parent built in the same call.
+pub fn split_parent_clean_change(tx_a: &Transaction, btc_change_script: &ScriptBuf) -> Vec<(OutPoint, TxOut)> {
+    let stones = match crate::runestone_enhanced::format_runestone(tx_a) {
+        Ok(stones) => stones,
+        Err(_) => return Vec::new(),
+    };
+    if !stones.iter().any(|s| s.protocol_tag == 1) {
+        return Vec::new();
+    }
+    let len = tx_a.output.len();
+    let default_output = tx_a.output.iter().position(|o| !o.script_pubkey.is_op_return()).unwrap_or(0);
+    let mut named = alloc::collections::BTreeSet::from([default_output]);
+    for stone in &stones {
+        for target in [stone.pointer, stone.refund].into_iter().flatten() {
+            named.insert(target as usize);
+        }
+        for edict in &stone.edicts {
+            if edict.output == len as u128 {
+                return Vec::new();
+            }
+            if edict.output < len as u128 {
+                named.insert(edict.output as usize);
+            }
+        }
+    }
+    let txid = tx_a.compute_txid();
+    tx_a.output
+        .iter()
+        .enumerate()
+        .filter(|(i, out)| {
+            *i != SPLIT_CARRIER_VOUT as usize
+                && !named.contains(i)
+                && !out.script_pubkey.is_op_return()
+                && out.script_pubkey == *btc_change_script
+        })
+        .map(|(i, out)| (OutPoint::new(txid, i as u32), out.clone()))
+        .collect()
+}
+
+/// Assert Tx A's provably clean change (`split_parent_clean_change`) in Tx B's
+/// prefetched UTXOs: `alkanes: Some(vec![])`, not required. Without it the change
+/// is an unindexed output of unknown status, and a wallet whose only coin Tx A
+/// spent has nothing verified left to fund Tx B with. Asserted, the change also
+/// counts as verified for the soft fee buffer.
+pub fn assert_split_parent_clean_change(
+    tx_b_params: &mut EnhancedExecuteParams,
+    tx_a_hex: &str,
+    btc_change_script: &ScriptBuf,
+) -> Result<()> {
+    let bytes = hex::decode(tx_a_hex).map_err(|e| AlkanesError::Other(format!("Tx A hex: {}", e)))?;
+    let tx_a: bitcoin::Transaction = bitcoin::consensus::encode::deserialize(&bytes)
+        .map_err(|e| AlkanesError::Other(format!("Tx A decode: {}", e)))?;
+    for (outpoint, out) in split_parent_clean_change(&tx_a, btc_change_script) {
+        let outpoint = outpoint.to_string();
+        tx_b_params.prefetched_utxos.retain(|p| p.outpoint != outpoint);
+        tx_b_params.prefetched_utxos.push(PrefetchedUtxo {
+            outpoint,
+            value: out.value.to_sat(),
+            script_pubkey_hex: hex::encode(out.script_pubkey.as_bytes()),
+            alkanes: Some(vec![]),
+            required: false,
+        });
+    }
+    Ok(())
+}
+
 /// Tx B's `to_addresses` (#308 review lane A 9, 2026-09-16).
 ///
 /// LEGACY wrap split: to_addresses[0] is the wrap SIGNER, which only Tx A pays, so Tx B
@@ -1751,6 +1844,10 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             });
         }
 
+        // Tx A's BTC change script, for assert_split_parent_clean_change below. Resolved
+        // here, before Tx A is broadcast, so a resolution error costs the user nothing.
+        let (_, tx_a_btc_change_script) = self.resolve_user_change_scripts(&tx_a_params).await?;
+
         log::info!("[split-tx] Step 1/2: building Tx A (protostones 0..{})", split_at);
         let tx_a_result = Box::pin(self.execute_full(tx_a_params)).await?;
         let wrap_txid = tx_a_result.reveal_txid.clone();
@@ -1828,10 +1925,12 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         // wallet's confirmed UTXOs first and can satisfy Tx B from them, leaving
         // the carrier (and whatever Tx A put on it) behind.
         require_split_carrier(&mut tx_b_params, &tx_a_hex, &params)?;
+        assert_split_parent_clean_change(&mut tx_b_params, &tx_a_hex, &tx_a_btc_change_script)?;
         tx_b_params.known_pending_tx_hexes.push(tx_a_hex);
 
         // Drop BTC input requirements — Tx A's BTC change at v2 covers Tx B
-        // fees via natural UTXO selection.
+        // fees via natural UTXO selection, as an asserted-clean input when
+        // assert_split_parent_clean_change could prove it.
         tx_b_params.input_requirements.retain(|req| {
             !matches!(
                 req,
@@ -1967,6 +2066,8 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         tx_b_params.fee_rate = Some(child_rate);
         tx_b_params.protostones = tx_b_stones;
         require_split_carrier(&mut tx_b_params, &tx_a_hex, &params)?;
+        let (_, tx_a_btc_change_script) = self.resolve_user_change_scripts(&tx_a_params).await?;
+        assert_split_parent_clean_change(&mut tx_b_params, &tx_a_hex, &tx_a_btc_change_script)?;
         tx_b_params.known_pending_tx_hexes.push(tx_a_hex);
         tx_b_params.input_requirements.retain(|req| {
             !matches!(
@@ -6518,6 +6619,386 @@ mod tests {
             "Tx B must spend Tx A's carrier {carrier}; it spent {:?}",
             tx_b.input.iter().map(|i| i.previous_output.to_string()).collect::<Vec<_>>(),
         );
+    }
+
+    // ---- split_parent_clean_change (ALK-18 develop port, 2026-10-20) ----
+
+    fn user_script() -> bitcoin::ScriptBuf {
+        bitcoin::ScriptBuf::from_hex(&format!("5120{}", "aa".repeat(32))).unwrap()
+    }
+
+    fn txout(sats: u64, script: &bitcoin::ScriptBuf) -> bitcoin::TxOut {
+        bitcoin::TxOut { value: Amount::from_sat(sats), script_pubkey: script.clone() }
+    }
+
+    /// An alkanes protostone as it sits in the runestone (resolved `u32` targets).
+    fn raw_stone(pointer: Option<u32>, refund: Option<u32>, edict_outputs: &[u128]) -> protorune_support::protostone::Protostone {
+        protorune_support::protostone::Protostone {
+            protocol_tag: 1,
+            message: vec![4u8, 1, 13],
+            pointer,
+            refund,
+            burn: None,
+            from: None,
+            edicts: edict_outputs
+                .iter()
+                .map(|output| protorune_support::protostone::ProtostoneEdict {
+                    id: ProtoruneRuneId { block: 2, tx: 0 },
+                    amount: 100,
+                    output: *output,
+                })
+                .collect(),
+        }
+    }
+
+    /// The runestone the executor emits. Its Runestone pointer (runes only) sits
+    /// on the change, as `select_runestone_pointer` puts it; it must not count as
+    /// naming that output for alkanes.
+    fn runestone_with(stones: Vec<protorune_support::protostone::Protostone>, runes_pointer: u32) -> bitcoin::TxOut {
+        use protorune_support::protostone::Protostones as _;
+        let script = Runestone {
+            protocol: Some(stones.encipher().unwrap()),
+            pointer: Some(runes_pointer),
+            ..Default::default()
+        }
+        .encipher();
+        bitcoin::TxOut { value: Amount::ZERO, script_pubkey: script }
+    }
+
+    fn parent_tx(outputs: Vec<bitcoin::TxOut>) -> bitcoin::Transaction {
+        bitcoin::Transaction {
+            version: bitcoin::transaction::Version::TWO,
+            lock_time: bitcoin::absolute::LockTime::ZERO,
+            input: vec![bitcoin::TxIn {
+                previous_output: OutPoint::new(bitcoin::Txid::from_str(&"f1".repeat(32)).unwrap(), 0),
+                ..Default::default()
+            }],
+            output: outputs,
+        }
+    }
+
+    /// Executor-shaped Tx A: v0 signer, v1 carrier, v2 BTC change, v3 runestone.
+    fn shaped_parent(stones: Vec<protorune_support::protostone::Protostone>) -> bitcoin::Transaction {
+        let signer = bitcoin::ScriptBuf::from_hex(&format!("5120{}", "bb".repeat(32))).unwrap();
+        parent_tx(vec![
+            txout(546, &signer),
+            txout(546, &user_script()),
+            txout(90_000, &user_script()),
+            runestone_with(stones, 2),
+        ])
+    }
+
+    fn vouts(found: &[(OutPoint, bitcoin::TxOut)]) -> Vec<u32> {
+        found.iter().map(|(op, _)| op.vout).collect()
+    }
+
+    #[test]
+    fn split_parent_clean_change_returns_the_unnamed_change() {
+        // The executor's shape: the boundary stone points and refunds to the carrier.
+        let tx_a = shaped_parent(vec![raw_stone(Some(1), Some(1), &[])]);
+        let found = split_parent_clean_change(&tx_a, &user_script());
+        assert_eq!(vouts(&found), vec![2]);
+        assert_eq!(found[0].0.txid, tx_a.compute_txid());
+        assert_eq!(found[0].1, tx_a.output[2]);
+
+        // The carrier is never returned, even when no target names it.
+        let tx_a = shaped_parent(vec![raw_stone(Some(0), Some(0), &[])]);
+        assert_eq!(vouts(&split_parent_clean_change(&tx_a, &user_script())), vec![2], "v1 is the carrier");
+
+        // A shadow-vout target (protostone 1 of 2, vout len + 1 + 1) names no output:
+        // the second stone's own pointer and refund decide, and they name v1.
+        let len = 4u32;
+        let tx_a = shaped_parent(vec![raw_stone(Some(len + 2), Some(1), &[]), raw_stone(Some(1), Some(1), &[])]);
+        assert_eq!(vouts(&split_parent_clean_change(&tx_a, &user_script())), vec![2]);
+
+        // Only outputs paying the BTC change script are change.
+        let other = bitcoin::ScriptBuf::from_hex(&format!("5120{}", "cc".repeat(32))).unwrap();
+        let tx_a = shaped_parent(vec![raw_stone(Some(1), Some(1), &[])]);
+        assert!(split_parent_clean_change(&tx_a, &other).is_empty());
+    }
+
+    #[test]
+    fn split_parent_clean_change_skips_change_at_default_output() {
+        // default_output (first non-OP_RETURN output) receives the leftovers of any
+        // stone without a pointer and the refund of a malformed one, so a change at
+        // v0 is named even though no target mentions it. v3 is not.
+        let tx_a = parent_tx(vec![
+            txout(20_000, &user_script()),
+            txout(546, &user_script()),
+            runestone_with(vec![raw_stone(Some(1), Some(1), &[])], 0),
+            txout(30_000, &user_script()),
+        ]);
+        assert_eq!(vouts(&split_parent_clean_change(&tx_a, &user_script())), vec![3]);
+
+        // An OP_RETURN first moves default_output to v1 (the carrier); v0 is then the
+        // runestone and v2 is unnamed change.
+        let tx_a = parent_tx(vec![
+            runestone_with(vec![raw_stone(Some(1), Some(1), &[])], 2),
+            txout(546, &user_script()),
+            txout(30_000, &user_script()),
+        ]);
+        assert_eq!(vouts(&split_parent_clean_change(&tx_a, &user_script())), vec![2]);
+    }
+
+    #[test]
+    fn split_parent_clean_change_skips_change_named_by_a_protostone() {
+        for (what, stone) in [
+            ("pointer", raw_stone(Some(2), Some(1), &[])),
+            ("refund", raw_stone(Some(1), Some(2), &[])),
+            ("edict", raw_stone(Some(1), Some(1), &[2])),
+        ] {
+            let tx_a = shaped_parent(vec![stone]);
+            assert!(split_parent_clean_change(&tx_a, &user_script()).is_empty(), "change named by a {what}");
+        }
+        // Named by a later stone (an alkanes call of the same tx).
+        let tx_a = shaped_parent(vec![raw_stone(Some(1), Some(1), &[]), raw_stone(Some(2), Some(2), &[])]);
+        assert!(split_parent_clean_change(&tx_a, &user_script()).is_empty(), "change named by a later stone");
+
+        // An edict to `tx.output.len()` spreads over every non-OP_RETURN output:
+        // nothing is clean, whatever else the tx says.
+        let tx_a = shaped_parent(vec![raw_stone(Some(1), Some(1), &[4])]);
+        assert!(split_parent_clean_change(&tx_a, &user_script()).is_empty(), "edict to every output");
+    }
+
+    #[test]
+    fn split_parent_clean_change_proves_nothing_without_a_decodable_alkanes_runestone() {
+        // No runestone at all.
+        let tx_a = parent_tx(vec![txout(546, &user_script()), txout(546, &user_script()), txout(90_000, &user_script())]);
+        assert!(split_parent_clean_change(&tx_a, &user_script()).is_empty(), "no runestone");
+
+        // OP_RETURN OP_13 with a truncated varint: a cenotaph, not a runestone.
+        let mut tx_a = shaped_parent(vec![raw_stone(Some(1), Some(1), &[])]);
+        tx_a.output[3].script_pubkey = bitcoin::ScriptBuf::from_hex("6a5d01ff").unwrap();
+        assert!(split_parent_clean_change(&tx_a, &user_script()).is_empty(), "undecodable runestone");
+
+        // Protostones of another protocol only: input alkanes reach no output, and
+        // nothing about this tx is the executor's shape.
+        let mut other_tag = raw_stone(Some(1), Some(1), &[]);
+        other_tag.protocol_tag = 2;
+        let tx_a = shaped_parent(vec![other_tag]);
+        assert!(split_parent_clean_change(&tx_a, &user_script()).is_empty(), "no alkanes protostone");
+
+        // Tx A without a change output (dropped as sub-dust).
+        let mut tx_a = shaped_parent(vec![raw_stone(Some(1), Some(1), &[])]);
+        tx_a.output.remove(2);
+        assert!(split_parent_clean_change(&tx_a, &user_script()).is_empty(), "no change output");
+    }
+
+    #[test]
+    fn assert_split_parent_clean_change_asserts_the_change_and_leaves_the_carrier_required() {
+        let tx_a = shaped_parent(vec![raw_stone(Some(1), Some(1), &[])]);
+        let hex = bitcoin::consensus::encode::serialize_hex(&tx_a);
+        let change = format!("{}:2", tx_a.compute_txid());
+        let carrier = format!("{}:1", tx_a.compute_txid());
+        let swap = stone(Some((4, 65522, 13)), None, None, vec![]);
+        let original = split_params(vec![swap.clone(), swap], true, Some(1));
+        let mut tx_b = original.clone();
+        // A stale row for the same outpoint is replaced, not duplicated.
+        tx_b.prefetched_utxos.push(PrefetchedUtxo {
+            outpoint: change.clone(),
+            value: 1,
+            script_pubkey_hex: "00".to_string(),
+            alkanes: None,
+            required: false,
+        });
+        require_split_carrier(&mut tx_b, &hex, &original).unwrap();
+        assert_split_parent_clean_change(&mut tx_b, &hex, &user_script()).unwrap();
+
+        let rows: Vec<&PrefetchedUtxo> = tx_b.prefetched_utxos.iter().filter(|p| p.outpoint == change).collect();
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].alkanes.as_ref().is_some_and(|a| a.is_empty()), "asserted clean");
+        assert!(!rows[0].required, "an assertion, not a requirement");
+        assert_eq!(rows[0].value, 90_000);
+        assert_eq!(rows[0].script_pubkey_hex, hex::encode(user_script().as_bytes()));
+        let carrier_row = tx_b.prefetched_utxos.iter().find(|p| p.outpoint == carrier).expect("carrier row");
+        assert!(carrier_row.required && carrier_row.alkanes.is_none(), "the carrier stays required and unasserted");
+
+        // Change named by the runestone: nothing asserted.
+        let named = shaped_parent(vec![raw_stone(Some(2), Some(1), &[])]);
+        let mut tx_b = original.clone();
+        assert_split_parent_clean_change(&mut tx_b, &bitcoin::consensus::encode::serialize_hex(&named), &user_script()).unwrap();
+        assert!(tx_b.prefetched_utxos.is_empty());
+    }
+
+    /// Tx B's selection on a wallet whose only coin Tx A spent: what Tx B can fund
+    /// from is Tx A's carrier (required) and Tx A's change, both unconfirmed and
+    /// unindexed. The assertion is what makes the change a VERIFIED input: with it
+    /// the change fills the soft fee buffer; without it the change is unverified and
+    /// is left out of the buffer.
+    #[tokio::test]
+    async fn split_tx_b_funds_from_tx_a_change_on_a_single_utxo_wallet() {
+        use bitcoin::key::Secp256k1;
+
+        let mut mock = MockProvider::new(Network::Regtest);
+        mock.qubitcoin_mode = false;
+        let secp = Secp256k1::new();
+        let (sk, pk) = secp.generate_keypair(&mut rand::thread_rng());
+        let addr = bitcoin::Address::p2tr(&secp, pk.x_only_public_key().0, None, Network::Regtest);
+        mock.set_keypair(sk, bitcoin::PublicKey::new(pk));
+        let script = addr.script_pubkey();
+        let only_coin = OutPoint::new(bitcoin::Txid::from_str(&"e5".repeat(32)).unwrap(), 0);
+        mock.utxos.lock().unwrap().push((only_coin, txout(100_000, &script)));
+
+        let signer = bitcoin::ScriptBuf::from_hex(&format!("5120{}", "bb".repeat(32))).unwrap();
+        let mut tx_a = parent_tx(vec![
+            txout(546, &signer),
+            txout(546, &script),
+            txout(90_000, &script),
+            runestone_with(vec![raw_stone(Some(1), Some(1), &[])], 2),
+        ]);
+        tx_a.input[0].previous_output = only_coin;
+        let hex = bitcoin::consensus::encode::serialize_hex(&tx_a);
+        let carrier = OutPoint::new(tx_a.compute_txid(), 1);
+        let change = OutPoint::new(tx_a.compute_txid(), 2);
+
+        let swap = stone(Some((4, 65522, 13)), None, None, vec![]);
+        let original = split_params(vec![swap.clone(), swap], true, Some(1));
+        let tx_b_params = |assert_change: bool| {
+            let mut tx_b = original.clone();
+            require_split_carrier(&mut tx_b, &hex, &original).unwrap();
+            if assert_change {
+                assert_split_parent_clean_change(&mut tx_b, &hex, &script).unwrap();
+            }
+            tx_b.known_pending_tx_hexes.push(hex.clone());
+            tx_b
+        };
+        let from = Some(vec![addr.to_string()]);
+        let mut executor = EnhancedAlkanesExecutor::new(&mut mock);
+        async fn select(
+            executor: &mut EnhancedAlkanesExecutor<'_>,
+            tx_b: EnhancedExecuteParams,
+            from: &Option<Vec<String>>,
+            btc: u64,
+            headroom: BtcHeadroom,
+        ) -> Result<UtxoSelectionResult> {
+            executor
+                .select_utxos_with_headroom(
+                    &[InputRequirement::Bitcoin { amount: btc }],
+                    from,
+                    &tx_b.known_pending_tx_hexes, None, &tx_b.prefetched_utxos, &[],
+                    UtxoDataSource::Metashrew,
+                    headroom,
+                )
+                .await
+        }
+        let set = |ops: &[OutPoint]| ops.iter().copied().collect::<std::collections::BTreeSet<OutPoint>>();
+
+        // The hard bar needs the change: Tx B spends carrier + change, never the
+        // coin Tx A already spent.
+        let funded = select(&mut executor, tx_b_params(true), &from, 5_000, BtcHeadroom::none()).await.expect("carrier + asserted change fund Tx B");
+        assert_eq!(set(&funded.outpoints), set(&[carrier, change]), "only coin {only_coin}");
+
+        // The carrier alone meets a 300-sat hard bar; the 5 000-sat fee buffer is
+        // filled only from verified coins. Asserted, the change is one.
+        let buffered = select(&mut executor, tx_b_params(true), &from, 300, BtcHeadroom::none().with_fee_buffer(5_000)).await.unwrap();
+        assert_eq!(set(&buffered.outpoints), set(&[carrier, change]), "asserted change fills the fee buffer");
+        let unasserted = select(&mut executor, tx_b_params(false), &from, 300, BtcHeadroom::none().with_fee_buffer(5_000)).await.unwrap();
+        assert_eq!(set(&unasserted.outpoints), set(&[carrier]), "an unasserted unindexed change never fills the fee buffer");
+
+        // Pins develop's CURRENT hard-bar rule (#328): an unverified coin still funds
+        // the hard bar when nothing verified can. The ALK-18 port (stage A2) flips
+        // this half: without the assertion Tx B must fail with the unindexed clause.
+        let unasserted = select(&mut executor, tx_b_params(false), &from, 5_000, BtcHeadroom::none()).await.expect("develop: unverified change may fund the hard bar");
+        assert_eq!(set(&unasserted.outpoints), set(&[carrier, change]));
+    }
+
+    /// Wallet for the single-UTXO split tests: standard-bitcoin mode (the mempool
+    /// adjustment runs, the probe answers), one confirmed 100 000-sat coin. With
+    /// `v0_is_users == false` Tx A's v0 pays a foreign address (a wrap signer), so
+    /// Tx A's carrier and change are the wallet's only coins when Tx B is built.
+    fn single_utxo_split_wallet(v0_is_users: bool) -> (MockProvider, bitcoin::Address, EnhancedExecuteParams) {
+        use bitcoin::key::Secp256k1;
+
+        let mut mock = MockProvider::new(Network::Regtest);
+        mock.qubitcoin_mode = false;
+        let secp = Secp256k1::new();
+        let (sk, pk) = secp.generate_keypair(&mut rand::thread_rng());
+        let addr = bitcoin::Address::p2tr(&secp, pk.x_only_public_key().0, None, Network::Regtest);
+        mock.set_keypair(sk, bitcoin::PublicKey::new(pk));
+        mock.utxos.lock().unwrap().push((
+            OutPoint::new(bitcoin::Txid::from_str(&"e6".repeat(32)).unwrap(), 0),
+            txout(100_000, &addr.script_pubkey()),
+        ));
+        let (_, foreign_pk) = secp.generate_keypair(&mut rand::thread_rng());
+        let foreign = bitcoin::Address::p2tr(&secp, foreign_pk.x_only_public_key().0, None, Network::Regtest);
+
+        let first = stone(Some((4, 65522, 13)), Some(OutputTarget::Output(0)), Some(OutputTarget::Output(0)), vec![]);
+        let second = stone(Some((4, 65522, 13)), Some(OutputTarget::Output(0)), Some(OutputTarget::Output(0)), vec![]);
+        let mut params = split_params(vec![first, second], true, Some(1));
+        let a = addr.to_string();
+        let v0 = if v0_is_users { a.clone() } else { foreign.to_string() };
+        params.to_addresses = vec![v0, a.clone()];
+        params.from_addresses = Some(vec![a.clone()]);
+        params.change_address = Some(a.clone());
+        params.alkanes_change_address = Some(a.clone());
+        params.fee_rate = Some(2.0);
+        params.ordinals_strategy = OrdinalsStrategy::Burn;
+        (mock, addr, params)
+    }
+
+    /// The carrier and the change `split_parent_clean_change` finds in the
+    /// executor's REAL Tx A (v0 is default_output, v1 the carrier), and Tx B's inputs.
+    fn carrier_and_change(tx_a: &bitcoin::Transaction, tx_b: &bitcoin::Transaction, addr: &bitcoin::Address) -> (std::collections::BTreeSet<OutPoint>, std::collections::BTreeSet<OutPoint>) {
+        let change = split_parent_clean_change(tx_a, &addr.script_pubkey());
+        assert_eq!(change.len(), 1, "the executor's Tx A has one provably clean change: {:?}", tx_a.output);
+        let want = [OutPoint::new(tx_a.compute_txid(), SPLIT_CARRIER_VOUT), change[0].0].into_iter().collect();
+        let got = tx_b.input.iter().map(|i| i.previous_output).collect();
+        (want, got)
+    }
+
+    /// `execute_split` on a single-UTXO wallet in standard-bitcoin mode, with the
+    /// mock reporting broadcast outputs as unconfirmed (as a node does): Tx B can
+    /// only be funded from Tx A's outputs. Before the ALK-18 port (stage A2) this
+    /// also passes without the assertion, because the unverified change still funds
+    /// the hard bar; after it, the assertion is what keeps this working.
+    #[tokio::test]
+    async fn execute_split_on_a_single_utxo_wallet_spends_tx_a_change() {
+        for v0_is_users in [false, true] {
+            let (mut mock, addr, params) = single_utxo_split_wallet(v0_is_users);
+            mock.unconfirmed_broadcasts = true;
+            let result = {
+                let mut executor = EnhancedAlkanesExecutor::new(&mut mock);
+                executor.execute_full(params).await.expect("split execute must succeed on a single-UTXO wallet")
+            };
+            let broadcast = mock.broadcasted_txs.lock().unwrap().clone();
+            assert_eq!(broadcast.len(), 2, "exactly Tx A and Tx B are broadcast");
+            let decode = |txid: &str| -> bitcoin::Transaction {
+                bitcoin::consensus::encode::deserialize(&hex::decode(&broadcast[txid]).unwrap()).unwrap()
+            };
+            let tx_a = decode(&result.wrap_txid.clone().expect("a split reports Tx A's txid"));
+            let tx_b = decode(&result.reveal_txid);
+            let (want, got) = carrier_and_change(&tx_a, &tx_b, &addr);
+            if v0_is_users {
+                // Tx A's v0 also pays the wallet. It is default_output and the DIESEL
+                // mint's target, so it is not asserted, and today it is still spent
+                // as an unverified hard-bar input ahead of the change (#328's rule).
+                // Stage A2 (ALK-18) refuses it; tighten this to `got == want` there.
+                assert!(got.is_superset(&want), "Tx B inputs {got:?} must include {want:?}");
+            } else {
+                assert_eq!(got, want, "Tx B inputs");
+            }
+        }
+    }
+
+    /// Same wallet through `build_split_transaction_psbts`: nothing is broadcast, so
+    /// a Tx A output reaches Tx B's PSBT only through a prefetched row (the provider
+    /// cannot look up a tx it never saw). Without the assertion the change is
+    /// selected as an unverified input and the build fails "UTXO not found".
+    /// (With v0 paying the wallet, v0 is selected the same way and the build fails
+    /// on it today; stage A2 covers that case.)
+    #[tokio::test]
+    async fn build_split_transaction_psbts_on_a_single_utxo_wallet_spends_tx_a_change() {
+        let (mut mock, addr, params) = single_utxo_split_wallet(false);
+        let state = {
+            let mut executor = EnhancedAlkanesExecutor::new(&mut mock);
+            match executor.build_split_transaction_psbts(params).await.expect("split PSBTs must build on a single-UTXO wallet") {
+                ExecutionState::ReadyToSign(state) => state,
+                other => panic!("unexpected state {other:?}"),
+            }
+        };
+        let tx_a = state.split_psbt.as_ref().expect("split PSBTs carry Tx A").unsigned_tx.clone();
+        let (want, got) = carrier_and_change(&tx_a, &state.psbt.unsigned_tx, &addr);
+        assert_eq!(got, want, "Tx B inputs");
     }
 
     /// `is_wrap_protostone` must reliably distinguish frBTC/frZEC/frETH wraps
