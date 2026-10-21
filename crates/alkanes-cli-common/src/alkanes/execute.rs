@@ -3300,6 +3300,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         tip: &mut IndexedTip,
     ) -> FeeInputStatus {
         use super::carrier::{AlkaneSheetStatus, SheetSource};
+        let mut counted = false;
         loop {
             let (status, source) = super::carrier::resolve_alkane_sheet(
                 &*self.provider,
@@ -3308,12 +3309,16 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                 prefetched_alkanes,
             )
             .await;
-            match source {
-                SheetSource::Asserted => *prefetched_hits += 1,
-                SheetSource::Probe => *rpc_hits += 1,
-                // No alkanes indexer in qubitcoin mode and no alkanes to
-                // burn: answered as authoritative clean, no counter.
-                SheetSource::Qubitcoin => {}
+            // Once per coin: the sync retry below probes the same coin again.
+            if !counted {
+                counted = true;
+                match source {
+                    SheetSource::Asserted => *prefetched_hits += 1,
+                    SheetSource::Probe => *rpc_hits += 1,
+                    // No alkanes indexer in qubitcoin mode and no alkanes to
+                    // burn: answered as authoritative clean, no counter.
+                    SheetSource::Qubitcoin => {}
+                }
             }
             return match status {
                 // An empty probe of a tx the indexer has not seen (unconfirmed,
@@ -4827,9 +4832,12 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         // When candidates were skipped because their alkane status is
         // unknown or unindexed, the shortfall may be ours, not the wallet's:
         // say so (ALK-18). Without skips the typed error below is unchanged.
+        // The message keeps the "Insufficient funds: need N sats, have M"
+        // shape consumers parse (subfrost-app's MAX probes reduce by N - M),
+        // so it departs from main's "Insufficient verified bitcoin" wording.
         if bitcoin_collected < bitcoin_needed && unknown_status_skipped + unindexed_skipped > 0 {
             let mut msg = format!(
-                "Insufficient verified bitcoin: need {} sats, have {} from UTXOs with a verified alkane balance",
+                "Insufficient funds: need {} sats, have {} from UTXOs with a verified alkane balance",
                 bitcoin_needed, bitcoin_collected
             );
             if unknown_status_skipped > 0 {
@@ -9774,7 +9782,8 @@ mod dust_change_tests {
                 .await;
             match res {
                 Err(AlkanesError::Wallet(msg)) => {
-                    assert!(msg.starts_with("Insufficient verified bitcoin"), "{requirements:?}: {msg}");
+                    // Was "Insufficient verified bitcoin"; A7 keeps the app-parsed prefix.
+                    assert!(msg.starts_with("Insufficient funds: need "), "{requirements:?}: {msg}");
                     assert!(
                         msg.contains("1 UTXO(s) were excluded because their alkane balance could not be determined"),
                         "{requirements:?}: {msg}"
@@ -11990,7 +11999,8 @@ mod carrier_validation_tests {
         for reqs in both_passes() {
             let (mut mock, addr, _carrier, _pending, hex) = pending_wallet();
             let msg = wallet_error(select_with(&mut mock, &addr, &reqs, &[hex], &[]).await);
-            assert!(msg.starts_with("Insufficient verified bitcoin"), "{reqs:?}: {msg}");
+            // Was "Insufficient verified bitcoin"; A7 keeps the app-parsed prefix.
+            assert!(msg.starts_with("Insufficient funds: need "), "{reqs:?}: {msg}");
             assert!(
                 msg.contains("2 UTXO(s) were excluded because the alkanes indexer has not indexed them yet")
                     && msg.contains("or pass them in prefetched_utxos with an alkanes assertion"),
@@ -12257,7 +12267,9 @@ mod carrier_validation_tests {
 
     /// N7: when coins were skipped for unknown or unindexed status, the
     /// shortfall says so and counts each class, on both passes. Without any
-    /// skip the typed `InsufficientBitcoin` and its text are unchanged.
+    /// skip the typed `InsufficientBitcoin` and its text are unchanged. The
+    /// head was "Insufficient verified bitcoin" before A7, which subfrost-app
+    /// could not parse; it now starts "Insufficient funds: need ".
     #[tokio::test]
     async fn shortfall_names_unknown_and_unindexed_counts() {
         for reqs in both_passes() {
@@ -12273,7 +12285,7 @@ mod carrier_validation_tests {
             mock.failing_outpoints.lock().unwrap().insert(failing.to_string());
             let (_txid, hex) = pending_tx(&addr, &[20_000]);
             let msg = wallet_error(select_with(&mut mock, &addr, &reqs, &[hex], &[]).await);
-            assert!(msg.starts_with("Insufficient verified bitcoin: need "), "{reqs:?}: {msg}");
+            assert!(msg.starts_with("Insufficient funds: need "), "{reqs:?}: {msg}");
             assert!(msg.contains("; 1 UTXO(s) were excluded because their alkane balance could not be determined"), "{reqs:?}: {msg}");
             assert!(msg.contains("; 1 UTXO(s) were excluded because the alkanes indexer has not indexed them yet"), "{reqs:?}: {msg}");
         }
@@ -12283,6 +12295,37 @@ mod carrier_validation_tests {
         let err = select(&mut mock, &addr, &[InputRequirement::Bitcoin { amount: 5_000 }]).await.err().expect("short");
         assert!(matches!(err, AlkanesError::InsufficientBitcoin { needed: 5_000, collected: 1_000 }), "{err:?}");
         assert_eq!(err.to_string(), "Wallet error: Insufficient funds: need 5000 sats, have 1000");
+    }
+
+    /// A7: the shortfall with skipped coins keeps the "Insufficient funds:
+    /// need N sats, have M" shape subfrost-app parses, with N the hard bar and
+    /// M what verified coins hold, so its MAX probe reduces by exactly the
+    /// amount verified coins cannot cover. main words it "Insufficient
+    /// verified bitcoin", which the app reads as indeterminate. `clean`
+    /// (1_000) funds, `failing` (30_000) is skipped as unknown; on the alkane
+    /// pass the 546-sat carrier is collected too.
+    #[tokio::test]
+    async fn shortfall_with_skips_is_parsed_by_the_app() {
+        for (reqs, have) in both_passes().into_iter().zip([1_000u64, 1_546]) {
+            let (mut mock, addr) = wallet();
+            let carrier = op(0x84);
+            let clean = op(0x85);
+            let failing = op(0x86);
+            {
+                let mut utxos = mock.utxos.lock().unwrap();
+                utxos.push((carrier, TxOut { value: Amount::from_sat(546), script_pubkey: addr.script_pubkey() }));
+                utxos.push((clean, TxOut { value: Amount::from_sat(1_000), script_pubkey: addr.script_pubkey() }));
+                utxos.push((failing, TxOut { value: Amount::from_sat(30_000), script_pubkey: addr.script_pubkey() }));
+            }
+            mock.alkane_balances.lock().unwrap().insert(carrier.to_string(), vec![(32, 0, 10)]);
+            mock.failing_outpoints.lock().unwrap().insert(failing.to_string());
+            let err = select(&mut mock, &addr, &reqs).await.err().expect("short");
+            assert!(matches!(err, AlkanesError::Wallet(_)), "{reqs:?}: {err:?}");
+            let text = err.to_string();
+            assert!(text.contains("Insufficient funds"), "{reqs:?}: {text}");
+            assert_eq!(crate::alkanes::carrier::app_need_have(&text), Some((15_000, have)), "{reqs:?}: {text}");
+            assert!(text.contains("; 1 UTXO(s) were excluded because their alkane balance could not be determined"), "{reqs:?}: {text}");
+        }
     }
 
     // ── the invariant inside build_single_transaction ─────────────────────
@@ -12543,7 +12586,8 @@ mod carrier_validation_tests {
         for (big, small) in above_tip_passes(40_600).into_iter().zip(above_tip_passes(15_000)) {
             let (mut mock, addr, prefetched, [low, high, high_dust]) = above_tip_wallet();
             let msg = wallet_error(select_with(&mut mock, &addr, &big, &[], &prefetched).await);
-            assert!(msg.starts_with("Insufficient verified bitcoin"), "{big:?}: {msg}");
+            // Was "Insufficient verified bitcoin"; A7 keeps the app-parsed prefix.
+            assert!(msg.starts_with("Insufficient funds: need "), "{big:?}: {msg}");
             assert!(
                 msg.contains("2 UTXO(s) were excluded because the alkanes indexer has not indexed them yet"),
                 "{big:?}: {msg}"
@@ -12605,6 +12649,24 @@ mod carrier_validation_tests {
             );
             assert_eq!(*mock.sync_calls.lock().unwrap(), 1, "{reqs:?}");
         }
+    }
+
+    /// A7: the sync retry probes `high` a second time, but the RPC counter
+    /// (logged as "{} via RPC") counts coins, so it reads one, not two.
+    #[tokio::test]
+    async fn above_tip_retry_counts_one_rpc_hit_per_coin() {
+        let (mut mock, addr, _prefetched, [_low, high, _high_dust]) = above_tip_wallet();
+        *mock.metashrew_height_after_sync.lock().unwrap() = Some(101);
+        let coins = WalletProvider::get_utxos(&mock, false, Some(vec![addr.to_string()])).await.unwrap();
+        let (_, utxo) = coins.iter().find(|(op, _)| *op == high).cloned().expect("high is a wallet UTXO");
+        let executor = EnhancedAlkanesExecutor::new(&mut mock);
+        let (mut asserted_hits, mut rpc_hits) = (0usize, 0usize);
+        let mut tip = IndexedTip { height: None, synced: false };
+        let status = executor
+            .probe_fee_input_carrier(&high, &utxo, None, &mut asserted_hits, &mut rpc_hits, &mut tip)
+            .await;
+        assert!(matches!(status, FeeInputStatus::Clean) && tip.synced, "the retry ran and verified it");
+        assert_eq!((asserted_hits, rpc_hits), (0, 1));
     }
 
     /// A5: when metashrew's height cannot be read, every probe-clean coin

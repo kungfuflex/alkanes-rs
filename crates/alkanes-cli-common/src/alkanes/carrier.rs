@@ -139,7 +139,7 @@ impl CarrierFilter {
     /// behind".
     pub fn insufficient_error(&self, needed: u64, have: u64) -> AlkanesError {
         let mut msg = format!(
-            "Insufficient spendable BTC: need {} sats, have {} sats in UTXOs verified to carry no alkanes",
+            "Insufficient funds: need {} sats, have {} sats in UTXOs verified to carry no alkanes",
             needed, have
         );
         if !self.carriers.is_empty() {
@@ -725,6 +725,21 @@ pub async fn assert_plain_send_package_clean<P: MetashrewRpcProvider + ?Sized>(
     assert_plain_send_inputs_clean(provider, qubitcoin_mode, &off_split).await
 }
 
+/// What subfrost-app reads from a BTC shortfall message: `None` unless it
+/// contains "Insufficient funds", then the (need, have) pair of
+/// `need\s+(\d+)\s+sats,\s+have\s+(\d+)`. Mirrors the first format of both
+/// app parsers (`parseInsufficientFunds`, `parseBtcShortfall`), so a test can
+/// pin that a shortfall keeps the shape the app's MAX probe reduces by.
+#[cfg(test)]
+pub(crate) fn app_need_have(text: &str) -> Option<(u64, u64)> {
+    if !text.contains("Insufficient funds") {
+        return None;
+    }
+    let re = regex::Regex::new(r"need\s+(\d+)\s+sats,\s+have\s+(\d+)").unwrap();
+    let caps = re.captures(text)?;
+    Some((caps[1].parse().ok()?, caps[2].parse().ok()?))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -833,7 +848,8 @@ mod tests {
         assert!(f.clean.is_empty());
         for send_all in [false, true] {
             let err = select_plain_send_inputs(&f, 10_000, send_all, fee).unwrap_err().to_string();
-            assert!(err.contains("Insufficient spendable BTC"), "{err}");
+            // Was "Insufficient spendable BTC"; A7 keeps the app-parsed prefix.
+            assert!(err.contains("Insufficient funds: need "), "{err}");
             assert!(err.contains("2 UTXO(s) carrying alkanes were excluded"), "{err}");
         }
     }
@@ -1341,9 +1357,11 @@ mod tests {
             unindexed: vec![OutPoint::new(txid_n(4), 0)],
             ..Default::default()
         };
+        // The head was "Insufficient spendable BTC" before A7, which subfrost-app
+        // could not parse; the clauses are unchanged.
         assert_eq!(
             f.insufficient_error(1_000, 0).to_string(),
-            "Wallet error: Insufficient spendable BTC: need 1000 sats, have 0 sats in UTXOs verified to carry no alkanes\
+            "Wallet error: Insufficient funds: need 1000 sats, have 0 sats in UTXOs verified to carry no alkanes\
              ; 1 UTXO(s) carrying alkanes were excluded (a plain BTC send would transfer \
              their alkanes to the recipient; move them with an alkanes transfer first)\
              ; 2 UTXO(s) were excluded because their alkane balance could not be verified \
@@ -1354,5 +1372,19 @@ mod tests {
         // Without unindexed UTXOs the message is the stage 1 text.
         let f = CarrierFilter { unindexed: vec![], ..f };
         assert!(!f.insufficient_error(1_000, 0).to_string().contains("not indexed"));
+    }
+
+    /// A7: a plain send short on verified-clean BTC keeps the "Insufficient
+    /// funds: need N sats, have M" shape subfrost-app parses, so its MAX probe
+    /// reduces by exactly what the clean coin cannot cover. 3 (4_000) is
+    /// clean, 1 (50_000) carries 2:0. need = 10_000 + fee(1, 2).
+    #[tokio::test]
+    async fn plain_send_shortfall_is_parsed_by_the_app() {
+        let p = mock(&[1], &[]);
+        let f = exclude_alkane_carriers(&p, false, vec![utxo(1, 50_000), utxo(3, 4_000)], None).await;
+        let err = select_plain_send_inputs(&f, 10_000, false, fee).unwrap_err().to_string();
+        assert!(err.contains("Insufficient funds"), "{err}");
+        assert_eq!(app_need_have(&err), Some((10_000 + fee(1, 2), 4_000)), "{err}");
+        assert!(err.contains("; 1 UTXO(s) carrying alkanes were excluded"), "{err}");
     }
 }

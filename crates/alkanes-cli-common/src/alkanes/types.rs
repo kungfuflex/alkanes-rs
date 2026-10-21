@@ -523,7 +523,10 @@ pub struct PrefetchedUtxo {
     /// exemption covers unknown status only: when its sheet is known (asserted
     /// or probed) and carries an alkane the call does not request, with no
     /// edict in the first protostone routing it, the pre-sign carrier
-    /// invariant refuses the build.
+    /// invariant refuses the build. A required coin of unknown status that
+    /// carries an inscription is refused too, before the ordinals split
+    /// (`OrdinalsStrategy::Preserve`): the split would move its unknown sheet
+    /// into outputs treated as clean.
     #[serde(default)]
     pub required: bool,
 }

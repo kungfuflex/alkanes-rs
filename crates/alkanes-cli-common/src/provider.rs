@@ -7015,7 +7015,8 @@ mod prepare_send_tests {
     async fn prepare_send_only_carrier_can_fund_refuses() {
         let (p, addr) = wallet(&[(1, 50_000), (2, 1_000)], &[1], &[], &[]).await;
         let err = prepare_send_with(&p, params(&addr, 10_000, false)).await.err().unwrap().to_string();
-        assert!(err.contains("Insufficient spendable BTC"), "{err}");
+        // Was "Insufficient spendable BTC"; A7 keeps the app-parsed prefix.
+        assert!(err.contains("Insufficient funds: need "), "{err}");
         assert!(err.contains("1 UTXO(s) carrying alkanes were excluded"), "{err}");
     }
 
