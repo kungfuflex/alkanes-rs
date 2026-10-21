@@ -219,39 +219,53 @@ impl<P: DeezelProvider> TransactionConstructor<P> {
         Ok(size)
     }
     
-    /// Select UTXOs for transaction
-    async fn select_utxos(&self, params: &SendTransactionParams) -> Result<Vec<(OutPoint, UtxoInfo)>> {
+    /// Select UTXOs for a plain send.
+    ///
+    /// Only UTXOs verified to carry no alkanes are eligible (SFS-05): the
+    /// candidate set goes through the executor's shared carrier filter, which
+    /// excludes carriers and fails closed on UTXOs whose alkane status cannot
+    /// be determined or that metashrew has not indexed yet. Largest-first
+    /// among the clean ones.
+    pub(crate) async fn select_utxos(&self, params: &SendTransactionParams) -> Result<Vec<(OutPoint, UtxoInfo)>> {
         let available_utxos = self.provider.get_utxos(false, params.from_addresses.clone()).await?;
-        
+
         let total_needed = params.outputs.iter().map(|o| o.amount).sum::<u64>() + 1000; // Add fee estimate
-        
+
+        let mut filter = crate::alkanes::carrier::exclude_alkane_carriers(
+            &self.provider,
+            self.provider.is_qubitcoin_mode(),
+            available_utxos,
+            None,
+        )
+        .await;
+
         // Simple UTXO selection (largest first)
         let mut selected = Vec::new();
         let mut total_selected = 0u64;
-        
-        let mut sorted_utxos = available_utxos;
+
+        let mut sorted_utxos = core::mem::take(&mut filter.clean);
         sorted_utxos.sort_by(|a, b| b.1.amount.cmp(&a.1.amount));
-        
+
         for (outpoint, utxo) in sorted_utxos {
             if utxo.frozen {
                 continue;
             }
-            
+
             selected.push((outpoint, utxo.clone()));
             total_selected += utxo.amount;
-            
+
             if total_selected >= total_needed {
                 break;
             }
         }
-        
+
         if total_selected < total_needed {
-            return Err(AlkanesError::Transaction("Insufficient funds".to_string()));
+            return Err(filter.insufficient_error(total_needed, total_selected));
         }
-        
+
         Ok(selected)
     }
-    
+
     /// Get change script
     async fn get_change_script(&self, params: &SendTransactionParams) -> Result<ScriptBuf> {
         if let Some(change_address) = &params.change_address {
@@ -274,8 +288,20 @@ impl<P: DeezelProvider> TransactionConstructor<P> {
         }
     }
     
-    /// Sign transaction
+    /// Sign transaction.
+    ///
+    /// A transaction without protostones is a plain BTC send: before signing,
+    /// every input is re-probed and the signature is refused if any carries
+    /// alkanes or has an unknown alkane status (SFS-05).
     pub async fn sign_transaction(&mut self, tx: Transaction) -> Result<Transaction> {
+        if !crate::alkanes::carrier::tx_has_protostones(&tx) {
+            crate::alkanes::carrier::assert_plain_send_inputs_clean(
+                &self.provider,
+                self.provider.is_qubitcoin_mode(),
+                &tx,
+            )
+            .await?;
+        }
         let tx_hex = bitcoin::consensus::encode::serialize_hex(&tx);
         let signed_hex = self.provider.sign_transaction(tx_hex).await?;
         
@@ -525,5 +551,80 @@ mod tests {
         assert!(recommendations.fast > recommendations.medium);
         assert!(recommendations.medium > recommendations.slow);
         assert!(recommendations.slow >= recommendations.minimum);
+    }
+
+    // ── SFS-05: TransactionConstructor never spends alkane carriers ──────
+
+    use crate::mock_provider::MockProvider;
+    use bitcoin::hashes::Hash;
+
+    fn txid_n(n: u8) -> bitcoin::Txid {
+        bitcoin::Txid::from_byte_array([n; 32])
+    }
+
+    async fn ctor(sats: &[u64], carriers: &[u8], failing: &[u8]) -> (TransactionConstructor<MockProvider>, MockProvider) {
+        let mut p = MockProvider::new(bitcoin::Network::Regtest);
+        p.qubitcoin_mode = false;
+        let addr = WalletProvider::get_address(&p).await.unwrap();
+        let spk = Address::from_str(&addr).unwrap().assume_checked().script_pubkey();
+        for (i, v) in sats.iter().enumerate() {
+            p.utxos.lock().unwrap().push((
+                OutPoint::new(txid_n(i as u8 + 1), 0),
+                bitcoin::TxOut { value: Amount::from_sat(*v), script_pubkey: spk.clone() },
+            ));
+        }
+        for n in carriers {
+            p.alkane_balances.lock().unwrap().insert(format!("{}:0", txid_n(*n)), vec![(2, 0, 1000)]);
+        }
+        for n in failing {
+            p.failing_outpoints.lock().unwrap().insert(format!("{}:0", txid_n(*n)));
+        }
+        (TransactionConstructor::new(p.clone()), p)
+    }
+
+    fn pay(amount: u64) -> SendTransactionParams {
+        SendTransactionParams {
+            outputs: vec![TransactionOutput { amount, script_pubkey: ScriptBuf::new() }],
+            fee_rate: Some(1.0),
+            from_addresses: None,
+            change_address: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn constructor_send_skips_carrier_uses_clean() {
+        // The carrier is the largest UTXO, so the old largest-first selector
+        // would have picked it first.
+        let (c, _) = ctor(&[90_000, 30_000, 30_000], &[1], &[]).await;
+        let tx = c.create_send_transaction(pay(40_000)).await.unwrap();
+        let ins: Vec<_> = tx.input.iter().map(|i| i.previous_output).collect();
+        assert_eq!(ins, vec![OutPoint::new(txid_n(2), 0), OutPoint::new(txid_n(3), 0)]);
+    }
+
+    #[tokio::test]
+    async fn constructor_send_only_carriers_errors() {
+        let (c, _) = ctor(&[90_000], &[1], &[]).await;
+        let err = c.create_send_transaction(pay(40_000)).await.unwrap_err().to_string();
+        assert!(err.contains("1 UTXO(s) carrying alkanes were excluded"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn constructor_send_unknown_status_fails_closed() {
+        let (c, _) = ctor(&[90_000], &[], &[1]).await;
+        let err = c.create_send_transaction(pay(40_000)).await.unwrap_err().to_string();
+        assert!(err.contains("could not be verified"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn constructor_refuses_to_sign_plain_send_with_carrier_input() {
+        let (mut c, _) = ctor(&[90_000, 30_000], &[1], &[]).await;
+        let tx = Transaction {
+            version: bitcoin::transaction::Version::TWO,
+            lock_time: bitcoin::locktime::absolute::LockTime::ZERO,
+            input: vec![TxIn { previous_output: OutPoint::new(txid_n(1), 0), ..Default::default() }],
+            output: vec![bitcoin::TxOut { value: Amount::from_sat(80_000), script_pubkey: ScriptBuf::new() }],
+        };
+        let err = c.sign_transaction(tx).await.unwrap_err().to_string();
+        assert!(err.contains("Refusing to sign"), "{err}");
     }
 }

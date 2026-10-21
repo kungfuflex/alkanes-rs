@@ -3194,6 +3194,13 @@ export class AlkanesProvider {
      * Per-outpoint TxOut + alkane-balance assertions. `required: true` forces the outpoint to
      * be spent (e.g. a package child's carrier) and fails the build if it cannot be. A
      * malformed entry is an error, not silently dropped.
+     *
+     * An output the alkanes indexer has not indexed yet (from a pending transaction, or mined
+     * above the indexed height) funds an alkanes call only when it is asserted here (`alkanes`,
+     * `[]` for "no alkanes") or required; an unasserted one is refused, even when nothing else
+     * can fund. `required` exempts the outpoint from the unknown-status rule only: if its
+     * sheet is known and carries an alkane the call does not request, with no edict in the
+     * first protostone routing it, the build is refused.
      */
     prefetchedUtxos?: Array<{
       outpoint: string;
@@ -3202,7 +3209,11 @@ export class AlkanesProvider {
       alkanes?: Array<{ block: number; tx: number; amount: string }>;
       required?: boolean;
     }>;
-    /** Raw hex of pending transactions whose outputs selection may use (e.g. an unconfirmed parent). */
+    /**
+     * Raw hex of pending transactions whose outputs selection may use (e.g. an unconfirmed parent).
+     * Their outputs are candidates only: each funds the call only when asserted or required in
+     * `prefetchedUtxos`.
+     */
     knownPendingTxHexes?: string[];
   }): Promise<any> {
     const provider = await this.getProvider();

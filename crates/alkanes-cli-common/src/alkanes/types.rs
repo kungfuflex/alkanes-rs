@@ -376,6 +376,14 @@ pub struct EnhancedExecuteParams {
     /// uses it the same way it would use a real mempool entry: strip its
     /// prevouts from the candidate set, add its pay-to-us outputs as
     /// candidates.
+    ///
+    /// A candidate is not a funding source (ALK-18): the indexer has not seen
+    /// a pending tx, so an empty `protorunesbyoutpoint` answer for its output
+    /// proves nothing. Such an output funds an alkanes call only when it is
+    /// asserted (`prefetched_utxos[i].alkanes = Some(..)`) or required
+    /// (`prefetched_utxos[i].required`); otherwise selection refuses it as
+    /// unindexed, even when nothing else can fund. `execute_split` asserts
+    /// Tx A's provably clean change for Tx B itself.
     #[serde(default)]
     pub known_pending_tx_hexes: Vec<String>,
     /// Caller-provided per-outpoint TxOut metadata used to short-circuit
@@ -491,6 +499,13 @@ pub struct PrefetchedUtxo {
     /// it as a fee input. Callers should pass `None` whenever the cache hasn't
     /// covered an outpoint (e.g., the cache index is keyed and this outpoint
     /// is missing from the index).
+    ///
+    /// An assertion is also the only way an output the alkanes indexer has not
+    /// indexed yet (a pending tx's output, or one mined above metashrew's
+    /// indexed height) funds an alkanes call without being `required`: the
+    /// selector treats an empty probe of such an output as absence of
+    /// information and refuses it (ALK-18). An asserted sheet is used as
+    /// given, confirmed or not.
     #[serde(default)]
     pub alkanes: Option<Vec<PrefetchedAlkane>>,
     /// This outpoint MUST be spent by the transaction being built (2026-09-14).
@@ -502,6 +517,16 @@ pub struct PrefetchedUtxo {
     /// `required: true` moves the outpoint to the front of the candidate list and
     /// fails the build if it is not a candidate (e.g. its parent was not passed in
     /// `known_pending_tx_hexes`) or was not selected. Fail-closed by design.
+    ///
+    /// A required outpoint is taken whatever its alkane status, so it is also
+    /// how a caller spends a pending output it holds no assertion for. The
+    /// exemption covers unknown status only: when its sheet is known (asserted
+    /// or probed) and carries an alkane the call does not request, with no
+    /// edict in the first protostone routing it, the pre-sign carrier
+    /// invariant refuses the build. A required coin of unknown status that
+    /// carries an inscription is refused too, before the ordinals split
+    /// (`OrdinalsStrategy::Preserve`): the split would move its unknown sheet
+    /// into outputs treated as clean.
     #[serde(default)]
     pub required: bool,
 }
@@ -550,7 +575,9 @@ pub struct EnhancedExecuteResult {
     /// Populated for the simple-execute path; used by `execute_split` to
     /// hand Tx A's hex into Tx B's `select_utxos` so the indexer-
     /// propagation timing window can't drop the strip pass on Tx A's
-    /// just-broadcast prevouts. None for paths that don't construct a
+    /// just-broadcast prevouts (Tx A's outputs then fund Tx B only as
+    /// required or asserted rows, see `known_pending_tx_hexes`). None for
+    /// paths that don't construct a
     /// reveal tx directly (e.g. commit/reveal envelope deploys at the
     /// commit phase).
     #[serde(default, skip_serializing_if = "Option::is_none")]
