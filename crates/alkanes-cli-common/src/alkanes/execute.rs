@@ -847,6 +847,40 @@ pub enum UtxoSkipReason {
     OrdBehind { block_height: u64, ord_indexed: u64 },
 }
 
+/// Pre-sign carrier invariant for an alkanes call (Halborn: "Incomplete
+/// Wallet Carrier Validation Can Transfer Unrequested Assets to Malicious
+/// Contracts", ALK-18): [`super::carrier::check_input_alkane_sheets`] with
+/// `SpendKind::AlkanesCall`, run in `build_single_transaction` before any
+/// PSBT leaves it.
+///
+/// An outpoint the caller REQUIRED (`PrefetchedUtxo.required`) is exempt
+/// from the unknown-status rule only: naming the outpoint is the caller's
+/// request to spend it whatever the indexer can tell about it (the split
+/// carrier is passed with `alkanes: None`). A required outpoint whose sheet
+/// is known sits in `per_utxo_alkanes` or `clean_outpoints`, and the carrier
+/// function reads `per_utxo_alkanes` first, so an unrequested id it carries
+/// is refused unless the first protostone edicts it back, like any other
+/// input's.
+pub(crate) fn check_input_alkane_sheets(
+    inputs: &[OutPoint],
+    per_utxo_alkanes: &alloc::collections::BTreeMap<OutPoint, Vec<(AlkaneId, u128)>>,
+    clean_outpoints: &alloc::collections::BTreeSet<OutPoint>,
+    caller_required: &alloc::collections::BTreeSet<OutPoint>,
+    alkanes_needed: &alloc::collections::BTreeMap<AlkaneId, u128>,
+    protostones: &[ProtostoneSpec],
+) -> Result<()> {
+    let known_or_required: alloc::collections::BTreeSet<OutPoint> =
+        clean_outpoints.union(caller_required).copied().collect();
+    super::carrier::check_input_alkane_sheets(
+        super::carrier::SpendKind::AlkanesCall,
+        inputs,
+        per_utxo_alkanes,
+        &known_or_required,
+        alkanes_needed,
+        protostones,
+    )
+}
+
 /// Returns `Ok(())` if `info` is eligible for coin selection, else `Err`
 /// with the structured reason for skipping. Pure function — no provider /
 /// network dependency, fully unit-testable.
@@ -1653,24 +1687,29 @@ fn parse_alkane_id_value(value: &serde_json::Value) -> Option<ProtoruneRuneId> {
     Some(ProtoruneRuneId { block, tx })
 }
 
-fn parse_espo_alkanes(outpoint_value: &serde_json::Value) -> Vec<(ProtoruneRuneId, u128)> {
-    outpoint_value
-        .get("alkanes")
-        .and_then(|v| v.as_array())
-        .map(|alkanes| {
-            alkanes
-                .iter()
-                .filter_map(|entry| {
-                    let rune_id = entry
-                        .get("alkane")
-                        .and_then(parse_alkane_id_value)
-                        .or_else(|| parse_alkane_id_value(entry))?;
-                    let amount = entry.get("amount").and_then(json_u128)?;
-                    Some((rune_id, amount))
-                })
-                .collect()
+/// Parse the `alkanes` rows of one espo `get_address_spendable_outpoints`
+/// entry. The result is used as an assertion (it skips the indexer probe),
+/// so it must be the WHOLE sheet: `None` when `alkanes` is not an array or
+/// any row does not parse, and the caller then leaves the outpoint to the
+/// probe (ALK-18). Dropping a bad row would turn a carrier into an
+/// assertion that looks clean. An entry without `alkanes` reads as empty,
+/// as before.
+fn parse_espo_alkanes(outpoint_value: &serde_json::Value) -> Option<Vec<(ProtoruneRuneId, u128)>> {
+    let Some(alkanes) = outpoint_value.get("alkanes") else {
+        return Some(Vec::new());
+    };
+    alkanes
+        .as_array()?
+        .iter()
+        .map(|entry| {
+            let rune_id = entry
+                .get("alkane")
+                .and_then(parse_alkane_id_value)
+                .or_else(|| parse_alkane_id_value(entry))?;
+            let amount = entry.get("amount").and_then(json_u128)?;
+            Some((rune_id, amount))
         })
-        .unwrap_or_default()
+        .collect()
 }
 
 /// Enhanced alkanes executor
@@ -2690,6 +2729,25 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                                 plan.outpoint, plan.safe_amount, plan.clean_amount);
                         }
 
+                        // A split spends each inscribed UTXO and routes only
+                        // the alkanes its known sheet names; its clean outputs
+                        // are then treated as clean. An inscribed UTXO whose
+                        // sheet is unknown (a caller-required outpoint the
+                        // indexer could not answer for) has no such proof:
+                        // refuse rather than launder it into clean outputs.
+                        if let Some(plan) = plans.iter().find(|plan| {
+                            !utxo_selection.per_utxo_alkanes.contains_key(&plan.outpoint)
+                                && !utxo_selection.clean_outpoints.contains(&plan.outpoint)
+                        }) {
+                            return Err(AlkanesError::Wallet(format!(
+                                "Refusing to build: inscribed input {} has an unknown alkane balance, so \
+                                 splitting it could move unrequested tokens; retry once the alkanes \
+                                 indexer can answer for it, or pass it in prefetched_utxos with an \
+                                 alkanes assertion",
+                                plan.outpoint
+                            )));
+                        }
+
                         // Collect alkane data for inscribed UTXOs being split
                         let split_utxo_alkanes: alloc::collections::BTreeMap<OutPoint, Vec<(AlkaneId, u128)>> = plans.iter()
                             .filter_map(|plan| {
@@ -2710,9 +2768,12 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                         // Compute clean extras the split-tx may consume. A
                         // UTXO is a valid extra if it's already in the
                         // selected set (so we know its TxOut data), is NOT
-                        // inscribed (not in `plans`), and carries NO alkanes
-                        // (not in `per_utxo_alkanes` — spending it as a fee
-                        // input would burn user tokens).
+                        // inscribed (not in `plans`), and was VERIFIED to
+                        // carry no alkanes (in `clean_outpoints`). Being absent
+                        // from `per_utxo_alkanes` is not enough: a
+                        // caller-required outpoint of unknown status is absent
+                        // too, and spending it as a fee input would hand
+                        // whatever it carries to the split (ALK-18).
                         //
                         // The split-tx pulls from this set as needed when
                         // small inscribed UTXOs can't self-fund the split.
@@ -2724,7 +2785,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                             .iter()
                             .filter(|(op, _)| {
                                 !inscribed_outpoints.contains(op)
-                                    && !alkane_outpoints_in_selection.contains(op)
+                                    && utxo_selection.clean_outpoints.contains(op)
                             })
                             .cloned()
                             .collect();
@@ -2768,6 +2829,11 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                         // path re-fetches prevouts by outpoint, so only the
                         // outpoints are needed here.
                         new_outpoints.extend(split.clean_utxos.iter().map(|(op, _)| *op));
+                        // Built here from inputs whose sheets are all known,
+                        // with every alkane on them edicted to
+                        // `alkane_outpoints`, so they are known clean for the
+                        // pre-sign invariant below.
+                        utxo_selection.clean_outpoints.extend(split.clean_utxos.iter().map(|(op, _)| *op));
                         // Add clean alkane UTXOs from split (for alkane spending)
                         new_outpoints.extend(split.alkane_outpoints.iter().map(|(op, _)| *op));
 
@@ -2904,6 +2970,19 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         
         // Validate final protostones after potential automatic protostone insertion
         self.validate_protostones(&final_protostones, outputs.len())?;
+
+        // Pre-sign carrier invariant (ALK-18): every input's alkane sheet is
+        // known (or the caller required the outpoint), and nothing unrequested
+        // rides along to the called contract. `build_psbt_and_fee` below adds
+        // no inputs, so this covers every input of the returned PSBT.
+        check_input_alkane_sheets(
+            &final_funding_outpoints,
+            &utxo_selection.per_utxo_alkanes,
+            &utxo_selection.clean_outpoints,
+            &utxo_selection.caller_required,
+            &alkanes_needed,
+            &final_protostones,
+        )?;
         
         log::info!("🔍 About to construct runestone:");
         log::info!("   outputs.len() = {} (outputs before OP_RETURN)", outputs.len());
@@ -3340,7 +3419,15 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                                 };
                                 let script_pubkey = ScriptBuf::from_bytes(script_bytes);
                                 let alkanes = parse_espo_alkanes(&entry);
-                                let has_alkanes = alkanes.iter().any(|(_, amount)| *amount > 0);
+                                if alkanes.is_none() {
+                                    log::warn!(
+                                        "Espo alkanes for {} do not parse; leaving its sheet to the indexer probe",
+                                        outpoint_str
+                                    );
+                                }
+                                let has_alkanes = alkanes
+                                    .as_ref()
+                                    .map_or(false, |a| a.iter().any(|(_, amount)| *amount > 0));
                                 let has_runes = entry
                                     .get("runes")
                                     .and_then(|v| v.as_array())
@@ -3354,7 +3441,9 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                                         script_pubkey: script_pubkey.clone(),
                                     },
                                 );
-                                espo_alkanes_by_outpoint.insert(outpoint, alkanes);
+                                if let Some(alkanes) = alkanes {
+                                    espo_alkanes_by_outpoint.insert(outpoint, alkanes);
+                                }
                                 fetched_utxos.push((
                                     outpoint,
                                     UtxoInfo {
@@ -11942,5 +12031,371 @@ mod carrier_validation_tests {
                 assert!(r.clean_outpoints.contains(&clean));
             }
         }
+    }
+
+    // ── pre-sign invariant ────────────────────────────────────────────────
+
+    fn op(n: u8) -> OutPoint {
+        OutPoint::new(txid_n(n), 0)
+    }
+
+    fn id(block: u64, tx: u64) -> AlkaneId {
+        AlkaneId { block, tx }
+    }
+
+    fn needed_32_0() -> alloc::collections::BTreeMap<AlkaneId, u128> {
+        alloc::collections::BTreeMap::from([(id(32, 0), 2u128)])
+    }
+
+    fn stone(edicts: Vec<ProtostoneEdict>) -> ProtostoneSpec {
+        ProtostoneSpec {
+            cellpack: None,
+            edicts,
+            bitcoin_transfer: None,
+            pointer: Some(OutputTarget::Output(0)),
+            refund: Some(OutputTarget::Output(0)),
+        }
+    }
+
+    fn edict(alkane_id: AlkaneId, amount: u128, target: OutputTarget) -> ProtostoneEdict {
+        ProtostoneEdict { alkane_id, amount, target }
+    }
+
+    fn none() -> alloc::collections::BTreeSet<OutPoint> {
+        alloc::collections::BTreeSet::new()
+    }
+
+    /// T6: an input with no `per_utxo_alkanes` entry, not verified clean and
+    /// not required, is refused.
+    #[test]
+    fn invariant_rejects_unknown_input() {
+        let per = alloc::collections::BTreeMap::new();
+        let err = check_input_alkane_sheets(&[op(1)], &per, &none(), &none(), &needed_32_0(), &[stone(vec![])])
+            .unwrap_err();
+        assert!(err.to_string().contains("unknown alkane balance"), "{err}");
+    }
+
+    /// T7
+    #[test]
+    fn invariant_accepts_requested_and_clean_inputs() {
+        let per = alloc::collections::BTreeMap::from([(op(1), vec![(id(32, 0), 5u128)])]);
+        let clean = alloc::collections::BTreeSet::from([op(2)]);
+        check_input_alkane_sheets(&[op(1), op(2)], &per, &clean, &none(), &needed_32_0(), &[stone(vec![])])
+            .expect("requested asset + clean funding is fine");
+    }
+
+    /// T8
+    #[test]
+    fn invariant_rejects_unrequested_unrouted_alkane() {
+        // Mixed carrier: requested 32:0 plus hidden 99:1 on the same UTXO.
+        let per = alloc::collections::BTreeMap::from([(op(1), vec![(id(32, 0), 2u128), (id(99, 1), 9)])]);
+        let err = check_input_alkane_sheets(&[op(1)], &per, &none(), &none(), &needed_32_0(), &[stone(vec![])])
+            .unwrap_err();
+        assert!(err.to_string().contains("99:1 x9"), "{err}");
+
+        // Partial edict (less than carried) is still a leak.
+        let partial = stone(vec![edict(id(99, 1), 5, OutputTarget::Output(1))]);
+        assert!(check_input_alkane_sheets(&[op(1)], &per, &none(), &none(), &needed_32_0(), &[partial]).is_err());
+
+        // Edict to another protostone is not a route back to the user.
+        let to_proto = stone(vec![edict(id(99, 1), 0, OutputTarget::Protostone(1))]);
+        assert!(check_input_alkane_sheets(&[op(1)], &per, &none(), &none(), &needed_32_0(), &[to_proto]).is_err());
+
+        // An edict in a LATER protostone does not route the leftover the
+        // first one receives.
+        let later = [stone(vec![]), stone(vec![edict(id(99, 1), 0, OutputTarget::Output(1))])];
+        assert!(check_input_alkane_sheets(&[op(1)], &per, &none(), &none(), &needed_32_0(), &later).is_err());
+    }
+
+    /// T9
+    #[test]
+    fn invariant_accepts_unrequested_alkane_routed_by_edict() {
+        let per = alloc::collections::BTreeMap::from([(op(1), vec![(id(32, 0), 2u128), (id(99, 1), 9)])]);
+        for amount in [0u128, 9, 10] {
+            let routed = stone(vec![edict(id(99, 1), amount, OutputTarget::Output(1))]);
+            check_input_alkane_sheets(&[op(1)], &per, &none(), &none(), &needed_32_0(), &[routed])
+                .unwrap_or_else(|e| panic!("edict amount {amount} routes all 9: {e}"));
+        }
+    }
+
+    /// N6 (adjusted by r2): a caller-required outpoint is exempt from the
+    /// unknown-status rule only. Unknown and required: accepted; the same
+    /// outpoint not required: refused. Required with a KNOWN sheet carrying an
+    /// unrequested, unrouted id: refused like any other input (the plan's
+    /// first draft exempted it from both rules, which reopens ALK-18 for a
+    /// coin the caller names). Amounts are u128 end to end: a total above u64
+    /// is routed only by an edict covering the full u128 amount.
+    #[test]
+    fn invariant_exempts_required_inputs_from_the_unknown_rule_only() {
+        let required = alloc::collections::BTreeSet::from([op(1)]);
+        let empty = alloc::collections::BTreeMap::new();
+        check_input_alkane_sheets(&[op(1)], &empty, &none(), &required, &needed_32_0(), &[stone(vec![])])
+            .expect("a required input of unknown status is the caller's request");
+        let err = check_input_alkane_sheets(&[op(1)], &empty, &none(), &none(), &needed_32_0(), &[stone(vec![])])
+            .unwrap_err();
+        assert!(err.to_string().contains("unknown alkane balance"), "{err}");
+
+        let carrier = alloc::collections::BTreeMap::from([(op(1), vec![(id(99, 1), 7u128)])]);
+        let err = check_input_alkane_sheets(&[op(1)], &carrier, &none(), &required, &needed_32_0(), &[stone(vec![])])
+            .unwrap_err();
+        assert!(err.to_string().contains("not requested and are not routed back by an edict (99:1 x7)"), "{err}");
+        let routed = stone(vec![edict(id(99, 1), 0, OutputTarget::Output(0))]);
+        check_input_alkane_sheets(&[op(1)], &carrier, &none(), &required, &needed_32_0(), &[routed])
+            .expect("a required carrier whose unrequested id is edicted back is fine");
+
+        // Two inputs of 2^64 each: the total (2^65) needs an edict of at
+        // least 2^65; one of u64::MAX (or 2^64) is a partial route.
+        let big = (u64::MAX as u128) + 1;
+        let per = alloc::collections::BTreeMap::from([(op(1), vec![(id(99, 1), big)]), (op(2), vec![(id(99, 1), big)])]);
+        for short in [u64::MAX as u128, big, 2 * big - 1] {
+            let partial = stone(vec![edict(id(99, 1), short, OutputTarget::Output(0))]);
+            let err = check_input_alkane_sheets(&[op(1), op(2)], &per, &none(), &none(), &needed_32_0(), &[partial])
+                .unwrap_err();
+            assert!(err.to_string().contains(&format!("99:1 x{}", 2 * big)), "{short}: {err}");
+        }
+        for full in [0, 2 * big] {
+            let routed = stone(vec![edict(id(99, 1), full, OutputTarget::Output(0))]);
+            check_input_alkane_sheets(&[op(1), op(2)], &per, &none(), &none(), &needed_32_0(), &[routed])
+                .unwrap_or_else(|e| panic!("edict {full} covers 2^65: {e}"));
+        }
+    }
+
+    /// N7: when coins were skipped for unknown or unindexed status, the
+    /// shortfall says so and counts each class, on both passes. Without any
+    /// skip the typed `InsufficientBitcoin` and its text are unchanged.
+    #[tokio::test]
+    async fn shortfall_names_unknown_and_unindexed_counts() {
+        for reqs in both_passes() {
+            let (mut mock, addr) = wallet();
+            let carrier = op(0x81);
+            let failing = op(0x82);
+            {
+                let mut utxos = mock.utxos.lock().unwrap();
+                utxos.push((carrier, TxOut { value: Amount::from_sat(546), script_pubkey: addr.script_pubkey() }));
+                utxos.push((failing, TxOut { value: Amount::from_sat(30_000), script_pubkey: addr.script_pubkey() }));
+            }
+            mock.alkane_balances.lock().unwrap().insert(carrier.to_string(), vec![(32, 0, 10)]);
+            mock.failing_outpoints.lock().unwrap().insert(failing.to_string());
+            let (_txid, hex) = pending_tx(&addr, &[20_000]);
+            let msg = wallet_error(select_with(&mut mock, &addr, &reqs, &[hex], &[]).await);
+            assert!(msg.starts_with("Insufficient verified bitcoin: need "), "{reqs:?}: {msg}");
+            assert!(msg.contains("; 1 UTXO(s) were excluded because their alkane balance could not be determined"), "{reqs:?}: {msg}");
+            assert!(msg.contains("; 1 UTXO(s) were excluded because the alkanes indexer has not indexed them yet"), "{reqs:?}: {msg}");
+        }
+
+        let (mut mock, addr) = wallet();
+        mock.utxos.lock().unwrap().push((op(0x83), TxOut { value: Amount::from_sat(1_000), script_pubkey: addr.script_pubkey() }));
+        let err = select(&mut mock, &addr, &[InputRequirement::Bitcoin { amount: 5_000 }]).await.err().expect("short");
+        assert!(matches!(err, AlkanesError::InsufficientBitcoin { needed: 5_000, collected: 1_000 }), "{err:?}");
+        assert_eq!(err.to_string(), "Wallet error: Insufficient funds: need 5000 sats, have 1000");
+    }
+
+    // ── the invariant inside build_single_transaction ─────────────────────
+
+    fn push_coin(mock: &MockProvider, addr: &Address, n: u8, sats: u64) -> OutPoint {
+        let outpoint = op(n);
+        mock.utxos.lock().unwrap().push((outpoint, TxOut { value: Amount::from_sat(sats), script_pubkey: addr.script_pubkey() }));
+        outpoint
+    }
+
+    fn inscribe(mock: &MockProvider, outpoint: OutPoint) {
+        mock.ord_inscriptions.lock().unwrap().insert(
+            outpoint.to_string(),
+            vec![(crate::vendored_ord::InscriptionId { txid: outpoint.txid, index: 0 }, 0)],
+        );
+    }
+
+    /// An app-shaped call paying `sats` to the wallet itself at v0, one
+    /// protostone pointing at v0.
+    fn call_params(
+        addr: &Address,
+        sats: u64,
+        protostones: Vec<ProtostoneSpec>,
+        prefetched_utxos: Vec<PrefetchedUtxo>,
+        ordinals_strategy: OrdinalsStrategy,
+    ) -> EnhancedExecuteParams {
+        EnhancedExecuteParams {
+            fee_rate: Some(1.0),
+            to_addresses: vec![addr.to_string()],
+            from_addresses: Some(vec![addr.to_string()]),
+            change_address: Some(addr.to_string()),
+            alkanes_change_address: Some(addr.to_string()),
+            input_requirements: vec![InputRequirement::BitcoinOutput { amount: sats, target: OutputTarget::Output(0) }],
+            protostones,
+            envelope_data: None,
+            raw_output: false,
+            trace_enabled: false,
+            mine_enabled: false,
+            auto_confirm: false,
+            ordinals_strategy,
+            mempool_indexer: false,
+            split_transactions: false,
+            split_at: None,
+            known_pending_tx_hexes: vec![],
+            prefetched_utxos,
+            excluded_utxos: vec![],
+            skip_diesel_mint: true,
+            max_indexed_height: None,
+            utxo_source: UtxoDataSource::Metashrew,
+        }
+    }
+
+    fn spent(state: &ExecutionState) -> Vec<OutPoint> {
+        match state {
+            ExecutionState::ReadyToSign(r) => r.psbt.unsigned_tx.input.iter().map(|i| i.previous_output).collect(),
+            _ => panic!("expected ReadyToSign"),
+        }
+    }
+
+    /// r2 wiring test: a `required: true` row asserting an id the call does
+    /// not request reaches `build_single_transaction` (the selector takes a
+    /// required coin whatever it holds), and the pre-sign invariant refuses
+    /// it. Same coin with a first-protostone edict routing 99:1 back: builds.
+    /// Same coin required with no assertion and a failing probe (unknown):
+    /// builds, because the exemption covers the unknown rule only.
+    #[tokio::test]
+    async fn required_coin_carrying_an_unrequested_id_is_refused_before_the_psbt() {
+        async fn build(asserted: bool, protostones: Vec<ProtostoneSpec>) -> (OutPoint, Result<ExecutionState>) {
+            let (mut mock, addr) = wallet();
+            push_coin(&mock, &addr, 0x91, 50_000);
+            let required = push_coin(&mock, &addr, 0x92, 10_000);
+            let alkanes = if asserted {
+                mock.alkane_balances.lock().unwrap().insert(required.to_string(), vec![(99, 1, 7)]);
+                Some(vec![PrefetchedAlkane { block: 99, tx: 1, amount: "7".to_string() }])
+            } else {
+                mock.failing_outpoints.lock().unwrap().insert(required.to_string());
+                None
+            };
+            let params = call_params(&addr, 546, protostones, vec![row(required, &addr, 10_000, alkanes, true)], OrdinalsStrategy::Burn);
+            let mut executor = EnhancedAlkanesExecutor::new(&mut mock);
+            let res = executor.build_single_transaction(&params).await;
+            (required, res)
+        }
+
+        let (_required, res) = build(true, vec![stone(vec![])]).await;
+        match res {
+            Err(AlkanesError::Wallet(msg)) => assert!(
+                msg.starts_with("Refusing to build: selected inputs carry alkanes that were not requested")
+                    && msg.contains("(99:1 x7)"),
+                "unexpected refusal: {msg}"
+            ),
+            Err(e) => panic!("expected the pre-sign refusal, got {e}"),
+            Ok(state) => panic!("built a PSBT spending {:?}: 99:1 x7 would reach the called contract", spent(&state)),
+        }
+
+        let (required, res) = build(true, vec![stone(vec![edict(id(99, 1), 0, OutputTarget::Output(0))])]).await;
+        let state = res.expect("an edict routing the unrequested id back lets it build");
+        assert!(spent(&state).contains(&required));
+
+        let (required, res) = build(false, vec![stone(vec![])]).await;
+        let state = res.expect("a required coin of unknown status is exempt from the unknown rule");
+        assert!(spent(&state).contains(&required));
+    }
+
+    /// r2 split-branch test: an inscribed, verified-clean coin is split under
+    /// `OrdinalsStrategy::Preserve` (the clean extra pays the split fee), and
+    /// the main transaction spends the split's clean outputs, which the
+    /// invariant accepts because the split branch records them in
+    /// `clean_outpoints`.
+    ///
+    /// The mock cannot hand back prevouts for the (unbroadcast) split
+    /// outputs, so `build_psbt_and_fee`, which runs AFTER the invariant,
+    /// stops with "UTXO not found: <split output>". That error is the proof
+    /// the invariant passed; a build that succeeds must spend split outputs.
+    #[tokio::test]
+    async fn main_tx_spends_split_clean_outputs_past_the_invariant() {
+        let (mut mock, addr) = wallet();
+        let inscribed = push_coin(&mock, &addr, 0xa1, 5_000);
+        let extra = push_coin(&mock, &addr, 0xa2, 10_000);
+        inscribe(&mock, inscribed);
+        let params = call_params(&addr, 12_000, vec![stone(vec![])], vec![], OrdinalsStrategy::Preserve);
+        let mut executor = EnhancedAlkanesExecutor::new(&mut mock);
+        match executor.build_single_transaction(&params).await {
+            Err(AlkanesError::Wallet(msg)) => {
+                let missing = msg
+                    .strip_prefix("UTXO not found: ")
+                    .and_then(|o| OutPoint::from_str(o).ok())
+                    .unwrap_or_else(|| panic!("expected the post-invariant prevout lookup to fail, got: {msg}"));
+                assert!(missing != inscribed && missing != extra, "the missing prevout must be a split output: {missing}");
+            }
+            Err(e) => panic!("unexpected error: {e}"),
+            Ok(state) => {
+                let inputs = spent(&state);
+                assert!(!inputs.contains(&inscribed) && !inputs.contains(&extra), "{inputs:?}");
+            }
+        }
+    }
+
+    /// H3 tightening: a split only takes extras that were VERIFIED clean. A
+    /// caller-required coin of unknown status is in the selection (and absent
+    /// from `per_utxo_alkanes`), but it must not pay the split fee.
+    #[tokio::test]
+    async fn split_never_takes_a_required_unknown_coin_as_fee_input() {
+        let (mut mock, addr) = wallet();
+        let inscribed = push_coin(&mock, &addr, 0xb1, 5_000);
+        let required = push_coin(&mock, &addr, 0xb2, 10_000);
+        inscribe(&mock, inscribed);
+        mock.failing_outpoints.lock().unwrap().insert(required.to_string());
+        let params =
+            call_params(&addr, 12_000, vec![stone(vec![])], vec![row(required, &addr, 10_000, None, true)], OrdinalsStrategy::Preserve);
+        let mut executor = EnhancedAlkanesExecutor::new(&mut mock);
+        match executor.build_single_transaction(&params).await {
+            Err(AlkanesError::Wallet(msg)) => assert!(msg.starts_with("Not enough clean funds to split inscribed UTXOs"), "{msg}"),
+            Err(e) => panic!("unexpected error: {e}"),
+            Ok(_) => panic!("the split was funded"),
+        }
+    }
+
+    /// H3 tightening: an inscribed coin whose sheet is unknown (required,
+    /// probe failing) is refused before it is split, instead of having its
+    /// split outputs recorded as clean.
+    #[tokio::test]
+    async fn inscribed_coin_of_unknown_status_is_never_split() {
+        let (mut mock, addr) = wallet();
+        let inscribed = push_coin(&mock, &addr, 0xc1, 5_000);
+        push_coin(&mock, &addr, 0xc2, 10_000);
+        inscribe(&mock, inscribed);
+        mock.failing_outpoints.lock().unwrap().insert(inscribed.to_string());
+        let params =
+            call_params(&addr, 12_000, vec![stone(vec![])], vec![row(inscribed, &addr, 5_000, None, true)], OrdinalsStrategy::Preserve);
+        let mut executor = EnhancedAlkanesExecutor::new(&mut mock);
+        match executor.build_single_transaction(&params).await {
+            Err(AlkanesError::Wallet(msg)) => assert_eq!(
+                msg,
+                format!(
+                    "Refusing to build: inscribed input {inscribed} has an unknown alkane balance, so splitting it \
+                     could move unrequested tokens; retry once the alkanes indexer can answer for it, or pass it \
+                     in prefetched_utxos with an alkanes assertion"
+                )
+            ),
+            Err(e) => panic!("unexpected error: {e}"),
+            Ok(_) => panic!("an inscribed coin of unknown status was split"),
+        }
+    }
+
+    /// Espo spendable-outpoint rows are used as assertions, so a row that
+    /// does not parse must not shrink the sheet: the whole outpoint is left
+    /// to the indexer probe (`None`). Before, the bad row was dropped and a
+    /// carrier could read as asserted clean.
+    #[test]
+    fn parse_espo_alkanes_refuses_the_sheet_on_any_bad_row() {
+        let rid = |block: u128, tx: u128| ProtoruneRuneId { block, tx };
+        let good = serde_json::json!({ "alkane": "2:0", "amount": "5" });
+        let ok = serde_json::json!({ "alkanes": [good.clone(), { "block": 99, "tx": "1", "amount": 7 }] });
+        assert_eq!(parse_espo_alkanes(&ok), Some(vec![(rid(2, 0), 5), (rid(99, 1), 7)]));
+        assert_eq!(parse_espo_alkanes(&serde_json::json!({ "alkanes": [] })), Some(vec![]));
+        assert_eq!(parse_espo_alkanes(&serde_json::json!({ "outpoint": "x" })), Some(vec![]), "no alkanes key reads as empty");
+
+        for bad in [
+            serde_json::json!({ "alkane": "99", "amount": "9" }),
+            serde_json::json!({ "alkane": "99:x", "amount": "9" }),
+            serde_json::json!({ "alkane": "99:1", "amount": "nine" }),
+            serde_json::json!({ "alkane": "99:1" }),
+            serde_json::json!({ "amount": "9" }),
+        ] {
+            let entry = serde_json::json!({ "alkanes": [good.clone(), bad.clone()] });
+            assert_eq!(parse_espo_alkanes(&entry), None, "{bad}");
+        }
+        assert_eq!(parse_espo_alkanes(&serde_json::json!({ "alkanes": "2:0" })), None, "alkanes not an array");
     }
 }

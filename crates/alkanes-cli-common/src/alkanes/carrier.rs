@@ -308,12 +308,16 @@ pub enum SpendKind {
 ///
 /// Excess of a REQUESTED alkane id is not covered here - that is the
 /// requested asset and its routing is the caller's protostone semantics.
+///
+/// Amounts are u128, the executor's width (develop's `per_utxo_alkanes`,
+/// `alkanes_needed` and `ProtostoneEdict.amount`): saturating a carried total
+/// to u64 would let a smaller edict "cover" it.
 pub fn check_input_alkane_sheets(
     kind: SpendKind,
     inputs: &[OutPoint],
-    per_utxo_alkanes: &BTreeMap<OutPoint, Vec<(AlkaneId, u64)>>,
+    per_utxo_alkanes: &BTreeMap<OutPoint, Vec<(AlkaneId, u128)>>,
     clean_outpoints: &BTreeSet<OutPoint>,
-    alkanes_needed: &BTreeMap<AlkaneId, u64>,
+    alkanes_needed: &BTreeMap<AlkaneId, u128>,
     protostones: &[ProtostoneSpec],
 ) -> Result<()> {
     let mut unrequested: BTreeMap<AlkaneId, u128> = BTreeMap::new();
@@ -321,7 +325,8 @@ pub fn check_input_alkane_sheets(
         if let Some(sheet) = per_utxo_alkanes.get(op) {
             for (id, amount) in sheet {
                 if *amount > 0 && !alkanes_needed.contains_key(id) {
-                    *unrequested.entry(id.clone()).or_insert(0) += *amount as u128;
+                    let total = unrequested.entry(id.clone()).or_insert(0);
+                    *total = total.saturating_add(*amount);
                 }
             }
         } else if !clean_outpoints.contains(op) {
@@ -345,7 +350,7 @@ pub fn check_input_alkane_sheets(
             p.edicts.iter().any(|e| {
                 e.alkane_id == *id
                     && matches!(e.target, OutputTarget::Output(_))
-                    && (e.amount == 0 || e.amount as u128 >= total)
+                    && (e.amount == 0 || e.amount >= total)
             })
         })
     };
@@ -375,12 +380,14 @@ pub fn check_input_alkane_sheets(
 }
 
 /// Convert a resolved carrier sheet into the executor's per-UTXO shape.
-/// Ids or amounts beyond u64 saturate; the invariant only needs "non-zero".
-fn carrier_sheet_u64(sheet: &[(ProtoruneRuneId, u128)]) -> Vec<(AlkaneId, u64)> {
+/// Ids beyond u64 saturate (`AlkaneId` is u64; a plain send requests no id,
+/// so any non-zero amount is refused whatever the id reads as). Amounts are
+/// kept as they are.
+fn carrier_sheet(sheet: &[(ProtoruneRuneId, u128)]) -> Vec<(AlkaneId, u128)> {
     let sat = |v: u128| u64::try_from(v).unwrap_or(u64::MAX);
     sheet
         .iter()
-        .map(|(id, amount)| (AlkaneId { block: sat(id.block), tx: sat(id.tx) }, sat(*amount).max(1)))
+        .map(|(id, amount)| (AlkaneId { block: sat(id.block), tx: sat(id.tx) }, *amount))
         .collect()
 }
 
@@ -405,7 +412,7 @@ pub async fn assert_plain_send_inputs_clean<P: MetashrewRpcProvider + ?Sized>(
     tx: &Transaction,
 ) -> Result<()> {
     let inputs: Vec<OutPoint> = tx.input.iter().map(|i| i.previous_output).collect();
-    let mut per_utxo: BTreeMap<OutPoint, Vec<(AlkaneId, u64)>> = BTreeMap::new();
+    let mut per_utxo: BTreeMap<OutPoint, Vec<(AlkaneId, u128)>> = BTreeMap::new();
     let mut clean: BTreeSet<OutPoint> = BTreeSet::new();
     for op in &inputs {
         match resolve_alkane_sheet(provider, qubitcoin_mode, op, None).await.0 {
@@ -413,7 +420,7 @@ pub async fn assert_plain_send_inputs_clean<P: MetashrewRpcProvider + ?Sized>(
                 clean.insert(*op);
             }
             AlkaneSheetStatus::Carrier(sheet) => {
-                per_utxo.insert(*op, carrier_sheet_u64(&sheet));
+                per_utxo.insert(*op, carrier_sheet(&sheet));
             }
             AlkaneSheetStatus::Unknown(e) => {
                 log::warn!("Pre-sign probe failed for {}:{}: {}", op.txid, op.vout, e);
