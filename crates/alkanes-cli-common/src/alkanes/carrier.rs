@@ -23,6 +23,10 @@
 //!   transaction's inputs (alkanes calls and plain sends).
 //! * [`assert_plain_send_inputs_clean`] - re-probe a built plain send's inputs
 //!   and run the invariant right before signing.
+//! * [`assert_signable_tx`] / [`assert_signable_psbt`] - the check of the
+//!   generic signers, which sign transactions built elsewhere: every input's
+//!   status must be known, and a plain transaction must spend no carrier and
+//!   no input the indexer has not indexed yet.
 
 use crate::traits::{MetashrewRpcProvider, UtxoInfo};
 use crate::{AlkanesError, Result};
@@ -189,7 +193,8 @@ impl CarrierFilter {
 /// The pre-sign re-probes ([`assert_plain_send_inputs_clean`] and the
 /// package / PSBT variants) do not apply this rule: they see only a
 /// transaction, not its inputs' `UtxoInfo`. They re-check carriers and
-/// unknowns; the unindexed rule lives here, in selection.
+/// unknowns; the unindexed rule lives here, in selection, and in
+/// [`assert_signable_tx`] for plain transactions.
 pub async fn exclude_alkane_carriers<P: MetashrewRpcProvider + ?Sized>(
     provider: &P,
     qubitcoin_mode: bool,
@@ -698,6 +703,220 @@ pub async fn assert_plain_send_package_clean<P: MetashrewRpcProvider + ?Sized>(
     let mut off_split = main.clone();
     off_split.input.retain(|i| rest.contains(&i.previous_output));
     assert_plain_send_inputs_clean(provider, qubitcoin_mode, &off_split).await
+}
+
+// ── generic signers: transactions signed but not built here ─────────────
+
+/// Caller assertions for [`assert_signable_tx`]. `Default` asserts nothing:
+/// every input is re-probed and unknown status is refused.
+#[derive(Debug, Clone, Default)]
+pub struct SignerAssertions {
+    /// Asserted sheets (`prefetched_utxos[].alkanes`), honoured as coin
+    /// selection honours them: an asserted input is not probed and its
+    /// transaction's status is not read.
+    pub sheets: AssertedSheets,
+    /// Parent transactions by txid (`known_pending_tx_hexes`).
+    pub parents: BTreeMap<bitcoin::Txid, Transaction>,
+}
+
+/// True iff `tx` is an alkanes call: its runestone decodes to at least one
+/// protostone with protocol tag 1, which is what protorune indexes. Anything
+/// else is plain: no OP_RETURN, a plain OP_RETURN, a cenotaph, a protocol
+/// field that does not decode or holds no protostone, only other tags.
+/// Stricter than [`tx_has_protostones`] on purpose: calling a plain send an
+/// alkanes call would admit carriers, the reverse only refuses.
+pub fn is_alkanes_call(tx: &Transaction) -> bool {
+    matches!(
+        crate::runestone_enhanced::format_runestone(tx),
+        Ok(stones) if stones.iter().any(|s| s.protocol_tag == 1)
+    )
+}
+
+/// What `get_tx_status` says about an input's parent transaction.
+#[derive(Debug, Clone)]
+enum ParentStatus {
+    Confirmed(u64),
+    Unconfirmed,
+    Unreadable(String),
+}
+
+async fn read_parent_status<P: crate::traits::EsploraProvider + ?Sized>(
+    provider: &P,
+    txid: &bitcoin::Txid,
+) -> ParentStatus {
+    let status = match provider.get_tx_status(&txid.to_string()).await {
+        Ok(status) => status,
+        Err(e) => return ParentStatus::Unreadable(format!("{e}")),
+    };
+    match status.get("confirmed").and_then(|c| c.as_bool()) {
+        Some(false) => ParentStatus::Unconfirmed,
+        Some(true) => match status.get("block_height").and_then(|h| h.as_u64()) {
+            Some(height) => ParentStatus::Confirmed(height),
+            None => ParentStatus::Unreadable("confirmed without a numeric block_height".to_string()),
+        },
+        None => ParentStatus::Unreadable("`confirmed` missing or not a bool".to_string()),
+    }
+}
+
+/// The `UtxoInfo` [`probe_not_indexed`] needs for an input whose transaction
+/// confirmed at `height`; it reads nothing else.
+fn mined_at(op: &OutPoint, height: u64) -> UtxoInfo {
+    UtxoInfo {
+        txid: op.txid.to_string(),
+        vout: op.vout,
+        amount: 0,
+        address: String::new(),
+        script_pubkey: None,
+        confirmations: 1,
+        frozen: false,
+        freeze_reason: None,
+        block_height: Some(height),
+        has_inscriptions: false,
+        has_runes: false,
+        has_alkanes: false,
+        is_coinbase: false,
+    }
+}
+
+/// Pre-sign check for a transaction this crate did not build (the generic
+/// signers: `walletSignPsbtBase64`, `sign_transaction`, `wallet sign-tx`).
+///
+/// Qubitcoin mode accepts without reads. Otherwise every unasserted input is
+/// probed, and an input whose probe fails is refused. A plain transaction
+/// (see [`is_alkanes_call`]) also refuses carriers, and a probe-clean
+/// unasserted input must be indexed: its transaction's `get_tx_status`
+/// (once per txid) must say confirmed at a height at or below metashrew's,
+/// which is read once before the first probe. An unconfirmed transaction, or
+/// one above that height or with the height unreadable, is unindexed; a status
+/// that cannot be read is unknown. An alkanes call is accepted with carriers
+/// (its protostones route them) and gets no status reads.
+///
+/// An asserted input (`assertions.sheets`) takes its asserted sheet, as in
+/// coin selection: no probe, no status read. Refusals name carriers first,
+/// then unknown inputs, then unindexed ones.
+pub async fn assert_signable_tx<P: crate::traits::DeezelProvider + ?Sized>(
+    provider: &P,
+    qubitcoin_mode: bool,
+    tx: &Transaction,
+    assertions: &SignerAssertions,
+) -> Result<()> {
+    if qubitcoin_mode {
+        return Ok(());
+    }
+    let alkanes_call = is_alkanes_call(tx);
+    let inputs: Vec<OutPoint> = tx.input.iter().map(|i| i.previous_output).collect();
+    // Read before the first probe: read after, the indexer could index block
+    // h in between, and an input mined at h would pass on an empty answer
+    // taken before h was indexed.
+    let mut indexed_height: Option<core::result::Result<u64, String>> = None;
+    if !alkanes_call && inputs.iter().any(|op| !assertions.sheets.contains_key(op)) {
+        let read = provider.get_metashrew_height().await.map_err(|e| format!("{e}"));
+        if let Err(e) = &read {
+            log::warn!(
+                "Pre-sign check: metashrew indexed height unavailable ({}); every probe-clean \
+                 input is unindexed",
+                e
+            );
+        }
+        indexed_height = Some(read);
+    }
+    let mut statuses: BTreeMap<bitcoin::Txid, ParentStatus> = BTreeMap::new();
+    let mut carriers: Vec<(OutPoint, Vec<(ProtoruneRuneId, u128)>)> = Vec::new();
+    let mut unknown: Vec<(OutPoint, String)> = Vec::new();
+    let mut unindexed: Vec<(OutPoint, String)> = Vec::new();
+    for op in &inputs {
+        match resolve_alkane_sheet(provider, false, op, Some(&assertions.sheets)).await {
+            (AlkaneSheetStatus::Carrier(sheet), _) => {
+                if !alkanes_call {
+                    carriers.push((*op, sheet));
+                }
+            }
+            (AlkaneSheetStatus::Unknown(e), _) => {
+                unknown.push((*op, format!("indexer probe failed: {e}")));
+            }
+            (AlkaneSheetStatus::Clean, source) => {
+                if alkanes_call || source != SheetSource::Probe {
+                    continue;
+                }
+                let status = match statuses.get(&op.txid) {
+                    Some(status) => status.clone(),
+                    None => {
+                        let status = read_parent_status(provider, &op.txid).await;
+                        statuses.insert(op.txid, status.clone());
+                        status
+                    }
+                };
+                match status {
+                    ParentStatus::Confirmed(height) => {
+                        if let Some(why) =
+                            probe_not_indexed(provider, &mined_at(op, height), &mut indexed_height).await
+                        {
+                            unindexed.push((*op, why));
+                        }
+                    }
+                    ParentStatus::Unconfirmed => unindexed.push((*op, "unconfirmed".to_string())),
+                    ParentStatus::Unreadable(e) => unknown.push((*op, format!("status unreadable: {e}"))),
+                }
+            }
+        }
+    }
+    if !carriers.is_empty() {
+        let listed: Vec<String> = carriers
+            .iter()
+            .flat_map(|(op, sheet)| {
+                sheet.iter().map(move |(id, amount)| {
+                    format!("{}:{} {}:{} x{}", op.txid, op.vout, id.block, id.tx, amount)
+                })
+            })
+            .collect();
+        return Err(AlkanesError::Wallet(format!(
+            "Refusing to sign: the inputs of this plain BTC send carry alkanes ({}). With no \
+             protostone to route them they would go to the first output (the recipient). Move \
+             them with an alkanes transfer first",
+            listed.join(", ")
+        )));
+    }
+    if let Some((op, why)) = unknown.first() {
+        return Err(AlkanesError::Wallet(if alkanes_call {
+            format!(
+                "Refusing to sign: input {}:{} has an unknown alkane balance ({}); this alkanes \
+                 call could forward tokens on it to the called contract. Retry once the alkanes \
+                 indexer is reachable, or pass it in prefetchedUtxos with an alkanes assertion",
+                op.txid, op.vout, why
+            )
+        } else {
+            format!(
+                "Refusing to sign: input {}:{} has an unknown alkane balance ({}); a plain BTC \
+                 send could transfer alkanes on it to the recipient. Retry once the alkanes \
+                 indexer is reachable",
+                op.txid, op.vout, why
+            )
+        }));
+    }
+    if let Some((op, why)) = unindexed.first() {
+        return Err(AlkanesError::Wallet(format!(
+            "Refusing to sign: input {}:{} of this plain BTC send is not indexed by the alkanes \
+             indexer yet ({}), so an empty balance proves nothing. Retry after the next block is \
+             indexed, or pass it in prefetchedUtxos with an alkanes assertion",
+            op.txid, op.vout, why
+        )));
+    }
+    Ok(())
+}
+
+/// [`assert_signable_tx`] over a base64 PSBT's unsigned transaction.
+pub async fn assert_signable_psbt<P: crate::traits::DeezelProvider + ?Sized>(
+    provider: &P,
+    qubitcoin_mode: bool,
+    psbt_base64: &str,
+    assertions: &SignerAssertions,
+) -> Result<()> {
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+    let bytes = STANDARD
+        .decode(psbt_base64)
+        .map_err(|e| AlkanesError::Parse(format!("Invalid PSBT base64: {e}")))?;
+    let psbt = bitcoin::psbt::Psbt::deserialize(&bytes)?;
+    assert_signable_tx(provider, qubitcoin_mode, &psbt.unsigned_tx, assertions).await
 }
 
 #[cfg(test)]
@@ -1307,5 +1526,227 @@ mod tests {
         // Without unindexed UTXOs the message is the stage 1 text.
         let f = CarrierFilter { unindexed: vec![], ..f };
         assert!(!f.insufficient_error(1_000, 0).to_string().contains("not indexed"));
+    }
+
+    // ── generic signers: transactions signed but not built here ─────────
+
+    /// Answer of the mock's `get_tx_status` for UTXO `n`'s transaction;
+    /// `None` makes the read fail.
+    fn set_status(p: &MockProvider, n: u8, status: Option<serde_json::Value>) {
+        p.tx_status.lock().unwrap().insert(txid_n(n).to_string(), status);
+    }
+
+    fn mined(height: u64) -> Option<serde_json::Value> {
+        Some(serde_json::json!({"confirmed": true, "block_height": height}))
+    }
+
+    /// `plain_tx(inputs)` plus an OP_RETURN output with `script`.
+    fn tx_with_op_return(inputs: &[u8], script: ScriptBuf) -> Transaction {
+        let mut tx = plain_tx(inputs);
+        tx.output.push(TxOut { value: Amount::ZERO, script_pubkey: script });
+        tx
+    }
+
+    /// A runestone whose protocol field is `protocol`.
+    fn protocol_runestone(protocol: Vec<u128>) -> ScriptBuf {
+        ordinals::Runestone { protocol: Some(protocol), pointer: Some(0), ..Default::default() }.encipher()
+    }
+
+    /// The encoded tag-1 protostone of `package_refuses_split_with_protostones`.
+    const TAG1_STONE: u128 = 1498966328321;
+
+    /// `plain_tx(inputs)` carrying a tag-1 protostone (an alkanes call).
+    fn call_tx(inputs: &[u8]) -> Transaction {
+        tx_with_op_return(inputs, protocol_runestone(vec![TAG1_STONE]))
+    }
+
+    async fn sign_check(p: &MockProvider, tx: &Transaction) -> Result<()> {
+        assert_signable_tx(p, false, tx, &SignerAssertions::default()).await
+    }
+
+    const PLAIN_UNKNOWN: &str = "has an unknown alkane balance";
+    const UNINDEXED_INPUT: &str = "of this plain BTC send is not indexed by the alkanes indexer yet";
+    const CALL_UNKNOWN: &str = "this alkanes call could forward tokens on it to the called contract";
+
+    #[tokio::test]
+    async fn signer_plain_clean_indexed_inputs_sign() {
+        // Metashrew has indexed up to 100; 1 is mined at 99, 2 at exactly 100.
+        let p = mock(&[], &[]);
+        *p.metashrew_height.lock().unwrap() = Some(100);
+        set_status(&p, 1, mined(99));
+        set_status(&p, 2, mined(100));
+        let tx = plain_tx(&[1, 2]);
+        assert!(!is_alkanes_call(&tx));
+        sign_check(&p, &tx).await.unwrap();
+        // The mock's default status (mined at 100) is indexed at its default
+        // metashrew height, so other tests sign without setting statuses.
+        sign_check(&mock(&[], &[]), &plain_tx(&[3])).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn signer_plain_refuses_carrier() {
+        let p = mock(&[1], &[]);
+        let tx = plain_tx(&[2, 1]);
+        assert!(!is_alkanes_call(&tx));
+        let err = sign_check(&p, &tx).await.unwrap_err().to_string();
+        assert!(err.contains("Refusing to sign") && err.contains("carry alkanes"), "{err}");
+        assert!(err.contains(&format!("{}:0 2:0 x1000", txid_n(1))), "{err}");
+        assert!(!err.contains(&format!("{}:0", txid_n(2))), "{err}");
+    }
+
+    #[tokio::test]
+    async fn signer_plain_refuses_failing_probe() {
+        let p = mock(&[], &[1]);
+        let err = sign_check(&p, &plain_tx(&[2, 1])).await.unwrap_err().to_string();
+        assert!(err.contains(&format!("{}:0 {PLAIN_UNKNOWN}", txid_n(1))), "{err}");
+        assert!(err.contains("(indexer probe failed: Network error: mock: protorunesbyoutpoint failed"), "{err}");
+        assert!(err.contains("a plain BTC send could transfer alkanes on it to the recipient"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn signer_plain_refuses_unconfirmed_parent() {
+        let p = mock(&[], &[]);
+        set_status(&p, 1, Some(serde_json::json!({"confirmed": false})));
+        let err = sign_check(&p, &plain_tx(&[1])).await.unwrap_err().to_string();
+        assert!(err.contains(&format!("{}:0 {UNINDEXED_INPUT} (unconfirmed)", txid_n(1))), "{err}");
+        assert!(err.contains("so an empty balance proves nothing"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn signer_plain_indexed_rule_edges() {
+        let p = mock(&[], &[]);
+        *p.metashrew_height.lock().unwrap() = Some(100);
+        set_status(&p, 1, mined(101));
+        set_status(&p, 2, mined(100));
+        let err = sign_check(&p, &plain_tx(&[1])).await.unwrap_err().to_string();
+        assert!(err.contains(UNINDEXED_INPUT) && err.contains("block 101 is above the indexed height 100"), "{err}");
+        sign_check(&p, &plain_tx(&[2])).await.unwrap();
+        // Metashrew's height cannot be read: an indexed-looking parent proves
+        // nothing either (#331's choice in selection).
+        *p.metashrew_height.lock().unwrap() = None;
+        let err = sign_check(&p, &plain_tx(&[2])).await.unwrap_err().to_string();
+        assert!(err.contains(UNINDEXED_INPUT) && err.contains("indexed height unavailable"), "{err}");
+        *p.metashrew_height.lock().unwrap() = Some(100);
+        // The parent's status cannot be read, or does not say where it is.
+        set_status(&p, 3, None);
+        set_status(&p, 4, Some(serde_json::json!({"confirmed": true})));
+        set_status(&p, 5, Some(serde_json::json!({"block_height": 100})));
+        for (n, why) in [
+            (3, "status unreadable: Network error: mock: tx status unavailable"),
+            (4, "status unreadable: confirmed without a numeric block_height"),
+            (5, "status unreadable: `confirmed` missing or not a bool"),
+        ] {
+            let err = sign_check(&p, &plain_tx(&[n])).await.unwrap_err().to_string();
+            assert!(err.contains(PLAIN_UNKNOWN) && err.contains(why), "{n}: {err}");
+        }
+    }
+
+    #[tokio::test]
+    async fn signer_reads_indexed_height_before_first_probe() {
+        // Metashrew indexes block 100 right after the first probe answers.
+        // The input is mined at 100, so that empty answer was taken before
+        // its block was indexed and proves nothing.
+        let p = mock(&[], &[]);
+        *p.metashrew_height.lock().unwrap() = Some(99);
+        *p.metashrew_height_after_probe.lock().unwrap() = Some(100);
+        set_status(&p, 1, mined(100));
+        let err = sign_check(&p, &plain_tx(&[1])).await.unwrap_err().to_string();
+        assert!(err.contains(UNINDEXED_INPUT) && err.contains("block 100 is above the indexed height 99"), "{err}");
+        // Probed again now that 100 is indexed: clean.
+        sign_check(&p, &plain_tx(&[1])).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn signer_protostone_gets_the_unknown_rule_only() {
+        let p = mock(&[1], &[2]);
+        let tx = call_tx(&[1]);
+        assert!(is_alkanes_call(&tx));
+        // Its protostones route what the carrier holds.
+        sign_check(&p, &tx).await.unwrap();
+        let err = sign_check(&p, &call_tx(&[1, 2])).await.unwrap_err().to_string();
+        assert!(err.contains(&format!("{}:0 {PLAIN_UNKNOWN} (indexer probe failed:", txid_n(2))), "{err}");
+        assert!(err.contains(CALL_UNKNOWN) && err.contains("pass it in prefetchedUtxos"), "{err}");
+        // No indexed rule: an unconfirmed parent signs, and neither its
+        // status nor metashrew's height is read (both reads would fail).
+        set_status(&p, 3, None);
+        *p.metashrew_height.lock().unwrap() = None;
+        sign_check(&p, &call_tx(&[3])).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn signer_kind_needs_a_tag1_protostone() {
+        use bitcoin::opcodes::all::{OP_PUSHNUM_13, OP_RETURN};
+        let p = mock(&[1], &[]);
+        // The same stone as TAG1_STONE with tag 2 in its first byte.
+        let other_tag = protocol_runestone(vec![TAG1_STONE + 1]);
+        let other_tag_tx = tx_with_op_return(&[1], other_tag);
+        let stones = crate::runestone_enhanced::format_runestone(&other_tag_tx).unwrap();
+        assert!(!stones.is_empty() && stones.iter().all(|s| s.protocol_tag == 2), "{stones:?}");
+        // A truncated varint after OP_RETURN OP_13 is a cenotaph.
+        let cenotaph = bitcoin::script::Builder::new()
+            .push_opcode(OP_RETURN)
+            .push_opcode(OP_PUSHNUM_13)
+            .push_slice([0x80u8])
+            .into_script();
+        let cenotaph_tx = tx_with_op_return(&[1], cenotaph);
+        assert!(matches!(ordinals::Runestone::decipher(&cenotaph_tx), Some(ordinals::Artifact::Cenotaph(_))));
+        let plain_op_return = bitcoin::script::Builder::new()
+            .push_opcode(OP_RETURN)
+            .push_slice(b"hello")
+            .into_script();
+        for (what, tx) in [
+            ("only a tag-2 stone", other_tag_tx),
+            ("a cenotaph", cenotaph_tx),
+            // The executor's shape with no stones (B.0 fact 5).
+            ("protocol: Some([])", tx_with_op_return(&[1], protocol_runestone(vec![]))),
+            ("a protocol field holding no stone", tx_with_op_return(&[1], protocol_runestone(vec![0]))),
+            ("a plain OP_RETURN", tx_with_op_return(&[1], plain_op_return)),
+            ("no OP_RETURN", plain_tx(&[1])),
+        ] {
+            assert!(!is_alkanes_call(&tx), "{what}");
+            let err = sign_check(&p, &tx).await.unwrap_err().to_string();
+            assert!(err.contains("carry alkanes") && err.contains("2:0 x1000"), "{what}: {err}");
+        }
+        let tx = call_tx(&[1]);
+        assert!(is_alkanes_call(&tx));
+        sign_check(&p, &tx).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn signer_psbt_matches_tx() {
+        use base64::{engine::general_purpose::STANDARD, Engine as _};
+        let p = mock(&[1], &[]);
+        let none = SignerAssertions::default();
+        let err = assert_signable_psbt(&p, false, "not base64!", &none).await.unwrap_err();
+        assert!(matches!(err, AlkanesError::Parse(_)), "{err}");
+        for tx in [plain_tx(&[2]), plain_tx(&[2, 1]), call_tx(&[1])] {
+            let b64 = STANDARD.encode(bitcoin::psbt::Psbt::from_unsigned_tx(tx.clone()).unwrap().serialize());
+            let from_psbt = assert_signable_psbt(&p, false, &b64, &none).await.map_err(|e| e.to_string());
+            let from_tx = sign_check(&p, &tx).await.map_err(|e| e.to_string());
+            assert_eq!(from_psbt, from_tx);
+        }
+    }
+
+    #[tokio::test]
+    async fn signer_qubitcoin_mode_reads_nothing() {
+        let p = mock(&[1], &[2]);
+        set_status(&p, 1, None);
+        set_status(&p, 3, None);
+        *p.metashrew_height.lock().unwrap() = None;
+        assert_signable_tx(&p, true, &plain_tx(&[1, 2, 3]), &SignerAssertions::default()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn signer_reads_only_what_the_rule_needs() {
+        // A carrier is refused whatever its transaction's status says.
+        let p = mock(&[1], &[]);
+        set_status(&p, 1, None);
+        let err = sign_check(&p, &plain_tx(&[1])).await.unwrap_err().to_string();
+        assert!(err.contains("carry alkanes") && !err.contains("status unreadable"), "{err}");
+        // A probe-clean input on the same failing read is unknown: the read
+        // happened.
+        set_status(&p, 2, None);
+        let err = sign_check(&p, &plain_tx(&[2])).await.unwrap_err().to_string();
+        assert!(err.contains(PLAIN_UNKNOWN) && err.contains("status unreadable"), "{err}");
     }
 }

@@ -97,6 +97,15 @@ pub struct MockProvider {
     /// Answer of `get_metashrew_height`; `None` makes it fail. Defaults to
     /// `Some(800001)`.
     pub metashrew_height: Arc<Mutex<Option<u64>>>,
+    /// Per-txid answer of `get_tx_status` instead of the default
+    /// `{"confirmed": true, "block_height": 100}` (the `utxo_status` default
+    /// height); `None` makes the read fail. Empty by default.
+    pub tx_status: Arc<Mutex<HashMap<String, Option<JsonValue>>>>,
+    /// When `Some(h)`, the first `get_protorunes_by_outpoint` call takes it and
+    /// sets `metashrew_height` to `Some(h)` after answering, models the
+    /// indexer reaching a block between a probe and a later height read.
+    /// Defaults to `None`.
+    pub metashrew_height_after_probe: Arc<Mutex<Option<u64>>>,
 }
 
 impl Default for MockProvider {
@@ -127,6 +136,8 @@ impl MockProvider {
             ord_inscriptions: Arc::new(Mutex::new(HashMap::new())),
             utxo_status: Arc::new(Mutex::new(HashMap::new())),
             metashrew_height: Arc::new(Mutex::new(Some(800001))),
+            tx_status: Arc::new(Mutex::new(HashMap::new())),
+            metashrew_height_after_probe: Arc::new(Mutex::new(None)),
         }
     }
     
@@ -738,6 +749,9 @@ impl MetashrewRpcProvider for MockProvider {
         let ab = self.alkane_balances.lock().unwrap();
         let entries = ab.get(&key).cloned().unwrap_or_default();
         drop(ab);
+        if let Some(h) = self.metashrew_height_after_probe.lock().unwrap().take() {
+            *self.metashrew_height.lock().unwrap() = Some(h);
+        }
 
         let mut balances: BTreeMap<ProtoruneRuneId, u128> = BTreeMap::new();
         for (block, tx, amount) in entries {
@@ -881,8 +895,12 @@ impl EsploraProvider for MockProvider {
         Ok("mock_raw_tx".to_string())
     }
     
-    async fn get_tx_status(&self, _txid: &str) -> Result<JsonValue> {
-        Ok(serde_json::json!({"confirmed": true}))
+    async fn get_tx_status(&self, txid: &str) -> Result<JsonValue> {
+        match self.tx_status.lock().unwrap().get(txid) {
+            Some(Some(status)) => Ok(status.clone()),
+            Some(None) => Err(AlkanesError::Network(format!("mock: tx status unavailable for {}", txid))),
+            None => Ok(serde_json::json!({"confirmed": true, "block_height": 100})),
+        }
     }
     
     async fn get_tx_merkle_proof(&self, _txid: &str) -> Result<JsonValue> {
