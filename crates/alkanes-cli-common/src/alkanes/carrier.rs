@@ -181,8 +181,11 @@ impl CarrierFilter {
 /// its own, whatever `confirmations` says: providers derive `confirmations`
 /// from a bitcoin tip read that falls back to 0 when it fails, while
 /// `block_height` comes from the UTXO's own status. Metashrew's height is
-/// read at most once, and only when a probe-clean candidate has a
-/// `block_height`; if the read fails, every such candidate is `unindexed`.
+/// read once, before the first probe, and only when some candidate without
+/// an assertion has a `block_height` (never in qubitcoin mode): read after a
+/// probe, it could already count a block the indexer reached after that
+/// probe answered. If the read fails, every probe-clean candidate with a
+/// `block_height` is `unindexed`.
 /// Asserted and qubitcoin answers do not depend on the indexer having seen
 /// the transaction and are unchanged.
 ///
@@ -197,7 +200,12 @@ pub async fn exclude_alkane_carriers<P: MetashrewRpcProvider + ?Sized>(
     asserted: Option<&AssertedSheets>,
 ) -> CarrierFilter {
     let mut out = CarrierFilter::default();
-    let mut indexed_height: Option<core::result::Result<u64, String>> = None;
+    let needs_height = !qubitcoin_mode
+        && candidates.iter().any(|(outpoint, info)| {
+            info.block_height.is_some() && !asserted.is_some_and(|m| m.contains_key(outpoint))
+        });
+    let mut indexed_height: Option<core::result::Result<u64, String>> =
+        if needs_height { Some(read_indexed_height(provider).await) } else { None };
     for (outpoint, mut info) in candidates {
         match resolve_alkane_sheet(provider, qubitcoin_mode, &outpoint, asserted).await {
             (AlkaneSheetStatus::Clean, source) => {
@@ -246,10 +254,12 @@ pub async fn exclude_alkane_carriers<P: MetashrewRpcProvider + ?Sized>(
 /// `confirmations` is only consulted without a `block_height`, because it is
 /// derived from a bitcoin tip read that falls back to 0 on failure; a known
 /// height is compared whatever `confirmations` says. `indexed_height` caches
-/// the one read per [`exclude_alkane_carriers`] call; a failed read counts
-/// every candidate with a `block_height` as unindexed. The executor's
-/// `probe_fee_input_carrier` shares it, with the cache filled before its
-/// first probe.
+/// the one read per call; a failed read counts every candidate with a
+/// `block_height` as unindexed. Both callers ([`exclude_alkane_carriers`]
+/// and the executor's `probe_fee_input_carrier`) fill it before their first
+/// probe, because an empty answer taken before the read may predate the
+/// height it is compared with. Left `None`, it is read here, after the
+/// probe.
 pub(crate) async fn probe_not_indexed<P: MetashrewRpcProvider + ?Sized>(
     provider: &P,
     info: &UtxoInfo,
@@ -260,23 +270,29 @@ pub(crate) async fn probe_not_indexed<P: MetashrewRpcProvider + ?Sized>(
     };
     let tip = match indexed_height {
         Some(tip) => tip,
-        None => {
-            let read = provider.get_metashrew_height().await.map_err(|e| format!("{e}"));
-            if let Err(e) = &read {
-                log::warn!(
-                    "Alkane carrier filter: metashrew indexed height unavailable ({}); excluding \
-                     every probe-clean UTXO with a block height",
-                    e
-                );
-            }
-            indexed_height.insert(read)
-        }
+        None => indexed_height.insert(read_indexed_height(provider).await),
     };
     match tip {
         Ok(tip) if height <= *tip => None,
         Ok(tip) => Some(format!("block {height} is above the indexed height {tip}")),
         Err(e) => Some(format!("indexed height unavailable: {e}")),
     }
+}
+
+/// One `get_metashrew_height` read for [`probe_not_indexed`]'s cache, with
+/// the error as text.
+async fn read_indexed_height<P: MetashrewRpcProvider + ?Sized>(
+    provider: &P,
+) -> core::result::Result<u64, String> {
+    let read = provider.get_metashrew_height().await.map_err(|e| format!("{e}"));
+    if let Err(e) = &read {
+        log::warn!(
+            "Alkane carrier filter: metashrew indexed height unavailable ({}); excluding \
+             every probe-clean UTXO with a block height",
+            e
+        );
+    }
+    read
 }
 
 /// What kind of transaction [`check_input_alkane_sheets`] is guarding; only
@@ -1259,6 +1275,28 @@ mod tests {
         assert_eq!(f.unindexed, vec![OutPoint::new(txid_n(1), 0), OutPoint::new(txid_n(3), 0)]);
         let err = f.insufficient_error(15_000, f.clean_total()).to_string();
         assert!(err.contains(&format!("; 2 {UNINDEXED}")), "{err}");
+    }
+
+    #[tokio::test]
+    async fn filter_reads_indexed_height_before_the_first_probe() {
+        // Metashrew is at 100 when the filter starts and indexes block 101
+        // right after answering the first probe. 1, mined at 101, probed
+        // empty before 101 was indexed, so that answer proves nothing: it is
+        // unindexed although the height reads 101 by the time it is judged.
+        // 2, at 100, is clean.
+        let p = mock(&[], &[]);
+        *p.metashrew_height.lock().unwrap() = Some(100);
+        *p.metashrew_height_after_probe.lock().unwrap() = Some(101);
+        let f = exclude_alkane_carriers(
+            &p,
+            false,
+            vec![utxo_at(1, 10_000, 3, Some(101)), utxo_at(2, 10_000, 3, Some(100))],
+            None,
+        )
+        .await;
+        assert_eq!(*p.metashrew_height.lock().unwrap(), Some(101), "the indexer advanced mid-filter");
+        assert_eq!(f.clean.iter().map(|(op, _)| *op).collect::<Vec<_>>(), vec![OutPoint::new(txid_n(2), 0)]);
+        assert_eq!(f.unindexed, vec![OutPoint::new(txid_n(1), 0)]);
     }
 
     #[tokio::test]

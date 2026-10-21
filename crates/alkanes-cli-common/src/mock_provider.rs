@@ -115,6 +115,11 @@ pub struct MockProvider {
     /// indexer reaches while the caller waits giving an outpoint alkanes.
     /// Empty by default.
     pub alkane_balances_after_sync: Arc<Mutex<HashMap<String, Vec<(u64, u64, u64)>>>>,
+    /// When `Some(h)`, the first `get_protorunes_by_outpoint` call takes it and
+    /// sets `metashrew_height` to `Some(h)` after answering, models the
+    /// indexer reaching a block between a probe and a later height read.
+    /// Defaults to `None`.
+    pub metashrew_height_after_probe: Arc<Mutex<Option<u64>>>,
 }
 
 impl Default for MockProvider {
@@ -150,6 +155,7 @@ impl MockProvider {
             sync_calls: Arc::new(Mutex::new(0)),
             metashrew_height_after_sync: Arc::new(Mutex::new(None)),
             alkane_balances_after_sync: Arc::new(Mutex::new(HashMap::new())),
+            metashrew_height_after_probe: Arc::new(Mutex::new(None)),
         }
     }
     
@@ -773,6 +779,9 @@ impl MetashrewRpcProvider for MockProvider {
         let ab = self.alkane_balances.lock().unwrap();
         let entries = ab.get(&key).cloned().unwrap_or_default();
         drop(ab);
+        if let Some(h) = self.metashrew_height_after_probe.lock().unwrap().take() {
+            *self.metashrew_height.lock().unwrap() = Some(h);
+        }
 
         let mut balances: BTreeMap<ProtoruneRuneId, u128> = BTreeMap::new();
         for (block, tx, amount) in entries {
