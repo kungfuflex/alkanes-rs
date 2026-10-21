@@ -2248,7 +2248,13 @@ impl<'a> Brc20ProgExecutor<'a> {
     }
 
     /// Select UTXOs for a specific Bitcoin amount, excluding specific transactions
-    /// Prioritizes confirmed UTXOs over pending (unconfirmed) ones
+    ///
+    /// Only UTXOs verified to carry no alkanes are eligible: frozen coins and
+    /// excluded txids are dropped first (never probed), the rest go through the
+    /// shared carrier filter, which excludes carriers and fails closed on UTXOs
+    /// whose alkane status cannot be determined or that metashrew has not
+    /// indexed yet. There is no fallback to pending UTXOs (they are unindexed).
+    /// Among the clean ones, more confirmations first.
     async fn select_utxos_for_amount_excluding(
         &self,
         amount: u64,
@@ -2258,51 +2264,38 @@ impl<'a> Brc20ProgExecutor<'a> {
         log::info!("Selecting UTXOs for {} sats", amount);
 
         let utxos = self.provider.get_utxos(true, from_addresses.clone()).await?;
-        let mut spendable_utxos: Vec<(OutPoint, UtxoInfo)> = utxos
+        let candidates: Vec<(OutPoint, UtxoInfo)> = utxos
             .into_iter()
             .filter(|(outpoint, info)| {
                 !info.frozen && !exclude_txids.contains(&outpoint.txid)
             })
             .collect();
 
-        // Sort UTXOs: confirmed first (by confirmations desc), then pending
-        // This ensures we use confirmed UTXOs before falling back to pending ones
-        spendable_utxos.sort_by(|(_, a), (_, b)| {
-            // Confirmed UTXOs (confirmations > 0) come before pending (confirmations == 0)
-            match (a.confirmations > 0, b.confirmations > 0) {
-                (true, false) => std::cmp::Ordering::Less,
-                (false, true) => std::cmp::Ordering::Greater,
-                _ => b.confirmations.cmp(&a.confirmations), // Higher confirmations first
-            }
-        });
+        let mut filter = crate::alkanes::carrier::exclude_alkane_carriers(
+            &*self.provider,
+            self.provider.is_qubitcoin_mode(),
+            candidates,
+            None,
+        )
+        .await;
 
-        let confirmed_count = spendable_utxos.iter().filter(|(_, u)| u.confirmations > 0).count();
-        let pending_count = spendable_utxos.len() - confirmed_count;
-        log::info!("Found {} spendable UTXOs ({} confirmed, {} pending)",
-            spendable_utxos.len(), confirmed_count, pending_count);
+        let mut spendable_utxos = core::mem::take(&mut filter.clean);
+        spendable_utxos.sort_by(|(_, a), (_, b)| b.confirmations.cmp(&a.confirmations));
+        log::info!("Found {} spendable UTXOs verified to carry no alkanes", spendable_utxos.len());
 
         let mut selected_outpoints = Vec::new();
         let mut bitcoin_collected = 0u64;
-        let mut using_pending = false;
 
         for (outpoint, utxo) in spendable_utxos {
-            if bitcoin_collected < amount {
-                if utxo.confirmations == 0 && !using_pending {
-                    using_pending = true;
-                    log::warn!("⚠️ Falling back to pending (unconfirmed) UTXOs - confirmed UTXOs insufficient");
-                }
-                bitcoin_collected += utxo.amount;
-                selected_outpoints.push(outpoint);
-            } else {
+            if bitcoin_collected >= amount {
                 break;
             }
+            bitcoin_collected += utxo.amount;
+            selected_outpoints.push(outpoint);
         }
 
         if bitcoin_collected < amount {
-            return Err(AlkanesError::Wallet(format!(
-                "Insufficient funds: need {} sats, have {}",
-                amount, bitcoin_collected
-            )));
+            return Err(filter.insufficient_error(amount, bitcoin_collected));
         }
 
         log::info!(
@@ -3411,5 +3404,104 @@ mod tests {
         // Safe amount = 1 sat, but must be at least dust limit
         let safe_amount = (max_offset + 1).max(DUST_LIMIT);
         assert_eq!(safe_amount, DUST_LIMIT); // Should be 546 (dust limit)
+    }
+
+    // ── funding selection (`select_utxos_for_amount_excluding`) ──
+
+    fn coin(n: u8) -> OutPoint {
+        OutPoint::new(Txid::from_byte_array([n; 32]), 0)
+    }
+
+    /// A non-qubitcoin MockProvider whose wallet holds `coins` (`(n, sats)`,
+    /// outpoint `[n; 32]:0`), in that order. Every coin is confirmed at the
+    /// mock's default height 100, below its metashrew height.
+    fn funding_mock(coins: &[(u8, u64)]) -> crate::mock_provider::MockProvider {
+        let mut p = crate::mock_provider::MockProvider::new(bitcoin::Network::Regtest);
+        p.qubitcoin_mode = false;
+        let script = Address::p2tr(&p.secp, p.internal_key, None, p.network).script_pubkey();
+        *p.utxos.lock().unwrap() = coins
+            .iter()
+            .map(|(n, sats)| {
+                (coin(*n), TxOut { value: bitcoin::Amount::from_sat(*sats), script_pubkey: script.clone() })
+            })
+            .collect();
+        p
+    }
+
+    fn mark_carrier(p: &crate::mock_provider::MockProvider, n: u8) {
+        p.alkane_balances.lock().unwrap().insert(coin(n).to_string(), vec![(2, 0, 1000)]);
+    }
+
+    async fn select(
+        p: &mut crate::mock_provider::MockProvider,
+        amount: u64,
+        exclude_txids: &[Txid],
+    ) -> Result<Vec<OutPoint>> {
+        Brc20ProgExecutor::new(p).select_utxos_for_amount_excluding(amount, &None, exclude_txids).await
+    }
+
+    /// R1: the carrier is listed first and could fund the amount alone; it is
+    /// never selected.
+    #[tokio::test]
+    async fn funding_skips_carriers() {
+        let mut p = funding_mock(&[(1, 50_000), (2, 30_000)]);
+        mark_carrier(&p, 1);
+        assert_eq!(select(&mut p, 20_000, &[]).await.unwrap(), vec![coin(2)]);
+    }
+
+    /// R2 to R4 pin the excluded-bucket clauses and the need / have numbers,
+    /// not the leading words of #329's shortfall text.
+    #[tokio::test]
+    async fn funding_refuses_when_only_carriers_remain() {
+        let mut p = funding_mock(&[(1, 50_000), (2, 30_000)]);
+        mark_carrier(&p, 1);
+        mark_carrier(&p, 2);
+        let err = select(&mut p, 1_000, &[]).await.unwrap_err().to_string();
+        assert!(err.contains("need 1000 sats") && err.contains("have 0 sats"), "{err}");
+        assert!(err.contains("2 UTXO(s) carrying alkanes were excluded"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn funding_refuses_unknown_coins() {
+        let mut p = funding_mock(&[(1, 50_000), (2, 500)]);
+        p.failing_outpoints.lock().unwrap().insert(coin(1).to_string());
+        let err = select(&mut p, 10_000, &[]).await.unwrap_err().to_string();
+        assert!(err.contains("need 10000 sats") && err.contains("have 500 sats"), "{err}");
+        assert!(err.contains("1 UTXO(s) were excluded because their alkane balance could not be verified"), "{err}");
+    }
+
+    /// R4: the old selector fell back to pending coins; an unconfirmed coin
+    /// probes empty but proves nothing, so it is excluded and the call fails.
+    #[tokio::test]
+    async fn funding_has_no_pending_fallback() {
+        let mut p = funding_mock(&[(1, 50_000), (2, 500)]);
+        p.utxo_status.lock().unwrap().insert(coin(1).to_string(), (0, None));
+        let err = select(&mut p, 10_000, &[]).await.unwrap_err().to_string();
+        assert!(err.contains("need 10000 sats") && err.contains("have 500 sats"), "{err}");
+        assert!(err.contains("1 UTXO(s) were excluded because the alkanes indexer has not indexed them yet"), "{err}");
+    }
+
+    /// R5: an excluded txid is dropped before the carrier filter, so its
+    /// failing probe is never run (no unknown clause).
+    #[tokio::test]
+    async fn funding_drops_excluded_txids_before_probing() {
+        let mut p = funding_mock(&[(1, 50_000), (2, 500)]);
+        p.failing_outpoints.lock().unwrap().insert(coin(1).to_string());
+        let err = select(&mut p, 10_000, &[coin(1).txid]).await.unwrap_err().to_string();
+        assert!(err.contains("have 500 sats") && !err.contains("could not be verified"), "{err}");
+        assert_eq!(select(&mut p, 400, &[coin(1).txid]).await.unwrap(), vec![coin(2)]);
+    }
+
+    /// R6: among clean coins, more confirmations first.
+    #[tokio::test]
+    async fn funding_prefers_more_confirmations() {
+        let mut p = funding_mock(&[(1, 10_000), (2, 10_000), (3, 10_000)]);
+        {
+            let mut status = p.utxo_status.lock().unwrap();
+            status.insert(coin(1).to_string(), (3, Some(100)));
+            status.insert(coin(2).to_string(), (20, Some(100)));
+            status.insert(coin(3).to_string(), (7, Some(100)));
+        }
+        assert_eq!(select(&mut p, 15_000, &[]).await.unwrap(), vec![coin(2), coin(3)]);
     }
 }
