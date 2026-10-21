@@ -258,8 +258,9 @@ pub enum WalletCommands {
         /// Source addresses (comma-separated)
         #[arg(long, value_delimiter = ',')]
         from: Option<Vec<String>>,
-        /// Skip UTXOs that have alkanes on them
-        #[arg(long)]
+        /// Deprecated, no effect: UTXOs carrying alkanes (or whose alkane
+        /// balance cannot be verified) are always excluded from BTC sends.
+        #[arg(long, hide = true)]
         lock_alkanes: bool,
         /// Change address (optional)
         #[arg(long)]
@@ -331,6 +332,12 @@ pub enum WalletCommands {
         /// Creates multiple transactions that together achieve the same total effect
         #[arg(long, value_name = "SIZE", conflicts_with = "truncate_excess_vsize")]
         split_max_vsize: Option<String>,
+        /// JSON file with signer assertions, the options of walletSignPsbtBase64:
+        /// prefetchedUtxos rows (an alkanes sheet is used instead of the indexer probe)
+        /// and knownPendingTxHexes (parent transactions, also used for prevouts)
+        /// An execute options file works too
+        #[arg(long, value_name = "FILE")]
+        assertions: Option<String>,
     },
     /// Sign a transaction with external key file
     Sign {

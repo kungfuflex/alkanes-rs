@@ -1738,7 +1738,8 @@ impl SystemWallet for SystemAlkanes {
                    auto_confirm: yes,
                    use_rebar: false,
                    rebar_tier: 1,
-                   lock_alkanes: false,
+                   // Alkane carriers are always excluded (SFS-05); kept true for clarity.
+                   lock_alkanes: true,
                    ordinals_strategy: alkanes_cli_common::alkanes::types::OrdinalsStrategy::default(),
                    mempool_indexer: false,
                };
@@ -1769,7 +1770,8 @@ impl SystemWallet for SystemAlkanes {
                    auto_confirm: yes,
                    use_rebar: false,
                    rebar_tier: 1,
-                   lock_alkanes: false,
+                   // Alkane carriers are always excluded (SFS-05); kept true for clarity.
+                   lock_alkanes: true,
                    ordinals_strategy: alkanes_cli_common::alkanes::types::OrdinalsStrategy::default(),
                    mempool_indexer: false,
                };
@@ -1786,7 +1788,7 @@ impl SystemWallet for SystemAlkanes {
                }
                Ok(())
            },
-           WalletCommands::SignTx { tx_hex, from_file, truncate_excess_vsize, split_max_vsize } => {
+           WalletCommands::SignTx { tx_hex, from_file, truncate_excess_vsize, split_max_vsize, assertions } => {
                // Parse the size limit if truncate or split is specified
                let max_tx_size = if let Some(ref size_str) = truncate_excess_vsize {
                    parse_size_string(size_str)?
@@ -1805,12 +1807,29 @@ impl SystemWallet for SystemAlkanes {
                } else {
                    tx_hex.ok_or_else(|| AlkanesError::InvalidParameters("No transaction hex or file provided".to_string()))?
                };
+               // Signer assertions (--assertions): read once, used for every
+               // transaction signed below
+               let assertions = match assertions {
+                   Some(ref file_path) => {
+                       let json = std::fs::read_to_string(file_path)
+                           .map_err(|e| AlkanesError::Storage(format!("Failed to read assertions file: {}", e)))?;
+                       let opts: serde_json::Value = serde_json::from_str(&json)
+                           .map_err(|e| AlkanesError::InvalidParameters(format!("Invalid assertions JSON: {}", e)))?;
+                       alkanes_cli_common::alkanes::carrier::SignerAssertions::from_options_json(&opts)?
+                   }
+                   None => alkanes_cli_common::alkanes::carrier::SignerAssertions::default(),
+               };
                
                // Decode the unsigned transaction first
                use bitcoin::consensus::Decodable;
                let tx_bytes = hex::decode(&hex_string).map_err(|e| AlkanesError::InvalidParameters(format!("Invalid hex: {}", e)))?;
                let unsigned_tx = bitcoin::Transaction::consensus_decode(&mut &tx_bytes[..])
                    .map_err(|e| AlkanesError::InvalidParameters(format!("Invalid transaction: {}", e)))?;
+
+               // Pre-sign carrier check (SFS-05): every transaction signed
+               // below goes through sign_transaction_with_assertions, which
+               // runs carrier::assert_signable_tx on what is actually signed.
+               // A split chunk has no runestone, so it gets the plain rule.
                
                const SAFETY_MARGIN: f64 = 0.975; // 2.5% safety margin (accounts for varint variations)
                
@@ -1996,7 +2015,7 @@ impl SystemWallet for SystemAlkanes {
                        eprintln!("   Inputs: {}", chunk_inputs.len());
                        eprintln!("   Output amount: {} sats", chunk_output_amount);
                        
-                       match provider.sign_transaction(chunk_hex).await {
+                       match provider.sign_transaction_with_assertions(chunk_hex, &assertions).await {
                            Ok(signed_hex) => {
                                let signed_bytes = hex::decode(&signed_hex)
                                    .map_err(|e| AlkanesError::InvalidParameters(format!("Invalid signed hex for tx {}: {}", tx_idx, e)))?;
@@ -2048,7 +2067,7 @@ impl SystemWallet for SystemAlkanes {
                        .map_err(|e| AlkanesError::InvalidParameters(format!("Failed to encode transaction: {}", e)))?;
                    let truncated_hex = hex::encode(truncated_bytes);
                    
-                   match provider.sign_transaction(truncated_hex).await {
+                   match provider.sign_transaction_with_assertions(truncated_hex, &assertions).await {
                        Ok(signed_hex) => {
                            let signed_bytes = hex::decode(&signed_hex).map_err(|e| AlkanesError::InvalidParameters(format!("Invalid signed hex: {}", e)))?;
                            let signed_size = signed_bytes.len();

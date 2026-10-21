@@ -65,6 +65,9 @@ pub struct MockProvider {
     /// non-dust pass) and the BTC-only alkane-carrier exclusion — both read
     /// `alkane_balances` through `get_protorunes_by_outpoint`.
     pub qubitcoin_mode: bool,
+    /// Outpoints (`txid:vout`) for which `get_protorunes_by_outpoint` returns
+    /// an error, models a failed / unavailable indexer probe. Empty by default.
+    pub failing_outpoints: Arc<Mutex<std::collections::HashSet<String>>>,
     /// Session-scoped pending-tx store. Provided so integration tests
     /// can wire chained-broadcast scenarios without spinning up an
     /// `Arc<dyn PendingTxStore>` of their own. `Some` by default so
@@ -82,6 +85,34 @@ pub struct MockProvider {
     /// path of `apply_mempool_adjustment`. Empty by default, so the mempool
     /// stays empty as it always did.
     pub mempool_txs: Arc<Mutex<Vec<JsonValue>>>,
+    /// Ord inscriptions per outpoint (`txid:vout`): (inscription id, sat
+    /// offset). Served by `get_output`, `get_inscription` and
+    /// `get_ord_address_info` (an address reports the ids on the mock UTXOs it
+    /// owns). Empty by default, so the wallet holds no ordinals.
+    pub ord_inscriptions: Arc<Mutex<HashMap<String, Vec<(crate::vendored_ord::InscriptionId, u64)>>>>,
+    /// Per-outpoint (`txid:vout`) `(confirmations, block_height)` reported by
+    /// `get_utxos` instead of the default `(10, Some(100))`, models a mempool
+    /// UTXO or one mined above metashrew's tip. Empty by default.
+    pub utxo_status: Arc<Mutex<HashMap<String, (u32, Option<u64>)>>>,
+    /// Answer of `get_metashrew_height`; `None` makes it fail. Defaults to
+    /// `Some(800001)`.
+    pub metashrew_height: Arc<Mutex<Option<u64>>>,
+    /// Per-txid answer of `get_tx_status` instead of the default
+    /// `{"confirmed": true, "block_height": 100}` (the `utxo_status` default
+    /// height); `None` makes the read fail. Empty by default.
+    pub tx_status: Arc<Mutex<HashMap<String, Option<JsonValue>>>>,
+    /// When `Some(h)`, the first `get_protorunes_by_outpoint` call takes it and
+    /// sets `metashrew_height` to `Some(h)` after answering, models the
+    /// indexer reaching a block between a probe and a later height read.
+    /// Defaults to `None`.
+    pub metashrew_height_after_probe: Arc<Mutex<Option<u64>>>,
+    /// Per-outpoint (`txid:vout`) answer of `get_tx_outspend` instead of the
+    /// default `{"spent": false}`; `None` makes the read fail. Empty by
+    /// default.
+    pub outspends: Arc<Mutex<HashMap<String, Option<JsonValue>>>>,
+    /// Per-txid answer of `get_tx_hex` instead of the default
+    /// `"mock_tx_hex"`. Empty by default.
+    pub tx_hexes: Arc<Mutex<HashMap<String, String>>>,
 }
 
 impl Default for MockProvider {
@@ -105,9 +136,17 @@ impl MockProvider {
             internal_key,
             alkane_balances: Arc::new(Mutex::new(HashMap::new())),
             qubitcoin_mode: true,
+            failing_outpoints: Arc::new(Mutex::new(std::collections::HashSet::new())),
             pending_tx_store: crate::pending_tx_store::MemoryPendingTxStore::new(),
             frozen_store: crate::frozen_store::MemoryFrozenStore::new(),
             mempool_txs: Arc::new(Mutex::new(vec![])),
+            ord_inscriptions: Arc::new(Mutex::new(HashMap::new())),
+            utxo_status: Arc::new(Mutex::new(HashMap::new())),
+            metashrew_height: Arc::new(Mutex::new(Some(800001))),
+            tx_status: Arc::new(Mutex::new(HashMap::new())),
+            metashrew_height_after_probe: Arc::new(Mutex::new(None)),
+            outspends: Arc::new(Mutex::new(HashMap::new())),
+            tx_hexes: Arc::new(Mutex::new(HashMap::new())),
         }
     }
     
@@ -271,10 +310,13 @@ impl WalletProvider for MockProvider {
     
     async fn get_utxos(&self, _include_frozen: bool, addresses: Option<Vec<String>>) -> Result<Vec<(OutPoint, UtxoInfo)>> {
         let utxos = self.utxos.lock().unwrap();
+        let status = self.utxo_status.lock().unwrap();
         let mut utxo_infos: Vec<(OutPoint, UtxoInfo)> = utxos.iter().map(|(outpoint, tx_out)| {
             let address = Address::from_script(&tx_out.script_pubkey, self.network)
                 .map(|addr| addr.to_string())
                 .unwrap_or_else(|_| "unknown_script".to_string()); // Handle unrecognized scripts
+            let (confirmations, block_height) =
+                status.get(&outpoint.to_string()).copied().unwrap_or((10, Some(100)));
 
             let info = UtxoInfo {
                 txid: outpoint.txid.to_string(),
@@ -282,10 +324,10 @@ impl WalletProvider for MockProvider {
                 amount: tx_out.value.to_sat(),
                 address,
                 script_pubkey: Some(tx_out.script_pubkey.clone()),
-                confirmations: 10,
+                confirmations,
                 frozen: false,
                 freeze_reason: None,
-                block_height: Some(100),
+                block_height,
                 has_inscriptions: false,
                 has_runes: false,
                 has_alkanes: false,
@@ -649,7 +691,10 @@ impl BitcoinRpcProvider for MockProvider {
 #[async_trait(?Send)]
 impl MetashrewRpcProvider for MockProvider {
     async fn get_metashrew_height(&self) -> Result<u64> {
-        Ok(800001)
+        self.metashrew_height
+            .lock()
+            .unwrap()
+            .ok_or_else(|| AlkanesError::Network("mock: metashrew height unavailable".to_string()))
     }
 
     async fn get_state_root(&self, _height: JsonValue) -> Result<String> {
@@ -707,9 +752,15 @@ impl MetashrewRpcProvider for MockProvider {
         };
         use std::collections::BTreeMap;
         let key = format!("{}:{}", txid, vout);
+        if self.failing_outpoints.lock().unwrap().contains(&key) {
+            return Err(AlkanesError::Network(format!("mock: protorunesbyoutpoint failed for {}", key)));
+        }
         let ab = self.alkane_balances.lock().unwrap();
         let entries = ab.get(&key).cloned().unwrap_or_default();
         drop(ab);
+        if let Some(h) = self.metashrew_height_after_probe.lock().unwrap().take() {
+            *self.metashrew_height.lock().unwrap() = Some(h);
+        }
 
         let mut balances: BTreeMap<ProtoruneRuneId, u128> = BTreeMap::new();
         for (block, tx, amount) in entries {
@@ -845,16 +896,20 @@ impl EsploraProvider for MockProvider {
         Ok(serde_json::json!({"txid": "mock_txid"}))
     }
     
-    async fn get_tx_hex(&self, _txid: &str) -> Result<String> {
-        Ok("mock_tx_hex".to_string())
+    async fn get_tx_hex(&self, txid: &str) -> Result<String> {
+        Ok(self.tx_hexes.lock().unwrap().get(txid).cloned().unwrap_or_else(|| "mock_tx_hex".to_string()))
     }
     
     async fn get_tx_raw(&self, _txid: &str) -> Result<String> {
         Ok("mock_raw_tx".to_string())
     }
     
-    async fn get_tx_status(&self, _txid: &str) -> Result<JsonValue> {
-        Ok(serde_json::json!({"confirmed": true}))
+    async fn get_tx_status(&self, txid: &str) -> Result<JsonValue> {
+        match self.tx_status.lock().unwrap().get(txid) {
+            Some(Some(status)) => Ok(status.clone()),
+            Some(None) => Err(AlkanesError::Network(format!("mock: tx status unavailable for {}", txid))),
+            None => Ok(serde_json::json!({"confirmed": true, "block_height": 100})),
+        }
     }
     
     async fn get_tx_merkle_proof(&self, _txid: &str) -> Result<JsonValue> {
@@ -865,8 +920,12 @@ impl EsploraProvider for MockProvider {
         Ok("mock_merkleblock_proof".to_string())
     }
     
-    async fn get_tx_outspend(&self, _txid: &str, _index: u32) -> Result<JsonValue> {
-        Ok(serde_json::json!({"spent": false}))
+    async fn get_tx_outspend(&self, txid: &str, index: u32) -> Result<JsonValue> {
+        match self.outspends.lock().unwrap().get(&format!("{}:{}", txid, index)) {
+            Some(Some(outspend)) => Ok(outspend.clone()),
+            Some(None) => Err(AlkanesError::Network(format!("mock: outspend unavailable for {}:{}", txid, index))),
+            None => Ok(serde_json::json!({"spent": false})),
+        }
     }
     
     async fn get_tx_outspends(&self, _txid: &str) -> Result<JsonValue> {
@@ -1095,20 +1154,74 @@ use crate::traits::EspoProvider;
 
 #[async_trait(?Send)]
 impl OrdProvider for MockProvider {
-    async fn get_inscription(&self, _inscription_id: &str) -> Result<OrdInscription> {
-        todo!()
+    async fn get_inscription(&self, inscription_id: &str) -> Result<OrdInscription> {
+        // Only the id and the satpoint are meaningful; the rest is filler.
+        let inscriptions = self.ord_inscriptions.lock().unwrap();
+        for (outpoint, entries) in inscriptions.iter() {
+            for (id, offset) in entries {
+                if id.to_string() != inscription_id {
+                    continue;
+                }
+                let outpoint = OutPoint::from_str(outpoint)
+                    .map_err(|e| AlkanesError::Parse(format!("bad mock outpoint {outpoint}: {e}")))?;
+                return Ok(OrdInscription {
+                    address: None,
+                    charms: vec![],
+                    child_count: 0,
+                    children: vec![],
+                    content_length: None,
+                    content_type: None,
+                    effective_content_type: None,
+                    fee: 0,
+                    height: 0,
+                    id: *id,
+                    next: None,
+                    number: 0,
+                    parents: vec![],
+                    previous: None,
+                    rune: None,
+                    sat: None,
+                    satpoint: ordinals::SatPoint { outpoint, offset: *offset },
+                    timestamp: 0,
+                    value: None,
+                    metaprotocol: None,
+                });
+            }
+        }
+        Err(AlkanesError::Other(format!("No mock inscription {inscription_id}")))
     }
     async fn get_inscriptions_in_block(&self, _block_hash: &str) -> Result<OrdInscriptions> {
         todo!()
     }
-    async fn get_ord_address_info(&self, _address: &str) -> Result<OrdAddressInfo> {
-        todo!()
+    async fn get_ord_address_info(&self, address: &str) -> Result<OrdAddressInfo> {
+        // The inscriptions on the mock UTXOs this address owns.
+        let inscriptions = self.ord_inscriptions.lock().unwrap();
+        let mut ids = Vec::new();
+        for (outpoint, tx_out) in self.utxos.lock().unwrap().iter() {
+            let owned = Address::from_script(&tx_out.script_pubkey, self.network)
+                .map(|a| a.to_string() == address)
+                .unwrap_or(false);
+            if !owned {
+                continue;
+            }
+            if let Some(entries) = inscriptions.get(&format!("{}:{}", outpoint.txid, outpoint.vout)) {
+                ids.extend(entries.iter().map(|(id, _)| *id));
+            }
+        }
+        Ok(OrdAddressInfo {
+            outputs: vec![],
+            inscriptions: if ids.is_empty() { None } else { Some(ids) },
+            sat_balance: 0,
+            runes_balances: None,
+        })
     }
     async fn get_block_info(&self, _query: &str) -> Result<OrdBlock> {
         todo!()
     }
     async fn get_ord_block_count(&self) -> Result<u64> {
-        todo!()
+        // Above the `block_height: Some(100)` `get_utxos` reports, so ord is
+        // caught up with every mock UTXO.
+        Ok(800_000)
     }
     async fn get_ord_blocks(&self) -> Result<OrdBlocks> {
         todo!()
@@ -1123,7 +1236,7 @@ impl OrdProvider for MockProvider {
         todo!()
     }
     async fn get_output(&self, output: &str) -> Result<OrdOutput> {
-        // Return a minimal output with no inscriptions
+        // Return a minimal output carrying the configured inscriptions
         let parts: Vec<&str> = output.split(':').collect();
         let (txid_str, vout) = if parts.len() == 2 {
             (parts[0], parts[1].parse::<u32>().unwrap_or(0))
@@ -1136,7 +1249,14 @@ impl OrdProvider for MockProvider {
             address: None,
             confirmations: 100,
             indexed: true,
-            inscriptions: Some(vec![]),
+            inscriptions: Some(
+                self.ord_inscriptions
+                    .lock()
+                    .unwrap()
+                    .get(&format!("{txid}:{vout}"))
+                    .map(|entries| entries.iter().map(|(id, _)| *id).collect())
+                    .unwrap_or_default(),
+            ),
             outpoint: OutPoint::new(txid, vout),
             runes: None,
             sat_ranges: None,

@@ -985,6 +985,14 @@ impl WalletProvider for BrowserWalletProvider {
         // For sending, we'll create the transaction using our infrastructure
         // then use the wallet to sign it
         let tx_hex = self.create_transaction(params.clone()).await?;
+        // Pre-sign carrier check (SFS-05): re-probe every input of the plain
+        // send; refuse if any carries alkanes or has an unknown status.
+        alkanes_cli_common::alkanes::carrier::assert_plain_send_psbt_clean(
+            self,
+            <Self as DeezelProvider>::is_qubitcoin_mode(self),
+            &tx_hex,
+        )
+        .await?;
         let signed_tx_hex = self.sign_transaction(tx_hex).await?;
         self.broadcast_transaction(signed_tx_hex).await
     }
@@ -1031,58 +1039,23 @@ impl WalletProvider for BrowserWalletProvider {
     }
     
     async fn create_transaction(&self, params: SendParams) -> Result<String> {
-        let recipient = Address::from_str(&params.address)?.assume_checked();
-        let amount = Amount::from_sat(params.amount);
-
         let address = <Self as WalletProvider>::get_address(self).await?;
-        let utxos = self.get_utxos(false, Some(vec![address])).await?;
-        if utxos.is_empty() {
-            return Err(AlkanesError::Wallet("No UTXOs available".to_string()));
-        }
-
-        let mut inputs = vec![];
-        let mut total_input = 0;
-
-        for (outpoint, utxo_info) in &utxos {
-            inputs.push(TxIn {
-                previous_output: *outpoint,
-                script_sig: ScriptBuf::new(),
-                sequence: Sequence::MAX,
-                witness: Witness::new(),
-            });
-            total_input += utxo_info.amount;
-        }
-
-        let mut outputs = vec![];
-        outputs.push(TxOut {
-            value: amount,
-            script_pubkey: recipient.script_pubkey(),
-        });
-        
-        let fee_rate = params.fee_rate.unwrap_or(1.0) as u64;
-        let estimated_vsize = 150; // Super rough estimate
-        let fee = fee_rate * estimated_vsize;
-
-        if total_input < amount.to_sat() + fee {
-            return Err(AlkanesError::Wallet("Insufficient funds".to_string()));
-        }
-
-        let change_address = <Self as WalletProvider>::get_address(self).await?;
-        let change_address = Address::from_str(&change_address)?.assume_checked();
-        let change_amount = total_input - amount.to_sat() - fee;
-        outputs.push(TxOut {
-            value: Amount::from_sat(change_amount),
-            script_pubkey: change_address.script_pubkey(),
-        });
-
-        let unsigned_tx = Transaction {
-            version: bitcoin::transaction::Version(2),
-            lock_time: bitcoin::locktime::absolute::LockTime::ZERO,
-            input: inputs,
-            output: outputs,
+        let change_address = match params.change_address.as_ref() {
+            Some(c) if !c.is_empty() => c.clone(),
+            _ => address.clone(),
         };
 
-        let psbt = Psbt::from_unsigned_tx(unsigned_tx)?;
+        // SFS-05: only UTXOs verified to carry no alkanes fund a plain send;
+        // carriers and unknown-status UTXOs are excluded (fail closed).
+        let fee_rate = params.fee_rate.unwrap_or(1.0).max(0.0);
+        let psbt = alkanes_cli_common::alkanes::carrier::build_plain_send_psbt(
+            self,
+            &params,
+            vec![address],
+            &change_address,
+            |n_in, n_out| ((10 + 68 * n_in + 31 * n_out) as f32 * fee_rate).ceil() as u64,
+        )
+        .await?;
 
         Ok(STANDARD.encode(&psbt.serialize()))
     }

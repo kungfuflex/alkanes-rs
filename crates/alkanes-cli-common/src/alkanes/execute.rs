@@ -1374,7 +1374,7 @@ fn build_effective_txouts_map(
 /// malformed `amount` decimal surfaces as a structured error rather than
 /// silently dropping the entry. Stale-cache callers should fail loud at
 /// execute-time, not later at swap-revert time.
-fn build_prefetched_alkanes_map(
+pub(crate) fn build_prefetched_alkanes_map(
     prefetched_utxos: &[PrefetchedUtxo],
 ) -> Result<Option<alloc::collections::BTreeMap<OutPoint, Vec<(ProtoruneRuneId, u128)>>>> {
     if prefetched_utxos.is_empty() {
@@ -3004,6 +3004,13 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
     /// alkane pass's fee-buffer zone of `select_utxos_with_headroom`, so both
     /// mean the same thing by "verified clean". `prefetched_hits` /
     /// `rpc_hits` count which source answered (neither in qubitcoin mode).
+    ///
+    /// The sheet itself comes from [`super::carrier::resolve_alkane_sheet`],
+    /// the rule every plain BTC send applies too: qubitcoin mode, then a
+    /// caller- or espo-asserted sheet (an empty Vec means "asserted clean"),
+    /// then a lazy protorunesbyoutpoint probe. Only the confirmations rule
+    /// below is executor-specific, because the shared resolver does not see
+    /// `UtxoInfo`.
     async fn probe_fee_input_carrier(
         &self,
         outpoint: &OutPoint,
@@ -3012,43 +3019,33 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         prefetched_hits: &mut usize,
         rpc_hits: &mut usize,
     ) -> (bool, bool) {
-        if self.provider.is_qubitcoin_mode() {
+        use super::carrier::{AlkaneSheetStatus, SheetSource};
+        let (status, source) = super::carrier::resolve_alkane_sheet(
+            &*self.provider,
+            self.provider.is_qubitcoin_mode(),
+            outpoint,
+            prefetched_alkanes,
+        )
+        .await;
+        match source {
+            SheetSource::Asserted => *prefetched_hits += 1,
+            SheetSource::Probe => *rpc_hits += 1,
             // No alkanes indexer in qubitcoin mode and no alkanes to
-            // burn — treat as authoritative so behavior is unchanged.
-            return (false, true);
+            // burn: answered as authoritative clean, no counter.
+            SheetSource::Qubitcoin => {}
         }
-        if let Some(balances) = prefetched_alkanes.and_then(|m| m.get(outpoint)) {
-            // Same short-circuit shape as the primary-discovery branch:
-            // caller- or espo-asserted balances skip the RPC. An empty Vec
-            // means "asserted clean — not a carrier."
-            *prefetched_hits += 1;
-            return (balances.iter().any(|(_, amt)| *amt > 0), true);
-        }
-        *rpc_hits += 1;
-        let txid_str = outpoint.txid.to_string();
-        match self
-            .provider
-            .get_protorunes_by_outpoint(&txid_str, outpoint.vout, None, 1)
-            .await
-        {
+        match status {
             // An UNCONFIRMED candidate (injected from a pending tx) always probes
             // empty: the indexer has not seen its tx. That is not authoritative
             // (#308 review lane A 7), so it may fund a genuine need (the hard
             // bar) but never the soft fee buffer or the dust headroom. A caller
-            // assertion (the branch above) still counts.
-            Ok(response) => (
-                response
-                    .balance_sheet
-                    .cached
-                    .balances
-                    .values()
-                    .any(|amt| *amt > 0),
-                utxo.confirmations > 0,
-            ),
-            // Unverifiable — keep the pre-existing behavior (select when the
-            // hard bar needs it), but mark it so neither the fee buffer nor
-            // the dust headroom will reach for it.
-            Err(_) => (false, false),
+            // assertion (and qubitcoin mode) still counts.
+            AlkaneSheetStatus::Clean => (false, source != SheetSource::Probe || utxo.confirmations > 0),
+            AlkaneSheetStatus::Carrier(_) => (true, source != SheetSource::Probe || utxo.confirmations > 0),
+            // Unverifiable (probe failed): keep the pre-existing behavior
+            // (select when the hard bar needs it), but mark it so neither the
+            // fee buffer nor the dust headroom will reach for it.
+            AlkaneSheetStatus::Unknown(_) => (false, false),
         }
     }
 
@@ -3748,6 +3745,13 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
 
                         rpc_count += 1;
                         let txid_str = outpoint.txid.to_string();
+                        // Same classification as `carrier::resolve_alkane_sheet`
+                        // (Ok with no non-zero amount = clean, Err = unknown),
+                        // kept inline because it also fills `utxo_balances`;
+                        // `probe_fee_input_carrier` goes through the shared
+                        // resolver. Like `probe_fee_input_carrier`, a
+                        // probe-clean answer only enters `probed_clean` when
+                        // `utxo.confirmations > 0`. Change both together.
                         match self.provider
                             .get_protorunes_by_outpoint(&txid_str, outpoint.vout, None, 1)
                             .await
@@ -8645,6 +8649,208 @@ mod dust_change_tests {
         assert_eq!(from_pending, 0, "took {from_pending} unconfirmed injected outputs as headroom in the alkane branch");
     }
 
+    // ── where the plain-send carrier rule (#329) meets this one ─────────
+
+    /// A standard-mode wallet in which every coin is classified by the
+    /// protorunesbyoutpoint probe alone (nothing asserted). In walk order: a
+    /// 546-sat carrier of 2:0, a 3_000-sat clean coin that meets a 3_000 hard
+    /// bar on its own, a 5_000-sat coin whose probe fails, two 2_000-sat clean
+    /// coins, and one 4_000-sat output of a pending tx that probes clean. The
+    /// pending output comes in through `pending_hex` (`known_pending_tx_hexes`),
+    /// as in `headroom_never_reaches_for_unconfirmed_injected_outputs`, because
+    /// the mock reports every UTXO of its own with 10 confirmations.
+    struct ProbeOnlyWallet {
+        mock: MockProvider,
+        addr: Address,
+        carrier: OutPoint,
+        hard: OutPoint,
+        failing: OutPoint,
+        clean: [OutPoint; 2],
+        unconfirmed: OutPoint,
+        pending_hex: String,
+    }
+
+    fn probe_only_wallet() -> ProbeOnlyWallet {
+        let mut mock = MockProvider::new(bitcoin::Network::Regtest);
+        let secp = Secp256k1::new();
+        let (sk, pk) = secp.generate_keypair(&mut rand::thread_rng());
+        let (xonly, _) = pk.x_only_public_key();
+        let addr = Address::p2tr(&secp, xonly, None, bitcoin::Network::Regtest);
+        mock.set_keypair(sk, bitcoin::PublicKey::new(pk));
+        mock.qubitcoin_mode = false;
+        let script = addr.script_pubkey();
+
+        let carrier = OutPoint::new(txid_n(0xc1), 0);
+        let hard = OutPoint::new(txid_n(0xc2), 0);
+        let failing = OutPoint::new(txid_n(0xc3), 0);
+        let clean = [OutPoint::new(txid_n(0xc4), 0), OutPoint::new(txid_n(0xc5), 0)];
+        {
+            let mut utxos = mock.utxos.lock().unwrap();
+            for (op, sats) in [(carrier, 546), (hard, 3_000), (failing, 5_000), (clean[0], 2_000), (clean[1], 2_000)] {
+                utxos.push((op, TxOut { value: Amount::from_sat(sats), script_pubkey: script.clone() }));
+            }
+        }
+        mock.alkane_balances.lock().unwrap().insert(format!("{}:0", carrier.txid), vec![(2, 0, 1_000)]);
+        mock.failing_outpoints.lock().unwrap().insert(format!("{}:0", failing.txid));
+
+        let pending = bitcoin::Transaction {
+            version: bitcoin::transaction::Version::TWO,
+            lock_time: bitcoin::absolute::LockTime::ZERO,
+            input: vec![bitcoin::TxIn {
+                previous_output: OutPoint::new(txid_n(0xc6), 0),
+                script_sig: bitcoin::ScriptBuf::new(),
+                sequence: bitcoin::Sequence::ENABLE_RBF_NO_LOCKTIME,
+                witness: bitcoin::Witness::new(),
+            }],
+            output: vec![TxOut { value: Amount::from_sat(4_000), script_pubkey: script.clone() }],
+        };
+        let unconfirmed = OutPoint::new(pending.compute_txid(), 0);
+        let pending_hex = bitcoin::consensus::encode::serialize_hex(&pending);
+        ProbeOnlyWallet { mock, addr, carrier, hard, failing, clean, unconfirmed, pending_hex }
+    }
+
+    /// BTC-only pass on the probe-only wallet. The fee buffer is out of reach,
+    /// so every candidate after the hard bar is offered to it: it takes the two
+    /// probe-clean coins and leaves the failing-probe coin (the shared
+    /// resolver's `Unknown`) and the unconfirmed one.
+    #[tokio::test]
+    async fn fee_buffer_takes_only_probe_clean_coins_on_the_btc_only_pass() {
+        let mut w = probe_only_wallet();
+        let from = Some(vec![w.addr.to_string()]);
+        let mut executor = EnhancedAlkanesExecutor::new(&mut w.mock);
+        let result = executor
+            .select_utxos_with_headroom(
+                &[InputRequirement::Bitcoin { amount: 3_000 }],
+                &from,
+                &[w.pending_hex.clone()], None, &[], &[],
+                UtxoDataSource::Metashrew,
+                BtcHeadroom::none().with_fee_buffer(20_000),
+            )
+            .await
+            .expect("the 3_000-sat coin meets the hard bar");
+
+        let taken: std::collections::BTreeSet<OutPoint> = result.outpoints.iter().copied().collect();
+        let want: std::collections::BTreeSet<OutPoint> = [w.hard, w.clean[0], w.clean[1]].into_iter().collect();
+        assert_eq!(taken, want, "failing={} unconfirmed={} carrier={}", w.failing, w.unconfirmed, w.carrier);
+    }
+
+    /// Same wallet through the alkane pass. Dust discovery finds the carrier
+    /// and covers the requirement, so the non-dust coins reach the "no balance
+    /// data" branch unprobed and the buffer zone probes them lazily. That lazy
+    /// probe's `Err` arm is what keeps the failing-probe coin out (untested
+    /// before the mock could fail a probe); the unconfirmed one is kept out by
+    /// its confirmations.
+    #[tokio::test]
+    async fn fee_buffer_takes_only_probe_clean_coins_on_the_alkane_pass() {
+        let mut w = probe_only_wallet();
+        let from = Some(vec![w.addr.to_string()]);
+        let mut executor = EnhancedAlkanesExecutor::new(&mut w.mock);
+        let result = executor
+            .select_utxos_with_headroom(
+                &[InputRequirement::Alkanes { block: 2, tx: 0, amount: 1_000 }, InputRequirement::Bitcoin { amount: 3_000 }],
+                &from,
+                &[w.pending_hex.clone()], None, &[], &[],
+                UtxoDataSource::Metashrew,
+                BtcHeadroom::none().with_fee_buffer(20_000),
+            )
+            .await
+            .expect("the carrier and the 3_000-sat coin meet the requirement");
+
+        let taken: std::collections::BTreeSet<OutPoint> = result.outpoints.iter().copied().collect();
+        let want: std::collections::BTreeSet<OutPoint> =
+            [w.carrier, w.hard, w.clean[0], w.clean[1]].into_iter().collect();
+        assert_eq!(taken, want, "failing={} unconfirmed={}", w.failing, w.unconfirmed);
+    }
+
+    /// Pins develop's CURRENT hard-bar rule, which #328 and the develop port
+    /// of #329 keep: a coin whose probe failed (alkane status unknown) still
+    /// funds the hard bar when nothing verified can, on both passes. This is
+    /// the rule the develop port of the ALK-18 executor fix (`a1580d96` on
+    /// main, "fail closed on unknown-alkane-status UTXOs") would change: the
+    /// coin would be skipped and selection would fail with a shortfall naming
+    /// it. Flip this test with that port.
+    #[tokio::test]
+    async fn unverified_coin_still_funds_the_hard_bar_when_nothing_else_can() {
+        let mut w = probe_only_wallet();
+        let (carrier, failing) = (w.carrier, w.failing);
+        {
+            let mut utxos = w.mock.utxos.lock().unwrap();
+            utxos.retain(|(op, _)| *op == carrier || *op == failing);
+            // Dust, so the alkane pass's discovery probes it too (and fails).
+            for (op, out) in utxos.iter_mut() {
+                if *op == failing {
+                    out.value = Amount::from_sat(1_000);
+                }
+            }
+        }
+        let from = Some(vec![w.addr.to_string()]);
+        let mut executor = EnhancedAlkanesExecutor::new(&mut w.mock);
+        for requirements in [
+            vec![InputRequirement::Bitcoin { amount: 900 }],
+            vec![InputRequirement::Alkanes { block: 2, tx: 0, amount: 1_000 }, InputRequirement::Bitcoin { amount: 1_200 }],
+        ] {
+            let result = executor
+                .select_utxos_with_headroom(
+                    &requirements, &from, &[], None, &[], &[],
+                    UtxoDataSource::Metashrew,
+                    BtcHeadroom::none(),
+                )
+                .await
+                .expect("develop: an unverified coin may fund the hard bar");
+            assert!(result.outpoints.contains(&failing), "{requirements:?}: {:?}", result.outpoints);
+        }
+    }
+
+    /// `probe_fee_input_carrier` and the plain-send filter
+    /// `carrier::exclude_alkane_carriers` classify every coin of the
+    /// probe-only wallet alike: clean = (false, true), carrier = (true, true),
+    /// unknown = (false, false). That includes the unconfirmed coin: it probes
+    /// clean, but metashrew has not indexed it, so the plain-send filter puts
+    /// it in `unindexed` and the executor does not count it as verified
+    /// either, (false, false).
+    #[tokio::test]
+    async fn plain_send_filter_and_fee_input_probe_agree_on_every_coin() {
+        use crate::alkanes::carrier::exclude_alkane_carriers;
+        let mut w = probe_only_wallet();
+        let addr = w.addr.to_string();
+        let mut coins = WalletProvider::get_utxos(&w.mock, false, Some(vec![addr.clone()])).await.unwrap();
+        // The unconfirmed coin, injected the way the executor injects it.
+        let report = apply_mempool_adjustment(&mut coins, &decode_pending_tx_payloads(&[w.pending_hex.clone()]), &[addr]);
+        assert_eq!(report.added, 1);
+        assert_eq!(coins.len(), 6);
+
+        let filter = exclude_alkane_carriers(&w.mock, false, coins.clone(), None).await;
+        let executor = EnhancedAlkanesExecutor::new(&mut w.mock);
+        let (mut asserted_hits, mut rpc_hits) = (0usize, 0usize);
+        for (op, utxo) in &coins {
+            let probed = executor
+                .probe_fee_input_carrier(op, utxo, None, &mut asserted_hits, &mut rpc_hits)
+                .await;
+            let (class, parity) = if filter.clean_outpoints.contains(op) {
+                ("clean", (false, true))
+            } else if filter.carriers.contains(op) {
+                ("carrier", (true, true))
+            } else if filter.unknown.contains(op) {
+                ("unknown", (false, false))
+            } else if filter.unindexed.contains(op) {
+                ("unindexed", (false, false))
+            } else {
+                panic!("{op} is in no bucket");
+            };
+            let want = if *op == w.carrier {
+                "carrier"
+            } else if *op == w.failing {
+                "unknown"
+            } else if *op == w.unconfirmed {
+                "unindexed"
+            } else {
+                "clean"
+            };
+            assert_eq!(class, want, "{op}");
+            assert_eq!(probed, parity, "{op}");
+        }
+    }
+
     // ── build: sub-dust change goes to the fee, not to an output ────────
 
     async fn build_with_change(
@@ -9829,6 +10035,115 @@ mod dust_change_tests {
                 needed + 2_500,
             );
         }
+    }
+
+    // ── the generic signer honours the assertions selection honoured ────
+
+    /// An executor PSBT that spends a coin admitted by assertion is signable
+    /// only when the signer gets the same assertion. The wallet holds a clean
+    /// confirmed BTC coin and a 2:0 x1000 carrier whose probe fails; the
+    /// carrier is asserted in `prefetched_utxos`, so selection takes it for
+    /// the requested 2:0 without a probe.
+    #[tokio::test]
+    async fn executor_built_psbt_admitted_by_assertion_signs_only_with_it() {
+        use crate::alkanes::carrier::{assert_signable_psbt, is_alkanes_call, SignerAssertions};
+        use crate::alkanes::parsing::{parse_input_requirements, parse_protostones};
+        use crate::alkanes::types::{PrefetchedAlkane, PrefetchedUtxo};
+        use base64::{engine::general_purpose::STANDARD, Engine as _};
+        let mut mock = MockProvider::new(bitcoin::Network::Regtest);
+        let secp = Secp256k1::new();
+        let sk = bitcoin::secp256k1::SecretKey::from_slice(&[0x5e; 32]).unwrap();
+        let pk = bitcoin::secp256k1::PublicKey::from_secret_key(&secp, &sk);
+        let addr = Address::p2tr(&secp, pk.x_only_public_key().0, None, bitcoin::Network::Regtest);
+        let change = Address::p2wpkh(&bitcoin::CompressedPublicKey(pk), bitcoin::Network::Regtest);
+        mock.set_keypair(sk, bitcoin::PublicKey::new(pk));
+        mock.qubitcoin_mode = false;
+        let script = addr.script_pubkey();
+        let carrier = OutPoint::new(txid_n(0xe0), 0);
+        let btc = OutPoint::new(txid_n(0xe1), 0);
+        mock.utxos.lock().unwrap().push((carrier, TxOut { value: Amount::from_sat(546), script_pubkey: script.clone() }));
+        mock.utxos.lock().unwrap().push((btc, TxOut { value: Amount::from_sat(100_000), script_pubkey: script.clone() }));
+        mock.alkane_balances.lock().unwrap().insert(carrier.to_string(), vec![(2, 0, 1000)]);
+        mock.failing_outpoints.lock().unwrap().insert(carrier.to_string());
+        let params = EnhancedExecuteParams {
+            fee_rate: Some(2.0),
+            to_addresses: vec!["p2tr:0".to_string()],
+            from_addresses: Some(vec![addr.to_string()]),
+            change_address: Some(change.to_string()),
+            alkanes_change_address: Some(addr.to_string()),
+            input_requirements: parse_input_requirements("2:0:1000").unwrap(),
+            protostones: parse_protostones("[2,0,77]:v0:v0").unwrap(),
+            envelope_data: None,
+            raw_output: false,
+            trace_enabled: false,
+            mine_enabled: false,
+            auto_confirm: false,
+            ordinals_strategy: OrdinalsStrategy::Burn,
+            mempool_indexer: false,
+            split_transactions: false,
+            split_at: None,
+            known_pending_tx_hexes: vec![],
+            prefetched_utxos: vec![PrefetchedUtxo {
+                outpoint: carrier.to_string(),
+                value: 546,
+                script_pubkey_hex: hex::encode(script.as_bytes()),
+                alkanes: Some(vec![PrefetchedAlkane { block: 2, tx: 0, amount: "1000".to_string() }]),
+                required: false,
+            }],
+            excluded_utxos: vec![],
+            skip_diesel_mint: true,
+            max_indexed_height: None,
+            utxo_source: UtxoDataSource::Metashrew,
+        };
+        let mut executor = EnhancedAlkanesExecutor::new(&mut mock);
+        let state = executor.build_single_transaction(&params).await.expect("build succeeds");
+        let ExecutionState::ReadyToSign(ready) = state else { panic!("expected ReadyToSign") };
+        let parent = ready.psbt.unsigned_tx.clone();
+        assert!(
+            parent.input.iter().any(|i| i.previous_output == carrier),
+            "the executor admits the asserted carrier although its probe fails"
+        );
+        assert!(is_alkanes_call(&parent));
+        let b64 = STANDARD.encode(ready.psbt.serialize());
+        let asserted = SignerAssertions::from_rows(&params.prefetched_utxos, &params.known_pending_tx_hexes).unwrap();
+        assert_signable_psbt(&mock, false, &b64, &asserted).await.unwrap();
+        let err = assert_signable_psbt(&mock, false, &b64, &SignerAssertions::default()).await.unwrap_err().to_string();
+        assert!(err.contains(&format!("input {carrier} has an unknown alkane balance (indexer probe failed:")), "{err}");
+        assert!(err.contains("this alkanes call could forward tokens on it"), "{err}");
+
+        // Plain kind: a bundle child as the app builds it, spending the
+        // parent's BTC change. The parent is given only as hex and is not
+        // broadcast, so esplora does not know it and its status read fails.
+        let pid = parent.compute_txid();
+        mock.tx_status.lock().unwrap().insert(pid.to_string(), None);
+        let vout = parent.output.iter().position(|o| o.script_pubkey == change.script_pubkey()).expect("BTC change") as u32;
+        let prevout = parent.output[vout as usize].clone();
+        let child = Transaction {
+            version: bitcoin::transaction::Version::TWO,
+            lock_time: bitcoin::absolute::LockTime::ZERO,
+            input: vec![bitcoin::TxIn { previous_output: OutPoint::new(pid, vout), ..Default::default() }],
+            output: vec![TxOut { value: prevout.value - Amount::from_sat(300), script_pubkey: script.clone() }],
+        };
+        assert!(!is_alkanes_call(&child));
+        let mut child_psbt = bitcoin::psbt::Psbt::from_unsigned_tx(child).unwrap();
+        child_psbt.inputs[0].witness_utxo = Some(prevout.clone());
+        let child_b64 = STANDARD.encode(child_psbt.serialize());
+        let hexes = vec![bitcoin::consensus::encode::serialize_hex(&parent)];
+        let err = assert_signable_psbt(&mock, false, &child_b64, &SignerAssertions::from_rows(&[], &hexes).unwrap())
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains(&format!("input {pid}:{vout} of this plain BTC send is not indexed")), "{err}");
+        let row = PrefetchedUtxo {
+            outpoint: format!("{pid}:{vout}"),
+            value: prevout.value.to_sat(),
+            script_pubkey_hex: hex::encode(prevout.script_pubkey.as_bytes()),
+            alkanes: Some(vec![]),
+            required: false,
+        };
+        assert_signable_psbt(&mock, false, &child_b64, &SignerAssertions::from_rows(&[row], &hexes).unwrap())
+            .await
+            .unwrap();
     }
 }
 
