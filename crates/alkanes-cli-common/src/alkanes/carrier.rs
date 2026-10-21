@@ -26,7 +26,9 @@
 //! * [`assert_signable_tx`] / [`assert_signable_psbt`] - the check of the
 //!   generic signers, which sign transactions built elsewhere: every input's
 //!   status must be known, and a plain transaction must spend no carrier and
-//!   no input the indexer has not indexed yet.
+//!   no input the indexer has not indexed yet. A replacement that keeps the
+//!   outputs of the transaction it replaces may re-sign that transaction's
+//!   unknown or unindexed inputs, never its carriers.
 
 use crate::traits::{MetashrewRpcProvider, UtxoInfo};
 use crate::{AlkanesError, Result};
@@ -842,6 +844,60 @@ fn mined_at(op: &OutPoint, height: u64) -> UtxoInfo {
     }
 }
 
+/// True when `tx` may re-sign `op` because it replaces the transaction T that
+/// spends it: the backend says `op` is spent by T, unconfirmed; T's hex hashes
+/// to T and T itself spends `op` (the backend's answer alone is not trusted);
+/// and `tx` keeps T's outputs, either (i) the same scripts in the same order,
+/// OP_RETURN bytes included (values may differ), or (ii) with no runestone in
+/// T or `tx`, T's scripts followed by more outputs, T having at least one
+/// non-OP_RETURN output. With either, the indexer settles what `op` carries
+/// exactly as it does for T. A read that fails admits nothing. `replaced`
+/// holds T per txid (`None`: its hex did not decode to T).
+async fn replaces_spender_of<P: crate::traits::EsploraProvider + ?Sized>(
+    provider: &P,
+    tx: &Transaction,
+    op: &OutPoint,
+    replaced: &mut BTreeMap<bitcoin::Txid, Option<Transaction>>,
+) -> bool {
+    let outspend = match provider.get_tx_outspend(&op.txid.to_string(), op.vout).await {
+        Ok(outspend) => outspend,
+        Err(_) => return false,
+    };
+    let spent = outspend.get("spent").and_then(|s| s.as_bool()) == Some(true);
+    let unconfirmed =
+        outspend.get("status").and_then(|s| s.get("confirmed")).and_then(|c| c.as_bool()) == Some(false);
+    let spender = outspend.get("txid").and_then(|t| t.as_str()).and_then(|t| t.parse::<bitcoin::Txid>().ok());
+    let spender = match spender {
+        Some(txid) if spent && unconfirmed => txid,
+        _ => return false,
+    };
+    if !replaced.contains_key(&spender) {
+        let decoded = match provider.get_tx_hex(&spender.to_string()).await {
+            Ok(hex_str) => hex::decode(hex_str.trim())
+                .ok()
+                .and_then(|bytes| bitcoin::consensus::deserialize::<Transaction>(&bytes).ok())
+                .filter(|t| t.compute_txid() == spender),
+            Err(_) => None,
+        };
+        replaced.insert(spender, decoded);
+    }
+    let Some(t) = replaced.get(&spender).and_then(|t| t.as_ref()) else {
+        return false;
+    };
+    if !t.input.iter().any(|i| i.previous_output == *op) {
+        return false;
+    }
+    let scripts = |tx: &Transaction| tx.output.iter().map(|o| o.script_pubkey.clone()).collect::<Vec<_>>();
+    let (old, new) = (scripts(t), scripts(tx));
+    if old == new {
+        return true;
+    }
+    ordinals::Runestone::decipher(t).is_none()
+        && ordinals::Runestone::decipher(tx).is_none()
+        && old.iter().any(|script| !script.is_op_return())
+        && new.starts_with(&old)
+}
+
 /// Pre-sign check for a transaction this crate did not build (the generic
 /// signers: `walletSignPsbtBase64`, `sign_transaction`, `wallet sign-tx`).
 ///
@@ -860,6 +916,11 @@ fn mined_at(op: &OutPoint, height: u64) -> UtxoInfo {
 /// coin selection: no probe, no status read. A parent hex asserts no sheet:
 /// its outputs are probed and judged like any input. Refusals name carriers
 /// first, then unknown inputs, then unindexed ones.
+///
+/// A replacement (a fee bump) may re-sign an unknown or unindexed input of
+/// the unconfirmed transaction it replaces when it keeps that transaction's
+/// outputs ([`replaces_spender_of`]); never a carrier. These reads happen
+/// only on the refusal path, and not when a carrier refuses anyway.
 pub async fn assert_signable_tx<P: crate::traits::DeezelProvider + ?Sized>(
     provider: &P,
     qubitcoin_mode: bool,
@@ -932,6 +993,23 @@ pub async fn assert_signable_tx<P: crate::traits::DeezelProvider + ?Sized>(
                 }
             }
         }
+    }
+    if carriers.is_empty() && !(unknown.is_empty() && unindexed.is_empty()) {
+        let mut replaced = BTreeMap::new();
+        let mut admitted = BTreeSet::new();
+        for (op, why) in unknown.iter().chain(unindexed.iter()) {
+            if replaces_spender_of(provider, tx, op, &mut replaced).await {
+                log::info!(
+                    "Pre-sign check: input {} ({}) admitted: this transaction replaces the unconfirmed \
+                     one that spends it and keeps its outputs",
+                    op,
+                    why
+                );
+                admitted.insert(*op);
+            }
+        }
+        unknown.retain(|(op, _)| !admitted.contains(op));
+        unindexed.retain(|(op, _)| !admitted.contains(op));
     }
     if !carriers.is_empty() {
         let listed: Vec<String> = carriers
@@ -2023,5 +2101,192 @@ mod tests {
         assert!(prevout_from_parents(&given, &op(1)).is_none());
         let err = prevout_from_parents(&given, &OutPoint::new(pid, 2)).unwrap().unwrap_err().to_string();
         assert!(err.contains(&format!("transaction {pid} has no output 2 (2 outputs)")), "{err}");
+    }
+
+    // ── generic signers: replacements ───────────────────────────────────
+
+    /// A P2WPKH-shaped script, distinct per `n`.
+    fn spk(n: u8) -> ScriptBuf {
+        ScriptBuf::from_bytes([&[0x00, 0x14][..], &[n; 20]].concat())
+    }
+
+    /// A plain T spending UTXOs `inputs`: a payment to `spk(1)` and change to
+    /// `spk(2)`.
+    fn replaced_tx(inputs: &[u8]) -> Transaction {
+        let mut t = plain_tx(inputs);
+        t.output = vec![
+            TxOut { value: Amount::from_sat(1_000), script_pubkey: spk(1) },
+            TxOut { value: Amount::from_sat(5_000), script_pubkey: spk(2) },
+        ];
+        t
+    }
+
+    /// `t` paying a higher fee: output 0 lowered, nothing else changed.
+    fn bump(t: &Transaction) -> Transaction {
+        let mut b = t.clone();
+        b.output[0].value = b.output[0].value - Amount::from_sat(100);
+        b
+    }
+
+    /// The mock says `t` spends each of its inputs, unconfirmed, and serves
+    /// its hex.
+    fn in_mempool(p: &MockProvider, t: &Transaction) {
+        let tid = t.compute_txid().to_string();
+        for (vin, i) in t.input.iter().enumerate() {
+            p.outspends.lock().unwrap().insert(
+                i.previous_output.to_string(),
+                Some(json!({"spent": true, "txid": tid, "vin": vin, "status": {"confirmed": false}})),
+            );
+        }
+        p.tx_hexes.lock().unwrap().insert(tid, bitcoin::consensus::encode::serialize_hex(t));
+    }
+
+    #[tokio::test]
+    async fn replacement_reuses_inputs_with_identical_outputs() {
+        // T spends 1, unconfirmed, and 2, whose probe fails. Alone, the bump
+        // is refused.
+        let p = mock(&[], &[2]);
+        set_status(&p, 1, Some(json!({"confirmed": false})));
+        let t = replaced_tx(&[1, 2]);
+        let new = bump(&t);
+        let err = sign_check(&p, &new).await.unwrap_err().to_string();
+        assert!(err.contains(&format!("{}:0 {PLAIN_UNKNOWN}", txid_n(2))), "{err}");
+        in_mempool(&p, &t);
+        sign_check(&p, &new).await.unwrap();
+        // One script changed: refused.
+        let mut moved = new.clone();
+        moved.output[0].script_pubkey = spk(3);
+        let err = sign_check(&p, &moved).await.unwrap_err().to_string();
+        assert!(err.contains(&format!("{}:0 {PLAIN_UNKNOWN}", txid_n(2))), "{err}");
+        // No hex for T, or a hex that is not T's (here the bump's own, which
+        // spends both inputs and keeps the scripts): refused.
+        let tid = t.compute_txid().to_string();
+        p.tx_hexes.lock().unwrap().remove(&tid);
+        let err = sign_check(&p, &new).await.unwrap_err().to_string();
+        assert!(err.contains(PLAIN_UNKNOWN), "{err}");
+        p.tx_hexes.lock().unwrap().insert(tid.clone(), bitcoin::consensus::encode::serialize_hex(&new));
+        let err = sign_check(&p, &new).await.unwrap_err().to_string();
+        assert!(err.contains(PLAIN_UNKNOWN), "{err}");
+        in_mempool(&p, &t);
+        // The outspend read for 1 fails: 1 is refused, 2 is still admitted.
+        p.outspends.lock().unwrap().insert(op(1).to_string(), None);
+        let err = sign_check(&p, &new).await.unwrap_err().to_string();
+        assert!(err.contains(&format!("{}:0 {UNINDEXED_INPUT} (unconfirmed)", txid_n(1))), "{err}");
+        assert!(!err.contains(PLAIN_UNKNOWN), "{err}");
+        // T confirmed: refused.
+        for n in [1, 2] {
+            p.outspends.lock().unwrap().insert(
+                op(n).to_string(),
+                Some(json!({"spent": true, "txid": tid, "vin": n - 1,
+                            "status": {"confirmed": true, "block_height": 100}})),
+            );
+        }
+        let err = sign_check(&p, &new).await.unwrap_err().to_string();
+        assert!(err.contains(&format!("{}:0 {PLAIN_UNKNOWN}", txid_n(2))), "{err}");
+    }
+
+    #[tokio::test]
+    async fn replacement_needs_the_replaced_tx_to_spend_the_input() {
+        // The backend says T spends 2, but T's own bytes spend only 1: the
+        // outspend answer alone admits nothing.
+        let p = mock(&[], &[2]);
+        let t = replaced_tx(&[1]);
+        in_mempool(&p, &t);
+        p.outspends.lock().unwrap().insert(
+            op(2).to_string(),
+            Some(json!({"spent": true, "txid": t.compute_txid().to_string(), "vin": 1,
+                        "status": {"confirmed": false}})),
+        );
+        let mut new = bump(&t);
+        new.input.push(TxIn { previous_output: op(2), ..Default::default() });
+        let err = sign_check(&p, &new).await.unwrap_err().to_string();
+        assert!(err.contains(&format!("{}:0 {PLAIN_UNKNOWN}", txid_n(2))), "{err}");
+        // A T that does spend 2, same scripts: admitted.
+        let t = replaced_tx(&[1, 2]);
+        in_mempool(&p, &t);
+        sign_check(&p, &new).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn replacement_prefix_only_without_runestones() {
+        // The app's add-input bump: T spends 1, unconfirmed; the bump adds 3,
+        // clean and indexed, and appends an output.
+        let p = mock(&[], &[]);
+        for n in [1, 5, 6] {
+            set_status(&p, n, Some(json!({"confirmed": false})));
+        }
+        let add_input = |t: &Transaction, extra: &TxOut| {
+            let mut b = t.clone();
+            b.input.push(TxIn { previous_output: op(3), ..Default::default() });
+            b.output.push(extra.clone());
+            b
+        };
+        let extra = TxOut { value: Amount::from_sat(4_000), script_pubkey: spk(4) };
+        let t = replaced_tx(&[1]);
+        in_mempool(&p, &t);
+        sign_check(&p, &add_input(&t, &extra)).await.unwrap();
+        // A runestone (no protostone, so plain) in T: only identity admits.
+        let stone = TxOut {
+            value: Amount::ZERO,
+            script_pubkey: ordinals::Runestone { pointer: Some(1), ..Default::default() }.encipher(),
+        };
+        let mut rt = replaced_tx(&[5]);
+        rt.output.push(stone.clone());
+        in_mempool(&p, &rt);
+        let appended = add_input(&rt, &extra);
+        assert!(ordinals::Runestone::decipher(&appended).is_some() && !is_alkanes_call(&appended));
+        let err = sign_check(&p, &appended).await.unwrap_err().to_string();
+        assert!(err.contains(&format!("{}:0 {UNINDEXED_INPUT}", txid_n(5))), "{err}");
+        sign_check(&p, &bump(&rt)).await.unwrap();
+        // A runestone appended by the replacement: refused.
+        let err = sign_check(&p, &add_input(&t, &stone)).await.unwrap_err().to_string();
+        assert!(err.contains(&format!("{}:0 {UNINDEXED_INPUT}", txid_n(1))), "{err}");
+        // T with no output but an OP_RETURN has nothing to keep: refused.
+        let mut burn = plain_tx(&[6]);
+        burn.output[0].script_pubkey =
+            bitcoin::script::Builder::new().push_opcode(bitcoin::opcodes::all::OP_RETURN).into_script();
+        in_mempool(&p, &burn);
+        let err = sign_check(&p, &add_input(&burn, &extra)).await.unwrap_err().to_string();
+        assert!(err.contains(&format!("{}:0 {UNINDEXED_INPUT}", txid_n(6))), "{err}");
+        // The added input gets the full rule.
+        set_status(&p, 3, Some(json!({"confirmed": false})));
+        let err = sign_check(&p, &add_input(&t, &extra)).await.unwrap_err().to_string();
+        assert!(err.contains(&format!("{}:0 {UNINDEXED_INPUT} (unconfirmed)", txid_n(3))), "{err}");
+    }
+
+    #[tokio::test]
+    async fn replacement_never_admits_carriers() {
+        let t = replaced_tx(&[1, 2]);
+        let new = bump(&t);
+        let p = mock(&[1], &[]);
+        in_mempool(&p, &t);
+        let err = sign_check(&p, &new).await.unwrap_err().to_string();
+        assert!(err.contains("carry alkanes") && err.contains(&format!("{}:0 2:0 x1000", txid_n(1))), "{err}");
+        // Asserted a carrier instead of probed: refused.
+        let p = mock(&[], &[1]);
+        in_mempool(&p, &t);
+        let a = asserting(&[row(1, Some(&[(2, 0, "1000")]))]);
+        let err = assert_signable_tx(&p, false, &new, &a).await.unwrap_err().to_string();
+        assert!(err.contains("carry alkanes") && err.contains(&format!("{}:0 2:0 x1000", txid_n(1))), "{err}");
+        // Only the carrier blocks it: unasserted, the failing probe is
+        // admitted.
+        sign_check(&p, &new).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn replacement_protostone_unknown_input() {
+        let p = mock(&[], &[1]);
+        let t = call_tx(&[1]);
+        in_mempool(&p, &t);
+        let new = bump(&t);
+        assert!(is_alkanes_call(&new));
+        sign_check(&p, &new).await.unwrap();
+        // Other OP_RETURN bytes, still an alkanes call: refused.
+        let mut other = new.clone();
+        other.output[1].script_pubkey =
+            ordinals::Runestone { protocol: Some(vec![TAG1_STONE]), ..Default::default() }.encipher();
+        assert!(is_alkanes_call(&other));
+        let err = sign_check(&p, &other).await.unwrap_err().to_string();
+        assert!(err.contains(CALL_UNKNOWN) && err.contains("indexer probe failed"), "{err}");
     }
 }

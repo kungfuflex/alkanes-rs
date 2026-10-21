@@ -106,6 +106,13 @@ pub struct MockProvider {
     /// indexer reaching a block between a probe and a later height read.
     /// Defaults to `None`.
     pub metashrew_height_after_probe: Arc<Mutex<Option<u64>>>,
+    /// Per-outpoint (`txid:vout`) answer of `get_tx_outspend` instead of the
+    /// default `{"spent": false}`; `None` makes the read fail. Empty by
+    /// default.
+    pub outspends: Arc<Mutex<HashMap<String, Option<JsonValue>>>>,
+    /// Per-txid answer of `get_tx_hex` instead of the default
+    /// `"mock_tx_hex"`. Empty by default.
+    pub tx_hexes: Arc<Mutex<HashMap<String, String>>>,
 }
 
 impl Default for MockProvider {
@@ -138,6 +145,8 @@ impl MockProvider {
             metashrew_height: Arc::new(Mutex::new(Some(800001))),
             tx_status: Arc::new(Mutex::new(HashMap::new())),
             metashrew_height_after_probe: Arc::new(Mutex::new(None)),
+            outspends: Arc::new(Mutex::new(HashMap::new())),
+            tx_hexes: Arc::new(Mutex::new(HashMap::new())),
         }
     }
     
@@ -887,8 +896,8 @@ impl EsploraProvider for MockProvider {
         Ok(serde_json::json!({"txid": "mock_txid"}))
     }
     
-    async fn get_tx_hex(&self, _txid: &str) -> Result<String> {
-        Ok("mock_tx_hex".to_string())
+    async fn get_tx_hex(&self, txid: &str) -> Result<String> {
+        Ok(self.tx_hexes.lock().unwrap().get(txid).cloned().unwrap_or_else(|| "mock_tx_hex".to_string()))
     }
     
     async fn get_tx_raw(&self, _txid: &str) -> Result<String> {
@@ -911,8 +920,12 @@ impl EsploraProvider for MockProvider {
         Ok("mock_merkleblock_proof".to_string())
     }
     
-    async fn get_tx_outspend(&self, _txid: &str, _index: u32) -> Result<JsonValue> {
-        Ok(serde_json::json!({"spent": false}))
+    async fn get_tx_outspend(&self, txid: &str, index: u32) -> Result<JsonValue> {
+        match self.outspends.lock().unwrap().get(&format!("{}:{}", txid, index)) {
+            Some(Some(outspend)) => Ok(outspend.clone()),
+            Some(None) => Err(AlkanesError::Network(format!("mock: outspend unavailable for {}:{}", txid, index))),
+            None => Ok(serde_json::json!({"spent": false})),
+        }
     }
     
     async fn get_tx_outspends(&self, _txid: &str) -> Result<JsonValue> {
