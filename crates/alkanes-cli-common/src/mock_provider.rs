@@ -102,6 +102,9 @@ pub struct MockProvider {
     /// unconfirmed, as they are on a real node. Defaults to `false` (they read
     /// as confirmed, which every existing test relies on).
     pub unconfirmed_broadcasts: bool,
+    /// When set, `get_protorunes_by_address` fails, models an unavailable
+    /// address-wide alkanes view (qubitcoin's only one). Defaults to `false`.
+    pub failing_protorunes_by_address: bool,
 }
 
 impl Default for MockProvider {
@@ -133,6 +136,7 @@ impl MockProvider {
             utxo_status: Arc::new(Mutex::new(HashMap::new())),
             metashrew_height: Arc::new(Mutex::new(Some(800001))),
             unconfirmed_broadcasts: false,
+            failing_protorunes_by_address: false,
         }
     }
     
@@ -702,8 +706,11 @@ impl MetashrewRpcProvider for MockProvider {
         Ok(serde_json::json!([]))
     }
     
-    async fn get_protorunes_by_address(&self, _address: &str, _block_tag: Option<String>, _protocol_tag: u128) -> Result<ProtoruneWalletResponse> {
+    async fn get_protorunes_by_address(&self, address: &str, _block_tag: Option<String>, _protocol_tag: u128) -> Result<ProtoruneWalletResponse> {
         use crate::alkanes::balance_sheet::{BalanceSheet, CachedBalanceSheet, ProtoruneRuneId};
+        if self.failing_protorunes_by_address {
+            return Err(AlkanesError::Network(format!("mock: protorunesbyaddress failed for {}", address)));
+        }
 
         let ab = self.alkane_balances.lock().unwrap();
         let utxos = self.utxos.lock().unwrap();
