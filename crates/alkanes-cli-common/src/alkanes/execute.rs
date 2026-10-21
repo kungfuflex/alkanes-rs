@@ -1374,7 +1374,7 @@ fn build_effective_txouts_map(
 /// malformed `amount` decimal surfaces as a structured error rather than
 /// silently dropping the entry. Stale-cache callers should fail loud at
 /// execute-time, not later at swap-revert time.
-fn build_prefetched_alkanes_map(
+pub(crate) fn build_prefetched_alkanes_map(
     prefetched_utxos: &[PrefetchedUtxo],
 ) -> Result<Option<alloc::collections::BTreeMap<OutPoint, Vec<(ProtoruneRuneId, u128)>>>> {
     if prefetched_utxos.is_empty() {
@@ -10035,6 +10035,115 @@ mod dust_change_tests {
                 needed + 2_500,
             );
         }
+    }
+
+    // ── the generic signer honours the assertions selection honoured ────
+
+    /// An executor PSBT that spends a coin admitted by assertion is signable
+    /// only when the signer gets the same assertion. The wallet holds a clean
+    /// confirmed BTC coin and a 2:0 x1000 carrier whose probe fails; the
+    /// carrier is asserted in `prefetched_utxos`, so selection takes it for
+    /// the requested 2:0 without a probe.
+    #[tokio::test]
+    async fn executor_built_psbt_admitted_by_assertion_signs_only_with_it() {
+        use crate::alkanes::carrier::{assert_signable_psbt, is_alkanes_call, SignerAssertions};
+        use crate::alkanes::parsing::{parse_input_requirements, parse_protostones};
+        use crate::alkanes::types::{PrefetchedAlkane, PrefetchedUtxo};
+        use base64::{engine::general_purpose::STANDARD, Engine as _};
+        let mut mock = MockProvider::new(bitcoin::Network::Regtest);
+        let secp = Secp256k1::new();
+        let sk = bitcoin::secp256k1::SecretKey::from_slice(&[0x5e; 32]).unwrap();
+        let pk = bitcoin::secp256k1::PublicKey::from_secret_key(&secp, &sk);
+        let addr = Address::p2tr(&secp, pk.x_only_public_key().0, None, bitcoin::Network::Regtest);
+        let change = Address::p2wpkh(&bitcoin::CompressedPublicKey(pk), bitcoin::Network::Regtest);
+        mock.set_keypair(sk, bitcoin::PublicKey::new(pk));
+        mock.qubitcoin_mode = false;
+        let script = addr.script_pubkey();
+        let carrier = OutPoint::new(txid_n(0xe0), 0);
+        let btc = OutPoint::new(txid_n(0xe1), 0);
+        mock.utxos.lock().unwrap().push((carrier, TxOut { value: Amount::from_sat(546), script_pubkey: script.clone() }));
+        mock.utxos.lock().unwrap().push((btc, TxOut { value: Amount::from_sat(100_000), script_pubkey: script.clone() }));
+        mock.alkane_balances.lock().unwrap().insert(carrier.to_string(), vec![(2, 0, 1000)]);
+        mock.failing_outpoints.lock().unwrap().insert(carrier.to_string());
+        let params = EnhancedExecuteParams {
+            fee_rate: Some(2.0),
+            to_addresses: vec!["p2tr:0".to_string()],
+            from_addresses: Some(vec![addr.to_string()]),
+            change_address: Some(change.to_string()),
+            alkanes_change_address: Some(addr.to_string()),
+            input_requirements: parse_input_requirements("2:0:1000").unwrap(),
+            protostones: parse_protostones("[2,0,77]:v0:v0").unwrap(),
+            envelope_data: None,
+            raw_output: false,
+            trace_enabled: false,
+            mine_enabled: false,
+            auto_confirm: false,
+            ordinals_strategy: OrdinalsStrategy::Burn,
+            mempool_indexer: false,
+            split_transactions: false,
+            split_at: None,
+            known_pending_tx_hexes: vec![],
+            prefetched_utxos: vec![PrefetchedUtxo {
+                outpoint: carrier.to_string(),
+                value: 546,
+                script_pubkey_hex: hex::encode(script.as_bytes()),
+                alkanes: Some(vec![PrefetchedAlkane { block: 2, tx: 0, amount: "1000".to_string() }]),
+                required: false,
+            }],
+            excluded_utxos: vec![],
+            skip_diesel_mint: true,
+            max_indexed_height: None,
+            utxo_source: UtxoDataSource::Metashrew,
+        };
+        let mut executor = EnhancedAlkanesExecutor::new(&mut mock);
+        let state = executor.build_single_transaction(&params).await.expect("build succeeds");
+        let ExecutionState::ReadyToSign(ready) = state else { panic!("expected ReadyToSign") };
+        let parent = ready.psbt.unsigned_tx.clone();
+        assert!(
+            parent.input.iter().any(|i| i.previous_output == carrier),
+            "the executor admits the asserted carrier although its probe fails"
+        );
+        assert!(is_alkanes_call(&parent));
+        let b64 = STANDARD.encode(ready.psbt.serialize());
+        let asserted = SignerAssertions::from_rows(&params.prefetched_utxos, &params.known_pending_tx_hexes).unwrap();
+        assert_signable_psbt(&mock, false, &b64, &asserted).await.unwrap();
+        let err = assert_signable_psbt(&mock, false, &b64, &SignerAssertions::default()).await.unwrap_err().to_string();
+        assert!(err.contains(&format!("input {carrier} has an unknown alkane balance (indexer probe failed:")), "{err}");
+        assert!(err.contains("this alkanes call could forward tokens on it"), "{err}");
+
+        // Plain kind: a bundle child as the app builds it, spending the
+        // parent's BTC change. The parent is given only as hex and is not
+        // broadcast, so esplora does not know it and its status read fails.
+        let pid = parent.compute_txid();
+        mock.tx_status.lock().unwrap().insert(pid.to_string(), None);
+        let vout = parent.output.iter().position(|o| o.script_pubkey == change.script_pubkey()).expect("BTC change") as u32;
+        let prevout = parent.output[vout as usize].clone();
+        let child = Transaction {
+            version: bitcoin::transaction::Version::TWO,
+            lock_time: bitcoin::absolute::LockTime::ZERO,
+            input: vec![bitcoin::TxIn { previous_output: OutPoint::new(pid, vout), ..Default::default() }],
+            output: vec![TxOut { value: prevout.value - Amount::from_sat(300), script_pubkey: script.clone() }],
+        };
+        assert!(!is_alkanes_call(&child));
+        let mut child_psbt = bitcoin::psbt::Psbt::from_unsigned_tx(child).unwrap();
+        child_psbt.inputs[0].witness_utxo = Some(prevout.clone());
+        let child_b64 = STANDARD.encode(child_psbt.serialize());
+        let hexes = vec![bitcoin::consensus::encode::serialize_hex(&parent)];
+        let err = assert_signable_psbt(&mock, false, &child_b64, &SignerAssertions::from_rows(&[], &hexes).unwrap())
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains(&format!("input {pid}:{vout} of this plain BTC send is not indexed")), "{err}");
+        let row = PrefetchedUtxo {
+            outpoint: format!("{pid}:{vout}"),
+            value: prevout.value.to_sat(),
+            script_pubkey_hex: hex::encode(prevout.script_pubkey.as_bytes()),
+            alkanes: Some(vec![]),
+            required: false,
+        };
+        assert_signable_psbt(&mock, false, &child_b64, &SignerAssertions::from_rows(&[row], &hexes).unwrap())
+            .await
+            .unwrap();
     }
 }
 

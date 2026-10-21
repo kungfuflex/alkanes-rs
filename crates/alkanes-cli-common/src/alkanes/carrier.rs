@@ -715,8 +715,72 @@ pub struct SignerAssertions {
     /// selection honours them: an asserted input is not probed and its
     /// transaction's status is not read.
     pub sheets: AssertedSheets,
-    /// Parent transactions by txid (`known_pending_tx_hexes`).
+    /// Parent transactions by txid (`known_pending_tx_hexes`). They supply
+    /// prevouts ([`prevout_from_parents`]) and name the cause when a plain
+    /// input's parent status cannot be read; they assert no sheet.
     pub parents: BTreeMap<bitcoin::Txid, Transaction>,
+}
+
+impl SignerAssertions {
+    /// From execute-option rows and parent hexes, parsed as coin selection
+    /// parses them: only rows with `alkanes: Some(..)` assert a sheet (`[]`
+    /// asserts clean), `required`, `value` and `script_pubkey_hex` are not
+    /// used. A malformed outpoint or amount, or a hex that does not decode to
+    /// a transaction, fails the whole call. Parents are keyed by their
+    /// computed txid; duplicates collapse.
+    pub fn from_rows(rows: &[super::types::PrefetchedUtxo], parent_hexes: &[String]) -> Result<Self> {
+        let sheets = super::execute::build_prefetched_alkanes_map(rows)?.unwrap_or_default();
+        let mut parents = BTreeMap::new();
+        for (i, hex_str) in parent_hexes.iter().enumerate() {
+            let tx: Transaction = hex::decode(hex_str.strip_prefix("0x").unwrap_or(hex_str))
+                .map_err(|e| format!("{e}"))
+                .and_then(|bytes| bitcoin::consensus::deserialize(&bytes).map_err(|e| format!("{e}")))
+                .map_err(|e| {
+                    AlkanesError::Validation(format!(
+                        "known_pending_tx_hexes entry {i} is not a transaction: {e}"
+                    ))
+                })?;
+            parents.entry(tx.compute_txid()).or_insert(tx);
+        }
+        Ok(Self { sheets, parents })
+    }
+
+    /// From an options object in the execute options' shape:
+    /// `prefetched_utxos` / `prefetchedUtxos` and `known_pending_tx_hexes` /
+    /// `knownPendingTxHexes`, parsed strictly by [`parse_array_option`]
+    /// (absent or `null` is empty). Other keys are ignored, so an execute
+    /// options object is accepted as is. `null` options assert nothing;
+    /// anything else that is not an object is an error.
+    ///
+    /// [`parse_array_option`]: super::types::parse_array_option
+    pub fn from_options_json(opts: &serde_json::Value) -> Result<Self> {
+        use super::types::{parse_array_option, PrefetchedUtxo};
+        if !opts.is_null() && !opts.is_object() {
+            return Err(AlkanesError::Validation("signer options must be a JSON object".to_string()));
+        }
+        let rows: Vec<PrefetchedUtxo> = parse_array_option(opts, &["prefetched_utxos", "prefetchedUtxos"])
+            .map_err(AlkanesError::Validation)?;
+        let parent_hexes: Vec<String> =
+            parse_array_option(opts, &["known_pending_tx_hexes", "knownPendingTxHexes"])
+                .map_err(AlkanesError::Validation)?;
+        Self::from_rows(&rows, &parent_hexes)
+    }
+}
+
+/// The prevout of `op` when its parent is in `assertions.parents`:
+/// `Some(Ok(parent.output[vout]))`, `Some(Err(..))` when the parent has no
+/// such output, `None` when the parent is not given. The parent
+/// authenticates itself by its txid.
+pub fn prevout_from_parents(assertions: &SignerAssertions, op: &OutPoint) -> Option<Result<bitcoin::TxOut>> {
+    let parent = assertions.parents.get(&op.txid)?;
+    Some(parent.output.get(op.vout as usize).cloned().ok_or_else(|| {
+        AlkanesError::Validation(format!(
+            "known_pending_tx_hexes: transaction {} has no output {} ({} outputs)",
+            op.txid,
+            op.vout,
+            parent.output.len()
+        ))
+    }))
 }
 
 /// True iff `tx` is an alkanes call: its runestone decodes to at least one
@@ -788,12 +852,14 @@ fn mined_at(op: &OutPoint, height: u64) -> UtxoInfo {
 /// (once per txid) must say confirmed at a height at or below metashrew's,
 /// which is read once before the first probe. An unconfirmed transaction, or
 /// one above that height or with the height unreadable, is unindexed; a status
-/// that cannot be read is unknown. An alkanes call is accepted with carriers
-/// (its protostones route them) and gets no status reads.
+/// that cannot be read is unknown, unless the transaction is one of
+/// `assertions.parents`, which makes it unindexed. An alkanes call is accepted
+/// with carriers (its protostones route them) and gets no status reads.
 ///
 /// An asserted input (`assertions.sheets`) takes its asserted sheet, as in
-/// coin selection: no probe, no status read. Refusals name carriers first,
-/// then unknown inputs, then unindexed ones.
+/// coin selection: no probe, no status read. A parent hex asserts no sheet:
+/// its outputs are probed and judged like any input. Refusals name carriers
+/// first, then unknown inputs, then unindexed ones.
 pub async fn assert_signable_tx<P: crate::traits::DeezelProvider + ?Sized>(
     provider: &P,
     qubitcoin_mode: bool,
@@ -855,6 +921,13 @@ pub async fn assert_signable_tx<P: crate::traits::DeezelProvider + ?Sized>(
                         }
                     }
                     ParentStatus::Unconfirmed => unindexed.push((*op, "unconfirmed".to_string())),
+                    // A parent the caller handed in exists; with no status it
+                    // is not broadcast or not indexed yet, and the remedy is
+                    // to assert the input or wait, not to retry the indexer.
+                    ParentStatus::Unreadable(e) if assertions.parents.contains_key(&op.txid) => unindexed.push((
+                        *op,
+                        format!("its transaction, given as a parent hex, is not broadcast or not indexed yet; status unreadable: {e}"),
+                    )),
                     ParentStatus::Unreadable(e) => unknown.push((*op, format!("status unreadable: {e}"))),
                 }
             }
@@ -1748,5 +1821,207 @@ mod tests {
         set_status(&p, 2, None);
         let err = sign_check(&p, &plain_tx(&[2])).await.unwrap_err().to_string();
         assert!(err.contains(PLAIN_UNKNOWN) && err.contains("status unreadable"), "{err}");
+    }
+
+    // ── generic signers: caller assertions and parent hexes ─────────────
+
+    use crate::alkanes::types::{PrefetchedAlkane, PrefetchedUtxo};
+    use serde_json::json;
+
+    /// A `prefetched_utxos` row for UTXO `n`; `alkanes: None` asserts nothing.
+    fn row(n: u8, alkanes: Option<&[(u128, u128, &str)]>) -> PrefetchedUtxo {
+        PrefetchedUtxo {
+            outpoint: format!("{}:0", txid_n(n)),
+            value: 10_000,
+            script_pubkey_hex: "51".to_string(),
+            alkanes: alkanes.map(|sheet| {
+                sheet
+                    .iter()
+                    .map(|(block, tx, amount)| PrefetchedAlkane { block: *block, tx: *tx, amount: amount.to_string() })
+                    .collect()
+            }),
+            required: false,
+        }
+    }
+
+    fn asserting(rows: &[PrefetchedUtxo]) -> SignerAssertions {
+        SignerAssertions::from_rows(rows, &[]).unwrap()
+    }
+
+    #[tokio::test]
+    async fn signer_plain_honours_assertions_like_selection() {
+        // 1 is unconfirmed, asserted clean. 2 is confirmed and probe-clean,
+        // asserted a carrier. 3 fails its probe, asserted clean. 4 is
+        // unconfirmed and unasserted. 5 is indexed and unasserted. 9 is
+        // asserted and spent by no transaction here.
+        let p = mock(&[], &[3]);
+        set_status(&p, 1, Some(json!({"confirmed": false})));
+        set_status(&p, 4, Some(json!({"confirmed": false})));
+        let a = asserting(&[
+            row(1, Some(&[])),
+            row(2, Some(&[(2, 0, "5")])),
+            row(3, Some(&[])),
+            row(9, Some(&[(2, 0, "7")])),
+        ]);
+        assert_signable_tx(&p, false, &plain_tx(&[1, 3, 5]), &a).await.unwrap();
+        let err = assert_signable_tx(&p, false, &plain_tx(&[1, 2]), &a).await.unwrap_err().to_string();
+        assert!(err.contains("carry alkanes") && err.contains(&format!("{}:0 2:0 x5", txid_n(2))), "{err}");
+        // The unasserted sibling still gets the indexed rule in the same call.
+        let err = assert_signable_tx(&p, false, &plain_tx(&[1, 3, 4]), &a).await.unwrap_err().to_string();
+        assert!(err.contains(&format!("{}:0 {UNINDEXED_INPUT} (unconfirmed)", txid_n(4))), "{err}");
+        // Without the assertions, 1 and 3 are refused.
+        let err = sign_check(&p, &plain_tx(&[1])).await.unwrap_err().to_string();
+        assert!(err.contains(UNINDEXED_INPUT), "{err}");
+        let err = sign_check(&p, &plain_tx(&[3])).await.unwrap_err().to_string();
+        assert!(err.contains(PLAIN_UNKNOWN), "{err}");
+        // Parity: selection, given the same statuses and the same sheets,
+        // keeps exactly the inputs the signer accepts.
+        let f = exclude_alkane_carriers(
+            &p,
+            false,
+            vec![
+                utxo_at(1, 10_000, 0, None),
+                utxo_at(2, 10_000, 10, Some(100)),
+                utxo_at(3, 10_000, 0, None),
+                utxo_at(4, 10_000, 0, None),
+                utxo_at(5, 10_000, 10, Some(100)),
+            ],
+            Some(&a.sheets),
+        )
+        .await;
+        let mut signed = vec![];
+        for n in 1..=5 {
+            if assert_signable_tx(&p, false, &plain_tx(&[n]), &a).await.is_ok() {
+                signed.push(op(n));
+            }
+        }
+        assert_eq!(signed, vec![op(1), op(3), op(5)]);
+        assert_eq!(f.clean.iter().map(|(op, _)| *op).collect::<Vec<_>>(), signed);
+    }
+
+    #[tokio::test]
+    async fn signer_protostone_assertion_replaces_a_failing_probe() {
+        let p = mock(&[], &[1]);
+        let tx = call_tx(&[1]);
+        assert!(is_alkanes_call(&tx));
+        for sheet in [&[][..], &[(2, 0, "1000")][..]] {
+            assert_signable_tx(&p, false, &tx, &asserting(&[row(1, Some(sheet))])).await.unwrap();
+        }
+        let err = sign_check(&p, &tx).await.unwrap_err().to_string();
+        assert!(err.contains(CALL_UNKNOWN) && err.contains("indexer probe failed"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn signer_assertions_parse_like_execute_options() {
+        let parent = plain_tx(&[7]);
+        let parent_hex = bitcoin::consensus::encode::serialize_hex(&parent);
+        let op1 = format!("{}:0", txid_n(1));
+        let row1 = json!({"outpoint": op1, "value": 546, "script_pubkey_hex": "51",
+                          "alkanes": [{"block": 2, "tx": 0, "amount": "1000"}]});
+        let snake = json!({"prefetched_utxos": [row1], "known_pending_tx_hexes": [parent_hex]});
+        let camel = json!({"prefetchedUtxos": [row1], "knownPendingTxHexes": [parent_hex]});
+        for opts in [snake, camel] {
+            let a = SignerAssertions::from_options_json(&opts).unwrap();
+            assert_eq!(a.sheets, AssertedSheets::from([(op(1), vec![(ProtoruneRuneId { block: 2, tx: 0 }, 1000)])]));
+            assert_eq!(a.parents.keys().copied().collect::<Vec<_>>(), vec![parent.compute_txid()]);
+        }
+        // Parents are keyed by txid, so the same hex twice is one parent.
+        let a = SignerAssertions::from_options_json(&json!({"knownPendingTxHexes": [parent_hex, format!("0x{parent_hex}")]}))
+            .unwrap();
+        assert_eq!(a.parents.len(), 1);
+        // An execute options object is accepted as is.
+        let a = SignerAssertions::from_options_json(&json!({
+            "fee_rate": 2.0, "to_addresses": ["p2tr:0"], "excludedUtxos": [], "prefetched_utxos": [row1]
+        }))
+        .unwrap();
+        assert_eq!(a.sheets.len(), 1);
+        // A row asserts a sheet only through `alkanes`: absent, `null`, or a
+        // `required` pin without one asserts nothing, so that input, failing
+        // its probe, is still refused.
+        let p = mock(&[], &[2]);
+        let op2 = format!("{}:0", txid_n(2));
+        let a = SignerAssertions::from_options_json(&json!({"prefetched_utxos": [
+            {"outpoint": op2, "value": 546, "script_pubkey_hex": "51"},
+            {"outpoint": op2, "value": 546, "script_pubkey_hex": "51", "alkanes": null},
+            {"outpoint": op2, "value": 546, "script_pubkey_hex": "51", "required": true},
+        ]}))
+        .unwrap();
+        assert!(a.sheets.is_empty(), "{:?}", a.sheets);
+        let err = assert_signable_tx(&p, false, &plain_tx(&[2]), &a).await.unwrap_err().to_string();
+        assert!(err.contains(PLAIN_UNKNOWN) && err.contains("indexer probe failed"), "{err}");
+        let err = assert_signable_tx(&p, false, &call_tx(&[2]), &a).await.unwrap_err().to_string();
+        assert!(err.contains(CALL_UNKNOWN), "{err}");
+        // Anything malformed fails the whole call, naming the key and the
+        // entry; never a partial set.
+        let bad_op = json!({"outpoint": "zz:0", "value": 546, "script_pubkey_hex": "51", "alkanes": []});
+        let bad_amount = json!({"outpoint": op1, "value": 546, "script_pubkey_hex": "51",
+                                "alkanes": [{"block": 2, "tx": 0, "amount": "ten"}]});
+        let stringy_value = json!({"outpoint": op1, "value": "546", "script_pubkey_hex": "51", "alkanes": []});
+        for (opts, wants) in [
+            (json!({"prefetched_utxos": [row1, bad_op]}), &["prefetched_utxos", "invalid outpoint 'zz:0'"][..]),
+            (json!({"prefetched_utxos": [bad_amount]}), &["prefetched_utxos", "invalid alkane amount 'ten' for 2:0"]),
+            (json!({"prefetchedUtxos": [row1, stringy_value]}), &["option `prefetchedUtxos` entry 1 is invalid"]),
+            (json!({"prefetched_utxos": row1}), &["option `prefetched_utxos` must be an array"]),
+            (json!({"knownPendingTxHexes": [parent_hex, "02000000zz"]}), &["known_pending_tx_hexes entry 1 is not a transaction"]),
+            (json!({"known_pending_tx_hexes": [parent_hex, "0200"]}), &["known_pending_tx_hexes entry 1 is not a transaction"]),
+            (json!({"knownPendingTxHexes": [parent_hex, 7]}), &["option `knownPendingTxHexes` entry 1 is invalid"]),
+            (json!([row1]), &["signer options must be a JSON object"]),
+        ] {
+            let err = SignerAssertions::from_options_json(&opts).unwrap_err().to_string();
+            for want in wants {
+                assert!(err.contains(want), "{opts}: {err}");
+            }
+        }
+        // Absent or `null` options assert nothing.
+        for opts in [json!(null), json!({}), json!({"prefetched_utxos": null, "knownPendingTxHexes": null})] {
+            let a = SignerAssertions::from_options_json(&opts).unwrap();
+            assert!(a.sheets.is_empty() && a.parents.is_empty(), "{opts}");
+        }
+    }
+
+    #[tokio::test]
+    async fn signer_parent_hex_classifies_unbroadcast_parents() {
+        // The caller built P and has not broadcast it: esplora does not know
+        // it, so its status read fails, and the indexer answers its outputs
+        // empty.
+        let mut parent = plain_tx(&[60]);
+        parent.output.push(TxOut { value: Amount::from_sat(5_000), script_pubkey: ScriptBuf::new() });
+        let pid = parent.compute_txid();
+        let child = Transaction {
+            input: vec![TxIn { previous_output: OutPoint::new(pid, 1), ..Default::default() }],
+            ..plain_tx(&[])
+        };
+        let p = mock(&[], &[]);
+        p.tx_status.lock().unwrap().insert(pid.to_string(), None);
+        let hexes = vec![bitcoin::consensus::encode::serialize_hex(&parent)];
+        let given = SignerAssertions::from_rows(&[], &hexes).unwrap();
+        let err = assert_signable_tx(&p, false, &child, &given).await.unwrap_err().to_string();
+        assert!(err.contains(&format!("{pid}:1 {UNINDEXED_INPUT}")), "{err}");
+        assert!(err.contains("given as a parent hex, is not broadcast or not indexed yet"), "{err}");
+        assert!(!err.contains(PLAIN_UNKNOWN), "{err}");
+        // Not given, the same failed read is unknown.
+        let err = sign_check(&p, &child).await.unwrap_err().to_string();
+        assert!(err.contains(PLAIN_UNKNOWN) && err.contains("status unreadable"), "{err}");
+        // A hex asserts no sheet; a row does.
+        let clean = PrefetchedUtxo { outpoint: format!("{pid}:1"), alkanes: Some(vec![]), ..row(0, None) };
+        let with_row = SignerAssertions::from_rows(&[clean], &hexes).unwrap();
+        assert_signable_tx(&p, false, &child, &with_row).await.unwrap();
+        // Broadcast but unconfirmed: unindexed, as without the hex.
+        p.tx_status.lock().unwrap().insert(pid.to_string(), Some(json!({"confirmed": false})));
+        let err = assert_signable_tx(&p, false, &child, &given).await.unwrap_err().to_string();
+        assert!(err.contains(&format!("{UNINDEXED_INPUT} (unconfirmed)")), "{err}");
+        // Confirmed since at an indexed height: the status decides.
+        p.tx_status.lock().unwrap().insert(pid.to_string(), mined(100));
+        assert_signable_tx(&p, false, &child, &given).await.unwrap();
+        // A parent no input spends changes nothing.
+        set_status(&p, 2, None);
+        assert_signable_tx(&p, false, &plain_tx(&[1]), &given).await.unwrap();
+        let err = assert_signable_tx(&p, false, &plain_tx(&[2]), &given).await.unwrap_err().to_string();
+        assert!(err.contains(PLAIN_UNKNOWN) && err.contains("status unreadable"), "{err}");
+        // Prevouts come from the parent.
+        assert_eq!(prevout_from_parents(&given, &OutPoint::new(pid, 1)).unwrap().unwrap(), parent.output[1]);
+        assert!(prevout_from_parents(&given, &op(1)).is_none());
+        let err = prevout_from_parents(&given, &OutPoint::new(pid, 2)).unwrap().unwrap_err().to_string();
+        assert!(err.contains(&format!("transaction {pid} has no output 2 (2 outputs)")), "{err}");
     }
 }
