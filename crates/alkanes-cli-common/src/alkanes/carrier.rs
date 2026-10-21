@@ -176,8 +176,8 @@ impl CarrierFilter {
 /// An empty probe only proves "clean" for a transaction the indexer has
 /// seen: a probe-clean candidate with a `block_height` above metashrew's
 /// indexed height, or with no `block_height` and 0 confirmations, is
-/// `unindexed` (the executor's `probe_fee_input_carrier` does not count an
-/// unconfirmed probe as verified either). A known `block_height` decides on
+/// `unindexed` (the executor's `probe_fee_input_carrier` applies the same
+/// rule through [`probe_not_indexed`]). A known `block_height` decides on
 /// its own, whatever `confirmations` says: providers derive `confirmations`
 /// from a bitcoin tip read that falls back to 0 when it fails, while
 /// `block_height` comes from the UTXO's own status. Metashrew's height is
@@ -247,8 +247,10 @@ pub async fn exclude_alkane_carriers<P: MetashrewRpcProvider + ?Sized>(
 /// derived from a bitcoin tip read that falls back to 0 on failure; a known
 /// height is compared whatever `confirmations` says. `indexed_height` caches
 /// the one read per [`exclude_alkane_carriers`] call; a failed read counts
-/// every candidate with a `block_height` as unindexed.
-async fn probe_not_indexed<P: MetashrewRpcProvider + ?Sized>(
+/// every candidate with a `block_height` as unindexed. The executor's
+/// `probe_fee_input_carrier` shares it, with the cache filled before its
+/// first probe.
+pub(crate) async fn probe_not_indexed<P: MetashrewRpcProvider + ?Sized>(
     provider: &P,
     info: &UtxoInfo,
     indexed_height: &mut Option<core::result::Result<u64, String>>,

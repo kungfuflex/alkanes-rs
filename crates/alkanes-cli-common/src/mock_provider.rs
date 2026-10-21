@@ -105,6 +105,16 @@ pub struct MockProvider {
     /// When set, `get_protorunes_by_address` fails, models an unavailable
     /// address-wide alkanes view (qubitcoin's only one). Defaults to `false`.
     pub failing_protorunes_by_address: bool,
+    /// Number of `sync` calls so far.
+    pub sync_calls: Arc<Mutex<usize>>,
+    /// When `Some(h)`, `sync` sets `metashrew_height` to `Some(h)`, models an
+    /// indexer that catches up while the caller waits. Defaults to `None`
+    /// (`sync` changes nothing).
+    pub metashrew_height_after_sync: Arc<Mutex<Option<u64>>>,
+    /// Entries moved into `alkane_balances` by `sync`, models a block the
+    /// indexer reaches while the caller waits giving an outpoint alkanes.
+    /// Empty by default.
+    pub alkane_balances_after_sync: Arc<Mutex<HashMap<String, Vec<(u64, u64, u64)>>>>,
 }
 
 impl Default for MockProvider {
@@ -137,6 +147,9 @@ impl MockProvider {
             metashrew_height: Arc::new(Mutex::new(Some(800001))),
             unconfirmed_broadcasts: false,
             failing_protorunes_by_address: false,
+            sync_calls: Arc::new(Mutex::new(0)),
+            metashrew_height_after_sync: Arc::new(Mutex::new(None)),
+            alkane_balances_after_sync: Arc::new(Mutex::new(HashMap::new())),
         }
     }
     
@@ -415,6 +428,12 @@ impl WalletProvider for MockProvider {
     }
     
     async fn sync(&self) -> Result<()> {
+        *self.sync_calls.lock().unwrap() += 1;
+        if let Some(h) = *self.metashrew_height_after_sync.lock().unwrap() {
+            *self.metashrew_height.lock().unwrap() = Some(h);
+        }
+        let caught_up: Vec<_> = self.alkane_balances_after_sync.lock().unwrap().drain().collect();
+        self.alkane_balances.lock().unwrap().extend(caught_up);
         Ok(())
     }
     

@@ -100,9 +100,9 @@ const MAX_HEADROOM_INPUTS: usize = 4;
 /// that is about to be replaced. It is now `fee_buffer`: selection keeps
 /// collecting up to `bitcoin_needed + fee_buffer`, but only from
 /// verified-clean UTXOs (caller- or espo-asserted, or indexer-probed and
-/// confirmed; on the alkane pass, probed lazily when discovery did not reach
+/// indexed; on the alkane pass, probed lazily when discovery did not reach
 /// them). So every wallet that reached the old bar using only verified-clean
-/// (caller/espo-asserted or indexer-probed and confirmed), needed-alkane or
+/// (caller/espo-asserted or indexer-probed and indexed), needed-alkane or
 /// required inputs selects the same inputs. Only `bitcoin_needed` (outputs +
 /// E) decides "Insufficient funds", and no unverified UTXO and no alkane
 /// carrier is spent to reach the buffer. Unlike the dust headroom it is
@@ -1481,7 +1481,8 @@ enum FeeInputStatus {
     /// Could not be determined (probe failed, malformed data).
     Unknown,
     /// Probed empty, but the alkanes indexer has not seen its transaction yet
-    /// (unconfirmed), so the empty answer is absence of information.
+    /// (unconfirmed, or mined above metashrew's indexed height), so the empty
+    /// answer is absence of information.
     Unindexed,
 }
 
@@ -1505,6 +1506,18 @@ impl FeeInputStatus {
             FeeInputStatus::Carrier(carried)
         }
     }
+}
+
+/// Metashrew's indexed height for one `select_utxos_with_headroom` call, as
+/// [`super::carrier::probe_not_indexed`] reads it: an empty probe of a UTXO
+/// mined at `h` proves "clean" only when `h <=` this height. Filled BEFORE
+/// the first probe of the call (the caller's `max_indexed_height` when
+/// given, else one `get_metashrew_height` read), so no empty answer can
+/// predate the height it is compared with. `synced` records the one
+/// `provider.sync()` a call may spend on an above-tip refusal.
+struct IndexedTip {
+    height: Option<core::result::Result<u64, String>>,
+    synced: bool,
 }
 
 
@@ -3274,9 +3287,9 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
     /// The sheet itself comes from [`super::carrier::resolve_alkane_sheet`],
     /// the rule every plain BTC send applies too: qubitcoin mode, then a
     /// caller- or espo-asserted sheet (an empty Vec means "asserted clean"),
-    /// then a lazy protorunesbyoutpoint probe. Only the confirmations rule
-    /// below is executor-specific, because the shared resolver does not see
-    /// `UtxoInfo`.
+    /// then a lazy protorunesbyoutpoint probe. A probe-clean answer then goes
+    /// through the plain-send filter's indexed rule,
+    /// [`super::carrier::probe_not_indexed`], against `tip`.
     async fn probe_fee_input_carrier(
         &self,
         outpoint: &OutPoint,
@@ -3284,35 +3297,61 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         prefetched_alkanes: Option<&alloc::collections::BTreeMap<OutPoint, Vec<(ProtoruneRuneId, u128)>>>,
         prefetched_hits: &mut usize,
         rpc_hits: &mut usize,
+        tip: &mut IndexedTip,
     ) -> FeeInputStatus {
         use super::carrier::{AlkaneSheetStatus, SheetSource};
-        let (status, source) = super::carrier::resolve_alkane_sheet(
-            &*self.provider,
-            self.provider.is_qubitcoin_mode(),
-            outpoint,
-            prefetched_alkanes,
-        )
-        .await;
-        match source {
-            SheetSource::Asserted => *prefetched_hits += 1,
-            SheetSource::Probe => *rpc_hits += 1,
-            // No alkanes indexer in qubitcoin mode and no alkanes to
-            // burn: answered as authoritative clean, no counter.
-            SheetSource::Qubitcoin => {}
-        }
-        match status {
-            // An UNCONFIRMED candidate (injected from a pending tx) always probes
-            // empty: the indexer has not seen its tx. That is absence of
-            // information (#308 review lane A 7), so it is unindexed, and since
-            // ALK-18 it funds nothing, not even the hard bar. A caller assertion
-            // (and qubitcoin mode) still counts.
-            AlkaneSheetStatus::Clean if source == SheetSource::Probe && utxo.confirmations == 0 => {
-                FeeInputStatus::Unindexed
+        loop {
+            let (status, source) = super::carrier::resolve_alkane_sheet(
+                &*self.provider,
+                self.provider.is_qubitcoin_mode(),
+                outpoint,
+                prefetched_alkanes,
+            )
+            .await;
+            match source {
+                SheetSource::Asserted => *prefetched_hits += 1,
+                SheetSource::Probe => *rpc_hits += 1,
+                // No alkanes indexer in qubitcoin mode and no alkanes to
+                // burn: answered as authoritative clean, no counter.
+                SheetSource::Qubitcoin => {}
             }
-            AlkaneSheetStatus::Clean => FeeInputStatus::Clean,
-            AlkaneSheetStatus::Carrier(sheet) => FeeInputStatus::from_sheet(sheet),
-            // Unverifiable (probe failed): UNKNOWN, never clean.
-            AlkaneSheetStatus::Unknown(_) => FeeInputStatus::Unknown,
+            return match status {
+                // An empty probe of a tx the indexer has not seen (unconfirmed,
+                // e.g. injected from a pending tx, or mined above metashrew's
+                // indexed height) is absence of information (#308 review lane
+                // A 7), so it is unindexed, and since ALK-18 it funds nothing,
+                // not even the hard bar. A caller assertion (and qubitcoin
+                // mode) still counts. Same rule as the plain-send filter.
+                AlkaneSheetStatus::Clean if source == SheetSource::Probe => {
+                    let Some(why) = super::carrier::probe_not_indexed(&*self.provider, utxo, &mut tip.height).await
+                    else {
+                        return FeeInputStatus::Clean;
+                    };
+                    // Above the tip (not unconfirmed, not a failed read): the
+                    // indexer may only be a block behind (regtest scripts that
+                    // mine and execute at once). Sync once per call, re-read
+                    // the height, then probe again: the empty answer above
+                    // predates the new height and proves nothing.
+                    if !tip.synced && utxo.block_height.is_some() && matches!(tip.height, Some(Ok(_))) {
+                        tip.synced = true;
+                        log::info!(
+                            "UTXO {}:{}: {}; syncing the alkanes indexer once before refusing it",
+                            outpoint.txid, outpoint.vout, why
+                        );
+                        if let Err(e) = self.provider.sync().await {
+                            log::warn!("Indexer sync failed ({}); re-reading its height anyway", e);
+                        }
+                        tip.height = Some(self.provider.get_metashrew_height().await.map_err(|e| format!("{e}")));
+                        continue;
+                    }
+                    log::debug!("UTXO {}:{} probed empty but is unindexed ({})", outpoint.txid, outpoint.vout, why);
+                    FeeInputStatus::Unindexed
+                }
+                AlkaneSheetStatus::Clean => FeeInputStatus::Clean,
+                AlkaneSheetStatus::Carrier(sheet) => FeeInputStatus::from_sheet(sheet),
+                // Unverifiable (probe failed): UNKNOWN, never clean.
+                AlkaneSheetStatus::Unknown(_) => FeeInputStatus::Unknown,
+            };
         }
     }
 
@@ -3736,6 +3775,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
 
         log::info!("Need {} sats Bitcoin and {} different alkanes tokens", bitcoin_needed, alkanes_needed.len());
 
+        let mut indexer_synced = false;
         if !alkanes_needed.is_empty() {
             if using_espo_source {
                 log::info!("Alkane inputs required -- using Espo spendable outpoint balances");
@@ -3752,8 +3792,36 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             } else {
                 log::info!("Alkane inputs required -- syncing indexer before balance query");
                 self.provider.sync().await?;
+                indexer_synced = true;
             }
         }
+
+        // The indexed height every empty probe below is compared with (see
+        // `IndexedTip`), read after the sync above (which then counts as the
+        // one an above-tip refusal may spend) and before any probe. The
+        // caller's `max_indexed_height` answers without an RPC (the
+        // eligibility filter already dropped every UTXO mined above it).
+        // Qubitcoin mode has no per-outpoint probe, so nothing to read. A
+        // failed read makes every probe-clean candidate with a block height
+        // unindexed (fail closed, as plain sends).
+        let mut indexed_tip = IndexedTip {
+            height: match max_indexed_height {
+                Some(h) => Some(Ok(h)),
+                None if self.provider.is_qubitcoin_mode() => None,
+                None => {
+                    let read = self.provider.get_metashrew_height().await.map_err(|e| format!("{e}"));
+                    if let Err(e) = &read {
+                        log::warn!(
+                            "Metashrew indexed height unavailable ({}); no probe-clean UTXO with a block \
+                             height can fund this alkanes transaction",
+                            e
+                        );
+                    }
+                    Some(read)
+                }
+            },
+            synced: indexer_synced,
+        };
 
         let mut bitcoin_collected = 0u64;
         // Inputs pulled purely to lift change out of the dust band, i.e. taken
@@ -3777,7 +3845,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
         // `BtcHeadroom`): the amount the old buffered hard bar asked for. Uncapped
         // and not counted as headroom, so every wallet that reached the old
         // bar using only verified-clean (caller/espo-asserted or
-        // indexer-probed and confirmed), needed-alkane or required inputs
+        // indexer-probed and indexed), needed-alkane or required inputs
         // selects exactly the inputs it used to. Same validity rule as
         // `wants_more_btc!()`: never for unverified candidates or carriers.
         macro_rules! prefers_more_btc {
@@ -3890,16 +3958,19 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
             let mut utxo_balances: alloc::collections::BTreeMap<String, serde_json::Value> = alloc::collections::BTreeMap::new();
             // Outpoints the discovery fanout below positively VERIFIED clean:
             // `protorunesbyoutpoint` answered `Ok` with no positive balance AND
-            // the UTXO is confirmed (an unconfirmed one always probes empty:
-            // same rule as `probe_fee_input_carrier`). Empty answers are never
+            // the indexer has the UTXO's tx (an unconfirmed one, or one mined
+            // above the indexed height, always probes empty: same rule as
+            // `probe_fee_input_carrier`). Empty answers are never
             // inserted into `utxo_balances`, so the selection loop's "no balance
             // data" branch reads this set to tell them from a blind spot.
             // Prefetched rows are not recorded here; that branch reads
             // `prefetched_alkanes` directly.
             let mut probed_clean: alloc::collections::BTreeSet<OutPoint> =
                 alloc::collections::BTreeSet::new();
-            // The `Ok`-empty answers for UNCONFIRMED UTXOs: unindexed, so the
-            // "no balance data" branch refuses them without a second RPC.
+            // The `Ok`-empty answers for UNCONFIRMED UTXOs (and, when the
+            // height read failed, for every UTXO with a block height):
+            // unindexed, so the "no balance data" branch refuses them without
+            // a second RPC.
             let mut probed_unindexed: alloc::collections::BTreeSet<OutPoint> =
                 alloc::collections::BTreeSet::new();
             // Addresses whose address-wide `protorunesbyaddress` answer
@@ -4072,8 +4143,8 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                         // `probe_fee_input_carrier` goes through the shared
                         // resolver. Like `probe_fee_input_carrier`, a
                         // probe-clean answer only enters `probed_clean` when
-                        // `utxo.confirmations > 0`, else `probed_unindexed`.
-                        // Change both together.
+                        // `carrier::probe_not_indexed` passes it. Change both
+                        // together.
                         match self.provider
                             .get_protorunes_by_outpoint(&txid_str, outpoint.vout, None, 1)
                             .await
@@ -4105,13 +4176,27 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                                         key,
                                         serde_json::json!({ "balances": balances_array }),
                                     );
-                                } else if utxo.confirmations > 0 {
+                                } else if super::carrier::probe_not_indexed(
+                                    &*self.provider,
+                                    utxo,
+                                    &mut indexed_tip.height,
+                                )
+                                .await
+                                .is_none()
+                                {
                                     // Verified clean: lets it fund BTC in the
                                     // selection loop below.
                                     probed_clean.insert(*outpoint);
-                                } else {
+                                } else if utxo.block_height.is_none()
+                                    || !matches!(indexed_tip.height, Some(Ok(_)))
+                                {
                                     probed_unindexed.insert(*outpoint);
                                 }
+                                // Else mined above the indexed height: in
+                                // neither set, so the "no balance data" branch
+                                // probes it again through
+                                // `probe_fee_input_carrier`, which may sync
+                                // the indexer once, only if it is wanted.
                             }
                             Err(e) => {
                                 // Non-fatal: a single failed outpoint just
@@ -4493,10 +4578,11 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                     // branch holds both information and blind spots: a
                     // `prefetched_utxos` row with `alkanes: Some([])` or an espo
                     // row with no balances (asserted clean), an `Ok`-empty probe
-                    // of a confirmed UTXO (`probed_clean`), an `Ok`-empty probe
-                    // of an unconfirmed one (`probed_unindexed`), a failed probe,
-                    // or a candidate discovery never probed (it covers only dust
-                    // unless a requirement is still unmet).
+                    // of an indexed UTXO (`probed_clean`), an `Ok`-empty probe
+                    // of an unconfirmed one (`probed_unindexed`), an `Ok`-empty
+                    // probe of one mined above the indexed height, a failed
+                    // probe, or a candidate discovery never probed (it covers
+                    // only dust unless a requirement is still unmet).
                     //
                     // Only BTC is wanted here, and only up to the hard bar and
                     // the soft fee buffer, never for the dust headroom (a
@@ -4539,6 +4625,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                             prefetched_alkanes.as_ref(),
                             &mut buffer_probe_prefetched,
                             &mut buffer_probe_rpc,
+                            &mut indexed_tip,
                         )
                         .await
                     };
@@ -4656,6 +4743,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                             prefetched_alkanes.as_ref(),
                             &mut prefetched_count,
                             &mut rpc_count,
+                            &mut indexed_tip,
                         )
                         .await;
                     take_btc_input!(utxo.amount);
@@ -4684,6 +4772,7 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                         prefetched_alkanes.as_ref(),
                         &mut prefetched_count,
                         &mut rpc_count,
+                        &mut indexed_tip,
                     )
                     .await
                 {
@@ -9707,11 +9796,16 @@ mod dust_change_tests {
     /// `FeeInputStatus::Unindexed`. (Before the ALK-18 port the executor
     /// returned `(is_carrier, verified)` and folded unknown and unindexed into
     /// one `(false, false)`; they are now told apart, as the plain-send filter
-    /// always did, so the shortfall error can name each.)
+    /// always did, so the shortfall error can name each.) Since A5 both also
+    /// apply the same indexed-height rule: `clean[1]` is mined above
+    /// metashrew's height, so it is unindexed on both sides (the mock's
+    /// `sync()` does not move the height, so the executor's one retry
+    /// changes nothing).
     #[tokio::test]
     async fn plain_send_filter_and_fee_input_probe_agree_on_every_coin() {
         use crate::alkanes::carrier::exclude_alkane_carriers;
         let mut w = probe_only_wallet();
+        w.mock.utxo_status.lock().unwrap().insert(w.clean[1].to_string(), (3, Some(900_000)));
         let addr = w.addr.to_string();
         let mut coins = WalletProvider::get_utxos(&w.mock, false, Some(vec![addr.clone()])).await.unwrap();
         // The unconfirmed coin, injected the way the executor injects it.
@@ -9722,9 +9816,10 @@ mod dust_change_tests {
         let filter = exclude_alkane_carriers(&w.mock, false, coins.clone(), None).await;
         let executor = EnhancedAlkanesExecutor::new(&mut w.mock);
         let (mut asserted_hits, mut rpc_hits) = (0usize, 0usize);
+        let mut tip = IndexedTip { height: None, synced: false };
         for (op, utxo) in &coins {
             let probed = executor
-                .probe_fee_input_carrier(op, utxo, None, &mut asserted_hits, &mut rpc_hits)
+                .probe_fee_input_carrier(op, utxo, None, &mut asserted_hits, &mut rpc_hits, &mut tip)
                 .await;
             let class = if filter.clean_outpoints.contains(op) {
                 "clean"
@@ -9750,7 +9845,7 @@ mod dust_change_tests {
                 "carrier"
             } else if *op == w.failing {
                 "unknown"
-            } else if *op == w.unconfirmed {
+            } else if *op == w.unconfirmed || *op == w.clean[1] {
                 "unindexed"
             } else {
                 "clean"
@@ -12397,5 +12492,171 @@ mod carrier_validation_tests {
             assert_eq!(parse_espo_alkanes(&entry), None, "{bad}");
         }
         assert_eq!(parse_espo_alkanes(&serde_json::json!({ "alkanes": "2:0" })), None, "alkanes not an array");
+    }
+
+    // ── A5: an empty probe counts only once metashrew has the UTXO's block ──
+
+    /// Metashrew has indexed up to block 100. `low` (20_000) is mined at 100,
+    /// `high` (20_000) and `high_dust` (900, inside the dust discovery) at
+    /// 101, all probing empty. `carrier` (546 at block 100) holds 10 x 32:0
+    /// and is asserted, so the alkane pass skips its pre-discovery sync and
+    /// the only `sync()` is the executor's above-tip retry. Returns (mock,
+    /// addr, prefetched, [low, high, high_dust]).
+    fn above_tip_wallet() -> (MockProvider, Address, Vec<PrefetchedUtxo>, [OutPoint; 3]) {
+        let (mock, addr) = wallet();
+        let carrier = OutPoint::new(txid_n(0x50), 0);
+        let coins = [OutPoint::new(txid_n(0x51), 0), OutPoint::new(txid_n(0x52), 0), OutPoint::new(txid_n(0x53), 0)];
+        {
+            let mut utxos = mock.utxos.lock().unwrap();
+            for (op, sats) in [(carrier, 546), (coins[0], 20_000), (coins[1], 20_000), (coins[2], 900)] {
+                utxos.push((op, TxOut { value: Amount::from_sat(sats), script_pubkey: addr.script_pubkey() }));
+            }
+        }
+        mock.alkane_balances.lock().unwrap().insert(carrier.to_string(), vec![(32, 0, 10)]);
+        {
+            let mut status = mock.utxo_status.lock().unwrap();
+            status.insert(coins[1].to_string(), (3, Some(101)));
+            status.insert(coins[2].to_string(), (3, Some(101)));
+        }
+        *mock.metashrew_height.lock().unwrap() = Some(100);
+        let asserted = PrefetchedAlkane { block: 32, tx: 0, amount: "10".to_string() };
+        let prefetched = vec![row(carrier, &addr, 546, Some(vec![asserted]), false)];
+        (mock, addr, prefetched, coins)
+    }
+
+    /// The BTC-only pass and the alkane pass, asking for `sats`.
+    fn above_tip_passes(sats: u64) -> [Vec<InputRequirement>; 2] {
+        [
+            vec![InputRequirement::Bitcoin { amount: sats }],
+            vec![InputRequirement::Alkanes { block: 32, tx: 0, amount: 10 }, InputRequirement::Bitcoin { amount: sats }],
+        ]
+    }
+
+    /// A5: `high` and `high_dust` are confirmed and probe empty, but metashrew
+    /// has not indexed block 101, so on both passes they fund nothing and the
+    /// shortfall names both. The executor syncs once (the mock's height does
+    /// not move) and not again for the second coin. Before A5 it keyed on
+    /// `confirmations > 0` and took both as verified clean. A smaller ask
+    /// funds from `low` alone.
+    #[tokio::test]
+    async fn probe_clean_coin_above_the_indexed_height_funds_nothing() {
+        for (big, small) in above_tip_passes(40_600).into_iter().zip(above_tip_passes(15_000)) {
+            let (mut mock, addr, prefetched, [low, high, high_dust]) = above_tip_wallet();
+            let msg = wallet_error(select_with(&mut mock, &addr, &big, &[], &prefetched).await);
+            assert!(msg.starts_with("Insufficient verified bitcoin"), "{big:?}: {msg}");
+            assert!(
+                msg.contains("2 UTXO(s) were excluded because the alkanes indexer has not indexed them yet"),
+                "{big:?}: {msg}"
+            );
+            assert_eq!(*mock.sync_calls.lock().unwrap(), 1, "{big:?}: one sync per selection");
+
+            let r = select_with(&mut mock, &addr, &small, &[], &prefetched).await.unwrap();
+            assert!(r.outpoints.contains(&low) && r.clean_outpoints.contains(&low), "{small:?}: {:?}", r.outpoints);
+            assert!(!r.outpoints.contains(&high) && !r.outpoints.contains(&high_dust), "{small:?}: {:?}", r.outpoints);
+        }
+
+        // Unasserted, the alkane pass syncs before its balance query and
+        // reads the height after that sync, so that sync is the one: no
+        // second sync on the above-tip refusal.
+        let (mut mock, addr, _prefetched, _) = above_tip_wallet();
+        let msg = wallet_error(select_with(&mut mock, &addr, &above_tip_passes(40_600)[1], &[], &[]).await);
+        assert!(msg.contains("2 UTXO(s) were excluded because the alkanes indexer has not indexed them yet"), "{msg}");
+        assert_eq!(*mock.sync_calls.lock().unwrap(), 1);
+    }
+
+    /// A5: the indexer catches up during the one `sync()`. The executor
+    /// re-reads the height (101) and probes again, so `high` and `high_dust`
+    /// fund the call on both passes. On the alkane pass `high_dust` was probed
+    /// by the dust discovery while still above the tip; discovery leaves such
+    /// a coin to the lazy probe instead of `probed_unindexed`, which is what
+    /// lets the retry reach it (41_446 sats only with it).
+    #[tokio::test]
+    async fn above_tip_refusal_syncs_once_and_rereads_the_height() {
+        for reqs in above_tip_passes(40_600) {
+            let (mut mock, addr, prefetched, coins) = above_tip_wallet();
+            *mock.metashrew_height_after_sync.lock().unwrap() = Some(101);
+            let r = select_with(&mut mock, &addr, &reqs, &[], &prefetched)
+                .await
+                .unwrap_or_else(|e| panic!("{reqs:?}: the indexer caught up: {e}"));
+            for op in &coins {
+                assert!(r.outpoints.contains(op) && r.clean_outpoints.contains(op), "{reqs:?}: {op} in {:?}", r.outpoints);
+            }
+            assert_eq!(*mock.sync_calls.lock().unwrap(), 1, "{reqs:?}");
+        }
+    }
+
+    /// A5: the empty answer taken before the sync predates the new height, so
+    /// it proves nothing: after the sync the executor probes `high` again and
+    /// now sees a 99:1 sheet the indexer gave it at block 101. It is skipped
+    /// as a carrier (not counted as unindexed, so the shortfall is the typed
+    /// one).
+    #[tokio::test]
+    async fn above_tip_retry_probes_again_after_the_sync() {
+        for reqs in above_tip_passes(30_000) {
+            let (mut mock, addr, prefetched, [_low, high, high_dust]) = above_tip_wallet();
+            mock.utxo_status.lock().unwrap().remove(&high_dust.to_string());
+            *mock.metashrew_height_after_sync.lock().unwrap() = Some(101);
+            mock.alkane_balances_after_sync.lock().unwrap().insert(high.to_string(), vec![(99, 1, 5)]);
+            let res = select_with(&mut mock, &addr, &reqs, &[], &prefetched).await;
+            assert!(
+                matches!(res, Err(AlkanesError::InsufficientBitcoin { needed: 30_000, .. })),
+                "{reqs:?}: the carrier behind the stale empty answer must not fund: {:?}",
+                res.map(|r| r.outpoints)
+            );
+            assert_eq!(*mock.sync_calls.lock().unwrap(), 1, "{reqs:?}");
+        }
+    }
+
+    /// A5: when metashrew's height cannot be read, every probe-clean coin
+    /// with a block height is unindexed (fail closed, as plain sends), with no
+    /// sync retry. A confirmed coin with no reported height is judged by its
+    /// confirmations alone, as in the plain-send filter.
+    #[tokio::test]
+    async fn failed_height_read_refuses_every_probe_clean_coin_with_a_height() {
+        for (big, small) in above_tip_passes(40_600).into_iter().zip(above_tip_passes(4_000)) {
+            let (mut mock, addr, prefetched, [low, high, high_dust]) = above_tip_wallet();
+            *mock.metashrew_height.lock().unwrap() = None;
+            let no_height = OutPoint::new(txid_n(0x54), 0);
+            mock.utxos.lock().unwrap().push((no_height, TxOut { value: Amount::from_sat(5_000), script_pubkey: addr.script_pubkey() }));
+            mock.utxo_status.lock().unwrap().insert(no_height.to_string(), (3, None));
+
+            let msg = wallet_error(select_with(&mut mock, &addr, &big, &[], &prefetched).await);
+            assert!(
+                msg.contains("3 UTXO(s) were excluded because the alkanes indexer has not indexed them yet"),
+                "{big:?}: {msg}"
+            );
+            assert_eq!(*mock.sync_calls.lock().unwrap(), 0, "{big:?}: no retry on a failed read");
+
+            let r = select_with(&mut mock, &addr, &small, &[], &prefetched).await.unwrap();
+            assert!(r.outpoints.contains(&no_height) && r.clean_outpoints.contains(&no_height), "{small:?}: {:?}", r.outpoints);
+            for op in [low, high, high_dust] {
+                assert!(!r.outpoints.contains(&op), "{small:?}: {op} in {:?}", r.outpoints);
+            }
+        }
+    }
+
+    /// A5: a caller-supplied `max_indexed_height` is the height, with no
+    /// metashrew read (the read would fail here and refuse `low`). Coins mined
+    /// above it never reach the probe: the eligibility filter drops them, so
+    /// the big ask fails with the typed error, not the unindexed clause.
+    #[tokio::test]
+    async fn caller_max_indexed_height_answers_without_a_height_read() {
+        for (big, small) in above_tip_passes(40_600).into_iter().zip(above_tip_passes(15_000)) {
+            let (mut mock, addr, prefetched, [low, high, high_dust]) = above_tip_wallet();
+            *mock.metashrew_height.lock().unwrap() = None;
+            let from = Some(vec![addr.to_string()]);
+            let mut executor = EnhancedAlkanesExecutor::new(&mut mock);
+            let r = executor
+                .select_utxos(&small, &from, &[], Some(100), &prefetched, &[], UtxoDataSource::Metashrew)
+                .await
+                .unwrap_or_else(|e| panic!("{small:?}: {e}"));
+            assert!(r.outpoints.contains(&low) && r.clean_outpoints.contains(&low), "{small:?}: {:?}", r.outpoints);
+            assert!(!r.outpoints.contains(&high) && !r.outpoints.contains(&high_dust));
+            let res = executor
+                .select_utxos(&big, &from, &[], Some(100), &prefetched, &[], UtxoDataSource::Metashrew)
+                .await;
+            assert!(matches!(res, Err(AlkanesError::InsufficientBitcoin { .. })), "{big:?}: {:?}", res.map(|r| r.outpoints));
+            assert_eq!(*mock.sync_calls.lock().unwrap(), 0, "{big:?}");
+        }
     }
 }
