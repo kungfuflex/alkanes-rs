@@ -2060,6 +2060,331 @@ pub(crate) async fn prepare_send_with<P: DeezelProvider>(provider: &P, params: S
     Ok(PreparedSend { split_psbt, tx, prevouts, split_clean_outpoints })
 }
 
+impl ConcreteProvider {
+    /// `WalletProvider::sign_transaction` with caller assertions. Runs
+    /// `carrier::assert_signable_tx` before any prevout lookup, so a raw
+    /// transaction this crate did not build is signed only when every input
+    /// passes the generic signer rule. An input whose parent is in
+    /// `assertions.parents` takes its prevout from that parent, which may not
+    /// be broadcast yet; other inputs keep the `get_tx` / `gettxout` lookup.
+    /// The trait method calls this with `SignerAssertions::default()`.
+    pub async fn sign_transaction_with_assertions(
+        &mut self,
+        tx_hex: String,
+        assertions: &crate::alkanes::carrier::SignerAssertions,
+    ) -> Result<String> {
+        log::info!("[WalletProvider] Calling sign_transaction");
+        // 1. Deserialize the transaction
+        let hex_bytes = hex::decode(tx_hex)?;
+        let mut tx: Transaction = bitcoin::consensus::deserialize(&hex_bytes)?;
+
+        // Pre-sign carrier check (SFS-05) for a transaction signed but not
+        // built here, before any prevout lookup.
+        crate::alkanes::carrier::assert_signable_tx(
+            &*self,
+            crate::traits::DeezelProvider::is_qubitcoin_mode(&*self),
+            &tx,
+            assertions,
+        )
+        .await?;
+
+        // 2. Setup for signing - gather immutable info first to avoid borrow checker issues.
+        let network = self.get_network();
+        let secp: Secp256k1<All> = Secp256k1::new();
+
+        // 3. Fetch the previous transaction outputs (prevouts) for signing.
+        //    A parent the caller handed in comes first: it may not be
+        //    broadcast, and it authenticates itself by its txid.
+        //    Try get_tx first, fall back to gettxout for qubitcoin mode (no txindex).
+        let mut prevouts = Vec::new();
+        for input in &tx.input {
+            if let Some(prevout) =
+                crate::alkanes::carrier::prevout_from_parents(assertions, &input.previous_output)
+            {
+                prevouts.push(prevout?);
+                continue;
+            }
+            let txid_str = input.previous_output.txid.to_string();
+            let vout = input.previous_output.vout;
+
+            // Try get_tx first (works with txindex)
+            let (amount, script_pubkey_hex_str) = match self.get_tx(&txid_str).await {
+                Ok(tx_info) if tx_info.get("error").is_none() && tx_info.get("vout").is_some() => {
+                    let vout_info = tx_info["vout"].get(vout as usize)
+                        .ok_or_else(|| AlkanesError::Wallet(format!("Vout {} not found for tx {}", vout, txid_str)))?;
+                    let amount = vout_info["value"].as_u64()
+                        .ok_or_else(|| AlkanesError::Wallet("UTXO value not found".to_string()))?;
+                    let script = vout_info["scriptpubkey"].as_str()
+                        .ok_or_else(|| AlkanesError::Wallet("UTXO script pubkey not found".to_string()))?
+                        .to_string();
+                    (amount, script)
+                }
+                Ok(_) | Err(_) => {
+                    let e = "tx not found or missing vout";
+                    // Fallback: use gettxout via RPC (works without txindex, for unspent outputs)
+                    log::info!("get_tx failed for {} ({}), trying gettxout", &txid_str[..16.min(txid_str.len())], e);
+                    let gettxout_resp: serde_json::Value = serde_json::from_value(
+                        <Self as crate::traits::JsonRpcProvider>::call(
+                            self, "", "gettxout",
+                            serde_json::json!([txid_str, vout]), 1,
+                        ).await.unwrap_or(serde_json::Value::Null)
+                    ).unwrap_or(serde_json::Value::Null);
+
+                    let result = gettxout_resp.get("result").unwrap_or(&gettxout_resp);
+                    if result.is_null() {
+                        // UTXO not found — derive script from wallet address
+                        log::warn!("gettxout returned null for {}:{}, using wallet address for script", &txid_str[..16.min(txid_str.len())], vout);
+                        let wallet_addr = WalletProvider::get_address(self).await.unwrap_or_default();
+                        let script_hex = bitcoin::Address::from_str(&wallet_addr).ok()
+                            .and_then(|a| a.require_network(network).ok())
+                            .map(|a| hex::encode(a.script_pubkey().as_bytes()))
+                            .unwrap_or_default();
+                        (546u64, script_hex)  // assume dust
+                    } else {
+                        let value_btc = result["value"].as_f64().unwrap_or(0.0);
+                        let amount = (value_btc * 100_000_000.0) as u64;
+                        let script = result.get("scriptPubKey").and_then(|s| s.get("hex")).and_then(|h| h.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        if script.is_empty() {
+                            return Err(AlkanesError::Wallet(format!("Cannot get scriptPubKey for {}:{}", txid_str, vout)));
+                        }
+                        (amount, script)
+                    }
+                }
+            };
+            let script_pubkey = ScriptBuf::from(Vec::from_hex(&script_pubkey_hex_str)?);
+            prevouts.push(TxOut { value: Amount::from_sat(amount), script_pubkey });
+        }
+
+        // 4. Get signing key based on wallet state
+        match &mut self.wallet_state {
+            WalletState::ExternalKey { private_key, .. } => {
+                // Sign with external private key
+                let secret_key = bitcoin::secp256k1::SecretKey::from_str(private_key)?;
+                let keypair = bitcoin::secp256k1::Keypair::from_secret_key(&secp, &secret_key);
+                let public_key = bitcoin::PublicKey::from_private_key(&secp, &bitcoin::PrivateKey {
+                    compressed: true,
+                    network: network.into(),
+                    inner: secret_key,
+                });
+
+                let mut sighash_cache = SighashCache::new(&mut tx);
+                
+                for i in 0..prevouts.len() {
+                    let prev_txout = &prevouts[i];
+                    
+                    // Detect script type
+                    if prev_txout.script_pubkey.is_p2wpkh() {
+                        // P2WPKH: Use ECDSA signature with segwit v0 sighash
+                        let sighash = sighash_cache.p2wpkh_signature_hash(
+                            i,
+                            &prev_txout.script_pubkey,
+                            prev_txout.value,
+                            EcdsaSighashType::All,
+                        )?;
+
+                        let msg = bitcoin::secp256k1::Message::from(sighash);
+                        let signature = secp.sign_ecdsa(&msg, &secret_key);
+                        let ecdsa_signature = bitcoin::ecdsa::Signature {
+                            signature,
+                            sighash_type: EcdsaSighashType::All,
+                        };
+
+                        // P2WPKH witness: [signature, pubkey]
+                        let mut witness = Witness::new();
+                        witness.push(ecdsa_signature.serialize());
+                        witness.push(public_key.to_bytes());
+                        *sighash_cache.witness_mut(i).unwrap() = witness;
+                        
+                    } else if prev_txout.script_pubkey.is_p2tr() {
+                        // P2TR: Use Schnorr signature with taproot sighash
+                        let untweaked_keypair = UntweakedKeypair::from(keypair);
+                        let tweaked_keypair = untweaked_keypair.tap_tweak(&secp, None);
+                        
+                        let sighash = sighash_cache.taproot_key_spend_signature_hash(
+                            i,
+                            &Prevouts::All(&prevouts),
+                            TapSighashType::Default,
+                        )?;
+
+                        let msg = bitcoin::secp256k1::Message::from(sighash);
+                        #[cfg(not(target_arch = "wasm32"))]
+                        let signature = secp.sign_schnorr_with_rng(&msg, &tweaked_keypair.to_keypair(), &mut thread_rng());
+                        #[cfg(target_arch = "wasm32")]
+                        let signature = secp.sign_schnorr_with_rng(&msg, &tweaked_keypair.to_keypair(), &mut OsRng);
+                        
+                        let taproot_signature = taproot::Signature {
+                            signature,
+                            sighash_type: TapSighashType::Default,
+                        };
+
+                        *sighash_cache.witness_mut(i).unwrap() = Witness::p2tr_key_spend(&taproot_signature);
+                        
+                    } else {
+                        return Err(AlkanesError::Wallet(format!(
+                            "Unsupported script type for input {}: {}",
+                            i, prev_txout.script_pubkey
+                        )));
+                    }
+                }
+
+                let signed_tx = sighash_cache.into_transaction();
+                return Ok(bitcoin::consensus::encode::serialize_hex(&signed_tx));
+            },
+            WalletState::Unlocked { keystore, mnemonic } => {
+                // Original signing logic with keystore
+                let keystore = keystore.clone();
+                let mnemonic = mnemonic.clone();
+
+                // 5. Sign each input
+        let mut sighash_cache = SighashCache::new(&mut tx);
+        for i in 0..prevouts.len() {
+            let prev_txout = &prevouts[i];
+
+            // Find the address and its derivation path from our keystore
+            let address = Address::from_script(&prev_txout.script_pubkey, network)
+                .map_err(|e| AlkanesError::Wallet(format!("Failed to parse address from script: {e}")))?;
+
+            // This call now takes a mutable keystore and may cache the derived address info.
+            let addr_info = Self::find_address_info(&keystore, &address, network)?;
+            let path = DerivationPath::from_str(&addr_info.derivation_path)?;
+
+            // Derive the private key for this input
+            let mnemonic_obj = Mnemonic::parse_in(bip39::Language::English, &mnemonic)?;
+            let seed = mnemonic_obj.to_seed("");
+            let root_key = Xpriv::new_master(network, &seed)?;
+            let derived_xpriv = root_key.derive_priv(&secp, &path)?;
+            let keypair = derived_xpriv.to_keypair(&secp);
+
+            // Route to appropriate signing algorithm based on script type
+            match addr_info.script_type.as_str() {
+                "p2wpkh" => {
+                    // P2WPKH: Use ECDSA signature with segwit v0 sighash
+                    let public_key = bitcoin::PublicKey::from_private_key(&secp, &bitcoin::PrivateKey {
+                        compressed: true,
+                        network: network.into(),
+                        inner: keypair.secret_key(),
+                    });
+
+                    let sighash = sighash_cache.p2wpkh_signature_hash(
+                        i,
+                        &prev_txout.script_pubkey,
+                        prev_txout.value,
+                        EcdsaSighashType::All,
+                    )?;
+
+                    let msg = bitcoin::secp256k1::Message::from(sighash);
+                    let signature = secp.sign_ecdsa(&msg, &keypair.secret_key());
+                    let ecdsa_signature = bitcoin::ecdsa::Signature {
+                        signature,
+                        sighash_type: EcdsaSighashType::All,
+                    };
+
+                    // P2WPKH witness: [signature, pubkey]
+                    let mut witness = Witness::new();
+                    witness.push(ecdsa_signature.serialize());
+                    witness.push(public_key.to_bytes());
+                    *sighash_cache.witness_mut(i).unwrap() = witness;
+                }
+                "p2pkh" => {
+                    // P2PKH: Use ECDSA signature with legacy sighash
+                    let public_key = bitcoin::PublicKey::from_private_key(&secp, &bitcoin::PrivateKey {
+                        compressed: true,
+                        network: network.into(),
+                        inner: keypair.secret_key(),
+                    });
+
+                    let sighash = sighash_cache.legacy_signature_hash(
+                        i,
+                        &prev_txout.script_pubkey,
+                        EcdsaSighashType::All.to_u32(),
+                    ).map_err(|e| AlkanesError::Wallet(format!("Failed to compute P2PKH sighash: {e}")))?;
+
+                    let msg = bitcoin::secp256k1::Message::from(sighash);
+                    let signature = secp.sign_ecdsa(&msg, &keypair.secret_key());
+                    let ecdsa_signature = bitcoin::ecdsa::Signature {
+                        signature,
+                        sighash_type: EcdsaSighashType::All,
+                    };
+
+                    // P2PKH doesn't use witness, it uses scriptSig (handled by finalization)
+                    // For now, we set witness for compatibility
+                    let mut witness = Witness::new();
+                    witness.push(ecdsa_signature.serialize());
+                    witness.push(public_key.to_bytes());
+                    *sighash_cache.witness_mut(i).unwrap() = witness;
+                }
+                "p2sh" | "p2sh-p2wpkh" => {
+                    // P2SH wrapping P2WPKH
+                    let public_key = bitcoin::PublicKey::from_private_key(&secp, &bitcoin::PrivateKey {
+                        compressed: true,
+                        network: network.into(),
+                        inner: keypair.secret_key(),
+                    });
+
+                    let sighash = sighash_cache.p2wpkh_signature_hash(
+                        i,
+                        &prev_txout.script_pubkey,
+                        prev_txout.value,
+                        EcdsaSighashType::All,
+                    )?;
+
+                    let msg = bitcoin::secp256k1::Message::from(sighash);
+                    let signature = secp.sign_ecdsa(&msg, &keypair.secret_key());
+                    let ecdsa_signature = bitcoin::ecdsa::Signature {
+                        signature,
+                        sighash_type: EcdsaSighashType::All,
+                    };
+
+                    // P2SH-P2WPKH witness: [signature, pubkey]
+                    let mut witness = Witness::new();
+                    witness.push(ecdsa_signature.serialize());
+                    witness.push(public_key.to_bytes());
+                    *sighash_cache.witness_mut(i).unwrap() = witness;
+                }
+                "p2tr" => {
+                    // P2TR: Use Schnorr signature with tap_tweak
+                    let untweaked_keypair = UntweakedKeypair::from(keypair);
+                    let tweaked_keypair = untweaked_keypair.tap_tweak(&secp, None);
+
+                    let sighash = sighash_cache.taproot_key_spend_signature_hash(
+                        i,
+                        &Prevouts::All(&prevouts),
+                        TapSighashType::Default,
+                    )?;
+
+                    let msg = bitcoin::secp256k1::Message::from(sighash);
+                    #[cfg(not(target_arch = "wasm32"))]
+                    let signature = secp.sign_schnorr_with_rng(&msg, &tweaked_keypair.to_keypair(), &mut thread_rng());
+                    #[cfg(target_arch = "wasm32")]
+                    let signature = secp.sign_schnorr_with_rng(&msg, &tweaked_keypair.to_keypair(), &mut OsRng);
+
+                    let taproot_signature = taproot::Signature {
+                        signature,
+                        sighash_type: TapSighashType::Default,
+                    };
+
+                    sighash_cache.witness_mut(i).unwrap().clone_from(&Witness::p2tr_key_spend(&taproot_signature));
+                }
+                _ => {
+                    return Err(AlkanesError::Wallet(format!(
+                        "Unsupported script type for input {}: {}",
+                        i, addr_info.script_type
+                    )));
+                }
+            }
+        }
+
+        // 6. Serialize the signed transaction
+        let signed_tx = sighash_cache.into_transaction();
+        Ok(bitcoin::consensus::encode::serialize_hex(&signed_tx))
+            },
+            _ => return Err(AlkanesError::Wallet("Wallet must be unlocked or have external key to sign transactions".to_string())),
+        }
+    }
+}
+
 #[async_trait(?Send)]
 impl WalletProvider for ConcreteProvider {
     async fn create_wallet(&mut self, config: WalletConfig, mnemonic: Option<String>, passphrase: Option<String>) -> Result<WalletInfo> {
@@ -2685,297 +3010,8 @@ impl WalletProvider for ConcreteProvider {
     }
 
     async fn sign_transaction(&mut self, tx_hex: String) -> Result<String> {
-        log::info!("[WalletProvider] Calling sign_transaction");
-        // 1. Deserialize the transaction
-        let hex_bytes = hex::decode(tx_hex)?;
-        let mut tx: Transaction = bitcoin::consensus::deserialize(&hex_bytes)?;
-
-        // 2. Setup for signing - gather immutable info first to avoid borrow checker issues.
-        let network = self.get_network();
-        let secp: Secp256k1<All> = Secp256k1::new();
-
-        // 3. Fetch the previous transaction outputs (prevouts) for signing.
-        //    Try get_tx first, fall back to gettxout for qubitcoin mode (no txindex).
-        let mut prevouts = Vec::new();
-        for input in &tx.input {
-            let txid_str = input.previous_output.txid.to_string();
-            let vout = input.previous_output.vout;
-
-            // Try get_tx first (works with txindex)
-            let (amount, script_pubkey_hex_str) = match self.get_tx(&txid_str).await {
-                Ok(tx_info) if tx_info.get("error").is_none() && tx_info.get("vout").is_some() => {
-                    let vout_info = tx_info["vout"].get(vout as usize)
-                        .ok_or_else(|| AlkanesError::Wallet(format!("Vout {} not found for tx {}", vout, txid_str)))?;
-                    let amount = vout_info["value"].as_u64()
-                        .ok_or_else(|| AlkanesError::Wallet("UTXO value not found".to_string()))?;
-                    let script = vout_info["scriptpubkey"].as_str()
-                        .ok_or_else(|| AlkanesError::Wallet("UTXO script pubkey not found".to_string()))?
-                        .to_string();
-                    (amount, script)
-                }
-                Ok(_) | Err(_) => {
-                    let e = "tx not found or missing vout";
-                    // Fallback: use gettxout via RPC (works without txindex, for unspent outputs)
-                    log::info!("get_tx failed for {} ({}), trying gettxout", &txid_str[..16.min(txid_str.len())], e);
-                    let gettxout_resp: serde_json::Value = serde_json::from_value(
-                        <Self as crate::traits::JsonRpcProvider>::call(
-                            self, "", "gettxout",
-                            serde_json::json!([txid_str, vout]), 1,
-                        ).await.unwrap_or(serde_json::Value::Null)
-                    ).unwrap_or(serde_json::Value::Null);
-
-                    let result = gettxout_resp.get("result").unwrap_or(&gettxout_resp);
-                    if result.is_null() {
-                        // UTXO not found — derive script from wallet address
-                        log::warn!("gettxout returned null for {}:{}, using wallet address for script", &txid_str[..16.min(txid_str.len())], vout);
-                        let wallet_addr = WalletProvider::get_address(self).await.unwrap_or_default();
-                        let script_hex = bitcoin::Address::from_str(&wallet_addr).ok()
-                            .and_then(|a| a.require_network(network).ok())
-                            .map(|a| hex::encode(a.script_pubkey().as_bytes()))
-                            .unwrap_or_default();
-                        (546u64, script_hex)  // assume dust
-                    } else {
-                        let value_btc = result["value"].as_f64().unwrap_or(0.0);
-                        let amount = (value_btc * 100_000_000.0) as u64;
-                        let script = result.get("scriptPubKey").and_then(|s| s.get("hex")).and_then(|h| h.as_str())
-                            .unwrap_or("")
-                            .to_string();
-                        if script.is_empty() {
-                            return Err(AlkanesError::Wallet(format!("Cannot get scriptPubKey for {}:{}", txid_str, vout)));
-                        }
-                        (amount, script)
-                    }
-                }
-            };
-            let script_pubkey = ScriptBuf::from(Vec::from_hex(&script_pubkey_hex_str)?);
-            prevouts.push(TxOut { value: Amount::from_sat(amount), script_pubkey });
-        }
-
-        // 4. Get signing key based on wallet state
-        match &mut self.wallet_state {
-            WalletState::ExternalKey { private_key, .. } => {
-                // Sign with external private key
-                let secret_key = bitcoin::secp256k1::SecretKey::from_str(private_key)?;
-                let keypair = bitcoin::secp256k1::Keypair::from_secret_key(&secp, &secret_key);
-                let public_key = bitcoin::PublicKey::from_private_key(&secp, &bitcoin::PrivateKey {
-                    compressed: true,
-                    network: network.into(),
-                    inner: secret_key,
-                });
-
-                let mut sighash_cache = SighashCache::new(&mut tx);
-                
-                for i in 0..prevouts.len() {
-                    let prev_txout = &prevouts[i];
-                    
-                    // Detect script type
-                    if prev_txout.script_pubkey.is_p2wpkh() {
-                        // P2WPKH: Use ECDSA signature with segwit v0 sighash
-                        let sighash = sighash_cache.p2wpkh_signature_hash(
-                            i,
-                            &prev_txout.script_pubkey,
-                            prev_txout.value,
-                            EcdsaSighashType::All,
-                        )?;
-
-                        let msg = bitcoin::secp256k1::Message::from(sighash);
-                        let signature = secp.sign_ecdsa(&msg, &secret_key);
-                        let ecdsa_signature = bitcoin::ecdsa::Signature {
-                            signature,
-                            sighash_type: EcdsaSighashType::All,
-                        };
-
-                        // P2WPKH witness: [signature, pubkey]
-                        let mut witness = Witness::new();
-                        witness.push(ecdsa_signature.serialize());
-                        witness.push(public_key.to_bytes());
-                        *sighash_cache.witness_mut(i).unwrap() = witness;
-                        
-                    } else if prev_txout.script_pubkey.is_p2tr() {
-                        // P2TR: Use Schnorr signature with taproot sighash
-                        let untweaked_keypair = UntweakedKeypair::from(keypair);
-                        let tweaked_keypair = untweaked_keypair.tap_tweak(&secp, None);
-                        
-                        let sighash = sighash_cache.taproot_key_spend_signature_hash(
-                            i,
-                            &Prevouts::All(&prevouts),
-                            TapSighashType::Default,
-                        )?;
-
-                        let msg = bitcoin::secp256k1::Message::from(sighash);
-                        #[cfg(not(target_arch = "wasm32"))]
-                        let signature = secp.sign_schnorr_with_rng(&msg, &tweaked_keypair.to_keypair(), &mut thread_rng());
-                        #[cfg(target_arch = "wasm32")]
-                        let signature = secp.sign_schnorr_with_rng(&msg, &tweaked_keypair.to_keypair(), &mut OsRng);
-                        
-                        let taproot_signature = taproot::Signature {
-                            signature,
-                            sighash_type: TapSighashType::Default,
-                        };
-
-                        *sighash_cache.witness_mut(i).unwrap() = Witness::p2tr_key_spend(&taproot_signature);
-                        
-                    } else {
-                        return Err(AlkanesError::Wallet(format!(
-                            "Unsupported script type for input {}: {}",
-                            i, prev_txout.script_pubkey
-                        )));
-                    }
-                }
-
-                let signed_tx = sighash_cache.into_transaction();
-                return Ok(bitcoin::consensus::encode::serialize_hex(&signed_tx));
-            },
-            WalletState::Unlocked { keystore, mnemonic } => {
-                // Original signing logic with keystore
-                let keystore = keystore.clone();
-                let mnemonic = mnemonic.clone();
-
-                // 5. Sign each input
-        let mut sighash_cache = SighashCache::new(&mut tx);
-        for i in 0..prevouts.len() {
-            let prev_txout = &prevouts[i];
-
-            // Find the address and its derivation path from our keystore
-            let address = Address::from_script(&prev_txout.script_pubkey, network)
-                .map_err(|e| AlkanesError::Wallet(format!("Failed to parse address from script: {e}")))?;
-
-            // This call now takes a mutable keystore and may cache the derived address info.
-            let addr_info = Self::find_address_info(&keystore, &address, network)?;
-            let path = DerivationPath::from_str(&addr_info.derivation_path)?;
-
-            // Derive the private key for this input
-            let mnemonic_obj = Mnemonic::parse_in(bip39::Language::English, &mnemonic)?;
-            let seed = mnemonic_obj.to_seed("");
-            let root_key = Xpriv::new_master(network, &seed)?;
-            let derived_xpriv = root_key.derive_priv(&secp, &path)?;
-            let keypair = derived_xpriv.to_keypair(&secp);
-
-            // Route to appropriate signing algorithm based on script type
-            match addr_info.script_type.as_str() {
-                "p2wpkh" => {
-                    // P2WPKH: Use ECDSA signature with segwit v0 sighash
-                    let public_key = bitcoin::PublicKey::from_private_key(&secp, &bitcoin::PrivateKey {
-                        compressed: true,
-                        network: network.into(),
-                        inner: keypair.secret_key(),
-                    });
-
-                    let sighash = sighash_cache.p2wpkh_signature_hash(
-                        i,
-                        &prev_txout.script_pubkey,
-                        prev_txout.value,
-                        EcdsaSighashType::All,
-                    )?;
-
-                    let msg = bitcoin::secp256k1::Message::from(sighash);
-                    let signature = secp.sign_ecdsa(&msg, &keypair.secret_key());
-                    let ecdsa_signature = bitcoin::ecdsa::Signature {
-                        signature,
-                        sighash_type: EcdsaSighashType::All,
-                    };
-
-                    // P2WPKH witness: [signature, pubkey]
-                    let mut witness = Witness::new();
-                    witness.push(ecdsa_signature.serialize());
-                    witness.push(public_key.to_bytes());
-                    *sighash_cache.witness_mut(i).unwrap() = witness;
-                }
-                "p2pkh" => {
-                    // P2PKH: Use ECDSA signature with legacy sighash
-                    let public_key = bitcoin::PublicKey::from_private_key(&secp, &bitcoin::PrivateKey {
-                        compressed: true,
-                        network: network.into(),
-                        inner: keypair.secret_key(),
-                    });
-
-                    let sighash = sighash_cache.legacy_signature_hash(
-                        i,
-                        &prev_txout.script_pubkey,
-                        EcdsaSighashType::All.to_u32(),
-                    ).map_err(|e| AlkanesError::Wallet(format!("Failed to compute P2PKH sighash: {e}")))?;
-
-                    let msg = bitcoin::secp256k1::Message::from(sighash);
-                    let signature = secp.sign_ecdsa(&msg, &keypair.secret_key());
-                    let ecdsa_signature = bitcoin::ecdsa::Signature {
-                        signature,
-                        sighash_type: EcdsaSighashType::All,
-                    };
-
-                    // P2PKH doesn't use witness, it uses scriptSig (handled by finalization)
-                    // For now, we set witness for compatibility
-                    let mut witness = Witness::new();
-                    witness.push(ecdsa_signature.serialize());
-                    witness.push(public_key.to_bytes());
-                    *sighash_cache.witness_mut(i).unwrap() = witness;
-                }
-                "p2sh" | "p2sh-p2wpkh" => {
-                    // P2SH wrapping P2WPKH
-                    let public_key = bitcoin::PublicKey::from_private_key(&secp, &bitcoin::PrivateKey {
-                        compressed: true,
-                        network: network.into(),
-                        inner: keypair.secret_key(),
-                    });
-
-                    let sighash = sighash_cache.p2wpkh_signature_hash(
-                        i,
-                        &prev_txout.script_pubkey,
-                        prev_txout.value,
-                        EcdsaSighashType::All,
-                    )?;
-
-                    let msg = bitcoin::secp256k1::Message::from(sighash);
-                    let signature = secp.sign_ecdsa(&msg, &keypair.secret_key());
-                    let ecdsa_signature = bitcoin::ecdsa::Signature {
-                        signature,
-                        sighash_type: EcdsaSighashType::All,
-                    };
-
-                    // P2SH-P2WPKH witness: [signature, pubkey]
-                    let mut witness = Witness::new();
-                    witness.push(ecdsa_signature.serialize());
-                    witness.push(public_key.to_bytes());
-                    *sighash_cache.witness_mut(i).unwrap() = witness;
-                }
-                "p2tr" => {
-                    // P2TR: Use Schnorr signature with tap_tweak
-                    let untweaked_keypair = UntweakedKeypair::from(keypair);
-                    let tweaked_keypair = untweaked_keypair.tap_tweak(&secp, None);
-
-                    let sighash = sighash_cache.taproot_key_spend_signature_hash(
-                        i,
-                        &Prevouts::All(&prevouts),
-                        TapSighashType::Default,
-                    )?;
-
-                    let msg = bitcoin::secp256k1::Message::from(sighash);
-                    #[cfg(not(target_arch = "wasm32"))]
-                    let signature = secp.sign_schnorr_with_rng(&msg, &tweaked_keypair.to_keypair(), &mut thread_rng());
-                    #[cfg(target_arch = "wasm32")]
-                    let signature = secp.sign_schnorr_with_rng(&msg, &tweaked_keypair.to_keypair(), &mut OsRng);
-
-                    let taproot_signature = taproot::Signature {
-                        signature,
-                        sighash_type: TapSighashType::Default,
-                    };
-
-                    sighash_cache.witness_mut(i).unwrap().clone_from(&Witness::p2tr_key_spend(&taproot_signature));
-                }
-                _ => {
-                    return Err(AlkanesError::Wallet(format!(
-                        "Unsupported script type for input {}: {}",
-                        i, addr_info.script_type
-                    )));
-                }
-            }
-        }
-
-        // 6. Serialize the signed transaction
-        let signed_tx = sighash_cache.into_transaction();
-        Ok(bitcoin::consensus::encode::serialize_hex(&signed_tx))
-            },
-            _ => return Err(AlkanesError::Wallet("Wallet must be unlocked or have external key to sign transactions".to_string())),
-        }
+        self.sign_transaction_with_assertions(tx_hex, &crate::alkanes::carrier::SignerAssertions::default())
+            .await
     }
     
     async fn broadcast_transaction(&self, tx_hex: String) -> Result<String> {

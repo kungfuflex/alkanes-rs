@@ -2656,6 +2656,12 @@ pub enum WalletCommands {
         /// Creates multiple transactions that together achieve the same total effect
         #[arg(long, value_name = "SIZE", conflicts_with = "truncate_excess_vsize")]
         split_max_vsize: Option<String>,
+        /// JSON file with signer assertions, the options of walletSignPsbtBase64:
+        /// prefetchedUtxos rows (an alkanes sheet is used instead of the indexer probe)
+        /// and knownPendingTxHexes (parent transactions, also used for prevouts)
+        /// An execute options file works too
+        #[arg(long, value_name = "FILE")]
+        assertions: Option<String>,
     },
     /// Decode a transaction to view its details
     DecodeTx {
