@@ -110,7 +110,8 @@ mod e2e {
     use metashrew_support::index_pointer::KeyValuePointer;
     use protorune::balance_sheet::{load_sheet, PersistentRecord};
     use protorune::message::MessageContext;
-    use protorune::tables::RuneTable;
+    use protorune::tables::{RuneTable, OUTPOINT_TO_OUTPUT};
+    use prost::Message as _;
     use protorune_support::balance_sheet::{
         BalanceSheet, BalanceSheetOperations, ProtoruneRuneId,
     };
@@ -130,6 +131,21 @@ mod e2e {
         fn drop(&mut self) {
             protorune::set_post_audit_fork_height_override(None);
         }
+    }
+
+    /// Register `op`'s scriptPubKey the way `index_outpoints` does for every
+    /// output of every indexed transaction. Capture keys the recycle ledger off
+    /// the PREVOUT OWNER, so a synthetic seed outpoint has to declare its owner
+    /// or it looks like a pre-indexing outpoint with no claimant.
+    fn seed_prevout_script(op: &OutPoint, spk: &ScriptBuf) -> Result<()> {
+        OUTPOINT_TO_OUTPUT.select(&consensus_encode(op)?).set(Arc::new(
+            (protorune_support::proto::protorune::Output {
+                script: spk.clone().into_bytes(),
+                value: 546,
+            })
+            .encode_to_vec(),
+        ));
+        Ok(())
     }
 
     fn eoa_recovery_spk() -> ScriptBuf {
@@ -185,6 +201,8 @@ mod e2e {
         let mut seed_sheet = BalanceSheet::<IndexPointer>::default();
         seed_sheet.increase(&stranded_rune, amount)?;
         seed_sheet.save(&table.OUTPOINT_TO_RUNES.select(&consensus_encode(&seed_op)?), false);
+        // The victim owned the outpoint being spent — that is who capture credits.
+        seed_prevout_script(&seed_op, &recovery)?;
 
         // 2) strand it: a tx with NO OP_RETURN spending seed_op, paying recovery EOA
         let strand_tx = Transaction {
@@ -314,6 +332,8 @@ mod e2e {
         let mut seed_sheet = BalanceSheet::<IndexPointer>::default();
         seed_sheet.increase(&stranded_rune, amount)?;
         seed_sheet.save(&table.OUTPOINT_TO_RUNES.select(&consensus_encode(&seed_op)?), false);
+        // The victim owned the outpoint being spent — that is who capture credits.
+        seed_prevout_script(&seed_op, &victim)?;
 
         // 2) strand it: bare-BTC spend paying victim EOA → capture credits 8:dead
         //    inventory and writes /recycle/<victim_spk>.
@@ -509,6 +529,8 @@ mod e2e {
         let mut seed_sheet = BalanceSheet::<IndexPointer>::default();
         seed_sheet.increase(&stranded_rune, amount)?;
         seed_sheet.save(&table.OUTPOINT_TO_RUNES.select(&consensus_encode(&seed_op)?), false);
+        // The victim owned the outpoint being spent — that is who capture credits.
+        seed_prevout_script(&seed_op, &recovery)?;
         let strand_tx = Transaction {
             version: bitcoin::transaction::Version::ONE,
             lock_time: bitcoin::absolute::LockTime::ZERO,
@@ -564,6 +586,138 @@ mod e2e {
         assert_eq!(claimed_at(&live)?, amount, "claim at the gate must release");
         assert!(recycle_ledger(recovery.as_bytes()).is_empty());
         assert_eq!(recycle_inventory_balance(&stranded), 0);
+        Ok(())
+    }
+
+    /// A distinct EOA scriptPubKey per `byte`. p2wpkh rather than p2tr because
+    /// the hash is arbitrary bytes — no curve-point validity to satisfy — and
+    /// `is_eoa` accepts it just the same.
+    fn eoa(byte: u8) -> ScriptBuf {
+        ScriptBuf::new_p2wpkh(&bitcoin::WPubkeyHash::from_byte_array([byte; 20]))
+    }
+
+    /// Strand `amount` of `asset` at `op`, owned by `owner`, and capture a
+    /// protostone-less spend of it that pays `pays`.
+    fn strand_and_capture(
+        op: OutPoint,
+        owner: &ScriptBuf,
+        pays: &ScriptBuf,
+        asset: &ProtoruneRuneId,
+        amount: u128,
+    ) -> Result<()> {
+        let table = RuneTable::for_protocol(AlkaneMessageContext::protocol_tag());
+        seed_prevout_script(&op, owner)?;
+        let mut sheet = BalanceSheet::<IndexPointer>::default();
+        sheet.increase(asset, amount)?;
+        sheet.save(&table.OUTPOINT_TO_RUNES.select(&consensus_encode(&op)?), false);
+        let spend = Transaction {
+            version: bitcoin::transaction::Version::ONE,
+            lock_time: bitcoin::absolute::LockTime::ZERO,
+            input: vec![TxIn {
+                previous_output: op,
+                script_sig: ScriptBuf::new(),
+                sequence: Sequence::MAX,
+                witness: Witness::new(),
+            }],
+            output: vec![TxOut {
+                value: Amount::from_sat(546),
+                script_pubkey: pays.clone(),
+            }],
+        };
+        crate::recycle::capture_block(
+            &protorune::test_helpers::create_block_with_txs(vec![spend]),
+            AlkaneMessageContext::protocol_tag(),
+        )
+    }
+
+    /// The mis-credit vector: a transaction that spends victim `V`'s stranded
+    /// outpoint while paying output 0 to `A` must NOT put V's alkanes in A's
+    /// claimable ledger. (The claim side then binds the release to the payout
+    /// output, so only V paying V can take them out.)
+    #[test]
+    fn capture_credits_prevout_owner_not_output_zero() -> Result<()> {
+        h::clear();
+        let victim = eoa(7);
+        let attacker = eoa(200);
+        let table = RuneTable::for_protocol(AlkaneMessageContext::protocol_tag());
+        let op = OutPoint {
+            txid: bitcoin::Txid::from_byte_array([0x51u8; 32]),
+            vout: 0,
+        };
+        let asset = ProtoruneRuneId { block: 2, tx: 81974 };
+        strand_and_capture(op, &victim, &attacker, &asset, 364)?;
+
+        assert_eq!(
+            crate::recycle::recycled_balances(victim.as_bytes()),
+            vec![(asset.clone(), 364u128)],
+            "the prevout owner must be credited the stranded alkanes"
+        );
+        assert!(
+            crate::recycle::recycled_balances(attacker.as_bytes()).is_empty(),
+            "output 0 of the spending tx must NOT be credited"
+        );
+        assert_eq!(
+            load_sheet(&table.OUTPOINT_TO_RUNES.select(&consensus_encode(&op)?))
+                .get_cached(&asset),
+            0,
+            "stranded balance must be cleared"
+        );
+        Ok(())
+    }
+
+    /// `getrecycled` reports exactly what is claimable, clamped to `8:dead`'s
+    /// held inventory, and is empty for an address with no ledger.
+    #[test]
+    fn getrecycled_view_reports_claimable_balances() -> Result<()> {
+        h::clear();
+        let owner = eoa(11);
+        let stranger = eoa(12);
+        let op = OutPoint {
+            txid: bitcoin::Txid::from_byte_array([0x52u8; 32]),
+            vout: 3,
+        };
+        let asset = ProtoruneRuneId { block: 2, tx: 77623 };
+        strand_and_capture(op, &owner, &owner, &asset, 1_813)?;
+
+        let ask = |spk: &ScriptBuf| -> Result<Vec<(AlkaneId, u128)>> {
+            let req = alkanes_support::proto::alkanes::AlkaneRecycledRequest {
+                script: spk.clone().into_bytes(),
+            };
+            let resp = crate::view::getrecycled(&req.encode_to_vec())?;
+            Ok(resp
+                .alkanes
+                .into_iter()
+                .map(|t| {
+                    let id: AlkaneId = t.id.clone().unwrap().into();
+                    let v: u128 = t.value.clone().unwrap().into();
+                    (id, v)
+                })
+                .collect())
+        };
+
+        assert_eq!(
+            ask(&owner)?,
+            vec![(AlkaneId { block: 2, tx: 77623 }, 1_813u128)],
+            "getrecycled must report the owner's claimable balance sheet"
+        );
+        assert!(
+            ask(&stranger)?.is_empty(),
+            "getrecycled must be empty for an address with no ledger"
+        );
+
+        // Clamped to held inventory: drain 8:dead below the ledger amount.
+        let what_bytes: Vec<u8> = AlkaneId { block: 2, tx: 77623 }.into();
+        let who_bytes: Vec<u8> = RECYCLE_ALKANE_ID.into();
+        IndexPointer::from_keyword("/alkanes/")
+            .select(&what_bytes)
+            .keyword("/balances/")
+            .select(&who_bytes)
+            .set_value::<u128>(1_000);
+        assert_eq!(
+            ask(&owner)?,
+            vec![(AlkaneId { block: 2, tx: 77623 }, 1_000u128)],
+            "getrecycled must clamp to 8:dead's held inventory"
+        );
         Ok(())
     }
 }
