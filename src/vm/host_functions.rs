@@ -421,14 +421,21 @@ impl AlkanesHostFunctionsImpl {
                 AlkaneId::parse(&mut Cursor::new(read_arraybuffer(data, what_ptr)?))?,
             )
         };
-        let balance = balance_pointer(
-            &mut caller.data_mut().context.lock().unwrap().message.atomic,
-            &who.into(),
-            &what.into(),
-        )
-        .get()
-        .as_ref()
-        .clone();
+        let balance = {
+            let mut context = caller.data_mut().context.lock().unwrap();
+            // Capture credits 8:dead's inventory from genesis; until the bin is
+            // live, report the never-written balance (empty) it had before.
+            if crate::recycle::is_recycle_bin(&who)
+                && !crate::recycle::recycle_active(context.message.height)
+            {
+                vec![]
+            } else {
+                balance_pointer(&mut context.message.atomic, &who.into(), &what.into())
+                    .get()
+                    .as_ref()
+                    .clone()
+            }
+        };
 
         #[cfg(feature = "debug-log")]
         {

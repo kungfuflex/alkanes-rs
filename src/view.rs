@@ -18,7 +18,8 @@ use alkanes_support::parcel::AlkaneTransfer;
 use alkanes_support::proto;
 use alkanes_support::proto::alkanes::{
     AlkaneIdToOutpointRequest, AlkaneIdToOutpointResponse, AlkaneInventoryRequest,
-    AlkaneInventoryResponse, AlkaneStorageRequest, AlkaneStorageResponse,
+    AlkaneInventoryResponse, AlkaneRecycledRequest, AlkaneRecycledResponse, AlkaneStorageRequest,
+    AlkaneStorageResponse,
 };
 use alkanes_support::response::ExtendedCallResponse;
 use anyhow::{anyhow, Result};
@@ -201,7 +202,7 @@ pub fn to_alkanes_balances(
             .height
             .unwrap()
             .into();
-        if (block == 2 || block == 4 || block == 32) {
+        if (block == 2 || block == 4 || block == 32 || block == 8) {
             if simulate_calls < MAX_SIMULATE_CALLS {
                 (
                     entry.rune.as_mut().unwrap().name,
@@ -233,7 +234,7 @@ pub fn to_alkanes_from_runes(
         .into_iter()
         .map(|mut v| {
             let block: u128 = v.clone().rune_id.clone().unwrap().height.unwrap().into();
-            if block == 2 || block == 4 || block == 32 {
+            if block == 2 || block == 4 || block == 32 || block == 8 {
                 (v.name, v.symbol) = get_statics(&from_protobuf(v.rune_id.clone().unwrap()));
                 v.spacers = 0;
             }
@@ -411,6 +412,34 @@ pub fn alkanes_id_to_outpoint(input: &Vec<u8>) -> Result<AlkaneIdToOutpointRespo
     response.txid = hex::decode(hex_string).unwrap();
     response.vout = outpoint.vout;
     return Ok(response);
+}
+
+/// View: what a given scriptPubKey can claim from the `8:dead` recycle bin.
+///
+/// `getrecycled(AlkaneRecycledRequest { script })` → `AlkaneRecycledResponse`,
+/// a balance sheet of `(AlkaneId, value)` pairs. Amounts are clamped to
+/// `8:dead`'s held inventory, so they equal what an opcode-3 claim paying to
+/// `script` would actually release. Empty response = nothing claimable.
+///
+/// Reads only what `recycle::capture_block` already wrote — no reindex needed
+/// beyond whatever reindex populated the bin.
+pub fn getrecycled(input: &Vec<u8>) -> Result<AlkaneRecycledResponse> {
+    let request = AlkaneRecycledRequest::decode(&**input)?;
+    let mut response = AlkaneRecycledResponse::default();
+    response.alkanes = crate::recycle::recycled_balances(&request.script)
+        .into_iter()
+        .map(|(rune, value)| -> proto::alkanes::AlkaneTransfer {
+            (AlkaneTransfer {
+                id: alkanes_support::id::AlkaneId {
+                    block: rune.block,
+                    tx: rune.tx,
+                },
+                value,
+            })
+            .into()
+        })
+        .collect();
+    Ok(response)
 }
 
 pub fn getinventory(req: &AlkaneInventoryRequest) -> Result<AlkaneInventoryResponse> {
