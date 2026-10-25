@@ -33,7 +33,7 @@ use bitcoin::blockdata::block::Block;
 use bitcoin::{ScriptBuf, Transaction};
 use metashrew_core::index_pointer::{AtomicPointer, IndexPointer};
 use metashrew_support::index_pointer::KeyValuePointer;
-use protorune::balance_sheet::{clear_chunked_balances, load_sheet_chunked};
+use protorune::balance_sheet::{clear_balances, load_sheet};
 use protorune::message::MessageContextParcel;
 use protorune::tables::RuneTable;
 use protorune_support::balance_sheet::{BalanceSheet, BalanceSheetOperations, ProtoruneRuneId};
@@ -141,7 +141,7 @@ fn credit_inventory(atomic: &mut AtomicPointer, what: &ProtoruneRuneId, value: u
 /// Sweep stranded protocol-tag balances in `block` into the recycle bin.
 /// Runs once per block, after `Protorune::index_block`. Idempotent on reindex
 /// (it clears each input it sweeps).
-pub fn capture_block(block: &Block, height: u64, protocol_tag: u128) -> Result<()> {
+pub fn capture_block(block: &Block, protocol_tag: u128) -> Result<()> {
     let table = RuneTable::for_protocol(protocol_tag);
     for tx in block.txdata.iter() {
         // Recipient = first non-OP_RETURN output, EOA only. Compute once.
@@ -157,12 +157,13 @@ pub fn capture_block(block: &Block, height: u64, protocol_tag: u128) -> Result<(
         for input in tx.input.iter() {
             let mut atomic = AtomicPointer::default();
             let key = consensus_encode(&input.previous_output)?;
-            // v3 stores outpoint balances chunked — read/clear with the chunked
-            // family so capture sees real (protocol-written) strandings.
             let sheet: BalanceSheet<AtomicPointer> =
-                load_sheet_chunked(&atomic.derive(&table.OUTPOINT_TO_RUNES.select(&key)));
+                load_sheet(&mut atomic.derive(&table.OUTPOINT_TO_RUNES.select(&key)));
             let balances = sheet.balances();
-            if balances.is_empty() {
+            // `clear_balances` zeroes entries in place rather than removing
+            // them, so an input already consumed by a protostone loads as
+            // zero-valued entries. Only a non-zero balance is stranded.
+            if balances.values().all(|amount| *amount == 0) {
                 continue; // not stranded (already consumed by a protostone, or empty)
             }
 
@@ -170,10 +171,7 @@ pub fn capture_block(block: &Block, height: u64, protocol_tag: u128) -> Result<(
                 None => {
                     // No EOA recipient: leave burned (spam GC). Clear the ghost so
                     // protorunesbyoutpoint stops reporting a spent outpoint.
-                    clear_chunked_balances(
-                        &mut atomic.derive(&table.OUTPOINT_TO_RUNES.select(&key)),
-                        height as u32,
-                    );
+                    clear_balances(&mut atomic.derive(&table.OUTPOINT_TO_RUNES.select(&key)));
                 }
                 Some(spk) => {
                     // 1+2: credit inventory + append to ledger, atomically.
@@ -191,10 +189,7 @@ pub fn capture_block(block: &Block, height: u64, protocol_tag: u128) -> Result<(
                     ledger_pointer(&mut atomic, spk.as_bytes())
                         .set(Arc::new(encode_ledger(&ledger)));
                     // 3: clear the stranded input balance.
-                    clear_chunked_balances(
-                        &mut atomic.derive(&table.OUTPOINT_TO_RUNES.select(&key)),
-                        height as u32,
-                    );
+                    clear_balances(&mut atomic.derive(&table.OUTPOINT_TO_RUNES.select(&key)));
                 }
             }
             atomic.commit();

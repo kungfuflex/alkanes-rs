@@ -108,7 +108,7 @@ mod e2e {
     };
     use metashrew_core::index_pointer::IndexPointer;
     use metashrew_support::index_pointer::KeyValuePointer;
-    use protorune::balance_sheet::{load_sheet_chunked, save_chunked};
+    use protorune::balance_sheet::{load_sheet, PersistentRecord};
     use protorune::message::MessageContext;
     use protorune::tables::RuneTable;
     use protorune_support::balance_sheet::{
@@ -117,6 +117,20 @@ mod e2e {
     use protorune_support::utils::consensus_encode;
     use std::sync::Arc;
 
+
+    /// Pins the post-audit fork above the test blocks; restores it on drop.
+    struct PreForkGuard;
+    impl PreForkGuard {
+        fn new() -> Self {
+            protorune::set_post_audit_fork_height_override(Some(1_000));
+            PreForkGuard
+        }
+    }
+    impl Drop for PreForkGuard {
+        fn drop(&mut self) {
+            protorune::set_post_audit_fork_height_override(None);
+        }
+    }
 
     fn eoa_recovery_spk() -> ScriptBuf {
         ScriptBuf::new_p2wpkh(&bitcoin::WPubkeyHash::from_byte_array([7u8; 20]))
@@ -152,6 +166,10 @@ mod e2e {
     #[test]
     fn recycle_capture_then_claim_roundtrip() -> Result<()> {
         h::clear();
+        // Index below the post-audit fork: from the fork on, protorune settles
+        // a protostone-less spend to default_output itself and capture sees
+        // nothing. The recycle bin recovers the pre-fork strandings.
+        let _fork = PreForkGuard::new();
         let tag = AlkaneMessageContext::protocol_tag();
         let table = RuneTable::for_protocol(tag);
         let stranded = AlkaneId { block: 2, tx: 1234 };
@@ -166,12 +184,7 @@ mod e2e {
         };
         let mut seed_sheet = BalanceSheet::<IndexPointer>::default();
         seed_sheet.increase(&stranded_rune, amount)?;
-        // v3 outpoint balances are chunked.
-        save_chunked(
-            &seed_sheet,
-            &mut table.OUTPOINT_TO_RUNES.select(&consensus_encode(&seed_op)?),
-            false,
-        );
+        seed_sheet.save(&table.OUTPOINT_TO_RUNES.select(&consensus_encode(&seed_op)?), false);
 
         // 2) strand it: a tx with NO OP_RETURN spending seed_op, paying recovery EOA
         let strand_tx = Transaction {
@@ -202,9 +215,9 @@ mod e2e {
             vec![(stranded_rune.clone(), amount)],
             "ledger[recovery] should record the stranded balance"
         );
-        // capture clears the spent input's chunk (clear_chunked_balances).
+        // capture clears the spent input (clear_balances).
         assert_eq!(
-            load_sheet_chunked(&table.OUTPOINT_TO_RUNES.select(&consensus_encode(&seed_op)?))
+            load_sheet(&table.OUTPOINT_TO_RUNES.select(&consensus_encode(&seed_op)?))
                 .get_cached(&stranded_rune),
             0,
             "stranded input balance should be cleared after capture"
@@ -245,12 +258,11 @@ mod e2e {
         index_block(&block2, 2)?;
 
         // 5) claim assertions: recovery output (vout 0) holds the alkane; ledger zeroed.
-        // Read the claim output with the chunked loader (v3 storage format).
         let claim_outpoint = OutPoint {
             txid: block2.txdata[0].compute_txid(),
             vout: 0,
         };
-        let claimed = load_sheet_chunked(
+        let claimed = load_sheet(
             &table.OUTPOINT_TO_RUNES.select(&consensus_encode(&claim_outpoint)?),
         );
         assert_eq!(
@@ -279,6 +291,10 @@ mod e2e {
     #[test]
     fn recycle_claim_cannot_be_redirected_via_protostone_pointer() -> Result<()> {
         h::clear();
+        // Index below the post-audit fork: from the fork on, protorune settles
+        // a protostone-less spend to default_output itself and capture sees
+        // nothing. The recycle bin recovers the pre-fork strandings.
+        let _fork = PreForkGuard::new();
         let tag = AlkaneMessageContext::protocol_tag();
         let table = RuneTable::for_protocol(tag);
         let stranded = AlkaneId { block: 2, tx: 4321 };
@@ -297,11 +313,7 @@ mod e2e {
         };
         let mut seed_sheet = BalanceSheet::<IndexPointer>::default();
         seed_sheet.increase(&stranded_rune, amount)?;
-        save_chunked(
-            &seed_sheet,
-            &mut table.OUTPOINT_TO_RUNES.select(&consensus_encode(&seed_op)?),
-            false,
-        );
+        seed_sheet.save(&table.OUTPOINT_TO_RUNES.select(&consensus_encode(&seed_op)?), false);
 
         // 2) strand it: bare-BTC spend paying victim EOA → capture credits 8:dead
         //    inventory and writes /recycle/<victim_spk>.
@@ -382,10 +394,10 @@ mod e2e {
         let claim_txid = block2.txdata[0].compute_txid();
         let victim_out = OutPoint { txid: claim_txid, vout: 0 };
         let attacker_out = OutPoint { txid: claim_txid, vout: 1 };
-        let victim_sheet = load_sheet_chunked(
+        let victim_sheet = load_sheet(
             &table.OUTPOINT_TO_RUNES.select(&consensus_encode(&victim_out)?),
         );
-        let attacker_sheet = load_sheet_chunked(
+        let attacker_sheet = load_sheet(
             &table.OUTPOINT_TO_RUNES.select(&consensus_encode(&attacker_out)?),
         );
 
