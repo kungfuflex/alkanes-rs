@@ -1,0 +1,92 @@
+# gitlab.sfsec.pub is canonical. github.com/kungfuflex/alkanes-rs is a ONE-WAY push mirror: nobody pushes to GitHub directly.
+# mirror:github runs on bob's release runner (protected refs only). bob's release gate hands it the OpenBao kind
+# github-mirror-kungfuflex (a fine-grained token: Contents RW on kungfuflex/alkanes-rs + kungfuflex/metashrew only)
+# for exactly this job, this project, its default/develop branch or a tag (subfrost/bob-ci release-gate.sh).
+# Each run pushes EVERY sfsec branch except pr/* (old GitHub PR heads, sfsec-only) and every tag:
+#   - branches: forced, except MIRROR_FF_BRANCHES (the ones GitHub's rulesets protect), which are pushed
+#     fast-forward only: a rewritten history there is REJECTED and fails this job (loudly), never overwritten.
+#   - tags: v* tags are pushed without force (GitHub makes them immutable); other tags are forced.
+#   - nothing is ever deleted on GitHub (no --prune).
+# The token never reaches argv, a URL or the log: it sits in a tmpfs file read by a GIT_ASKPASS helper.
+# Branches that are not protected on sfsec (feature branches) are mirrored by the next run on the default branch
+# (push, or the hourly pipeline schedule).
+stages: [mirror]
+
+variables:
+  MIRROR_GITHUB_REPO: kungfuflex/alkanes-rs
+  # GitHub rulesets on these: no force-push, no deletion (and a PR rule). Pushed fast-forward only, one by one.
+  MIRROR_FF_BRANCHES: "main develop"
+
+mirror:github:
+  stage: mirror
+  tags: [bob-release]
+  image: bob/release
+  interruptible: false
+  resource_group: mirror-github
+  variables:
+    GIT_STRATEGY: none
+    BOB_RELEASE: github-mirror-kungfuflex
+  rules:
+    - if: '$CI_COMMIT_REF_PROTECTED == "true" && $CI_PIPELINE_SOURCE =~ /^(push|web|schedule|api)$/ && ($CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH || $CI_COMMIT_BRANCH == "develop" || $CI_COMMIT_TAG)'
+  script:
+    - |
+      set -euo pipefail; umask 077
+      W=$(mktemp -d /dev/shm/mirror.XXXXXX); R=$(mktemp -d)/src.git
+      trap 'shred -u "$W"/tok 2>/dev/null || true; rm -rf "$W" "$(dirname "$R")"' EXIT
+      # 1. the token, read ONCE into tmpfs (the wrapped token is single-use; the inner one is slot-bound)
+      set -a; . /run/bobci/bao.env; set +a
+      BAO_TOKEN=$(bao unwrap -field=token "$BAO_WRAPPED_TOKEN"); export BAO_TOKEN; unset BAO_WRAPPED_TOKEN
+      bao kv get -mount=ci -field=token github/mirror-kungfuflex | tr -d '\r\n' > "$W/tok"; unset BAO_TOKEN
+      [ "$(wc -c < "$W/tok")" -ge 40 ] || { echo "mirror: token missing from github/mirror-kungfuflex" >&2; exit 1; }
+      # 2. every sfsec branch (minus pr/*) and tag, with the job token in env-config scoped to this GitLab only
+      git init -q --bare "$R"
+      export GIT_TERMINAL_PROMPT=0 GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="http.$CI_SERVER_URL/.extraHeader"
+      GIT_CONFIG_VALUE_0="Authorization: Basic $(printf 'gitlab-ci-token:%s' "$CI_JOB_TOKEN" | base64 -w0)"; export GIT_CONFIG_VALUE_0
+      git -C "$R" fetch -q --no-auto-gc "$CI_SERVER_URL/$CI_PROJECT_PATH.git" \
+        '+refs/heads/*:refs/heads/*' '^refs/heads/pr/*' '+refs/tags/*:refs/tags/*'
+      unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0
+      echo "sfsec: $(git -C "$R" for-each-ref refs/heads | wc -l) branches (pr/* excluded), $(git -C "$R" for-each-ref refs/tags | wc -l) tags"
+      # 3. push. GIT_ASKPASS answers git's prompts from the tmpfs file; no credential helper may cache it
+      printf '#!/bin/sh\ncase "$1" in Username*) echo x-access-token ;; *) cat "%s" ;; esac\n' "$W/tok" > "$W/askpass"; chmod 700 "$W/askpass"
+      GH="https://github.com/$MIRROR_GITHUB_REPO.git"; rc=0
+      gpush() { GIT_ASKPASS="$W/askpass" git -C "$R" -c credential.helper= -c core.askPass="$W/askpass" push --porcelain "$GH" "$@" >> "$W/push.out" 2>&1 || rc=1; }
+      # three pushes, so one rejected ref cannot hold back the rest even if GitHub declines a push as a whole:
+      #   1. every other branch (forced) and every non-v* tag (forced)
+      #   2. each MIRROR_FF_BRANCHES branch on its own, WITHOUT force: fast-forward only, whatever GitHub's rules
+      #   3. v* tags without force (GitHub's ruleset makes them immutable; a moved one is rejected)
+      EX=(); for b in $MIRROR_FF_BRANCHES; do EX+=("^refs/heads/$b"); done
+      gpush '+refs/heads/*:refs/heads/*' '^refs/heads/pr/*' "${EX[@]}" '+refs/tags/*:refs/tags/*' '^refs/tags/v*'
+      for b in $MIRROR_FF_BRANCHES; do
+        if git -C "$R" rev-parse -q --verify "refs/heads/$b" >/dev/null; then gpush "refs/heads/$b:refs/heads/$b"; fi
+      done
+      gpush 'refs/tags/v*:refs/tags/v*'
+      # porcelain flags: ' ' fast-forward, '+' forced, '-' deleted, '*' new, '=' up to date, '!' rejected
+      awk -F'\t' '$1 ~ /^[ +*-]$/ {u++} $1=="=" {s++} $1=="!" {r++} END {printf "github: %d updated, %d up to date, %d rejected\n", u, s, r}' "$W/push.out"
+      if grep -q $'^!\t' "$W/push.out" || [ $rc != 0 ]; then
+        echo "mirror: GitHub REJECTED these refs (non-fast-forward on a protected branch, a moved v* tag, or a commit" >&2
+        echo "touching .github/workflows while the token has no Workflows permission):" >&2
+        grep -v $'^[ +*=-]\t' "$W/push.out" | grep -vE '^(Done|To |hint:)' | sed 's/^/  /' >&2; exit 1
+      fi
+
+# MR dry run (when this file changes): what the mirror would push, from public GitHub refs. No secret, no token.
+mirror:github:dry-run:
+  stage: mirror
+  tags: [bob]
+  image: bob/rust
+  variables:
+    GIT_STRATEGY: none
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      changes: [.gitlab-ci.yml]
+  script:
+    - |
+      set -euo pipefail; export LC_ALL=C; T=$(mktemp -d)
+      export GIT_TERMINAL_PROMPT=0 GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="http.$CI_SERVER_URL/.extraHeader"
+      GIT_CONFIG_VALUE_0="Authorization: Basic $(printf 'gitlab-ci-token:%s' "$CI_JOB_TOKEN" | base64 -w0)"; export GIT_CONFIG_VALUE_0
+      git ls-remote "$CI_SERVER_URL/$CI_PROJECT_PATH.git" 'refs/heads/*' 'refs/tags/*' | grep -v $'\trefs/heads/pr/' | sort -k2 > "$T/sfsec"
+      unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0
+      git ls-remote "https://github.com/$MIRROR_GITHUB_REPO.git" 'refs/heads/*' 'refs/tags/*' | sort -k2 > "$T/github"
+      echo "sfsec $(wc -l < "$T/sfsec") refs (pr/* excluded), github $(wc -l < "$T/github") refs (egress to github.com OK)"
+      echo "would create or update:"; join -t $'\t' -1 2 -2 2 -v 1 -o 1.2 <(sort -t $'\t' -k2 "$T/sfsec") <(sort -t $'\t' -k2 "$T/github") | sed 's/^/  new  /' | head -50
+      join -t $'\t' -1 2 -2 2 -o 1.2,1.1,2.1 <(sort -t $'\t' -k2 "$T/sfsec") <(sort -t $'\t' -k2 "$T/github") | awk -F'\t' '$2!=$3{print "  move "$1}' | head -50
+      echo "only on GitHub (left alone, never deleted):"; join -t $'\t' -1 2 -2 2 -v 2 -o 2.2 <(sort -t $'\t' -k2 "$T/sfsec") <(sort -t $'\t' -k2 "$T/github") | sed 's/^/  /' | head -50
