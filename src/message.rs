@@ -74,7 +74,11 @@ pub fn handle_message(
     // vout 0 to satisfy the lookup, but point the payout at the attacker's output.
     // The native handler keys the ledger off the payout output's spk, so a claim
     // can only ever release the ledger of the address it actually pays.
-    if crate::recycle::is_recycle_claim(&cellpack.target, &cellpack.inputs) {
+    // Below RECYCLE_CLAIM_HEIGHT the claim falls through to normal dispatch,
+    // which reverts like any call to an undeployed alkane.
+    if crate::recycle::is_recycle_claim(&cellpack.target, &cellpack.inputs)
+        && crate::recycle::recycle_active(parcel.height)
+    {
         return crate::recycle::handle_claim(parcel);
     }
 

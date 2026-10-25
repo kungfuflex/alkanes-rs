@@ -104,7 +104,8 @@ pub fn index_block(block: &Block, height: u32) -> Result<()> {
     // Recycle-bin capture (native, no wasmi): sweep any protocol-tag balance
     // left stranded at a spent input by a protostone-less spend into 8:dead's
     // inventory + per-recipient ledger. Runs from genesis (no height gate) so a
-    // reindex recovers historical burns; claims happen later via 8:dead opcode 3.
+    // reindex recovers historical burns; claims happen later via 8:dead opcode 3,
+    // from genesis::RECYCLE_CLAIM_HEIGHT (see recycle::recycle_active).
     crate::recycle::capture_block(block, AlkaneMessageContext::protocol_tag())?;
 
     if is_active(height.into()) {

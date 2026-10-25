@@ -438,4 +438,132 @@ mod e2e {
         let _ = Arc::new(());
         Ok(())
     }
+
+    /// Sets `RECYCLE_CLAIM_HEIGHT` for the test; restores it on drop.
+    struct ClaimGateGuard;
+    impl ClaimGateGuard {
+        fn new(height: u64) -> Self {
+            crate::recycle::set_recycle_claim_height_override(Some(height));
+            ClaimGateGuard
+        }
+    }
+    impl Drop for ClaimGateGuard {
+        fn drop(&mut self) {
+            crate::recycle::set_recycle_claim_height_override(None);
+        }
+    }
+
+    /// A tx paying `spk` at vout 0 that claims from 8:dead (opcode 3, pointer 0).
+    fn recycle_claim_tx(spk: &ScriptBuf, funding: u8) -> Transaction {
+        let protostone = protorune_support::protostone::Protostone {
+            message: Cellpack {
+                target: RECYCLE_ALKANE_ID,
+                inputs: vec![3],
+            }
+            .encipher(),
+            pointer: Some(0),
+            refund: Some(0),
+            edicts: vec![],
+            from: None,
+            burn: None,
+            protocol_tag: AlkaneMessageContext::protocol_tag(),
+        };
+        h::create_protostone_tx_with_inputs(
+            vec![TxIn {
+                previous_output: OutPoint {
+                    txid: bitcoin::Txid::from_byte_array([funding; 32]),
+                    vout: 0,
+                },
+                script_sig: ScriptBuf::new(),
+                sequence: Sequence::MAX,
+                witness: Witness::new(),
+            }],
+            vec![TxOut {
+                value: Amount::from_sat(546),
+                script_pubkey: spk.clone(),
+            }],
+            protostone,
+        )
+    }
+
+    /// Capture runs from genesis, but a claim below RECYCLE_CLAIM_HEIGHT is not
+    /// processed: nothing is released and the ledger and inventory stay intact.
+    /// The same claim succeeds once the gate is reached.
+    #[test]
+    fn recycle_claim_waits_for_activation_height() -> Result<()> {
+        h::clear();
+        let _fork = PreForkGuard::new();
+        let gate: u32 = 5;
+        let _gate = ClaimGateGuard::new(gate as u64);
+        let table = RuneTable::for_protocol(AlkaneMessageContext::protocol_tag());
+        let stranded = AlkaneId { block: 2, tx: 1234 };
+        let stranded_rune = ProtoruneRuneId { block: 2, tx: 1234 };
+        let amount: u128 = 500;
+        let recovery = eoa_recovery_spk();
+
+        // Seed and strand at block 1, below the gate: capture still runs.
+        let seed_op = OutPoint {
+            txid: bitcoin::Txid::from_byte_array([9u8; 32]),
+            vout: 0,
+        };
+        let mut seed_sheet = BalanceSheet::<IndexPointer>::default();
+        seed_sheet.increase(&stranded_rune, amount)?;
+        seed_sheet.save(&table.OUTPOINT_TO_RUNES.select(&consensus_encode(&seed_op)?), false);
+        let strand_tx = Transaction {
+            version: bitcoin::transaction::Version::ONE,
+            lock_time: bitcoin::absolute::LockTime::ZERO,
+            input: vec![TxIn {
+                previous_output: seed_op,
+                script_sig: ScriptBuf::new(),
+                sequence: Sequence::MAX,
+                witness: Witness::new(),
+            }],
+            output: vec![TxOut {
+                value: Amount::from_sat(546),
+                script_pubkey: recovery.clone(),
+            }],
+        };
+        index_block(&protorune::test_helpers::create_block_with_txs(vec![strand_tx]), 1)?;
+        assert_eq!(recycle_inventory_balance(&stranded), amount);
+        assert_eq!(
+            recycle_ledger(recovery.as_bytes()),
+            vec![(stranded_rune.clone(), amount)]
+        );
+
+        let claimed_at = |block: &bitcoin::Block| -> Result<u128> {
+            let out = OutPoint {
+                txid: block.txdata[0].compute_txid(),
+                vout: 0,
+            };
+            Ok(load_sheet(&table.OUTPOINT_TO_RUNES.select(&consensus_encode(&out)?))
+                .get_cached(&stranded_rune))
+        };
+
+        // Claim one block below the gate: not processed.
+        let early = protorune::test_helpers::create_block_with_txs(vec![recycle_claim_tx(
+            &recovery, 1,
+        )]);
+        index_block(&early, gate - 1)?;
+        assert_eq!(claimed_at(&early)?, 0, "pre-gate claim must release nothing");
+        assert_eq!(
+            recycle_ledger(recovery.as_bytes()),
+            vec![(stranded_rune.clone(), amount)],
+            "pre-gate claim must leave the ledger intact"
+        );
+        assert_eq!(
+            recycle_inventory_balance(&stranded),
+            amount,
+            "pre-gate claim must leave the inventory intact"
+        );
+
+        // Claim at the gate: released to the recovery output.
+        let live = protorune::test_helpers::create_block_with_txs(vec![recycle_claim_tx(
+            &recovery, 2,
+        )]);
+        index_block(&live, gate)?;
+        assert_eq!(claimed_at(&live)?, amount, "claim at the gate must release");
+        assert!(recycle_ledger(recovery.as_bytes()).is_empty());
+        assert_eq!(recycle_inventory_balance(&stranded), 0);
+        Ok(())
+    }
 }

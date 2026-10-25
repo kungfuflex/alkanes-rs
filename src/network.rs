@@ -268,6 +268,7 @@ pub mod genesis {
     /// from genesis here.
     pub const FRBTC_V130_FORK_HEIGHT: u32 = 0;
     pub const FRBTC_V131_FORK_HEIGHT: u32 = 0;
+    pub const RECYCLE_CLAIM_HEIGHT: u32 = 0;
 }
 
 /// testnet4 (`--features testnet`): the latest consensus rules from block 0.
@@ -288,6 +289,7 @@ pub mod genesis {
     pub const V220_FORK_HEIGHT: u32 = 0;
     pub const FRBTC_V130_FORK_HEIGHT: u32 = 0;
     pub const FRBTC_V131_FORK_HEIGHT: u32 = 0;
+    pub const RECYCLE_CLAIM_HEIGHT: u32 = 0;
 }
 
 #[cfg(feature = "mainnet")]
@@ -313,6 +315,11 @@ pub mod genesis {
     /// v2.2.1-alpha.3) before this height or they diverge at 32:0.
     pub const FRBTC_V130_FORK_HEIGHT: u32 = 957_000;
     pub const FRBTC_V131_FORK_HEIGHT: u32 = 960_000;
+    /// Recycle-bin activation: from this height `8:dead` dispatches, its
+    /// native claim (opcode 3) releases ledgers, and `__balance` reports
+    /// its inventory. Capture runs from genesis, but nothing a pre-gate
+    /// transaction can observe differs from an indexer without the bin.
+    pub const RECYCLE_CLAIM_HEIGHT: u32 = 980_000;
 }
 
 #[cfg(feature = "fractal")]
@@ -330,6 +337,7 @@ pub mod genesis {
     /// from genesis here.
     pub const FRBTC_V130_FORK_HEIGHT: u32 = 0;
     pub const FRBTC_V131_FORK_HEIGHT: u32 = 0;
+    pub const RECYCLE_CLAIM_HEIGHT: u32 = 0;
 }
 
 #[cfg(feature = "dogecoin")]
@@ -347,6 +355,7 @@ pub mod genesis {
     /// from genesis here.
     pub const FRBTC_V130_FORK_HEIGHT: u32 = 0;
     pub const FRBTC_V131_FORK_HEIGHT: u32 = 0;
+    pub const RECYCLE_CLAIM_HEIGHT: u32 = 0;
 }
 
 #[cfg(feature = "luckycoin")]
@@ -364,6 +373,7 @@ pub mod genesis {
     /// from genesis here.
     pub const FRBTC_V130_FORK_HEIGHT: u32 = 0;
     pub const FRBTC_V131_FORK_HEIGHT: u32 = 0;
+    pub const RECYCLE_CLAIM_HEIGHT: u32 = 0;
 }
 
 #[cfg(feature = "bellscoin")]
@@ -381,6 +391,7 @@ pub mod genesis {
     /// from genesis here.
     pub const FRBTC_V130_FORK_HEIGHT: u32 = 0;
     pub const FRBTC_V131_FORK_HEIGHT: u32 = 0;
+    pub const RECYCLE_CLAIM_HEIGHT: u32 = 0;
 }
 
 pub fn is_active(height: u64) -> bool {

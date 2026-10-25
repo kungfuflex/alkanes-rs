@@ -25,6 +25,16 @@
 //!
 //! Non-EOA recipients (script-path / bare scripts) are left burned — this is the
 //! intended garbage-collection of spam alkanes spent by non-alkanes wallets.
+//!
+//! ## Activation
+//!
+//! Capture runs from genesis, but everything a transaction can observe is gated
+//! on `genesis::RECYCLE_CLAIM_HEIGHT` (see [`recycle_active`]): `8:*` dispatch,
+//! the native claim, and `__balance` reads of `8:dead`. Below the gate those
+//! behave exactly as on an indexer without the bin. Capture's own writes are
+//! `8:dead`'s storage (unreadable while it cannot run), its inventory (masked
+//! from `__balance`), and clearing spent outpoints (never read again), so
+//! pre-gate consensus state is unchanged.
 
 use crate::utils::alkane_inventory_pointer;
 use alkanes_support::id::AlkaneId;
@@ -47,6 +57,30 @@ pub const RECYCLE_ALKANE_ID: AlkaneId = AlkaneId {
     block: 8,
     tx: 0xdead,
 };
+
+/// True once the recycle bin is live at `height`. Gates every
+/// transaction-observable effect of the bin; capture itself is ungated.
+pub fn recycle_active(height: u64) -> bool {
+    #[cfg(test)]
+    {
+        if let Some(h) = RECYCLE_CLAIM_HEIGHT_OVERRIDE.with(|c| c.get()) {
+            return height >= h;
+        }
+    }
+    height >= crate::network::genesis::RECYCLE_CLAIM_HEIGHT as u64
+}
+
+#[cfg(test)]
+thread_local! {
+    static RECYCLE_CLAIM_HEIGHT_OVERRIDE: std::cell::Cell<Option<u64>> =
+        std::cell::Cell::new(None);
+}
+
+/// Test-only override of `RECYCLE_CLAIM_HEIGHT`; `None` restores the constant.
+#[cfg(test)]
+pub fn set_recycle_claim_height_override(height: Option<u64>) {
+    RECYCLE_CLAIM_HEIGHT_OVERRIDE.with(|c| c.set(height));
+}
 
 /// Storage keyword for the per-recipient ledger inside `8:dead`. MUST match
 /// `alkanes_std_recycle::RECYCLE_LEDGER_PREFIX` exactly — the WASM reads what
@@ -281,7 +315,10 @@ pub fn handle_claim(
 
 /// True if a cellpack targets the recycle bin's claim opcode (3).
 pub fn is_recycle_claim(target: &AlkaneId, inputs: &[u128]) -> bool {
-    target.block == RECYCLE_ALKANE_ID.block
-        && target.tx == RECYCLE_ALKANE_ID.tx
-        && inputs.first() == Some(&3u128)
+    is_recycle_bin(target) && inputs.first() == Some(&3u128)
+}
+
+/// True if `id` is the recycle bin (`8:dead`).
+pub fn is_recycle_bin(id: &AlkaneId) -> bool {
+    id.block == RECYCLE_ALKANE_ID.block && id.tx == RECYCLE_ALKANE_ID.tx
 }
