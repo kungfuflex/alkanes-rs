@@ -124,7 +124,15 @@ check:security-deps:
       import sys, tomllib
       floor = {"rustls-webpki": ((0, 103), (0, 103, 16)), "webpki-roots": ((1, 0), (1, 0, 10)),
                "rustls": ((0, 23), (0, 23, 46)), "quinn-proto": ((0, 11), (0, 11, 18)), "h2": ((0, 4), (0, 4, 16))}
+      # Lines with no fixed release that must stay out of Cargo.lock entirely:
+      # h2 0.3 (RUSTSEC-2026-0258, came via actix-web `http2`) and zstd 0.13 /
+      # zstd-safe 7 / zstd-sys 2.0 (RUSTSEC-2026-0391/-0398/-0403/-0410, came via
+      # actix-web `compress-zstd`).
+      gone = {"h2": "0.3.", "zstd": "0.13.", "zstd-safe": "7.", "zstd-sys": "2.0."}
       bad = 0
+      for p in tomllib.load(open("Cargo.lock", "rb"))["package"]:
+          if p["name"] in gone and p["version"].startswith(gone[p["name"]]):
+              print(f"FAIL {p['name']} {p['version']} is back in Cargo.lock"); bad = 1
       for p in tomllib.load(open("Cargo.lock", "rb"))["package"]:
           if p["name"] not in floor or "source" not in p:
               continue
