@@ -45,6 +45,8 @@ makes HTTPS connections. Rebuild from the `v3.0.0-rc.4` tag with `--locked`.
   - `Cargo.lock` removes `zstd` 0.13.3, `zstd-safe` 7.2.4, `zstd-sys` 2.0.16, `h2` 0.3.27 and
     `jobserver`, and changes nothing else. None of them is in the indexer wasm's dependency
     graph, and the wasm is rebuilt byte-identical (sha256 above).
+- **tokio** 1.53.0 → 1.53.3 (RUSTSEC-2026-0386, `AsyncFd` I/O safety). It is used by the
+  host crates and isn't in the indexer wasm.
 - **Release:** workspace version 3.0.0-rc.3 → 3.0.0-rc.4 for the host, CLI and RPC crates.
   The five crates compiled into the indexer wasm (`alkanes`, `alkanes-support`, `ordinals`,
   `protorune`, `protorune-support`) now pin their own version and stay at **3.0.0-rc.3**.
