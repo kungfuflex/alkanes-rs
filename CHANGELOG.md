@@ -47,6 +47,13 @@ makes HTTPS connections. Rebuild from the `v3.0.0-rc.4` tag with `--locked`.
     graph, and the wasm is rebuilt byte-identical (sha256 above).
 - **tokio** 1.53.0 → 1.53.3 (RUSTSEC-2026-0386, `AsyncFd` I/O safety). It is used by the
   host crates and isn't in the indexer wasm.
+- **ruint** 1.14.0 → 1.17.2 (RUSTSEC-2025-0137, unsound `reciprocal_mg10` used by `Uint`
+  division). It comes in through `alloy-primitives` 0.7 in `alkanes-cli-common` (EVM ABI
+  encoding) and the CLI, RPC and data-api crates, and isn't in the indexer wasm. 1.17.2 is
+  the newest ruint that builds with rustc 1.86. `enum-ordinalize` is held at 4.3.2 for the
+  same reason; it and the other packages this adds to `Cargo.lock` (`ark-ff` 0.5, `educe`)
+  are optional ruint dependencies that no workspace crate enables, so none of them is
+  compiled.
 - **Release:** workspace version 3.0.0-rc.3 → 3.0.0-rc.4 for the host, CLI and RPC crates.
   The five crates compiled into the indexer wasm (`alkanes`, `alkanes-support`, `ordinals`,
   `protorune`, `protorune-support`) now pin their own version and stay at **3.0.0-rc.3**.
@@ -60,5 +67,6 @@ toolchain rather than a patch bump: `sqlx` 0.7 (used with Postgres by `alkanes-d
 stack), `alloy-dyn-abi` 0.7, `time` 0.3.41, `actix-http` 3.11.2 (GHSA-xhj4-vrgc-hr34, CL.TE
 request smuggling in `alkanes-jsonrpc` and `alkanes-data-api`; run them behind a proxy that
 normalizes `Transfer-Encoding` / `Content-Length`), `rsa` (no fix released) and
-`crypto-bigint` 0.5. The `time` and `actix-http` fixes need rustc 1.88, and this workspace
-pins 1.86.0. None of them is in the indexer wasm.
+`crypto-bigint` 0.5, and `ruint` RUSTSEC-2026-0220 (wrong overflow flags from `Uint` shifts,
+fixed in ruint 1.20.0). The `time` and `actix-http` fixes need rustc 1.88, ruint 1.20 needs
+rustc 1.90, and this workspace pins 1.86.0. None of them is in the indexer wasm.
