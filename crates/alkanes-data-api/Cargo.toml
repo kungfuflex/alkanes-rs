@@ -12,7 +12,18 @@ path = "src/main.rs"
 
 [dependencies]
 # Web framework
-actix-web = "4.8"
+actix-web = { version = "4.8", default-features = false, features = [
+    # actix-web's default features minus `compress-zstd` and `http2`.
+    # compress-zstd: nothing here uses the Compress middleware, and with it
+    # actix-http decoded any request body sent with `Content-Encoding: zstd`
+    # through zstd 0.13's stream::write::Decoder (RUSTSEC-2026-0403; zstd 0.13
+    # also carries RUSTSEC-2026-0391/-0398/-0410). Such bodies now reach the
+    # handler undecoded and fail to parse. http2: the server binds plain
+    # HTTP/1.1 (`HttpServer::bind`), and `http2` is what links h2 0.3
+    # (RUSTSEC-2026-0258, no 0.3 fix) into the binary, reachable through h2c
+    # prior knowledge. Same choice as metashrew v9.1.0-rc.6.
+    "macros", "compress-brotli", "compress-gzip", "cookies", "unicode", "compat",
+] }
 actix-cors = "0.7"
 
 # Async runtime

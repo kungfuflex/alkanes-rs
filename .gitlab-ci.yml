@@ -10,7 +10,7 @@
 # The token never reaches argv, a URL or the log: it sits in a tmpfs file read by a GIT_ASKPASS helper.
 # Branches that are not protected on sfsec (feature branches) are mirrored by the next run on the default branch
 # (push, or the hourly pipeline schedule).
-stages: [mirror]
+stages: [mirror, check]
 
 variables:
   MIRROR_GITHUB_REPO: kungfuflex/alkanes-rs
@@ -90,3 +90,66 @@ mirror:github:dry-run:
       echo "would create or update:"; join -t $'\t' -1 2 -2 2 -v 1 -o 1.2 <(sort -t $'\t' -k2 "$T/sfsec") <(sort -t $'\t' -k2 "$T/github") | sed 's/^/  new  /' | head -50
       join -t $'\t' -1 2 -2 2 -o 1.2,1.1,2.1 <(sort -t $'\t' -k2 "$T/sfsec") <(sort -t $'\t' -k2 "$T/github") | awk -F'\t' '$2!=$3{print "  move "$1}' | head -50
       echo "only on GitHub (left alone, never deleted):"; join -t $'\t' -1 2 -2 2 -v 2 -o 2.2 <(sort -t $'\t' -k2 "$T/sfsec") <(sort -t $'\t' -k2 "$T/github") | sed 's/^/  /' | head -50
+
+# Dependency security gate (MRs, default-branch pushes, v* tags). Runs AFTER the mirror stage, so a red
+# check never holds the GitHub mirror back. Fails if:
+#   - Cargo.lock would need re-resolving (--locked), or a fixed crate drops below its patched floor
+#     (CVE-2026-111943: rustls-webpki >= 0.103.16, webpki-roots >= 1.0.10; rustls >= 0.23.46;
+#     quinn-proto >= 0.11.18; h2 0.4 >= 0.4.16);
+#   - a CLI/RPC/FFI binary links the sqlx 0.7 rustls 0.21 stack again (positive control: each must
+#     still link rustls 0.23, so a broken probe cannot pass);
+#   - the CLI/RPC crates do not build, or the cli-common unit tests fail.
+# bob/rust carries rustc 1.91/1.95/1.99, not the 1.86.0 that rust-toolchain.toml pins (job VMs cannot
+# reach static.rust-lang.org), so this job builds with 1.91.0. The byte-exact indexer wasm is NOT built
+# here: that proof stays on the pinned production recipe (rust 1.86.0, --features mainnet, sha256 in
+# the release notes).
+check:security-deps:
+  stage: check
+  tags: [bob]
+  image: bob/rust
+  interruptible: true
+  variables:
+    RUSTUP_TOOLCHAIN: "1.91.0"
+    CARGO_TERM_COLOR: never
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE == "push"'
+    - if: '$CI_COMMIT_TAG =~ /^v[0-9]/'
+  script:
+    - |
+      set -euo pipefail
+      cargo metadata --locked --format-version 1 > /dev/null
+      echo "Cargo.lock: consistent (--locked)"
+      python3 -I - <<'PY'
+      import sys, tomllib
+      floor = {"rustls-webpki": ((0, 103), (0, 103, 16)), "webpki-roots": ((1, 0), (1, 0, 10)),
+               "rustls": ((0, 23), (0, 23, 46)), "quinn-proto": ((0, 11), (0, 11, 18)), "h2": ((0, 4), (0, 4, 16))}
+      # Lines with no fixed release that must stay out of Cargo.lock entirely:
+      # h2 0.3 (RUSTSEC-2026-0258, came via actix-web `http2`) and zstd 0.13 /
+      # zstd-safe 7 / zstd-sys 2.0 (RUSTSEC-2026-0391/-0398/-0403/-0410, came via
+      # actix-web `compress-zstd`).
+      gone = {"h2": "0.3.", "zstd": "0.13.", "zstd-safe": "7.", "zstd-sys": "2.0."}
+      bad = 0
+      for p in tomllib.load(open("Cargo.lock", "rb"))["package"]:
+          if p["name"] in gone and p["version"].startswith(gone[p["name"]]):
+              print(f"FAIL {p['name']} {p['version']} is back in Cargo.lock"); bad = 1
+      for p in tomllib.load(open("Cargo.lock", "rb"))["package"]:
+          if p["name"] not in floor or "source" not in p:
+              continue
+          v = tuple(int(x) for x in p["version"].split("-")[0].split("."))
+          line, need = floor[p["name"]]
+          if v[:2] == line and v < need:
+              print(f"FAIL {p['name']} {p['version']} < {'.'.join(map(str, need))}"); bad = 1
+          else:
+              print(f"ok   {p['name']} {p['version']}")
+      sys.exit(bad)
+      PY
+      for p in alkanes-cli alkanes-cli-sys alkanes-ffi alkanes-jni alkanes-jsonrpc; do
+        t=$(cargo tree --locked -p "$p" -e normal --target x86_64-unknown-linux-gnu --prefix none)
+        n21=$(grep -c '^rustls v0\.21\.' <<<"$t" || true); n23=$(grep -c '^rustls v0\.23\.' <<<"$t" || true)
+        [ "$n23" -gt 0 ] || { echo "FAIL $p: probe found no rustls 0.23 (positive control) - the check itself is broken"; exit 1; }
+        [ "$n21" = 0 ] || { echo "FAIL $p links rustls 0.21 (sqlx 0.7 tls-rustls)"; exit 1; }
+        echo "ok   $p: rustls 0.23 only"
+      done
+      cargo build --locked -p alkanes-cli -p alkanes-jsonrpc
+      cargo test --locked -p alkanes-cli-common --lib --target x86_64-unknown-linux-gnu

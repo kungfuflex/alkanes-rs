@@ -123,7 +123,11 @@ bech32.workspace = true
 
 # Optional: persistent sqlite cache backend (cache-sqlite feature).
 # Uses sqlx-sqlite to share libsqlite3-sys version with alkanes-contract-indexer.
-sqlx = { version = "0.7", default-features = false, features = ["runtime-tokio-rustls", "sqlite", "macros"], optional = true }
+# `runtime-tokio`, not `runtime-tokio-rustls`: SQLite is a local file and never
+# speaks TLS, and the `tls-rustls` half pulled sqlx 0.7's rustls 0.21 /
+# rustls-webpki 0.101 / webpki-roots 0.25 stack (no patched release for
+# RUSTSEC-2026-0381/0382) into every alkanes-cli build for nothing.
+sqlx = { version = "0.7", default-features = false, features = ["runtime-tokio", "sqlite", "macros"], optional = true }
 
 # Optional: gRPC cache shim (cache-grpc feature) for subfrost-mobile integration
 tonic = { version = "0.12", default-features = false, features = ["codegen", "prost", "transport"], optional = true }

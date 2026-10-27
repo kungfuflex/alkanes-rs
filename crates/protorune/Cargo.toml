@@ -1,6 +1,9 @@
 [package]
 name = "protorune"
-version.workspace = true
+# Pinned, not workspace: this crate is in the indexer wasm's dependency graph, and the
+# package version feeds rustc's -C metadata, so bumping it changes alkanes.wasm bytes.
+# It moves only with an indexer release (see the workspace [workspace.package] note).
+version = "3.0.0-rc.3"
 edition.workspace = true
 description.workspace = true
 license.workspace = true
