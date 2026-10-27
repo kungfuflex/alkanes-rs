@@ -10,6 +10,15 @@
 # The token never reaches argv, a URL or the log: it sits in a tmpfs file read by a GIT_ASKPASS helper.
 # Branches that are not protected on sfsec (feature branches) are mirrored by the next run on the default branch
 # (push, or the hourly pipeline schedule).
+# Advisory gating (subfrost/bob-ci!53, docs/ADVISORY-GATING.md in bob-ci): advisory:source runs in stage .pre on MRs,
+# main, tags and schedules and scans Cargo.lock (+ every other lockfile: ts-sdk, ...) offline against the mirrored DB
+# bundle. Images: the alkanes indexer wasm ships inside the metashrew image built by subvh's bob pipeline, not here.
+# Waivers: .sfsec/advisory-waivers.toml (reviewed MRs only).
+# REPIN ref: to the protected bob-ci tag that contains !53 before merge
+include:
+  - { project: subfrost/bob-ci, ref: feat/advisory-gating, file: templates/bob.gitlab-ci.yml }
+  - { project: subfrost/bob-ci, ref: feat/advisory-gating, file: templates/advisory/advisory.gitlab-ci.yml }
+
 stages: [mirror]
 
 variables:
