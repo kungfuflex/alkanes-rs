@@ -353,6 +353,9 @@ pub struct SendParams {
     pub auto_confirm: bool,
     pub use_rebar: bool,
     pub rebar_tier: u8,
+    /// Deprecated, ignored. Plain BTC sends always exclude UTXOs that carry
+    /// alkanes and fail closed on UTXOs whose alkane status is unknown
+    /// (SFS-05); there is no opt-out.
     pub lock_alkanes: bool,
     /// Strategy for handling UTXOs that contain ordinal inscriptions
     /// - 'exclude': (default) Fail if inscribed UTXOs must be spent

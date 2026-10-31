@@ -270,21 +270,9 @@ pub enum UtxoSkipReason {
     UnindexedHeight { block_height: u64, max_indexed: u64 },
 }
 
-/// Pre-sign carrier invariant (Halborn: "Incomplete Wallet Carrier Validation
-/// Can Transfer Unrequested Assets to Malicious Contracts").
-///
-/// Protorune aggregates the alkane sheets of EVERY input and forwards the
-/// unallocated remainder to the first alkanes message, so any token riding an
-/// input is handed to the called contract unless the transaction routes it
-/// elsewhere first. Before a PSBT leaves the executor, every input must have a
-/// KNOWN sheet (`per_utxo_alkanes` entry, or verified clean), and every alkane
-/// id carried by the inputs must either be requested (`alkanes_needed`) or be
-/// explicitly routed to a physical output by an edict in the first protostone
-/// (the one that receives the leftover input balance) covering the full
-/// carried amount (`amount == 0` means "all").
-///
-/// Excess of a REQUESTED alkane id is not covered here — that is the
-/// requested asset and its routing is the caller's protostone semantics.
+/// Pre-sign carrier invariant for an alkanes call. Thin wrapper over the shared
+/// [`super::carrier::check_input_alkane_sheets`] (which plain BTC sends use
+/// too), keeping the executor's wording.
 pub(crate) fn check_input_alkane_sheets(
     inputs: &[OutPoint],
     per_utxo_alkanes: &alloc::collections::BTreeMap<OutPoint, Vec<(AlkaneId, u64)>>,
@@ -292,47 +280,14 @@ pub(crate) fn check_input_alkane_sheets(
     alkanes_needed: &alloc::collections::BTreeMap<AlkaneId, u64>,
     protostones: &[ProtostoneSpec],
 ) -> Result<()> {
-    let mut unrequested: alloc::collections::BTreeMap<AlkaneId, u128> =
-        alloc::collections::BTreeMap::new();
-    for op in inputs {
-        if let Some(sheet) = per_utxo_alkanes.get(op) {
-            for (id, amount) in sheet {
-                if *amount > 0 && !alkanes_needed.contains_key(id) {
-                    *unrequested.entry(id.clone()).or_insert(0) += *amount as u128;
-                }
-            }
-        } else if !clean_outpoints.contains(op) {
-            return Err(AlkanesError::Wallet(format!(
-                "Refusing to build: input {}:{} has an unknown alkane balance; it could forward \
-                 unrequested tokens to the called contract",
-                op.txid, op.vout
-            )));
-        }
-    }
-    let routed = |id: &AlkaneId, total: u128| -> bool {
-        protostones.first().map_or(false, |p| {
-            p.edicts.iter().any(|e| {
-                e.alkane_id == *id
-                    && matches!(e.target, OutputTarget::Output(_))
-                    && (e.amount == 0 || e.amount as u128 >= total)
-            })
-        })
-    };
-    let unrouted: Vec<String> = unrequested
-        .iter()
-        .filter(|(id, total)| !routed(id, **total))
-        .map(|(id, total)| format!("{}:{} x{}", id.block, id.tx, total))
-        .collect();
-    if !unrouted.is_empty() {
-        return Err(AlkanesError::Wallet(format!(
-            "Refusing to build: selected inputs carry alkanes that were not requested and are not \
-             routed back by an edict ({}). Protorune would forward them to the called contract. \
-             Request them explicitly, add an edict in the first protostone sending them to one of \
-             your outputs, or split that UTXO first",
-            unrouted.join(", ")
-        )));
-    }
-    Ok(())
+    super::carrier::check_input_alkane_sheets(
+        super::carrier::SpendKind::AlkanesCall,
+        inputs,
+        per_utxo_alkanes,
+        clean_outpoints,
+        alkanes_needed,
+        protostones,
+    )
 }
 
 /// Returns `Ok(())` if `info` is eligible for coin selection, else `Err`
@@ -3261,38 +3216,26 @@ impl<'a> EnhancedAlkanesExecutor<'a> {
                 // be spent when the transaction is otherwise unbuildable (the
                 // pre-existing behavior), but must never be pulled in purely for
                 // dust headroom — see the guard below the carrier check.
-                let (is_carrier, verified) = if self.provider.is_qubitcoin_mode() {
-                    // No alkanes indexer in qubitcoin mode and no alkanes to
-                    // burn — treat as authoritative so behavior is unchanged.
-                    (false, true)
-                } else if let Some(balances) =
-                    prefetched_alkanes.as_ref().and_then(|m| m.get(&outpoint))
-                {
-                    // Same short-circuit shape as the primary-discovery branch:
-                    // caller-asserted balances skip the RPC. An empty Vec means
-                    // "asserted clean — not a carrier."
-                    prefetched_count += 1;
-                    (balances.iter().any(|(_, amt)| *amt > 0), true)
-                } else {
-                    rpc_count += 1;
-                    let txid_str = outpoint.txid.to_string();
-                    match self
-                        .provider
-                        .get_protorunes_by_outpoint(&txid_str, outpoint.vout, None, 1)
-                        .await
-                    {
-                        Ok(response) => (
-                            response
-                                .balance_sheet
-                                .cached
-                                .balances
-                                .values()
-                                .any(|amt| *amt > 0),
-                            true,
-                        ),
-                        // Unverifiable — UNKNOWN, not clean.
-                        Err(_) => (false, false),
-                    }
+                // Shared sheet resolution (also used by every plain BTC send
+                // path): qubitcoin -> authoritative clean, caller assertion
+                // (an empty Vec means "asserted clean"), else a lazy
+                // protorunesbyoutpoint probe. A failed probe is UNKNOWN.
+                let (status, source) = super::carrier::resolve_alkane_sheet(
+                    &*self.provider,
+                    self.provider.is_qubitcoin_mode(),
+                    &outpoint,
+                    prefetched_alkanes.as_ref(),
+                )
+                .await;
+                match source {
+                    super::carrier::SheetSource::Asserted => prefetched_count += 1,
+                    super::carrier::SheetSource::Probe => rpc_count += 1,
+                    super::carrier::SheetSource::Qubitcoin => {}
+                }
+                let (is_carrier, verified) = match status {
+                    super::carrier::AlkaneSheetStatus::Clean => (false, true),
+                    super::carrier::AlkaneSheetStatus::Carrier(_) => (true, true),
+                    super::carrier::AlkaneSheetStatus::Unknown(_) => (false, false),
                 };
                 if !verified {
                     // Every transaction this executor builds carries an
